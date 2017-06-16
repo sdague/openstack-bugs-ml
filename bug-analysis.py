@@ -28,6 +28,8 @@ import sys
 
 from launchpadlib.launchpad import Launchpad
 import requests
+import watson_developer_cloud
+import watson_developer_cloud.natural_language_understanding.features.v1 as features
 
 LPCACHEDIR = os.path.expanduser(os.environ.get('LPCACHEDIR',
                                                '~/.launchpadlib/cache'))
@@ -43,6 +45,8 @@ def parse_args():
         description="Do watson analysis on open bugs for project")
     parser.add_argument('--project', required=True,
                         help='The project to act on')
+    parser.add_argument('--skip-lp', action="store_true", default=False,
+                        help='Skip Launchpad Processing')
     parser.add_argument('-v', '--verbose', action="store_true", default=False)
     return parser.parse_args()
 
@@ -277,7 +281,8 @@ def sentiment_analysis(bugs):
 def main():
     args = parse_args()
     setup_logger(args.verbose)
-    collect_bugs(args.project)
+    if not args.skip_lp:
+        collect_bugs(args.project)
     run_watson_nlu()
 
     bugs = []
