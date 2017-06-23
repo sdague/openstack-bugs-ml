@@ -40,6 +40,7 @@ RE_LINK = re.compile(' https://review.openstack.org/(\d+)')
 
 LOG = logging.getLogger('bug-analysis')
 
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Do watson analysis on open bugs for project")
@@ -47,6 +48,8 @@ def parse_args():
                         help='The project to act on')
     parser.add_argument('--skip-lp', action="store_true", default=False,
                         help='Skip Launchpad Processing')
+    parser.add_argument('--skip-watson', action="store_true", default=False,
+                        help='Skip Watson Processing')
     parser.add_argument('-v', '--verbose', action="store_true", default=False)
     return parser.parse_args()
 
@@ -193,8 +196,10 @@ def concept_analysis(bugs):
     report = "watson-concept.html"
     keywords = {}
     concepts = {}
+    tags = {}
     for res in bugs:
         link = res["link"]
+        tags[link] = res["tags"]
         for k in res["results"]["concepts"]:
             key = k["text"]
             concepts[key] = k["dbpedia_resource"]
@@ -222,7 +227,7 @@ def concept_analysis(bugs):
     scored < 0.5 relevance were dropped.
 
     <table>
-    <tr><th>Concept</th><th>Reviews</th></tr>
+    <tr><th>Concept</th><th>Reviews</th><th>Tags</th></tr>
     """)
         sort = keywords.items()
         for k, v in sorted(sort, key=(lambda x: (-len(x[1]), x[0]))):
@@ -230,12 +235,30 @@ def concept_analysis(bugs):
                 concepts[k].encode("utf-8"),
                 k.encode("utf-8")))
             for bug in v:
-                f.write('<a href="%s">%s</a>\n' % (bug, bug.split("/")[-1]))
+                f.write('<a href="%s">%s</a>\n' % (
+                    bug, bug.split("/")[-1]))
+            f.write("</td><td>")
+            for tag, tagdata in collect_tags(tags, v):
+                if tagdata["count"] > 1:
+                    f.write("<li>%s: %s</li>" % (tag, tagdata["count"]))
             f.write("</td></tr>\n")
         f.write("""</table>
         </body>
         </html>
         """)
+
+
+def collect_tags(tags, bugs):
+    tag_counts = {}
+    for bug in bugs:
+        for tag in tags[bug]:
+            if tag not in tag_counts:
+                tag_counts[tag] = {"count": 1, "bugs": [bug]}
+            else:
+                tag_counts[tag]["count"] += 1
+                tag_counts[tag]["bugs"].append(bug)
+    sort = tag_counts.items()
+    return sorted(sort, key=(lambda x: (-x[1]["count"])))
 
 
 def sentiment_analysis(bugs):
@@ -283,7 +306,8 @@ def main():
     setup_logger(args.verbose)
     if not args.skip_lp:
         collect_bugs(args.project)
-    run_watson_nlu()
+    if not args.skip_watson:
+        run_watson_nlu()
 
     bugs = []
     for fname in glob.glob('work/res-*.json'):
