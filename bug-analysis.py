@@ -227,7 +227,7 @@ def concept_analysis(bugs):
     scored < 0.5 relevance were dropped.
 
     <table>
-    <tr><th>Concept</th><th>Reviews</th><th>Tags</th></tr>
+    <tr><th>Concept</th><th>Open Bugs</th><th>Tags</th></tr>
     """)
         sort = keywords.items()
         for k, v in sorted(sort, key=(lambda x: (-len(x[1]), x[0]))):
