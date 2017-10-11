@@ -74,7 +74,11 @@ def collect_bugs(project_name):
         nova_owner = 'Unknown'
         comments = []
         for m in bug.messages:
-            comments.append(unicode(m.content))
+            comments.append(
+                {"author": str(m.owner),
+                 "content": unicode(m.content),
+                 "date_created": str(m.date_created)
+                 })
 
 
         for task in bug.bug_tasks:
@@ -88,11 +92,15 @@ def collect_bugs(project_name):
         bug_data = {
             "index": counter,
             "id": bug.id,
+            "created": str(bug.date_created),
+            "last_updated": str(bug.date_last_updated),
+            "heat": bug.heat,
             "importance": task.importance,
             "status": nova_status,
             "owner": str(nova_owner),
             "title": title,
             "link": task.web_link,
+            "description": bug.description,
             "comments": comments,
             "tags": bug.tags
         }
