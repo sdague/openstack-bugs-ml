@@ -24,7 +24,6 @@ import re
 import sys
 
 from launchpadlib.launchpad import Launchpad
-import requests
 
 LPCACHEDIR = os.path.expanduser(os.environ.get('LPCACHEDIR',
                                                '~/.launchpadlib/cache'))
@@ -123,9 +122,9 @@ def collect_bugs(project_name):
             "tags": bug.tags
         }
         if nova_openned:
-            bug_data['openned'] = nova_openned
+            bug_data['openned'] = str(nova_openned)
         if nova_closed:
-            bug_data['closed'] = nova_closed
+            bug_data['closed'] = str(nova_closed)
 
         try:
             path = fname
@@ -133,10 +132,10 @@ def collect_bugs(project_name):
                 os.makedirs(os.path.dirname(path))
             with open(path, 'w') as f:
                 f.write(json.dumps(bug_data, indent=4))
-        except ValueError, e:
-            print e, bug_data
+        except ValueError as e:
+            print(e, bug_data)
         counter += 1
-        print "Fetched: %s (%d)" % (bug_data["link"], counter)
+        print("Fetched: %s (%d)" % (bug_data["link"], counter))
 
 def main():
     args = parse_args()
