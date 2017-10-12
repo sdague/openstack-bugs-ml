@@ -1,0 +1,48 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-08-01 10:04:11.862046+00:00", 
+    "description": "Currently, we have two APIs to update server's metadata:\n1. update: only update/add the key=value user provided in this call\n2. update_all: replace all previous added key=value pair with the key=value pair user provided in this call\nthey are using the same _update_instance_metadata method, differed only with one boolean key:\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/server_metadata.py#n78\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/server_metadata.py#n95\n\nThen it will be handled in the below work flow:\nI. get the server object\n   http://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/server_metadata.py#n108\nII. handled in compute/api.py update_instance_metadata:\n   http://git.openstack.org/cgit/openstack/nova/tree/nova/compute/api.py#n3689\n   the difference of update_all and update is handled here:\n   i) if we are using update all, the target meatadata will be set as the metadata passed in, say new_meta\n   ii) if we are using update, the target meatadata will be set to old_meta + new_meta\nIII. then we just set instance.metadata to the target metadata, and call instance.save() to do the job.\nIV. it is finally handled in DB:\n    http://git.openstack.org/cgit/openstack/nova/tree/nova/db/sqlalchemy/api.py#n2694\n    here we compared the metadata read from DB and the target metadata we passed in:\n    i) if we call update_all, the target metadata only contains new_meta, so key=value pairs that are in old_meta but\n    not in new_meta will be deleted.\n    ii) if we call update, the target metadata will contains new_meta + old_meta so old_meta will not be deleted.\n\nThe above mentioned process worked pretty well for general uses, but when we come to concurrently usage, problem may\noccour:\n\nFor example, we have two concurrent meta_data update calls, say meta_A and meta_B, they are called at the same time\nsince the target meta is generated at the API level(in previous step I and II), it the two calls came in at the same\ntime, the instance.metadata got in these two calls will be the same (old_meta), here comes the problem, the target\nmeta for A call will be old_meta + A, target meta for B call will be old_meta + B, and they will then go the rest\nof the process;\n\nWhen it comes to the DB layer, step IV, as we only have one DB so it is first time come first serve style, lets say\ncall A has successfully handled, the metadata in DB is now old_meta + A, then we will handle call B, as the target\nmeta is old_meta + B hence A will be removed.", 
+    "tags": [
+        "db"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1650188", 
+    "owner": "https://api.launchpad.net/1.0/~zhengzhenyu", 
+    "id": 1650188, 
+    "index": 4710, 
+    "created": "2016-12-15 09:16:54.736940+00:00", 
+    "title": "Concurrently update server's metadata are handled badly", 
+    "comments": [
+        {
+            "content": "Currently, we have two APIs to update server's metadata:\n1. update: only update/add the key=value user provided in this call\n2. update_all: replace all previous added key=value pair with the key=value pair user provided in this call\nthey are using the same _update_instance_metadata method, differed only with one boolean key:\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/server_metadata.py#n78\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/server_metadata.py#n95\n\nThen it will be handled in the below work flow:\nI. get the server object\n   http://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/server_metadata.py#n108\nII. handled in compute/api.py update_instance_metadata:\n   http://git.openstack.org/cgit/openstack/nova/tree/nova/compute/api.py#n3689\n   the difference of update_all and update is handled here:\n   i) if we are using update all, the target meatadata will be set as the metadata passed in, say new_meta\n   ii) if we are using update, the target meatadata will be set to old_meta + new_meta\nIII. then we just set instance.metadata to the target metadata, and call instance.save() to do the job.\nIV. it is finally handled in DB:\n    http://git.openstack.org/cgit/openstack/nova/tree/nova/db/sqlalchemy/api.py#n2694\n    here we compared the metadata read from DB and the target metadata we passed in:\n    i) if we call update_all, the target metadata only contains new_meta, so key=value pairs that are in old_meta but\n    not in new_meta will be deleted.\n    ii) if we call update, the target metadata will contains new_meta + old_meta so old_meta will not be deleted.\n\nThe above mentioned process worked pretty well for general uses, but when we come to concurrently usage, problem may\noccour:\n\nFor example, we have two concurrent meta_data update calls, say meta_A and meta_B, they are called at the same time\nsince the target meta is generated at the API level(in previous step I and II), it the two calls came in at the same\ntime, the instance.metadata got in these two calls will be the same (old_meta), here comes the problem, the target\nmeta for A call will be old_meta + A, target meta for B call will be old_meta + B, and they will then go the rest\nof the process;\n\nWhen it comes to the DB layer, step IV, as we only have one DB so it is first time come first serve style, lets say\ncall A has successfully handled, the metadata in DB is now old_meta + A, then we will handle call B, as the target\nmeta is old_meta + B hence A will be removed.", 
+            "date_created": "2016-12-15 09:16:54.736940+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhengzhenyu"
+        }, 
+        {
+            "content": "I'm not sure we can solve this easily without introducing optimistic concurrency control to metadata REST API, e.g. something similar to e-tags, so that the caller has to provide an e-tag on update and will get 409 Conflict, if a concurrent request has been completed first.", 
+            "date_created": "2016-12-15 13:32:26.515073+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/411327", 
+            "date_created": "2016-12-15 13:46:02.993536+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@Roman, what do you mean by e-tag? I'm not familiar with that, I'm now fixing it by adding an uuid lock.", 
+            "date_created": "2016-12-16 02:07:41.735785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhengzhenyu"
+        }, 
+        {
+            "content": "cdent and/or jaypipes might have input on the etag idea here too:\n\nhttps://en.wikipedia.org/wiki/HTTP_ETag\n\nOr I'm wondering if we can move the lock to the database layer somehow rather than lock in the REST API.", 
+            "date_created": "2016-12-22 03:23:02.600737+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/411327\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 10:04:11.185616+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

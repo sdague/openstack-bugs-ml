@@ -1,0 +1,66 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-06-03 13:28:40.746593+00:00", 
+    "description": "The unit tests for the stable/essex branch of nova aren't running, but the jobs are still passing.  See the latest patch that got merged:\n\nhttps://review.openstack.org/#/c/22313/\nhttp://logs.openstack.org/22313/2/gate/gate-nova-python26/16997/console.html.gz\nhttp://logs.openstack.org/22313/2/gate/gate-nova-python27/17057/console.html.gz", 
+    "tags": [], 
+    "importance": "Critical", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1132835", 
+    "owner": "https://api.launchpad.net/1.0/~fungi", 
+    "id": 1132835, 
+    "index": 115, 
+    "created": "2013-02-25 15:23:04.420416+00:00", 
+    "title": "Nova unit tests not running, but still passing for stable/essex", 
+    "comments": [
+        {
+            "content": "The unit tests for the stable/essex branch of nova aren't running, but the jobs are still passing.  See the latest patch that got merged:\n\nhttps://review.openstack.org/#/c/22313/\nhttp://logs.openstack.org/22313/2/gate/gate-nova-python26/16997/console.html.gz\nhttp://logs.openstack.org/22313/2/gate/gate-nova-python27/17057/console.html.gz", 
+            "date_created": "2013-02-25 15:23:04.420416+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "I'm able to confirm this behavior on a local checkout of stable/essex, so I'll see if I can bisect to find where it started and also determine how to get run_tox.sh to catch future occurrences of this.", 
+            "date_created": "2013-02-25 16:25:31.661160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Bisecting nova isn't helping much... I've gone back 6+ months in stable/essex and continue to get \"Ran 0 tests\" which suggests it could be an external dependency change bringing this about. I was able to narrow down a 24-hour time period by examining bitrot job logs. The last one which ran tests started at 00:00 UTC on 2012-10-30, while the one which started at the same time on 2012-10-31 ran none. Note that this issue is also affecting stable/folsom and began at the same time. Comparing the pip freeze output from these jobs, the only change I see between the last working one and the first broken one is an SQLAlchemy bump from 0.7.9 to 0.8.0b1. I'll see if I can find the corresponding fix for this in master and introduce stable backports of it shortly.\n\nThe run-tox.sh script tries to catch this scenario, but does so by inspecting the contents of nose_results.html and does not consider the absence of that file to indicate an error. I'll come up with a patch to address this so we'll start catching it again in the future.", 
+            "date_created": "2013-02-25 17:23:22.736899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Okay, turns out this SQLAlchemy issue was affecting stable/folsom briefly, but the fix for grizzly got backported there. It was never backported to stable/essex however that pin alone seems insufficient to solve this. I'm continuing to investigate whether other unbounded dependencies which shifted between then and now are adding to the fun.", 
+            "date_created": "2013-02-25 17:52:39.965593+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Based on local tests, it seems I can get this running again by backporting the following changes to essex...\n\n    https://review.openstack.org/6464 (replace python-novaclient dependency with httplib2)\n\n    https://review.openstack.org/15097 (cap SQLAlchemy dependency at 0.7.9)\n\n    https://bugs.launchpad.net/glance/+bug/975483 (add xattr test dependency workaround)\n\n...and by additionally capping the glance dependency at <2013 (one or more changes in grizzly milestones of the glance server source are contributing to this issue).    \n\nAlso, the zero-tests check in run-tox.sh only previously worked for folsom and later becasue this nova change was never backported to essex...\n\n    https://review.openstack.org/11759 (add nosehtmloutput test dependency)\n\nI'm assembling a stack of changes for review, so we can get nova essex unit tests back in shape later this evening, I hope.", 
+            "date_created": "2013-02-25 23:21:08.281781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Minor correction--there's no need to work around 975483 if glance is allowed up through 2012 releases (was only necessary if I pinned it strictly to 2011.3.1), so I think I should be able to fix this with only four patches.", 
+            "date_created": "2013-02-25 23:25:30.274151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/22944", 
+            "date_created": "2013-02-26 03:21:09.022643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "It turns out the novaclient removal also wasn't strictly needed. I'll point the SQLAlchemy cap at the same bug as was used for folsom, and fix this one with the glance cap. If a separate bug is required for the nosehtmloutput addition, let me know and I'll clone this one.", 
+            "date_created": "2013-02-26 03:21:35.363169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22944\nCommitted: http://github.com/openstack/nova/commit/45274c84cf00cab2fb8d4b4969b2f9f911b9c6c1\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit 45274c84cf00cab2fb8d4b4969b2f9f911b9c6c1\nAuthor: Jeremy Stanley <email address hidden>\nDate:   Tue Feb 26 02:53:52 2013 +0000\n\n    Pin glance dependency to pre-grizzly versions.\n    \n    Fixes bug 1132835\n    \n    * tools/pip-requires: Changes in recent glance prevent nose from\n    running tests in essex nova, resulting in a \"Ran 0 tests\" success\n    result. This change pins the dependency on glance to ensure grizzly\n    versions are not used in nova stable/essex.\n    \n    Change-Id: Ia962287b5b23b5b536a4b7d3d10bb005c1c0eba9\n", 
+            "date_created": "2013-02-28 17:40:28.186417+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This was fixed in a commit appearing in the unversioned EOL tag.", 
+            "date_created": "2013-06-03 13:28:39.907184+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }
+    ]
+}

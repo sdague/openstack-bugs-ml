@@ -1,0 +1,66 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-09-17 12:00:50.128839+00:00", 
+    "description": "There is an error in available resource computing logic within nova resource tracker, that caused available resource counted the all instances including error status one.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1169929", 
+    "owner": "None", 
+    "id": 1169929, 
+    "index": 3589, 
+    "created": "2013-04-17 12:20:37.743926+00:00", 
+    "title": "Wrong memory and storage computing in resource tracer that counted the error status instance's resource", 
+    "comments": [
+        {
+            "content": "There is an error in available resource computing logic within nova resource tracker, that caused available resource counted the all instances including error status one.", 
+            "date_created": "2013-04-17 12:20:37.743926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lzy-dev"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/27111", 
+            "date_created": "2013-04-18 11:08:36.075627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "How do we know this is incorrect behaviour ?\n\nI think counting the resources occupied by ERROR state instances is correct. They may still have disk space assigned to them.\n\nIf we report that there is space, when really the errored instance is using it, it may cause new instances to try to build on the host, then fail.\n\nI vote that this bug is invalid.\n\nIf there is more information that I'm missing please let me know.", 
+            "date_created": "2013-04-18 12:41:08.568581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~msherborne+openstack"
+        }, 
+        {
+            "content": "Use case:\nWhich I found as the strange appearance is that in some particular cases the \"nova hypervisior-stat\" command return a/some negative value/s in the statistics list, then I found there are some \"error\" status instances running in the cloud, so I consider the error instances' resources probably should not be summed as in-used.\n\nAnalysis:\nAs we know nova resource tracer periodic call particular driver's get_available_resource method to fetch hypervisor's stats, including memory (memory_mb, memory_mb_used), storage (local_gb, local_gb_used) and etc. fields, but actually tracer will not use them directly, but just use total resource size (such as \"memory_mb\" field) to subtract each instance used resource size (pls refer comments: https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L491). So there have some deviation is make me sense.\n\nSolution:\nI know the negative stats values may be normal also if the over-commit be enabled on the compute host.\nBut IMO, it will be better probably if we can involve the instance status in the resource computing logic, the advantage is tracer can give more accurate hypervisor stats to nova-scheduler and end-user/api-caller, specifically the first one.\n\nExample:\nvm_stats.SUSPENDED: Not count memory size (memory_mb_used) but count storage size (local_gb_used) only. (VM is suspended to disk.)\nvm_stats.STOPPED: Not count memory size but count storage size only. (VM is powered off, the disk image is still there.)\nvm_stats.SOFT_DELETED: Not count memory size but count storage size only. (VM is marked as deleted but the disk images are)\nvm_stats.DELETED: Not count memory and storage size, already ignored in the code.  (VM is permanently deleted.)\nvm_stats.ERROR: Not count memory and storage size.\n\n\n@Matthew, thanks for you input and review.\nIf you agree my above option, I think the key point is about how to ignore ERROR instance's resource in computing logic.\na. Not count memory and storage size, or b. Just ignor memory size for the counting.", 
+            "date_created": "2013-04-18 14:38:51.588463+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lzy-dev"
+        }, 
+        {
+            "content": "I think the trouble is that error can be for different reasons. For example, I'm working on a bug now where if you try to put an instance in rescue mode and it fails, it puts the instance into error, but the disk storage is still used.\n\nI think the trick really is to ask the driver what the actual resources are.\n\nPerhaps when the instance is put into error status, it can update the resource tracker with info straight from the driver ?\n\nPerhaps the starting point would be to make a list of all the places in the code where an instance is set to error status, and see which of those places would leave it with no disk usage.", 
+            "date_created": "2013-04-18 23:46:07.418372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~msherborne+openstack"
+        }, 
+        {
+            "content": "Hi Brian\n\nThis is Zhi Yan from IBM, I have an \"issue\"/question about resource\ntracer, IMO. It's better If it can get you input, thanks.\nhttps://bugs.launchpad.net/nova/+bug/1169929\n\nAs we know resource tracer periodic call particular driver's\nget_available_resource method to fetch hypervisor's stats, including\nmemory, storage and etc. fields, and actually tracer will not use them\ndirectly, but just use total resource size (such as \"memory_mb\" field)\nto subtract each instance storage&memory resources size.\n\nIn the resource update logic, I saw you just care instance in \"new\"\nand \"deleted\" status changing, when update the \"new\" one, that's not\nin the traced list, you will subtract its all resource from the\ncompute host total resource, and when the \"deleted\" instance be\nupdated, you will add its all resource into the compute host total\nresource. this logic does not problem, but I think we probable need\nimprove the computing granularity, I means it will better if we can\ncare vm status transforming for each key status such as:\n\nvm_stats.SUSPENDED: Not count memory size (memory_mb_used) but count\nstorage size (local_gb_used) only. (VM is suspended to disk.)\nvm_stats.STOPPED: Not count memory size but count storage size only.\n(VM is powered off, the disk image is still there.)\nvm_stats.SOFT_DELETED: Not count memory size but count storage size\nonly. (VM is marked as deleted but the disk images are)\nvm_stats.DELETED: Not count memory and storage size, already ignored\nin the code. (VM is permanently deleted.)\nvm_stats.ERROR: Not count memory and storage size.\n\nFor now I'm sure my above idea is correct enough or say hope you can\ngive some input. I don't like resolve the particular issue just for\n\"error\" status instance resource counting for that bug.\n\nThere are two key/particular question about above idea:\n1. if we involve the vm status transforming into tracer, maybe a big\nchallenge is take care each status transforming be case by case, such\nas: ACTIVE => SUSPENDED means deduct memory but not storage, when it\nback to ACTIVE then need deduct memory again. And SOFT_DELETED =>\nERROR and ..... So probable I need take ALL the status transforming\nwithin nova to adding/subtracting corresponding resource value.\n2. Regarding \"error\" status instance resource counting, I think\nMatthew's comment (in his 2th comments) is valuable, maybe we need\ncounting memory and storage size separately, to ask the driver what\nthe actual resources are.\n\nBTW, I think this change/enhancement could give more accurate\nhypervisor stats to nova-scheduler and end-user/api-caller,\nspecifically the first one, that will improve provisioning/cloud\nperformance via the scheduling/placement enhancement.\n\nThanks a lot for you Brian, any comments are welcome.\n\nZhi Yan Liu\n", 
+            "date_created": "2013-04-19 07:02:19+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lzy-dev"
+        }, 
+        {
+            "content": "Zhi - Thanks for your thoughts on this.\n\nTo your 1st point, RT counts every instance as if it was active and running.  In other words, RT calculates the maximum resources used by all local instances.  If you're interested in a different style of tracking, I would welcome a patch introducing an alternate policy.\n\nTo your 2nd point, instances in the error state are unclear.  Are they still using resources?  They are counted on purpose for this reason.  (What Matt said above)\n\nBrian", 
+            "date_created": "2013-04-19 13:18:20.484824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~belliott"
+        }, 
+        {
+            "content": "For 1st point, yes Brian, I'd like to give RT a enhanced resource counting policy, just as I said there to involve vm's status to computing logic.\n\nFor 2nd point, I have not got the clear thought on the error vm for RT resource counting as so far, as you you said above, it's under a unclear state for its resources. Maybe I give a query method to the driver to get what the actual resources be used for the vm.", 
+            "date_created": "2013-04-22 08:45:18.954297+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lzy-dev"
+        }, 
+        {
+            "content": "Low priority, will handle this later.", 
+            "date_created": "2013-05-22 04:31:47.543693+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lzy-dev"
+        }, 
+        {
+            "content": "Very old incomplete bug", 
+            "date_created": "2014-09-17 12:00:49.333952+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

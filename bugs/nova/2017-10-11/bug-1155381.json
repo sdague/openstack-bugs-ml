@@ -1,0 +1,61 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 11:24:59.300220+00:00", 
+    "description": "Looks like horizon sees security groups for the \"admin\" tenant as well.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1155381", 
+    "owner": "https://api.launchpad.net/1.0/~kspear", 
+    "id": 1155381, 
+    "index": 3289, 
+    "created": "2013-03-15 00:31:06.174905+00:00", 
+    "title": "List of security groups is not filtered by tenant when quantum SG is enabled", 
+    "comments": [
+        {
+            "content": "Looks like horizon sees security groups for the \"admin\" tenant as well.", 
+            "date_created": "2013-03-15 00:31:06.174905+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tomoe"
+        }, 
+        {
+            "content": "Could you add detailed steps to reproduce this issue?", 
+            "date_created": "2013-03-17 21:36:32.437645+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gabriel-hurley"
+        }, 
+        {
+            "content": "Hi Gabriel,\n\nHere's the steps to reproduce the issue. \n\n1. add nova.conf as below to use Quantum's security groups\n \n  security_group_api = quantum\n\n NB: be sure to use a quantum plugin that supports SG.\n\n2. click on Access & Security tab.\n\n You'd see two \"default\" security groups\n\n----\n\nIt occurred to me that this might be a problem of quantum integration inside nova code (nova/network/quantumv2/api.py) since I guess horizon just makes OpenStack SG API, which is proxied to Quantum. \n", 
+            "date_created": "2013-03-18 05:36:06.457055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tomoe"
+        }, 
+        {
+            "content": "You also need to uncomment a line in /etc/quantum/plugins/openvswitch/ovs_quantum_plugin.ini\n\n[SECURITYGROUP]\n# Firewall driver for realizing quantum security group function\nfirewall_driver = quantum.agent.linux.iptables_firewall.OVSHybridIptablesFirewallDriver\n\nAnd restart q-agt, n-cpu, n-api.\n\nAnd I only see it while logged in as admin.", 
+            "date_created": "2013-03-18 06:04:15.814387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kspear"
+        }, 
+        {
+            "content": "Looks like a nova/quantum issue to me:\n\ncurl -i http://115.146.93.78:8774/v2/c542bf988efe40d0b1794523a1599a7a/os-security-groups -X GET -H \"X-Auth-Project-Id: c542bf988efe40d0b1794523a1599a7a\" -H \"User-Agent: python-novaclient\" -H \"Accept: application/json\" -H \"X-Auth-Token: 943ff65ba98f37c81179d04d3bd1ce3a\"\nHTTP/1.1 200 OK\nX-Compute-Request-Id: req-c145f321-e305-41e5-a7eb-c799876cda33\nContent-Type: application/json\nContent-Length: 1046\nDate: Mon, 18 Mar 2013 06:10:57 GMT\n\n{\"security_groups\": [{\"rules\": [{\"from_port\": 55, \"group\": {}, \"ip_protocol\": \"tcp\", \"to_port\": 55, \"parent_group_id\": \"7f015dbd-57a3-499f-a190-2f44d4237ce8\", \"ip_range\": {\"cidr\": \"0.0.0.0/0\"}, \"id\": \"549ef037-1b5a-4e1d-9037-05ebc97680ec\"}], \"tenant_id\": \"1656e05368164d918183fcf4a699e9f5\", \"id\": \"7f015dbd-57a3-499f-a190-2f44d4237ce8\", \"name\": \"default\", \"description\": \"default\"}, {\"rules\": [{\"from_port\": -1, \"group\": {\"tenant_id\": \"c542bf988efe40d0b1794523a1599a7a\", \"name\": \"default\"}, \"ip_protocol\": null, \"to_port\": -1, \"parent_group_id\": \"80f76a6d-7cd3-4528-9fbc-25522cffa05b\", \"ip_range\": {}, \"id\": \"149cda67-5b50-4e52-8010-c3253581a50a\"}, {\"from_port\": -1, \"group\": {\"tenant_id\": \"c542bf988efe40d0b1794523a1599a7a\", \"name\": \"default\"}, \"ip_protocol\": null, \"to_port\": -1, \"parent_group_id\": \"80f76a6d-7cd3-4528-9fbc-25522cffa05b\", \"ip_range\": {}, \"id\": \"310d03d8-9fad-4d48-98a3-fe8c9eeb922f\"}], \"tenant_id\": \"c542bf988efe40d0b1794523a1599a7a\", \"id\": \"80f76a6d-7cd3-4528-9fbc-25522cffa05b\", \"name\": \"default\", \"description\": \"default\"}]}", 
+            "date_created": "2013-03-18 06:12:55.890524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kspear"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/24632", 
+            "date_created": "2013-03-18 07:00:36.379622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/24632\nCommitted: http://github.com/openstack/nova/commit/775e3b02b2afbf101db22b87a1c3b189d68532e1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 775e3b02b2afbf101db22b87a1c3b189d68532e1\nAuthor: Kieran Spear <email address hidden>\nDate:   Mon Mar 18 17:32:26 2013 +1100\n\n    Pass project id in quantum driver secgroup list\n    \n    The quantum driver is always returning security groups from every tenant\n    a user has access to, even when the \"project\" filter is supplied.\n    \n    Make sure we pass along the project value when we call\n    quantum.list_security_groups() so it's properly filtered.\n    \n    Fixes bug 1155381.\n    \n    Change-Id: I682c66a1f3f9db18b5f9924a37b45c759ff259f7\n", 
+            "date_created": "2013-03-25 15:40:44.016162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/25401", 
+            "date_created": "2013-03-26 15:09:57.119086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/25401\nCommitted: http://github.com/openstack/nova/commit/989435822e5841bc1355e75bbdb003b10a3baf58\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit 989435822e5841bc1355e75bbdb003b10a3baf58\nAuthor: Kieran Spear <email address hidden>\nDate:   Mon Mar 18 17:32:26 2013 +1100\n\n    Pass project id in quantum driver secgroup list\n    \n    The quantum driver is always returning security groups from every tenant\n    a user has access to, even when the \"project\" filter is supplied.\n    \n    Make sure we pass along the project value when we call\n    quantum.list_security_groups() so it's properly filtered.\n    \n    Fixes bug 1155381.\n    \n    Change-Id: I682c66a1f3f9db18b5f9924a37b45c759ff259f7\n    (cherry picked from commit 775e3b02b2afbf101db22b87a1c3b189d68532e1)\n", 
+            "date_created": "2013-03-27 10:52:04.485696+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

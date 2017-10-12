@@ -1,0 +1,59 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-10-06 08:47:52.384118+00:00", 
+    "description": "Chris Friesen has reported that in Newton with a live migration that has ~16 ports per instance, the \"network-changed\" events generated from neutron when the vifs are unplugged from the source host can effectively block the network info cache refresh that's called at the end of the live migration operation. Details are in the IRC logs:\n\nhttp://eavesdrop.openstack.org/irclogs/%23openstack-nova/%23openstack-nova.2017-05-17.log.html#t2017-05-17T22:50:31\n\nBut this stands out:\n\ncfriesen\tmriedem: so it looks like _build_network_info_model() costs about 200ms plus about 125ms per port since we query each port separatly from neutron.  and the refresh_cache lock is held the whole time\n\nIn Nova the 'network-changed' event is handled generically because there is no port id in the event, so nova just refreshes the entire nw info cache on the instance - which can be expensive and redundant since it's doing a lot of queries to Neutron to build up information about ports, fixed IPs, floating IPs, subnets and networks, and Neutron doesn't have bulk query APIs or allow OR filters in the API for bulk queries on things like floating IPs.\n\nhttps://github.com/openstack/nova/blob/8d492c76d53f3fcfacdd945a277446bdfe6797b0/nova/compute/manager.py#L6854\n\nLooking in neutron's code that sends the network-changed event, there is a port in scope, it's just not sent like for network-vif-deleted events.\n\nWe should be able to scope the network-changed event to a specific port on the neutron side and check for that on the nova side so we don't have to refresh the entire network info cache, but just the vif that was updated.", 
+    "tags": [
+        "neutron", 
+        "openstack-version.newton"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1691602", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1691602, 
+    "index": 6849, 
+    "created": "2017-05-18 00:26:42.305805+00:00", 
+    "title": "live migration generates several network-changed events which lock up refreshing the nw info cache", 
+    "comments": [
+        {
+            "content": "Chris Friesen has reported that in Newton with a live migration that has ~16 ports per instance, the \"network-changed\" events generated from neutron when the vifs are unplugged from the source host can effectively block the network info cache refresh that's called at the end of the live migration operation. Details are in the IRC logs:\n\nhttp://eavesdrop.openstack.org/irclogs/%23openstack-nova/%23openstack-nova.2017-05-17.log.html#t2017-05-17T22:50:31\n\nBut this stands out:\n\ncfriesen\tmriedem: so it looks like _build_network_info_model() costs about 200ms plus about 125ms per port since we query each port separatly from neutron.  and the refresh_cache lock is held the whole time\n\nIn Nova the 'network-changed' event is handled generically because there is no port id in the event, so nova just refreshes the entire nw info cache on the instance - which can be expensive and redundant since it's doing a lot of queries to Neutron to build up information about ports, fixed IPs, floating IPs, subnets and networks, and Neutron doesn't have bulk query APIs or allow OR filters in the API for bulk queries on things like floating IPs.\n\nhttps://github.com/openstack/nova/blob/8d492c76d53f3fcfacdd945a277446bdfe6797b0/nova/compute/manager.py#L6854\n\nLooking in neutron's code that sends the network-changed event, there is a port in scope, it's just not sent like for network-vif-deleted events.\n\nWe should be able to scope the network-changed event to a specific port on the neutron side and check for that on the nova side so we don't have to refresh the entire network info cache, but just the vif that was updated.", 
+            "date_created": "2017-05-18 00:26:42.305805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The messy thing with this is going to be the existing nw info cache refresh code in nova doesn't know how to handle a single port id, if it's given that it expects it's from attaching a port to an instance.", 
+            "date_created": "2017-05-18 01:08:45.002973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/465783", 
+            "date_created": "2017-05-18 02:21:35.362152+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/465787", 
+            "date_created": "2017-05-18 02:53:02.293367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/465783\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=bf8e6007cfa50d461790be325e9e97b8b396ae47\nSubmitter: Jenkins\nBranch:    master\n\ncommit bf8e6007cfa50d461790be325e9e97b8b396ae47\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed May 17 22:18:54 2017 -0400\n\n    Send port ID in network-changed event to Nova\n    \n    When Nova gets a network-changed event, it rebuilds the\n    entire network info cache for the instance if it does not\n    have a specific port ID. This can be costly and redundant\n    when performing something like a live migration with multiple\n    ports attached to the same instance.\n    \n    This change simply adds the port ID to the network-changed event\n    since we have it in scope. Nova can use it or not, but at least\n    the information is provided for context.\n    \n    Change-Id: Ifdaef05208d09ddd9587fed6214cf388e5265ba4\n    Closes-Bug: #1691602\n", 
+            "date_created": "2017-06-15 17:22:46.147754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Automatically discovered version newton in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 16:00:45.111901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/neutron 11.0.0.0b3 development milestone.", 
+            "date_created": "2017-07-28 20:21:46.433582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/466449\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2f67b97577fa28f7e6ab23971e7d6f259889c992\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2f67b97577fa28f7e6ab23971e7d6f259889c992\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri May 19 22:58:08 2017 -0400\n\n    Pull out code that builds VIF in _build_network_info_model\n    \n    This is a refactor that pulls the code out of the\n    neutronv2 API _build_network_info_model method so that\n    upcoming changes can use it for updating the network\n    info cache for a specific port rather than rebuilding the\n    entire list of VIFs every time Nova gets a network-changed\n    event from Neutron.\n    \n    Change-Id: Ic5833f59152bbf5ee64300cdd2df32002708e096\n    Related-Bug: #1691602\n", 
+            "date_created": "2017-08-23 15:37:32.109661+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

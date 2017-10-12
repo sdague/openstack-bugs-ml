@@ -1,0 +1,48 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:22:25.809463+00:00", 
+    "description": "I've seen this several times, but only now tracked it down.  \n\nI get the following error when running nova-network: \n\n\n2012-06-07 14:26:58 CRITICAL nova [-] Unexpected error while running command.\nCommand: sudo nova-rootwrap kill -9 4514\nExit code: 99\nStdout: 'Unauthorized command: kill -9 4514\\n'\nStderr: ''\n\n\nThe issue is that we're running kill_dhcp in linux net.  Kill DHCP gets its pid not from a running process, but from a pid file in the network directory (e.g., /var/lib/nova/networks).  \n\nThus, if the pid file still exists, but dnsmasq is not running, the above kill command is trying to kill a pid that doesn't exit.  \n\nHowever, the process of applying the filter is the following: \n \n        try:\n            command = os.readlink(\"/proc/%d/exe\" % int(args[1]))\n            # NOTE(dprince): /proc/PID/exe may have ' (deleted)' on\n            # the end if an executable is updated or deleted\n            if command.endswith(\" (deleted)\"):\n                command = command[:command.rindex(\" \")]\n            if command not in self.args[1]:\n                # Affected executable not in accepted list\n                return False\n        except (ValueError, OSError):\n            # Incorrect PID\n            return False\n\nImportantly, if the file in proc does not exist, the filter fails.  In this case, because the process is no longer running the read fails and you get a filter failure.  \n\nPerhaps for the kill filter it should be able to run kill commands for pids that do not exist?  Either that, or we should raise some kind of specific exception that could be caught and ignored by higher-level code like kill_dhcp  that is perfectly happy if the PID no longer exists.  Right now the rootwrap failure will prevent nova-network from booting until you figure out you need to clear out the old dnsmasq pid.", 
+    "tags": [
+        "rootwrap"
+    ], 
+    "importance": "High", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1010275", 
+    "owner": "https://api.launchpad.net/1.0/~ttx", 
+    "id": 1010275, 
+    "index": 705, 
+    "created": "2012-06-08 01:34:23.858491+00:00", 
+    "title": "rootwrap filter fail when killing a pid that doesn't exist", 
+    "comments": [
+        {
+            "content": "I've seen this several times, but only now tracked it down.  \n\nI get the following error when running nova-network: \n\n\n2012-06-07 14:26:58 CRITICAL nova [-] Unexpected error while running command.\nCommand: sudo nova-rootwrap kill -9 4514\nExit code: 99\nStdout: 'Unauthorized command: kill -9 4514\\n'\nStderr: ''\n\n\nThe issue is that we're running kill_dhcp in linux net.  Kill DHCP gets its pid not from a running process, but from a pid file in the network directory (e.g., /var/lib/nova/networks).  \n\nThus, if the pid file still exists, but dnsmasq is not running, the above kill command is trying to kill a pid that doesn't exit.  \n\nHowever, the process of applying the filter is the following: \n \n        try:\n            command = os.readlink(\"/proc/%d/exe\" % int(args[1]))\n            # NOTE(dprince): /proc/PID/exe may have ' (deleted)' on\n            # the end if an executable is updated or deleted\n            if command.endswith(\" (deleted)\"):\n                command = command[:command.rindex(\" \")]\n            if command not in self.args[1]:\n                # Affected executable not in accepted list\n                return False\n        except (ValueError, OSError):\n            # Incorrect PID\n            return False\n\nImportantly, if the file in proc does not exist, the filter fails.  In this case, because the process is no longer running the read fails and you get a filter failure.  \n\nPerhaps for the kill filter it should be able to run kill commands for pids that do not exist?  Either that, or we should raise some kind of specific exception that could be caught and ignored by higher-level code like kill_dhcp  that is perfectly happy if the PID no longer exists.  Right now the rootwrap failure will prevent nova-network from booting until you figure out you need to clear out the old dnsmasq pid.", 
+            "date_created": "2012-06-08 01:34:23.858491+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Nice find.\r\n\r\nThe trick is that allowing to kill PIDs that do no longer (or not yet) exist creates a (admitted minimal) flaw in the filter. And you can't really raise a higher level error since those are running in two different processes.\r\n\r\nThe solution, I think, is to accept that nova-rootwrap returns \"Unauthorized command\" in that specific case. nova-rootwrap returns 99 in that case (it otherwise returns the return code of the shell command it ran). This can be achieved by calling utils.execute with check_exit_code=[0,99].\r\n\r\nWould that work for you ?", 
+            "date_created": "2012-06-08 08:07:39.585043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Yeah, that seems like the best available approach, though it seems like we'll have to touch each place in the code where utils.execute specifies kill", 
+            "date_created": "2012-06-09 18:47:28.373129+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/8389", 
+            "date_created": "2012-06-11 09:44:46.196435+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Actually all the other \"kill\" calls just check that the PID is actually valid before trying to kill it. The kill_dhcp call should just do the same, rather than ignoring an \"authorized command\" error.", 
+            "date_created": "2012-06-11 10:28:44.065624+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8389\nCommitted: http://github.com/openstack/nova/commit/294de0ec6c6b2f5d39dcdc3687a42095fca01288\nSubmitter: Jenkins\nBranch:    master\n\ncommit 294de0ec6c6b2f5d39dcdc3687a42095fca01288\nAuthor: Thierry Carrez <email address hidden>\nDate:   Mon Jun 11 11:37:07 2012 +0200\n\n    Do not attempt to kill already-dead dnsmasq\n    \n    Check that the dnsmasq process is running (and actually looks like a\n    dnsmasq process) before attempting to kill it. Fixes bug 1010275.\n    \n    Change-Id: Ib49209e1624dfb30470adbe13d7fc045ec1fdf83\n", 
+            "date_created": "2012-06-11 13:18:42.330398+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

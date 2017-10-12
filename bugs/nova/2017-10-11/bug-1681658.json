@@ -1,0 +1,48 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2017-06-27 16:59:17.202533+00:00", 
+    "description": "disk_allocation_ratio is not working with Ocata since we are checking if requested amount is less than max_unit.\nBecause of this if I have a compute with 64GB local disk and I'm using iSCSI storage then even after setting disk_allocation_ratio to 9999.0 I can not create a VM with 80GB as root disk.\n\nFollowing code segment in objects/resource_provider.py is causing this to fail:\n                _INV_TBL.c.resource_class_id == r_idx,\n                (func.coalesce(usage.c.used, 0) + amount <= (\n                    _INV_TBL.c.total - _INV_TBL.c.reserved\n                ) * _INV_TBL.c.allocation_ratio),\n                _INV_TBL.c.min_unit <= amount,\n                _INV_TBL.c.max_unit >= amount,\n\nEnvironment: \n# openstack --version\nopenstack 3.8.1", 
+    "tags": [
+        "scheduler"
+    ], 
+    "importance": "Medium", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1681658", 
+    "owner": "None", 
+    "id": 1681658, 
+    "index": 4791, 
+    "created": "2017-04-11 06:36:50.544346+00:00", 
+    "title": "disk_allocation_ratio does not work with placement API", 
+    "comments": [
+        {
+            "content": "disk_allocation_ratio is not working with Ocata since we are checking if requested amount is less than max_unit.\nBecause of this if I have a compute with 64GB local disk and I'm using iSCSI storage then even after setting disk_allocation_ratio to 9999.0 I can not create a VM with 80GB as root disk.\n\nFollowing code segment in objects/resource_provider.py is causing this to fail:\n                _INV_TBL.c.resource_class_id == r_idx,\n                (func.coalesce(usage.c.used, 0) + amount <= (\n                    _INV_TBL.c.total - _INV_TBL.c.reserved\n                ) * _INV_TBL.c.allocation_ratio),\n                _INV_TBL.c.min_unit <= amount,\n                _INV_TBL.c.max_unit >= amount,\n\nEnvironment: \n# openstack --version\nopenstack 3.8.1", 
+            "date_created": "2017-04-11 06:36:50.544346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nirendra"
+        }, 
+        {
+            "content": "This is the correct behavior. min_unit and max_unit describe the minimum and maximum amounts that any single allocation must fit within. However it's not entirely clear if that describe your case as you've not said what your inventory settings are.\n\nAssuming your max_unit is <80 then that means an 80GB allocation is not possible, whatever allocation_ratio is set to.\n\nWhat allocation_ratio does is modify the apparently available total capacity for all all allocations.\n\nmax_unit is the biggest any single allocation can be\nstep_size is the \"chunk size\" of any allocation. For example if '5' any allocation must be a multiple of 5 and:\n\n* more than min_unit\n* less than max_unit\n* and within the remaining capacity where capacity = ((total - reservered) * allocation_ration) - amount already allocated)\n\nPlease follow up if this doesn't explain things.", 
+            "date_created": "2017-04-11 17:08:24.564173+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "This is correct behaviour. The max_unit value represents the maximum limit of the resource on the compute node. In this case, you can't put a disk of size 80GB on a compute node with 64GB of physical disk space.\n\nIf you had a compute node with 100GB of disk space, you could, however, set your allocation ratio to 9999.0 and launch 2 VMs requesting 80GB of disk space.", 
+            "date_created": "2017-04-11 17:09:49.110399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Find below the scenario I'm trying:\n1. Create a Cinder volume of size 100GB\n2. Spawn a VM using this volume\n  i.) Select a flavor with \"Root Disk (GB)\" of size 80GB\n3. My compute has 20GB space in root disk\n4. Nova placement API still skips the hosts by checking root disk size on compute\n\nSince we are using cinder volume to create this VM do we still need to check for root disk size on the host?\n", 
+            "date_created": "2017-04-12 06:37:00.118092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nirendra"
+        }, 
+        {
+            "content": "@nirendra: yes, please select a flavor with a root disk 20GB or less.", 
+            "date_created": "2017-04-17 14:50:06.899866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "This is a poor design decision in my opinion and took a while for me to debug since it breaks previous behavior. We primarily run cinder backed volumes but need to specify the flavor disk size so that static images with fixed disks work properly. \n\nCan you at least add a config option to spoof/change the max_unit? Or a max_unit_multiplier that works like the disk_allocation_ratio used to?\n\n", 
+            "date_created": "2017-06-27 16:59:16.551656+00:00", 
+            "author": "https://api.launchpad.net/1.0/~leaberry"
+        }
+    ]
+}

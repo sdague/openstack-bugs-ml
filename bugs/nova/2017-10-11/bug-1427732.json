@@ -1,0 +1,100 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-08-28 04:17:30.299158+00:00", 
+    "description": "Steps:\n1. Create VM\n2. Create volume\n3. Attach volume to VM\n4. Pause VM\n5. Detach volume\n6. Attach volume back (without unpausing the VM)\n\nWhat happens is the volume enters the state \"attaching\" for a while but then becomes \"available\" again without being \"in-use\". Nova-compute and cinder-volume logs report nothing about it even with debug enabled\n\nNova version: 2014.2.1\nI am aware of the bug https://bugs.launchpad.net/nova/+bug/1242366 but this is a bit different case and the release we use already have the fix installed", 
+    "tags": [
+        "libvirt", 
+        "openstack-version.juno", 
+        "volumes"
+    ], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1427732", 
+    "owner": "None", 
+    "id": 1427732, 
+    "index": 5454, 
+    "created": "2015-03-03 15:29:12.952001+00:00", 
+    "title": "Detaching and then attaching a volume to a paused instance has no effect and reports no error", 
+    "comments": [
+        {
+            "content": "Steps:\n1. Create VM\n2. Create volume\n3. Attach volume to VM\n4. Pause VM\n5. Detach volume\n6. Attach volume back (without unpausing the VM)\n\nWhat happens is the volume enters the state \"attaching\" for a while but then becomes \"available\" again without being \"in-use\". Nova-compute and cinder-volume logs report nothing about it even with debug enabled\n\nNova version: 2014.2.1\nI am aware of the bug https://bugs.launchpad.net/nova/+bug/1242366 but this is a bit different case and the release we use already have the fix installed", 
+            "date_created": "2015-03-03 15:29:12.952001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~artacc"
+        }, 
+        {
+            "content": "are you using libvirt driver?  is there any log in nova api layer? \n\nplease note that the attach is checked something like: at compute/api.py which is API layer code\nlooks like PAUSED instance should also be able to attach volume, but could you please help to check again?\n\n3036     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.PAUSED,\n3037                                     vm_states.STOPPED, vm_states.RESIZED,\n3038                                     vm_states.SOFT_DELETED])\n3039     def attach_volume(self, context, instance, volume_id, device=None,\n3040                        disk_bus=None, device_type=None):\n", 
+            "date_created": "2015-03-06 12:51:48.910072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "yes we are using libvirt\n\nhere is what I could find in nova-api log after I did: nova volume-attach 4ee06735-c3c0-4158-85da-8928cd851614 5b81412e-719f-4827-91ad-3323a5ee0a2c\n\n2015-03-10 13:28:14.782 5395 DEBUG nova.api.openstack.wsgi [req-f846e1f9-f4f8-4255-80a7-5e074be33352 None] Action: 'create', calling method: <bound method VolumeAttachmentController.create of <nova.api.openstack.compute.contrib.volumes.VolumeAttachmentController object at 0x7f6d5eab6790>>, body: {\"volumeAttachment\": {\"device\": null, \"volumeId\": \"5b81412e-719f-4827-91ad-3323a5ee0a2c\"}} _process_stack /usr/lib/python2.7/dist-packages/nova/api/openstack/wsgi.py:934\n2015-03-10 13:28:14.783 5395 AUDIT nova.api.openstack.compute.contrib.volumes [req-f846e1f9-f4f8-4255-80a7-5e074be33352 None] Attach volume 5b81412e-719f-4827-91ad-3323a5ee0a2c to instance 4ee06735-c3c0-4158-85da-8928cd851614 at None\n2015-03-10 13:28:14.907 5395 DEBUG nova.volume.cinder [req-f846e1f9-f4f8-4255-80a7-5e074be33352 None] Cinderclient connection created using URL: http://controller01:8776/v1/ed9ef5f7ff4f49fe8cb6741b1383cd79 get_cinder_client_version /usr/lib/python2.7/dist-packages/nova/volume/cinder.py:255\n2015-03-10 13:28:15.029 5395 DEBUG nova.volume.cinder [req-f846e1f9-f4f8-4255-80a7-5e074be33352 None] Cinderclient connection created using URL: http://controller01:8776/v1/ed9ef5f7ff4f49fe8cb6741b1383cd79 get_cinder_client_version /usr/lib/python2.7/dist-packages/nova/volume/cinder.py:255\n2015-03-10 13:28:15.190 5395 INFO nova.osapi_compute.wsgi.server [req-f846e1f9-f4f8-4255-80a7-5e074be33352 None] 192.168.101.2 \"POST /v2/ed9ef5f7ff4f49fe8cb6741b1383cd79/servers/4ee06735-c3c0-4158-85da-8928cd851614/os-volume_attachments HTTP/1.1\" status: 200 len: 391 time: 0.4172301\n\n\nI noticed that there is \"attach to None\" and tried again with path specified: nova volume-attach 9f47d3c7-656e-486c-b2c7-8bba6fa14545 9632ce57-5739-4285-98c6-6af3875439ea /dev/vdb\n\n2015-03-10 13:42:13.711 5395 DEBUG nova.api.openstack.wsgi [req-000d1d78-bd99-4e97-8427-dd16c8e3f435 None] Action: 'create', calling method: <bound method VolumeAttachmentController.create of <nova.api.openstack.compute.contrib.volumes.VolumeAttachmentController object at 0x7f6d5eab6790>>, body: {\"volumeAttachment\": {\"device\": \"/dev/vdb\", \"volumeId\": \"9632ce57-5739-4285-98c6-6af3875439ea\"}} _process_stack /usr/lib/python2.7/dist-packages/nova/api/openstack/wsgi.py:934\n2015-03-10 13:42:13.712 5395 AUDIT nova.api.openstack.compute.contrib.volumes [req-000d1d78-bd99-4e97-8427-dd16c8e3f435 None] Attach volume 9632ce57-5739-4285-98c6-6af3875439ea to instance 9f47d3c7-656e-486c-b2c7-8bba6fa14545 at /dev/vdb\n2015-03-10 13:42:13.815 5395 DEBUG nova.volume.cinder [req-000d1d78-bd99-4e97-8427-dd16c8e3f435 None] Cinderclient connection created using URL: http://controller01:8776/v1/ed9ef5f7ff4f49fe8cb6741b1383cd79 get_cinder_client_version /usr/lib/python2.7/dist-packages/nova/volume/cinder.py:255\n2015-03-10 13:42:13.950 5395 DEBUG nova.volume.cinder [req-000d1d78-bd99-4e97-8427-dd16c8e3f435 None] Cinderclient connection created using URL: http://controller01:8776/v1/ed9ef5f7ff4f49fe8cb6741b1383cd79 get_cinder_client_version /usr/lib/python2.7/dist-packages/nova/volume/cinder.py:255\n2015-03-10 13:42:14.069 5395 INFO nova.osapi_compute.wsgi.server [req-000d1d78-bd99-4e97-8427-dd16c8e3f435 None] 192.168.101.2 \"POST /v2/ed9ef5f7ff4f49fe8cb6741b1383cd79/servers/9f47d3c7-656e-486c-b2c7-8bba6fa14545/os-volume_attachments HTTP/1.1\" status: 200 len: 391 time: 0.3644302\n\nthe result is same\n\nfor VM images I tried cirros and ubuntu 14.04 both behaving the same\nthe error reproduces reliably for me", 
+            "date_created": "2015-03-10 10:50:46.718998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~artacc"
+        }, 
+        {
+            "content": "Also I checked compute/api.py\nthis exact code block is at 2924-2928 for me", 
+            "date_created": "2015-03-10 11:00:28.176258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~artacc"
+        }, 
+        {
+            "content": "What in my testing is that after detaching a volume from the paused VM, there is no available instance in Attach to instance drop down list.\n\nVersion of my env is code from stable/juno.\n\n$ nova --version\n2.20.0\n$ cinder --version\n1.1.1", 
+            "date_created": "2015-03-23 07:24:51.800513+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wantwatering"
+        }, 
+        {
+            "content": "Same in our horizon.\nSo looks like horizon does not allow this operation but nova client does.", 
+            "date_created": "2015-03-27 15:16:07.861387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~artacc"
+        }, 
+        {
+            "content": "Not sure horizon's mechanism, but nova do allow this and some bugs used to be solved for it \n\ncan you attach logs instead of a chapter ? guess more info can be get from it .. thanks", 
+            "date_created": "2015-03-27 16:08:32.102908+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Confirmed, following the steps described in the bug and i got the error in nova-compute.log: `Stderr: u'blockdev: cannot open xxx` details below. But `/dev/disk/by-path/ip-192.168.70.11:3260-iscsi-iqn.2010-10.org.openstack:volume-08bc45cb-e570-44a7-8619-6f575575369c-lun-1` could be found by `ls /dev/disk/by-path`.. even disk config exists by 'virsh dumpxml <domain>' .. After resuming the instance, `virsh dumpxml <domain>` couldn't found the disk config anymore, but `/dev/disk/by-path/xxxx` still exists.\n\n2015-04-01 13:03:37.597 ERROR nova.openstack.common.periodic_task [-] Error during ComputeManager.update_available_resource: Unexpected error while running command.\nCommand: sudo nova-rootwrap /etc/nova/rootwrap.conf blockdev --getsize64 /dev/disk/by-path/ip-192.168.70.11:3260-iscsi-iqn.2010-10.org.openstack:volume-08bc45cb-e570-44a7-8619-6f575575369c-lun-1\nExit code: 1\nStdout: u''\nStderr: u'blockdev: cannot open /dev/disk/by-path/ip-192.168.70.11:3260-iscsi-iqn.2010-10.org.openstack:volume-08bc45cb-e570-44a7-8619-6f575575369c-lun-1: No such device or address\\n'\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task Traceback (most recent call last):\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/openstack/common/periodic_task.py\", line 224, in run_periodic_tasks\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     task(self, context)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/compute/manager.py\", line 6067, in update_available_resource\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     rt.update_available_resource(context)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/compute/resource_tracker.py\", line 315, in update_available_resource\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     resources = self.driver.get_available_resource(self.nodename)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/virt/libvirt/driver.py\", line 4875, in get_available_resource\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     disk_over_committed = self._get_disk_over_committed_size_total()\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/virt/libvirt/driver.py\", line 6056, in _get_disk_over_committed_size_total\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     self._get_instance_disk_info(dom.name(), xml))\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/virt/libvirt/driver.py\", line 6009, in _get_instance_disk_info\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     dk_size = lvm.get_volume_size(path)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/virt/libvirt/lvm.py\", line 172, in get_volume_size\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     run_as_root=True)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/virt/libvirt/utils.py\", line 55, in execute\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     return utils.execute(*args, **kwargs)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/data/stack/nova/nova/utils.py\", line 199, in execute\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     return processutils.execute(*cmd, **kwargs)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task   File \"/usr/local/lib/python2.7/dist-packages/oslo_concurrency/processutils.py\", line 233, in execute\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task     cmd=sanitized_cmd)\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task ProcessExecutionError: Unexpected error while running command.\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task Command: sudo nova-rootwrap /etc/nova/rootwrap.conf blockdev --getsize64 /dev/disk/by-path/ip-192.168.70.11:3260-iscsi-iqn.2010-10.org.openstack:volume-08bc45cb-e570-44a7-8619-6f575575369c-lun-1\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task Exit code: 1\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task Stdout: u''\n2015-04-01 13:03:37.597 TRACE nova.openstack.common.periodic_task Stderr: u'blockdev: cannot open /dev/disk/by-path/ip-192.168.70.11:3260-iscsi-iqn.2010-10.org.openstack:volume-08bc45cb-e570-44a7-8619-6f575575369c-lun-1: No such device or address\\n'", 
+            "date_created": "2015-04-01 05:56:29.600210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liyingjun"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/200032", 
+            "date_created": "2015-07-09 12:06:41.999338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by lyanchih (<email address hidden>) on branch: master\nReview: https://review.openstack.org/200032", 
+            "date_created": "2015-09-03 03:58:20.864368+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/252170", 
+            "date_created": "2015-12-02 03:55:41.172428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/252170\nReason: This patch is quite old, so I am abandoning it to keep the review queue manageable. Feel free to restore the change if you're still interested in working on it.", 
+            "date_created": "2016-08-25 12:57:15.927988+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This bug report has an assignee for a while now but there is no patch\nfor that. It looks like that the chance of getting a patch is low.\nI'm going to remove the assignee to signal to others that they can take\nover if they like.\nIf you want to work on this, please:\n* add yourself as assignee AND\n* set the status to \"In Progress\" AND\n* provide a (WIP) patch within the next 2 weeks after that.\nIf you need assistance, reach out on the IRC channel #openstack-nova or\nuse the mailing list.\n", 
+            "date_created": "2017-03-21 16:22:00.491423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mszankin"
+        }, 
+        {
+            "content": "Also, this bug needs to be reverified. It is old as hell!", 
+            "date_created": "2017-03-21 16:23:11.174705+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mszankin"
+        }, 
+        {
+            "content": "Automatically discovered version juno in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:56:53.954542+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-08-28 04:17:27.515330+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ]
+}

@@ -1,0 +1,38 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2014-09-15 11:57:24.510264+00:00", 
+    "description": "When creating a network (with FlatDHCPManager), _create_networks is called.  For each network, it creates a row in the network, and then it creates N fixed_ips.\n\nHowever, each of these inserts appears to be done as its own transaction.\n\nThis is bad both from an error recovery point of view, but also all those commits hit the database pretty hard (particularly if you haven't tweaked your MySQL config!)\n\nI guess the session should be passed to the save() function, and I'm a little suspicious of our entire transaction handling in general...", 
+    "tags": [
+        "db"
+    ], 
+    "importance": "Low", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/755138", 
+    "owner": "None", 
+    "id": 755138, 
+    "index": 5054, 
+    "created": "2011-04-09 00:06:08.578860+00:00", 
+    "title": "nova-manage network create is not atomic in the DB", 
+    "comments": [
+        {
+            "content": "When creating a network (with FlatDHCPManager), _create_networks is called.  For each network, it creates a row in the network, and then it creates N fixed_ips.\n\nHowever, each of these inserts appears to be done as its own transaction.\n\nThis is bad both from an error recovery point of view, but also all those commits hit the database pretty hard (particularly if you haven't tweaked your MySQL config!)\n\nI guess the session should be passed to the save() function, and I'm a little suspicious of our entire transaction handling in general...", 
+            "date_created": "2011-04-09 00:06:08.578860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~justin-fathomdb"
+        }, 
+        {
+            "content": "This looks like it's still valid, but do we have a plan to fix it? If not, should we just mark it as WontFix? Does the transactions issue apply to more than just network creation?", 
+            "date_created": "2012-02-02 15:16:54.300955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I've been reviewing the transaction handling of Nova in general, and think this issue is probably quite wide-spread. Most of the low-level functions in db/sqlalchemy/api.py do their work inside a transaction, and commit implicitly before returning to the caller (just look for \"with session.begin\" to see where implicit commits happen). Thus, any higher level function which makes several low-level calls is not currently able to do its work in a single atomic transaction. \n\nFor example, based on my understanding, in network/manage.py, the allocation of floating IPs isn't atomic. I've added comments below to show where I think commits are happening.\n\nallocate_for_instance():\n 327             # allocate a floating ip \n 328             floating_address = self.allocate_floating_ip(context, project_id) \n 329             # set auto_assigned column to true for the floating ip \n 330             self.db.floating_ip_set_auto_assigned(context, floating_address)  \n\nEach of the above calls is commited separately. It would be ideal if these were in a try: block, and could be done atomically. Taking a look inside the first call...\n\n\nallocate_floating_ip():\n 408         try:\n 409             reservations = QUOTAS.reserve(context, floating_ips=1)\n\nno commit inside quota_reserve, which is what we want\n\n 410         except exception.OverQuota:\n 411             pid = context.project_id\n 412             LOG.warn(_(\"Quota exceeded for %(pid)s, tried to allocate \"\n 413                        \"floating IP\") % locals())\n 414             raise exception.FloatingIpLimitExceeded()\n\nI think there should be a rollback in this except block\n\n 415 \n 416         try:\n 417             floating_ip = self.db.floating_ip_allocate_address(context,\n 418                                                                project_id,\n 419                                                                pool)\n\nwoops! db.floating_ip_allocate_address just committed a transaction! \nThis might have committed the reservation, too, if they're using the same db connection.\n\n 420             payload = dict(project_id=project_id, floating_ip=floating_ip)\n 421             notifier.notify(context,\n 422                             notifier.publisher_id(\"network\"),\n 423                             'network.floating_ip.allocate',\n 424                             notifier.INFO, payload)\n 425 \n 426             # Commit the reservations\n 427             QUOTAS.commit(context, reservations)\n\nThis commits all changes in reservations as one transaction.\n\n 428         except Exception:\n 429             with excutils.save_and_reraise_exception():\n 430                 QUOTAS.rollback(context, reservations)\n\nThis rollback can only back out of partially updated reservations (the QUOTAS.commit call).\nIt can't undo the allocation of the floating ip address, however, since that was committed inside the function.", 
+            "date_created": "2012-05-31 16:45:56.733237+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Honestly, I don't think this going to be fixed prior to the network layer leaving Nova. Just marking Won't Fix based on that fact.", 
+            "date_created": "2014-09-15 11:57:23.498944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

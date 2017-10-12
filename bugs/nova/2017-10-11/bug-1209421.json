@@ -1,0 +1,67 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2014-09-30 13:15:44.966487+00:00", 
+    "description": "nova/tests/virt/test_virt_drivers.py has a class called _VirtDriverTestCase That is used to check which functions virt driver support and to help generate a support matrix.\n\nBut nova/tests/virt/test_virt_drivers.py only tets libvirt, and the fake driver, and does not provide any mechanism to automatically generate the support matrix.\n\nThis file should test all virt drivers and provide a way to produce a support matrix.", 
+    "tags": [
+        "hyper-v", 
+        "libvirt", 
+        "testing", 
+        "vmware", 
+        "xenserver"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1209421", 
+    "owner": "https://api.launchpad.net/1.0/~boden", 
+    "id": 1209421, 
+    "index": 3519, 
+    "created": "2013-08-08 00:15:25.410259+00:00", 
+    "title": "nova.tests.virt.test_virt_drivers doesn't produce a support matrix as documented", 
+    "comments": [
+        {
+            "content": "nova/tests/virt/test_virt_drivers.py has a class called _VirtDriverTestCase That is used to check which functions virt driver support and to help generate a support matrix.\n\nBut nova/tests/virt/test_virt_drivers.py only tets libvirt, and the fake driver, and does not provide any mechanism to automatically generate the support matrix.\n\nThis file should test all virt drivers and provide a way to produce a support matrix.", 
+            "date_created": "2013-08-08 00:15:25.410259+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "A common driver TestCase would be more than welcome.\n\nWe had a few issues on the Hyper-V driver side due to the lack of a similar solution.\nTypically, this happens when the contract of a method changes e.g. by adding a key to a dictionary returned by a method. \n\n", 
+            "date_created": "2013-08-24 20:30:56.457929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexpilotti"
+        }, 
+        {
+            "content": "I'm not really convinced that the test_virt_drivers  test case is useful at all.  For a start it can only work if the virt driver has a way to fake all its external interaction.. This works for libvirt thanks to fakelibvirt, but then by virtue of using fakelibvirt this is not really achieving any useful test coverage that we don't already have via the main libvirt test cases.\n\nOn the subject of generating a hypervisor support matrix, I think this test case is even more useless. For libvirt you would need to be able to run it for QEMU, KVM, LXC, Xen, etc and report results for each of them. This is impossible with fakelibvirt, and the unit tests can't use the real libvirt since that would make them heavily dependant on external system state.\n\nIf we want to have generated reports of supported APIs per hypervisor, then I think that realistically this has to be done using the tempest test suite, or some similar thing which validates a real world deployment of Nova against a live hypervisor.\n\nSo I think this bug should be closed as wontfix, or re-assigned to some other project. The unit tests just aren't the right place to generate a useful hypervisor support matrix.", 
+            "date_created": "2014-09-16 15:48:26.739585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I spent a few hours looking into this one; adding my 2 cents below..\n\nI do agree with Daniel's assessment above in that the hypervisor support matrix (https://wiki.openstack.org/wiki/HypervisorSupportMatrix) can / should not be generated via unit test based analysis and that likely the correct place for such automated analysis is tempest / live tests or similar. In fact I don't think the compute driver UT methods are enough to determine / build the full hypervisor matrix even if we wanted to.\n\nNote -- I suggest if we agree the UT class should not generate the hyper matrix that we at least remove the comments in test_virt_drivers.py which indicates it does for clarity sake. \n\n\nHowever I do believe some potentially useful information can be gleamed on a per hypervisor basis using static analysis. As part of my investigation of this bug, I implemented a quick python script which effectively does the following:\n\n- Analyzes the nova ComputeDriver (base) class and determines the list of methods required for the driver \"contract\". Additionally methods are marked as required or optional based on if the base driver raises NotImplementedError or just does a pass signifying optional.\n-  Analyzes the hypervisor virt driver (concrete) driver implementations (classes) and determines which methods the virt driver class implements.\n- Outputs a matrix which contains the compute driver methods and their implemented status within the virt driver.\n\nFor example see the output from the vmwareapi compute driver here: http://paste.openstack.org/show/112285/\n\nThis is fairly low level information at the driver method level, however IMO it provides information which I was unable to extract using UT coverage or any other means.\n\n\nThat said I propose the following:\n[1] I will submit a patch to remove the comments in test_virt_drivers which indicates it generates a matrix and also remove the dead code which tracks the not implemented errors.\n[2] I will start an email thread to determine if there's any interest / resources to work on a means to generate the hyper matrix outside the UTs (e.g. tempest or elsewhere).\n[3] I can clean up my simple static analysis script and make it avail on github if anyone thinks its useful?\n\n\nThoughts from others are appreciated.\n", 
+            "date_created": "2014-09-16 20:08:58.548588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boden"
+        }, 
+        {
+            "content": "IMO static analysis is fairly useless while a dedicated set of tempest tests would do.\nFor most driver features even some of the existing tests can be used for this purpose.\n\nWe could include automatically all the drivers/hypervisors with an associated CI (anyway a prereq for being a supported driver) and optionally a separare matrix for unsupported cases like libvirt/Xen, upon submission of the test results, to be linked in the same wiki page.", 
+            "date_created": "2014-09-16 21:26:57.105812+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexpilotti"
+        }, 
+        {
+            "content": "test_virt_drivers actually appears to provide some coverage which I don't see elsewhere, namely in testing the base (common) implemented methods of the ComputeDriver in addition to the FakeDriver.\n\nAs noted in a previous comment there is obviously some amount of overlap between what's covered in the test_virt_drivers and in the main libvirt driver tests. However there does appear to be some amount of additional coverage in test_virt_drivers from a libvirt perspective and therefore I don't think we should remove it in it's entirety without the due diligence to ensure all coverage is provided in the main libvirt tests.\n\nThat said my plan is to submit a small patch which updates the test_virt_drivers comments to reflect its not used to build the hyper matrix and also a very minor logging change to better reflect the unimplemented class / method / test. Assuming that patch goes through I'll be closing this one out. If we believe the hyper matrix should be generated via tempest or other testing magic I suggest we queue that up as a blueprint for the respective team - tho do date I haven't seen a strong need / desire for such. \n", 
+            "date_created": "2014-09-17 18:04:19.973628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boden"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/122227", 
+            "date_created": "2014-09-17 19:31:05.907707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/122227\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=64a911415b677ddaadc9e350aa1017387da56db6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 64a911415b677ddaadc9e350aa1017387da56db6\nAuthor: Boden R <email address hidden>\nDate:   Wed Sep 17 15:20:36 2014 -0400\n\n    Clarify virt driver test comments & log statement\n    \n    The current implementation of nova.tests.virt.test_virt_drivers\n    indicates NotImplementedError should be caught and logged to\n    dynamically build the hypervisor support matrix. This is not a\n    realistic / optimal approach for building the support matrix and\n    thus this patch updates the code comments accordingly for\n    clarity. This patch also modifies the logging statement outputted\n    in such scenarios to better clarify which test case method is\n    executing.\n    \n     Partial-Bug: 1209421\n    \n    Change-Id: I5d80cdc06207071548fdb5f6852ca96fa8d79776\n", 
+            "date_created": "2014-09-29 23:10:38.437784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "As noted in comment #5 a patch has been merged which removes the comments in test_virt_drivers indicating a hypervisor matrix should be generated from the unit test compute driver subclass execution. As discussed (above) in this bug; if hypervisor support matrix dynamic generation is needed, we should seek to implement that at the integration test level to provide a more complete picture of driver support.\n\nClosing this as as won't fix since there are no current plans to generate a matrix during UT.", 
+            "date_created": "2014-09-30 13:15:31.507113+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boden"
+        }
+    ]
+}

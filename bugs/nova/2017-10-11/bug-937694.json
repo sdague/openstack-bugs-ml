@@ -1,0 +1,76 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:47:38.766283+00:00", 
+    "description": "Dear stackers,\nEnv : DIablo 2011.3\n\nnova-volume/ network/ api/ scheduler/ <------> nova-compute #1\n                                                                              |---> nova-compute # x\n\nI just noticed for the second time that removing a volume via nova volume-delete does a \"dd\" first in order to erase the content.\nThat dd uses as cpu as possible, making the instances unreacheable - the python process having a hard time working (nova-network especially) Once the dd is complete, and load back to normal, all my instances are reacheable.\n\nhttp://grrrab.it/96d2up\n\nat the same time, instance availability : \nhttp://grrrab.it/ii62p7\n\n\nIs it possible to add a \"nice\" for the dd process, so we make sure the process doesn't phagocyte too much the CPU ?\nthanks\nRazique", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/937694", 
+    "owner": "https://api.launchpad.net/1.0/~p-draigbrady", 
+    "id": 937694, 
+    "index": 2598, 
+    "created": "2012-02-21 11:04:15.258384+00:00", 
+    "title": "Deleting a volume uses 'dd' which higher up too much the load", 
+    "comments": [
+        {
+            "content": "Dear stackers,\nEnv : DIablo 2011.3\n\nnova-volume/ network/ api/ scheduler/ <------> nova-compute #1\n                                                                              |---> nova-compute # x\n\nI just noticed for the second time that removing a volume via nova volume-delete does a \"dd\" first in order to erase the content.\nThat dd uses as cpu as possible, making the instances unreacheable - the python process having a hard time working (nova-network especially) Once the dd is complete, and load back to normal, all my instances are reacheable.\n\nhttp://grrrab.it/96d2up\n\nat the same time, instance availability : \nhttp://grrrab.it/ii62p7\n\n\nIs it possible to add a \"nice\" for the dd process, so we make sure the process doesn't phagocyte too much the CPU ?\nthanks\nRazique", 
+            "date_created": "2012-02-21 11:04:15.258384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~razique"
+        }, 
+        {
+            "content": "You mention CPU as the bottleneck, but that would surprise me with that dd command.\nIs perhaps disk the bottleneck? What type of backing storage do you have? What size are the volumes?\nFrom the graph I'm guessing dd uses 35% of your CPU, while saturating the disk writing zeros?\nPerhaps dd is also blowing away the buffer cache while doing this,\nthus causing more disk thrashing?\n\nDoes the attached patch avoid the issue in any way?\nYou'll need to apply that as root to /usr/lib/python/...../nova/volume/driver.py\n(I'd delete any driver.py[co] files there too just in case),\nand restart the nova volume service", 
+            "date_created": "2012-02-23 14:18:11.278975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Hi - thanks P\u00e1draig,\nit's not the CPU, it's the load of the server - pretty high actually. \nThe volume backend is an ISCSI-connected SAN, and it's not the bottleneck (Gigabit link which doesn't saturates at  that point)\nThanks!", 
+            "date_created": "2012-02-24 14:17:56.397763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~razique"
+        }, 
+        {
+            "content": "Razique: could you test the proposed patch ?", 
+            "date_created": "2012-06-07 13:03:39.924346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "We cannot solve the issue you reported without more information. Could you please provide the requested information ?", 
+            "date_created": "2012-07-12 14:22:16.704360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sorry for the delay Thierry I was convinced I replied. The patch works. The dd takes longer but availability is not perturbed.\nthanks", 
+            "date_created": "2012-07-12 14:40:12.424213+00:00", 
+            "author": "https://api.launchpad.net/1.0/~razique"
+        }, 
+        {
+            "content": "OK I'll send this for folsom.\nAlso related is bug 1022511", 
+            "date_created": "2012-07-12 15:09:36.384761+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Razique: On second thoughts I'm a bit wary of setting priorities.\nThat should only be done in very specific circumstances,\nor otherwise you'll have a priority setting arms race.\n\nCould you please remove the 'ionice', '-c3',  part of the patch,\nbut leave the 'direct' flags in place.\nIf that still fixes the issue for you, it points to a Linux VM issue,\nwhich is OK as we'd prefer no caching in this case.\n\nthanks.", 
+            "date_created": "2012-07-13 17:43:15.922678+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "How about cstream? \nhttp://www.cons.org/cracauer/cstream.html\n\nIt has nice features below:\n* Exact throughput limiting\n* Built-in data creation and sink (not using /dev/null and /dev/zero) \n* Customizable reporting including bytes written\n* Blocksize customization like dd\n\nFor example:\n\n# cstream -t 10M -T1 -v1 -n 1G -i - -o /tmp/dummy1G\n10485760 B 10.0 MB 1.00 s 10484060 B/s 10.00 MB/s\n20979712 B 20.0 MB 2.00 s 10485237 B/s 10.00 MB/s\n...\n", 
+            "date_created": "2012-08-23 00:28:48.810230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yosshy"
+        }, 
+        {
+            "content": "Rate limiting is an option,\nthough hopefully we can get the system to\nauto use appropriate resources for this.\n\nBTW pv is another common tool used for rate limiting:\nhttp://www.ivarch.com/programs/pv.shtml\n\nthanks!", 
+            "date_created": "2012-08-23 01:29:40.288769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/12481", 
+            "date_created": "2012-09-06 01:46:15.661667+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/12481\nCommitted: http://github.com/openstack/nova/commit/64f1916d5871344bdd5177993bca709950e0b819\nSubmitter: Jenkins\nBranch:    master\n\ncommit 64f1916d5871344bdd5177993bca709950e0b819\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Fri Jul 13 18:22:17 2012 +0100\n\n    avoid the buffer cache when copying volumes\n    \n    The dd process when clearing volumes, was seen to starve\n    the system when writing to an iSCSI SAN connected over GigE.\n    \n    So use O_DIRECT within the dd process so that the system\n    buffer cache is not impacted, which is generally the\n    best thing to do when streaming large amounts of data.\n    \n    Also one could drop the I/O priority of the dd process\n    by prepending \"ionice -c3\". That would change the priority\n    from \"normal\" (best effort) to \"idle\", which means zeroing\n    will only proceed when there is no other I/O on the system.\n    It was thought best to leave scheduling decisions to the\n    system however, rather than specifying them explicitly.\n    \n    Fixes bug: 937694\n    Change-Id: Ic842d7b83209c41d8ff05075990ed12e6f86283a\n", 
+            "date_created": "2012-09-06 19:40:48.051867+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

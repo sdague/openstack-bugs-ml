@@ -1,0 +1,165 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-05-04 16:14:06.849924+00:00", 
+    "description": "os-quota-sets API should check requests for /v2/:tenant/os-quota-sets/ against Keystone to ensure that :tenant does exist.\n\nPOST requests to a non-existant tenant should fail with a 400 error code.\n\nGET requests to a non-existant tenant may fail with a 400 error code. Current behavior is to return 200 with the default quotas. A slightly incompatible change would be to return a 302 redirect to /v2/:tenant/os-quota-sets/defaults in this case.\n\nEdit (2014-01-22)\n\nOriginal Description\n--------------------\nGET /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\nreturns 200 with the default quotas.\n\nMoreover\nPOST /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\nwith updated quotas succeeds and that metadata is saved!\n\nI'm not sure if this is a bug or not. I cannot find any documentation on this interface.", 
+    "tags": [
+        "quotas", 
+        "security", 
+        "ux"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 190, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1118066", 
+    "owner": "None", 
+    "id": 1118066, 
+    "index": 1326, 
+    "created": "2013-02-07 06:46:04.415403+00:00", 
+    "title": "Nova should confirm quota requests against Keystone", 
+    "comments": [
+        {
+            "content": "GET /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\nreturns 200 with the default quotas.\n\nMoreover\nPOST /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\nwith updated quotas succeeds and that metadata is saved!\n\nI'm not sure if this is a bug or not. I cannot find any documentation on this interface.", 
+            "date_created": "2013-02-07 06:46:04.415403+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "Similar bug: https://bugs.launchpad.net/python-novaclient/+bug/1031139", 
+            "date_created": "2013-09-03 14:17:00.550527+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liyingjun"
+        }, 
+        {
+            "content": "Can you show what novaclient commands you used to get the aforementioned behavior?\r\n\r\nFrom the information provided, it's not clear whether you're using the client or calling the nova api directly.", 
+            "date_created": "2013-12-05 01:29:43.036353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "This works if you make get or post requests against the os-quota-sets api.\n\n\nOn Wed, Dec 4, 2013 at 7:29 PM, Melanie Witt <email address hidden>wrote:\n\n> Can you show what novaclient commands you used to get the aforementioned\n> behavior?\n>\n> >From the information provided, it's not clear whether you're using the\n> client or calling the nova api directly.\n>\n> ** Changed in: python-novaclient\n>        Status: Confirmed => Incomplete\n>\n> --\n> You received this bug notification because you are subscribed to the bug\n> report.\n> https://bugs.launchpad.net/bugs/1118066\n>\n> Title:\n>   Request of quota sets for nonexistent tenant returns 200 with defaults\n>\n> Status in Python client library for Nova:\n>   Incomplete\n>\n> Bug description:\n>   GET /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\n>   returns 200 with the default quotas.\n>\n>   Moreover\n>   POST /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\n>   with updated quotas succeeds and that metadata is saved!\n>\n>   I'm not sure if this is a bug or not. I cannot find any documentation\n>   on this interface.\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/python-novaclient/+bug/1118066/+subscriptions\n>\n", 
+            "date_created": "2013-12-05 03:40:37+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "Switched this to affecting nova itself. I can confirm that it is possible to insert quotas into the database for non-existent projects. \n\nSteps to replicate:\n\n$ keystone tenant-list | grep foobar # this is empty, indicating no 'foobar' tenant\n$ nova quota-update foobar --cores 200\n$ nova quota-show --tenant foobar\n# Prints out the quotas\n\nWhen I reported the issue it was affecting our Essex distribution. At that point the novaclient had programmatic support for quotas but no command line. Now, on Havana the command line has the same behavior as the API.", 
+            "date_created": "2013-12-06 23:39:33.971248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "So this is a known issue, nova doesn't do any tenant validation for quotas.   Right now the assumption is that only global admins (think cloud operator) should have access to the last three methods in:\n\nhttp://docs.openstack.org/api/openstack-compute/2/content/os-quota-sets.html\n\nGET\tv2{/tenant_id}/os-quota-sets{/tenant_id}{/user_id}\t\nEnables an admin user to show quotas for a specified tenant and user.\n\nPOST\tv2{/tenant_id}/os-quota-sets{/tenant_id}{/user_id}\t\nUpdates quotas for a specified tenant/project and user.\n\nGET\tv2{/tenant_id}/os-quota-sets{/tenant_id}/detail{/user_id}\t\nShows details for quotas for a specified tenant and user.\n\nAnd as an admin (trusted user), we expect them to not break things.\n\nThis is part of a bigger issue, which is nova doesn't have great RBAC support. Say you want to create a tenant admin who can set quotas per user.", 
+            "date_created": "2014-01-22 01:08:20.745647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "\"And as an admin (trusted user), we expect them to not break things.\"\n\nSorry, I am going to have to disagree with you on this. The interface gives no indication that the request failed to produce the desired effect. Add to that several facts:  many quota-exceeded errors are masked by other quota exceeded error names and end users will report quota exceeded errors as \"my instance failed to start\". These all add up to a bad user experience.\n\n\"This is part of a bigger issue, which is nova doesn't have great RBAC support. Say you want to create a tenant admin who can set quotas per user.\"\n\nI don't see how role-based access control is necessary when a simple check \"does this string correspond to a real project UUID (or name if you want to support that)\" would suffice.\n\nMarking as open for these reasons.\n", 
+            "date_created": "2014-01-22 01:25:17.184987+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": ">\"And as an admin (trusted user), we expect them to not break things.\"\n>\n>Sorry, I am going to have to disagree with you on this. The interface gives no indication that the request failed to produce the >desired effect. Add to that several facts: many quota-exceeded errors are masked by other quota exceeded error names and end >users will report quota exceeded errors as \"my instance failed to start\". These all add up to a bad user experience.\"\n\nYup, the UX is horrible for this one. can you expand on the error masking point?\n\n>\"This is part of a bigger issue, which is nova doesn't have great RBAC support. Say you want to create a tenant admin who can set >quotas per user.\"\n>\n>I don't see how role-based access control is necessary when a simple check \"does this string correspond to a real project UUID (or >name if you want to support that)\" would suffice.\n\nSo nova doesn't keep track of project UUIDs, so this would have to be implemented as a call out to keystone. So I am not very familiar with the keystone API but I think you would need to call v2.0/tenants{/tenantId}\t (http://docs.openstack.org/api/openstack-identity-service/2.0/content/Tenant_Operations.html) to make sure the tenant is valid or not.\n\n\n>\n>Marking as open for these reasons.\n\nPerhaps opinion was the wrong status, while I agree that there is something to fix here, I am not sure how you want to change things.  For this to be confirmed I would like a more explicit explanation of what the issue is and what the desired outcome should be.  Do you just want to make sure the tenant is valid? If so I can get behind that, but the bug description needs some updating.", 
+            "date_created": "2014-01-22 02:40:13.230876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Goes beyond the scope of the specific bug here, but IMO the real fix for this kind of issue is that quota limits should be managed in Keystone (and passed to Nova and other services as part of the context) , and enforced in the service.\n\nProject and User IDs are really just foreign keys to Nova, it shouldn't be managing properties of them.     ", 
+            "date_created": "2014-01-22 09:07:33.586044+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "> Yup, the UX is horrible for this one. can you expand on the error masking point?\n\nThat was an error I saw in Essex where one type of quota exception would be thrown when another type was exceeded. I'll check in our Havana setup and see if it is still a problem. I'll file a separate report if it is.\n\n> I am not sure how you want to change things. For this to be confirmed I would like a more explicit explanation of what the issue is and what the desired outcome should be.\n\nI think the simple fix is to have the nova api check against Keystone to validate the UUID before sending a response to the client. I'll update the bug description to suggest this solution.", 
+            "date_created": "2014-01-22 20:10:49.244795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "Hi vaibhav, are you still working on this?", 
+            "date_created": "2014-06-13 16:08:49.618833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "I would propose the following behavior:\n\nWhen os-quota-sets is updated, nova-api checks the quota tables to see if the quota-set for the project ID already exists in the table. If it does exist, then update with the new quota value. Otherwise, use keystoneclient to confirm that the project ID exists. If it does not exist, return an appropriate error to the API. Otherwise update the new quota value.\n\nThis will catch the error except for cases where the quota table is already corrupted with quotas that apply to no projects.", 
+            "date_created": "2014-06-13 16:14:14.884575+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "Hi Scott,\n\nWe fixed the bug keystone way in \"Manila\" but it was decided later that\nthe bug would not be fixed. Will send you the link of the fix tomorrow as\nI am travelling today. BTW, keystoneclient is the only way to go as we\nare not sure what keystone database is used in the background. Administrator\nmight have configured keystone to use LDAP.\n\nVaibhav\n\n\nOn Fri, Jun 13, 2014 at 9:44 PM, Scott Devoid <email address hidden> wrote:\n\n> I would propose the following behavior:\n>\n> When os-quota-sets is updated, nova-api checks the quota tables to see\n> if the quota-set for the project ID already exists in the table. If it\n> does exist, then update with the new quota value. Otherwise, use\n> keystoneclient to confirm that the project ID exists. If it does not\n> exist, return an appropriate error to the API. Otherwise update the new\n> quota value.\n>\n> This will catch the error except for cases where the quota table is\n> already corrupted with quotas that apply to no projects.\n>\n> --\n> You received this bug notification because you are a bug assignee.\n> https://bugs.launchpad.net/bugs/1118066\n>\n> Title:\n>   Nova should confirm quota requests against Keystone\n>\n> Status in OpenStack Compute (Nova):\n>   Confirmed\n>\n> Bug description:\n>   os-quota-sets API should check requests for /v2/:tenant/os-quota-sets/\n>   against Keystone to ensure that :tenant does exist.\n>\n>   POST requests to a non-existant tenant should fail with a 400 error\n>   code.\n>\n>   GET requests to a non-existant tenant may fail with a 400 error code.\n>   Current behavior is to return 200 with the default quotas. A slightly\n>   incompatible change would be to return a 302 redirect to /v2/:tenant\n>   /os-quota-sets/defaults in this case.\n>\n>   Edit (2014-01-22)\n>\n>   Original Description\n>   --------------------\n>   GET /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\n>   returns 200 with the default quotas.\n>\n>   Moreover\n>   POST /v2/:tenant/os-quota-sets/:this_tenant_does_not_exist\n>   with updated quotas succeeds and that metadata is saved!\n>\n>   I'm not sure if this is a bug or not. I cannot find any documentation\n>   on this interface.\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1118066/+subscriptions\n>\n", 
+            "date_created": "2014-06-16 13:27:23+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vaibhav-bhatkar"
+        }, 
+        {
+            "content": "There is a blueprint to validate tenant and user IDs that is pending: https://blueprints.launchpad.net/nova/+spec/validate-tenant-user-with-keystone.  It should resolve this bug and well as many other identical bugs.", 
+            "date_created": "2014-06-21 16:53:53.562823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thang-pham"
+        }, 
+        {
+            "content": "There are no reviews, so this should not be in \"In Progress\"", 
+            "date_created": "2015-03-04 13:10:20.160540+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Just confirmed this is still an issue", 
+            "date_created": "2015-03-11 21:06:34.796921+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Moving priority up based on how many times this bug has been reported", 
+            "date_created": "2015-03-11 21:06:58.253676+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "I will be working on this. And submit a review very soon.", 
+            "date_created": "2015-04-30 07:32:26.501466+00:00", 
+            "author": "https://api.launchpad.net/1.0/~raiesmh08"
+        }, 
+        {
+            "content": "nova python client help tells that - \n\nroot@devstack:/opt/stack/nova# nova help quota-show\nusage: nova quota-show [--tenant <tenant-id>] [--user <user-id>]\n\nList the quotas for a tenant/user.\n\nOptional arguments:\n  --tenant <tenant-id>  ID of tenant to list the quotas for.\n  --user <user-id>      ID of user to list the quotas for.\nroot@devstack:/opt/stack/nova#\n\nThus there is three possibilities - \n\n1. Get quota  filtered by user_id ==> get_user_quota\n2. Get quota filtered by tenant_id ===> get_project_quota\n3. Get quota filtered by user_id and tenant_id both  ==> get_by_project_and_user\n\nCurrent quota api  implementation treats only \"get_user_quota\" or current project. Need to enhance/modify to entertain remainings.", 
+            "date_created": "2015-04-30 10:17:51.269560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~raiesmh08"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/143934\nReason: This review is > 4 weeks without comment and currently blocked by a core reviewer with a -2. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and contacting the reviewer with the -2 on this review to ensure you address their concerns.", 
+            "date_created": "2015-05-13 17:20:00.679325+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Mh, are you still working on this bug ?", 
+            "date_created": "2015-09-01 06:28:04.383997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhhuabj"
+        }, 
+        {
+            "content": "Hi Hua, Sorry to not give update on this.\nDue to time constrains I could not go ahead with this.\n\nPlease, you can continue with this :)", 
+            "date_created": "2015-09-01 16:39:05.893425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~raiesmh08"
+        }, 
+        {
+            "content": "The link to the blueprint in comment 13 is wrong, it's this:\n\nhttps://blueprints.launchpad.net/nova/+spec/validate-project-with-keystone\n\nThere was a change proposed for juno and kilo but missed deadlines:\n\nhttps://review.openstack.org/#/c/143934/\n\nSince that's an API impacting change it's going to require a spec for mitaka, which would also help to get operator and keystone team feedback.  So I'm marking this as wishlist given it requires a spec.", 
+            "date_created": "2015-10-06 17:35:51.138183+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Rather than validate against keystone, couldn't we just fail if we're trying to update a quotas or project_quotas table entry where project_id doesn't exist?", 
+            "date_created": "2015-10-06 17:50:58.783315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I validated today with openstackclient 1.7.0 that you can't show quotas for a project that doesn't exist:\n\nstack@client:~/devstack$ openstack quota show randomtext\nTenant ID: randomtext does not exist. (HTTP 404) (Request-ID: req-cc9354ea-5935-45db-be60-b86aaf0a20ea)\n\nAnd I validated that with the v2.1 API you can't request a quota update on non-standard resources:\n\n{\"badRequest\": {\"message\": \"Invalid input for field/attribute quota_set. Value: {u'foo': 20, u'force': True}. Additional properties are not allowed (u'foo' was unexpected)\", \"code\": 400}}\n\nBecause the jsonschema prevents that:\n\nhttps://github.com/openstack/nova/blob/master/nova/api/openstack/compute/schemas/quota_sets.py#L28\n\nHowever, you can create a nova.quotas table entry with an invalid projectid:\n\nhttp://paste.openstack.org/show/475511/\n\nSo we need to do something about that.  I see two options:\n\n1. quota-sets.update should only attempt to update quota on existing resources - if objects.Quotas.update_limit fails with a not found, we return 404 on the response.  We don't try to create quotas automatically if they don't exist.  However, as part of this we'd need to add a new quotas-sets.create API since update is handling both create and update today.  This would require a microversion change since it's not backward compatible.\n\n2. We could change quota-sets.update to try and update first and if we get a 404, then we validate the projectid against the identity service before calling objects.Quotas.create_limit.  That would at least narrow the performance impact of validating the projectid against keystone in the request.", 
+            "date_created": "2015-10-06 19:09:56.646069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Also, confirmed that you can pass a random uuid to nova quota-show and it will just return default quotas:\n\nhttp://paste.openstack.org/show/475512/\n\nWhich is misleading if that project doesn't exist, but if you try updating it with the current behavior it will create the quotas entry in the db as detailed in comment 24.", 
+            "date_created": "2015-10-06 19:11:54.499424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think this blueprint covers the same https://blueprints.launchpad.net/nova/+spec/validate-project-with-keystone. Kindly provide your feedback.", 
+            "date_created": "2016-04-12 05:12:37.707642+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhilash-goyal"
+        }, 
+        {
+            "content": "see comments #26 + #22\n\nThis wishlist bug has been open a year without any activity. I'm going to move it to \"Opinion / Wishlist\", which is an easily-obtainable queue of older requests that have come on. This bug can be reopened (set back to \"New\") if someone decides to work on this.", 
+            "date_created": "2016-05-17 12:07:09.916866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "This is being worked under this blueprint in the Pike release:\n\nhttps://blueprints.launchpad.net/nova/+spec/validate-project-with-keystone\n\nAnd has been fixed with this change in pike for the os-quota-sets API:\n\nhttps://review.openstack.org/#/c/435010/", 
+            "date_created": "2017-05-04 16:13:36.691490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:55:29.424235+00:00", 
+    "description": "Due to a previous bug that was never caught and the fact that we can now pass ephemeral and block devices through the API, it is possible to ask nova to create an arbitrarily large ephemeral block device - which nova will happily do (and by default make it raw). \n\nThe bug was introduced in commit 0ef7e15e225efcce3e02098cb1d57f9f40181f82 as before that commit the ephemeral device size will be defaulted to whatever was in the instance_type - due to a bug this defaulting was not done anymore (see compute.api.API._update_block_device_mapping).\n\nSteps to reproduce:\n\nndipanov@localhost devstack]$ nova flavor-show 1\n+----------------------------+---------+\n| Property                   | Value   |\n+----------------------------+---------+\n| name                       | m1.tiny |\n| ram                        | 512     |\n| OS-FLV-DISABLED:disabled   | False   |\n| vcpus                      | 1       |\n| extra_specs                | {}      |\n| swap                       |         |\n| os-flavor-access:is_public | True    |\n| rxtx_factor                | 1.0     |\n| OS-FLV-EXT-DATA:ephemeral  | 0       | <--- Ephemeral is 0\n| disk                       | 1       |\n| id                         | 1       |\n+----------------------------+---------+\n[ndipanov@localhost devstack]$ nova --debug boot --image 308f190c-d2f7-44fe-9b6d-7a28e2e2aa64 --flavor 1 --block-device source=blank,dest=local,size=2,device=vdb testvme2 #using the not yet merged novaclient patch https://review.openstack.org/#/c/38815/. The request dict is as follows: '{\"server\": {\"name\": \"testvme2\", \"imageRef\": \"308f190c-d2f7-44fe-9b6d-7a28e2e2aa64\", \"block_device_mapping_v2\": [{\"source_type\": \"image\", \"delete_on_termination\": true, \"boot_index\": 0, \"uuid\": \"308f190c-d2f7-44fe-9b6d-7a28e2e2aa64\", \"destination_type\": \"local\"}, {\"source_type\": \"blank\", \"delete_on_termination\": true, \"device_name\": \"vdb\", \"volume_size\": \"2\", \"destination_type\": \"local\"}], \"flavorRef\": \"1\", \"max_count\": 1, \"min_count\": 1}}'\n[ndipanov@localhost devstack]$ nova list\n+--------------------------------------+----------+--------+------------+-------------+------------------+\n| ID                                   | Name     | Status | Task State | Power State | Networks         |\n+--------------------------------------+----------+--------+------------+-------------+------------------+\n| 6c8a571c-3c1b-4fef-800e-0cecea927566 | testvme2 | ACTIVE | None       | Running     | private=10.0.0.2 |\n+--------------------------------------+----------+--------+------------+-------------+------------------+\n[ndipanov@localhost devstack]$ cd /opt/stack/data/nova/instances/_base/\n[ndipanov@localhost _base]$ ls -lah\ntotal 130M\ndrwxrwxr-x. 2 ndipanov libvirtd 4.0K Aug 30 10:59 .\ndrwxr-xr-x. 5 ndipanov root     4.0K Aug 30 10:59 ..\n-rw-rw-r--. 1 ndipanov libvirtd 4.8M Aug 30 10:59 65706cf4-0f63-4cf6-a8ee-a1dc447a6380\n-rw-rw-r--. 1 qemu     qemu      24M Aug 30 10:59 8bf383ae7171db9b882fc6e33eebf619896d67b7\n-rw-r--r--. 1 qemu     qemu     2.0G Aug 30 10:59 ephemeral_2_default\n-rw-rw-r--. 1 ndipanov libvirtd 3.6M Aug 30 10:59 fe478037-cd36-4517-b886-fd6e14d7462e\n\nWe can see that the raw image was happily created by nova. completely disregarding the limitation.\n\nI have attached a proposed patch.\n\nThis bug only affects current trunk as of the commit mentioned above.", 
+    "tags": [
+        "security"
+    ], 
+    "importance": "Critical", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1218977", 
+    "owner": "https://api.launchpad.net/1.0/~ndipanov", 
+    "id": 1218977, 
+    "index": 152, 
+    "created": "2013-08-30 15:18:26.463497+00:00", 
+    "title": "DOS by passing an ephemeral or swap of arbitrary size", 
+    "comments": [
+        {
+            "content": "Due to a previous bug that was never caught and the fact that we can now pass ephemeral and block devices through the API, it is possible to ask nova to create an arbitrarily large ephemeral block device - which nova will happily do (and by default make it raw). \n\nThe bug was introduced in commit 0ef7e15e225efcce3e02098cb1d57f9f40181f82 as before that commit the ephemeral device size will be defaulted to whatever was in the instance_type - due to a bug this defaulting was not done anymore (see compute.api.API._update_block_device_mapping).\n\nSteps to reproduce:\n\nndipanov@localhost devstack]$ nova flavor-show 1\n+----------------------------+---------+\n| Property                   | Value   |\n+----------------------------+---------+\n| name                       | m1.tiny |\n| ram                        | 512     |\n| OS-FLV-DISABLED:disabled   | False   |\n| vcpus                      | 1       |\n| extra_specs                | {}      |\n| swap                       |         |\n| os-flavor-access:is_public | True    |\n| rxtx_factor                | 1.0     |\n| OS-FLV-EXT-DATA:ephemeral  | 0       | <--- Ephemeral is 0\n| disk                       | 1       |\n| id                         | 1       |\n+----------------------------+---------+\n[ndipanov@localhost devstack]$ nova --debug boot --image 308f190c-d2f7-44fe-9b6d-7a28e2e2aa64 --flavor 1 --block-device source=blank,dest=local,size=2,device=vdb testvme2 #using the not yet merged novaclient patch https://review.openstack.org/#/c/38815/. The request dict is as follows: '{\"server\": {\"name\": \"testvme2\", \"imageRef\": \"308f190c-d2f7-44fe-9b6d-7a28e2e2aa64\", \"block_device_mapping_v2\": [{\"source_type\": \"image\", \"delete_on_termination\": true, \"boot_index\": 0, \"uuid\": \"308f190c-d2f7-44fe-9b6d-7a28e2e2aa64\", \"destination_type\": \"local\"}, {\"source_type\": \"blank\", \"delete_on_termination\": true, \"device_name\": \"vdb\", \"volume_size\": \"2\", \"destination_type\": \"local\"}], \"flavorRef\": \"1\", \"max_count\": 1, \"min_count\": 1}}'\n[ndipanov@localhost devstack]$ nova list\n+--------------------------------------+----------+--------+------------+-------------+------------------+\n| ID                                   | Name     | Status | Task State | Power State | Networks         |\n+--------------------------------------+----------+--------+------------+-------------+------------------+\n| 6c8a571c-3c1b-4fef-800e-0cecea927566 | testvme2 | ACTIVE | None       | Running     | private=10.0.0.2 |\n+--------------------------------------+----------+--------+------------+-------------+------------------+\n[ndipanov@localhost devstack]$ cd /opt/stack/data/nova/instances/_base/\n[ndipanov@localhost _base]$ ls -lah\ntotal 130M\ndrwxrwxr-x. 2 ndipanov libvirtd 4.0K Aug 30 10:59 .\ndrwxr-xr-x. 5 ndipanov root     4.0K Aug 30 10:59 ..\n-rw-rw-r--. 1 ndipanov libvirtd 4.8M Aug 30 10:59 65706cf4-0f63-4cf6-a8ee-a1dc447a6380\n-rw-rw-r--. 1 qemu     qemu      24M Aug 30 10:59 8bf383ae7171db9b882fc6e33eebf619896d67b7\n-rw-r--r--. 1 qemu     qemu     2.0G Aug 30 10:59 ephemeral_2_default\n-rw-rw-r--. 1 ndipanov libvirtd 3.6M Aug 30 10:59 fe478037-cd36-4517-b886-fd6e14d7462e\n\nWe can see that the raw image was happily created by nova. completely disregarding the limitation.\n\nI have attached a proposed patch.\n\nThis bug only affects current trunk as of the commit mentioned above.", 
+            "date_created": "2013-08-30 15:18:26.463497+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-08-30 15:18:26.463497+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "not totally sure this needs to be a security bug since there hasn't been a release with this code in.  I'm ok with the patch. I'm a little split on whether local disks should be limited via root + ephemeral or just ephemeral.\n\nFor example if the flavor type is 100G root and 100G ephemeral it might be nice to allow users to use that 200G total for both the root and ephemeral.", 
+            "date_created": "2013-08-30 18:04:23.909569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Thanks for the comment Vish - if everyone agrees that this does not need to be private anymore - I'd open it up and post a patch so we can discuss it there, in hopes of making it for H-3.", 
+            "date_created": "2013-09-03 11:21:39.258677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Agreed. I opened it, please fix publicly", 
+            "date_created": "2013-09-03 11:55:16.317306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/44864", 
+            "date_created": "2013-09-03 12:35:52.982530+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/44864\nCommitted: http://github.com/openstack/nova/commit/fcf712ec3538d4e07e0c0da6fadcd4f2ea7747fc\nSubmitter: Jenkins\nBranch:    master\n\ncommit fcf712ec3538d4e07e0c0da6fadcd4f2ea7747fc\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Fri Aug 30 16:40:43 2013 +0200\n\n    Check ephemeral and swap size in the API\n    \n    Validate that ephemeral and swap disks passed in trough the API are\n    within size limits for the given instance type. The validation is done\n    in the API layer.\n    \n    Closes-bug #1218977\n    \n    Change-Id: I96c6e651e4b221313c39dfc41e79d536585fb955\n", 
+            "date_created": "2013-09-03 15:53:40.206715+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

@@ -1,0 +1,36 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-12-03 21:34:21.992118+00:00", 
+    "description": "When using the libvirt CPU monitor (i.e., virt_driver) for metrics collection, I sporadically noticed cases where the values for cpu.user.percent + cpu.kernel.percent + cpu.idle.percent didn't equal 100, which should be the case.  This wasn't happening very often so it was quite difficult to track down, but after adding several debug logs, over time, I was able to track down the problem.\n\nIf you look at this code:\nhttps://github.com/openstack/nova/blob/master/nova/compute/monitors/cpu/virt_driver.py#L52\n\n... you'll notice that there is an inherent assumption that for a given \"round\" of metrics gathering, there is a built-in assumption that the collective time to call metric_driver.get_metric(metric_name) (keep in mind there are 10 metrics right now) won't exceed 1 second (if it does, it's considered the \"next\" round of metric collection) ... i.e., so for the first metric collection, we refresh the host CPU stats and the subsequent n-1 calls simply use the cache ... this yielding a coherent answer (i.e., the percentages would all sum up to 100% as you'd expect).\n\nHowever, in some cases (e.g., if the system is undergoing stress, etc.), I've seen cases where this code:\nhttps://github.com/openstack/nova/blob/master/nova/compute/monitors/cpu/virt_driver.py#L60\n\n... takes more than 1 second to execute, which then causes [within the \"same\" metrics round] the data to be refreshed, thus yielding potentially incoherent results (e.g., summation of percentages < 100 or > 100 -- makes for some interesting data points).  :-)\n\nThe fix is simple... let's just move the timestamp cache *after* the host stats have been collected... problem solved.\n\nP.S.  This problem is occurring on Liberty (and I suspect it would happen on older releases too).", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1490837", 
+    "owner": "https://api.launchpad.net/1.0/~jwcroppe", 
+    "id": 1490837, 
+    "index": 4338, 
+    "created": "2015-09-01 06:16:40.120100+00:00", 
+    "title": "Sporadic incoherent metrics when driver.get_host_cpu_stats takes longer than 1 second to execute", 
+    "comments": [
+        {
+            "content": "When using the libvirt CPU monitor (i.e., virt_driver) for metrics collection, I sporadically noticed cases where the values for cpu.user.percent + cpu.kernel.percent + cpu.idle.percent didn't equal 100, which should be the case.  This wasn't happening very often so it was quite difficult to track down, but after adding several debug logs, over time, I was able to track down the problem.\n\nIf you look at this code:\nhttps://github.com/openstack/nova/blob/master/nova/compute/monitors/cpu/virt_driver.py#L52\n\n... you'll notice that there is an inherent assumption that for a given \"round\" of metrics gathering, there is a built-in assumption that the collective time to call metric_driver.get_metric(metric_name) (keep in mind there are 10 metrics right now) won't exceed 1 second (if it does, it's considered the \"next\" round of metric collection) ... i.e., so for the first metric collection, we refresh the host CPU stats and the subsequent n-1 calls simply use the cache ... this yielding a coherent answer (i.e., the percentages would all sum up to 100% as you'd expect).\n\nHowever, in some cases (e.g., if the system is undergoing stress, etc.), I've seen cases where this code:\nhttps://github.com/openstack/nova/blob/master/nova/compute/monitors/cpu/virt_driver.py#L60\n\n... takes more than 1 second to execute, which then causes [within the \"same\" metrics round] the data to be refreshed, thus yielding potentially incoherent results (e.g., summation of percentages < 100 or > 100 -- makes for some interesting data points).  :-)\n\nThe fix is simple... let's just move the timestamp cache *after* the host stats have been collected... problem solved.\n\nP.S.  This problem is occurring on Liberty (and I suspect it would happen on older releases too).", 
+            "date_created": "2015-09-01 06:16:40.120100+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jwcroppe"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/219153", 
+            "date_created": "2015-09-01 06:22:00.722147+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/219153\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7fe05a8ca45b36c173458b92aa6ad6d9df861736\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7fe05a8ca45b36c173458b92aa6ad6d9df861736\nAuthor: Joe Cropper <email address hidden>\nDate:   Tue Sep 1 01:18:15 2015 -0500\n\n    Ensure Nova metrics derived from a set of metrics\n    \n    This patch addresses a problem in which the current Nova metrics can\n    yield a set of incoherent results. For example, prior to this patch,\n    it is possible that a collection of metrics sent in a single RPC\n    notification message can contain values such as the following:\n    \n    {'cpu.user.percent': A, 'cpu.kernel.percent': B,\n     'cpu.idle.percent': C, 'cpu.iowait.percent': D} such that you can\n    end up with A + B + C + D != 100, which does not make any sense\n    from an end consumer perspective.\n    \n    The root cause of this problem stems from the fact that each\n    individual metric retrieval (i.e., via get_metric(name)) could\n    result in the driver.get_host_cpu_stats() function being called,\n    which leads to the incoherent results mentioned above.\n    \n    To solve this, we only refresh the metric data once per collection\n    cycle. Additionally, the `Monitor` base class uses get_metrics()\n    instead of get_metric() and returns a 3-tuple of the form\n    (metric_name, metric_value, timestamp).\n    \n    This patch also removes some code from the CPU virt_driver's\n    _update_data() method that checked whether the last call was\n    less than 1 second ago, which seemed to try to solve this\n    coherency issue, but didn't really work all of the time (and hence\n    how this defect was encountered to begin with). Given we use the\n    [more appropriate] metric set approach now, this code no longer\n    serves any purpose.\n    \n    Unit tests updated to work with the new framework.\n    \n    Change-Id: Ia23783f2e6b92b3af2e9acf09f95a9eeacd8eb3b\n    Closes-Bug: 1490837\n    Co-authored-by: Jay Pipes <email address hidden>\n", 
+            "date_created": "2015-10-07 14:54:23.559714+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b1 development milestone.", 
+            "date_created": "2015-12-02 16:17:58.685110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }
+    ]
+}

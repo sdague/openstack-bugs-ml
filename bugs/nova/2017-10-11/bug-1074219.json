@@ -1,0 +1,43 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-06-11 23:06:17.970587+00:00", 
+    "description": "I have meet a problem when I try to use nova vmwareapi driver to provision instance on the ESXi backend. The instance can not be provision successfully, the status in nova always say error.\n\nAfter I trigger the booting for a vmdk format image by the \"nova boot\" command, in the nova-compute log I can found the follow key tasks in the provisioning sequence:\n1. Provisioning message arrive compute node.\n2. VMWareVlanBridgeDriver use ESXi webservice (sdk, vim25) to check vSwitch and port group, and create port group if it not existing.\n3. VMWareESXDriver use ESXi webservice to create VM.\n4. VMWareESXDriver delete the fake vmdk file.\n5. VMWareESXDriver download image from glance and write it (xxx-flat.vmdk)to the VM home folder in the ESXi datastore.\n6. VMWareESXDriver ask ESXi reconfigure VM with the real image file (xxx-flat.vmdk).\n7. VMWareESXDriver power on the VM.\n\nI see the task #1~#4 can be executed successful from the log, but the task #5 can not be finished correctly. I have checked the vmdk file (xxx-flat.vmdk) size in the VM home folder in the ESXi datastore, and it size is always 0 bytes during the image uploading period. I also checked glance-api log, there have not errors and running in normal. Because the vmdk is invalid, so the task #6 and #7 are all failed, ESXi raise \"Unable to access file xxx-flat.vmdk\" (this is from ESXi 5.1, ESXi 4.1 said the same message) and Nova raise \"NovaException\" exception to frontend. I have used tcpdump tool to monitor HTTP interactive process between the glance-api and the nova-compute, and between the nova-compute and the ESXi, both of them are all be dumped on the nova-compute host, I can see the image data could be downloaded to nova-compute from the glance-api, but I can not see any data upload to ESXi. I also have tried 3 combinations, ESXi4.1+ SDK4.1, ESXi4.1u3+ SDK4.1, ESXi5.1+SDK5.1, but the result are all same, provisioning failed.\n\nI just think is there some firewall filter rules can cause this which between the ESXi and nova-compute host? So I stop the iptables on the nova-compute host and allow the 80 and 443 port access settings on the ESXi, but that does not change anything...failed also\n\nCan anybody provision instance successful by nova with ESXi? Big thanks.", 
+    "tags": [
+        "vmware"
+    ], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1074219", 
+    "owner": "None", 
+    "id": 1074219, 
+    "index": 5599, 
+    "created": "2012-11-02 02:38:46.012679+00:00", 
+    "title": "Can not launch instance by nova with ESXi backend, image can not be uploaded to datastore", 
+    "comments": [
+        {
+            "content": "I have meet a problem when I try to use nova vmwareapi driver to provision instance on the ESXi backend. The instance can not be provision successfully, the status in nova always say error.\n\nAfter I trigger the booting for a vmdk format image by the \"nova boot\" command, in the nova-compute log I can found the follow key tasks in the provisioning sequence:\n1. Provisioning message arrive compute node.\n2. VMWareVlanBridgeDriver use ESXi webservice (sdk, vim25) to check vSwitch and port group, and create port group if it not existing.\n3. VMWareESXDriver use ESXi webservice to create VM.\n4. VMWareESXDriver delete the fake vmdk file.\n5. VMWareESXDriver download image from glance and write it (xxx-flat.vmdk)to the VM home folder in the ESXi datastore.\n6. VMWareESXDriver ask ESXi reconfigure VM with the real image file (xxx-flat.vmdk).\n7. VMWareESXDriver power on the VM.\n\nI see the task #1~#4 can be executed successful from the log, but the task #5 can not be finished correctly. I have checked the vmdk file (xxx-flat.vmdk) size in the VM home folder in the ESXi datastore, and it size is always 0 bytes during the image uploading period. I also checked glance-api log, there have not errors and running in normal. Because the vmdk is invalid, so the task #6 and #7 are all failed, ESXi raise \"Unable to access file xxx-flat.vmdk\" (this is from ESXi 5.1, ESXi 4.1 said the same message) and Nova raise \"NovaException\" exception to frontend. I have used tcpdump tool to monitor HTTP interactive process between the glance-api and the nova-compute, and between the nova-compute and the ESXi, both of them are all be dumped on the nova-compute host, I can see the image data could be downloaded to nova-compute from the glance-api, but I can not see any data upload to ESXi. I also have tried 3 combinations, ESXi4.1+ SDK4.1, ESXi4.1u3+ SDK4.1, ESXi5.1+SDK5.1, but the result are all same, provisioning failed.\n\nI just think is there some firewall filter rules can cause this which between the ESXi and nova-compute host? So I stop the iptables on the nova-compute host and allow the 80 and 443 port access settings on the ESXi, but that does not change anything...failed also\n\nCan anybody provision instance successful by nova with ESXi? Big thanks.", 
+            "date_created": "2012-11-02 02:38:46.012679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lzy-dev"
+        }, 
+        {
+            "content": "We were seeing the same thing you are.  The process would get through step 4, and end up with a 0KB vmdk created under the VM on the hypervisor.  We can now provision an instance using ESXi after modifying  the code in nova/image/glance.py, nova/virt/vmwareapi/io_util.py, and nova/virt/vmwareapi/vmware_images.py.  Provisioning against ESXi worked out of the box with ESSEX, but was butchered in FOLSOM.  There were no iptables changes.  We are ESXi 4.1u2 with SDK 4.1.", 
+            "date_created": "2012-11-09 21:39:01.440041+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mat-rush"
+        }, 
+        {
+            "content": "Mat -- are you able to share the patches you made to get this to work?", 
+            "date_created": "2012-11-12 00:31:36.083790+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Same thing here. I'm still not able to solve this problem.\nMat, can you share some patch to fix this?", 
+            "date_created": "2013-02-25 15:15:55.517514+00:00", 
+            "author": "https://api.launchpad.net/1.0/~faelrba"
+        }, 
+        {
+            "content": "I'm afraid I can't reproduce this error. Could you tell me about your configuration?", 
+            "date_created": "2013-06-04 19:28:47.312052+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }
+    ]
+}

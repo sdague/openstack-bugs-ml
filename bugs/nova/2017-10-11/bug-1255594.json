@@ -1,0 +1,50 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-11-27 06:48:04.389130+00:00", 
+    "description": "Reusing keystone tokens improves OpenStack efficiency and performance. For operations that require a token, reusing a token avoids the overhead of a request to keystone. For operations that validate tokens, reused tokens improve the hit rate of authentication caches (e.g., in keystoneclient.middleware). In both cases, the load on the keystone server is reduced, thus improving the response time for requests that do require new tokens or token validation. Finally, since token validation is so CPU intensive, improved auth cache hit rate can significantly reduce CPU utilization by keystone.\n\nIn spite of the progress made by http://github.com/openstack/nova/commit/85332012dede96fa6729026c2a90594ea0502ac5, which was committed to address bug #1250580, the neutronv2 network API code in nova-compute creates more tokens than necessary, to the point where performance degradation is measurable when creating a large number of instances.\n\nPrior to the aforementioned change, nova-compute created a new admin token for accessing neutron virtually every time a call was made into nova.network.neutronv2.  With aforementioned change, a token is created once per \"thread\" (i.e., green thread); thus multiple calls into neutronv2 can share a token. For example, during instance creation, a single token is created then reused 6 times; prior to the patch, 7 tokens would have been created by nova.network.neutronv2 per \"nova boot\". However, this scheme is far from optimal. Given that tokens, by default, have a shelf life of 24H, a single token could be shared by _all_ nova.network.neutronv2 calls in a 24-hour period.\n\nThe performance impact of sharing a single neutronv2 admin token is easy to observe when creating a large number of instances in parallel. In this example, I boot 40 instances in parallel, ping them, then delete them. I'm using a 24-core machine with enough RAM and disk throughput to never become bottlenecks. Note that I'm running with multiple keystone-all worker processes (https://review.openstack.org/#/c/42967/). Using the per-thread tokens, the last instance becomes active after 40s and the last instance is deleted after 65s. Using a single shared token, the last instance becomes active after 32s and the last instance is deleted after 60s. During the token-per-thread run, keystone-all processes had 900% CPU utilization (i.e., 9 x 100% of a single core) for the first ~10s, then stayed in the 50-100% range for the rest of the run. In the single token run, the keystone-all processes never exceeded 150% CPU utilization.\n\nI focused on the nova.network.neutronv2 because it created the most tokens during my parallel boot experiment. However there are other excessive token offenders. After fixing nova.network.neutronv2, the leading auth requestors are glance-index and glance-registry due to a high auth cache miss rate. I'm not sure who's creating those new tokens however.", 
+    "tags": [
+        "api", 
+        "in-stable-icehouse", 
+        "network"
+    ], 
+    "importance": "High", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1255594", 
+    "owner": "https://api.launchpad.net/1.0/~pete5", 
+    "id": 1255594, 
+    "index": 1335, 
+    "created": "2013-11-27 16:48:55.293241+00:00", 
+    "title": "neutron glue code creates tokens excessively, still", 
+    "comments": [
+        {
+            "content": "Reusing keystone tokens improves OpenStack efficiency and performance. For operations that require a token, reusing a token avoids the overhead of a request to keystone. For operations that validate tokens, reused tokens improve the hit rate of authentication caches (e.g., in keystoneclient.middleware). In both cases, the load on the keystone server is reduced, thus improving the response time for requests that do require new tokens or token validation. Finally, since token validation is so CPU intensive, improved auth cache hit rate can significantly reduce CPU utilization by keystone.\n\nIn spite of the progress made by http://github.com/openstack/nova/commit/85332012dede96fa6729026c2a90594ea0502ac5, which was committed to address 1250580, the neutronv2 network API code in nova-compute creates more tokens than necessary, to the point where performance degradation is measurable when creating a large number of instances.\n\nPrior to the aforementioned change, nova-compute created a new admin token for accessing neutron virtually every time a call was made into nova.network.neutronv2.  With aforementioned change, a token is created once per \"thread\" (i.e., green thread); thus multiple calls into neutronv2 can share a token. For example, during instance creation, a single token is created then reused 6 times; prior to the patch, 7 tokens would have been created by nova.network.neutronv2 per \"nova boot\". However, this scheme is far from optimal. Given that tokens, by default, have a shelf life of 24H, a single token could be shared by _all_ nova.network.neutronv2 calls in a 24-hour period.\n\nThe performance impact of sharing a single neutronv2 admin token is easy to observe when creating a large number of instances in parallel. In this example, I boot 40 instances in parallel, ping them, then delete them. I'm using a 24-core machine with enough RAM and disk throughput to never become bottlenecks. Note that I'm running with multiple keystone-all worker processes (https://review.openstack.org/#/c/42967/). Using the per-thread tokens, the last instance becomes active after 40s and the last instance is deleted after 65s. Using a single shared token, the last instance becomes active after 32s and the last instance is deleted after 60s. During the token-per-thread run, keystone-all processes had 900% CPU utilization (i.e., 9 x 100% of a single core) for the first ~10s, then stayed in the 50-100% range for the rest of the run. In the single token run, the keystone-all processes never exceeded 150% CPU utilization.\n\nI focused on the nova.network.neutronv2 because it created the most tokens during my parallel boot experiment. However there are other excessive token offenders. After fixing nova.network.neutronv2, the leading auth requestors are glance-index and glance-registry due to a high auth cache miss rate. I'm not sure who's creating those new tokens however.", 
+            "date_created": "2013-11-27 16:48:55.293241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pete5"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/58854", 
+            "date_created": "2013-11-27 20:43:07.981392+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Removing milestone since the patch was abandoned.", 
+            "date_created": "2014-03-09 14:58:20.268635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/58854\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5c01b9e618af44640332871757ff613b2f0b66e2\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5c01b9e618af44640332871757ff613b2f0b66e2\nAuthor: Vladik Romanovsky <email address hidden>\nDate:   Wed Mar 26 00:54:19 2014 -0400\n\n    share neutron admin auth tokens\n    \n    Admin tokens in nova.network.neutronv2 were being created once per\n    \"thread\" (i.e., green thread) and shared. For example, during instance\n    creation, a single token was created then reused 6 times.  However,\n    this scheme was far from optimal. Given that tokens, by default, have\n    a shelf life of 24H, a single token can be shared by _all_ admin\n    nova.network.neutronv2 calls in a 24-hour period.\n    \n    DocImpact\n    Signed-Off-By: Peter Feiner <email address hidden>\n    Closes-Bug: 1255594\n    \n    Change-Id: I5c743aa86030e4ab000dcdefb6a7183305512303\n", 
+            "date_created": "2014-05-22 06:11:57.375367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/128650", 
+            "date_created": "2014-10-15 13:33:18.236008+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/128650\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=155664f178c1a38b1a34f6a1756d27d201dbfa1f\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 155664f178c1a38b1a34f6a1756d27d201dbfa1f\nAuthor: Vladik Romanovsky <email address hidden>\nDate:   Wed Mar 26 00:54:19 2014 -0400\n\n    share neutron admin auth tokens\n    \n    Admin tokens in nova.network.neutronv2 were being created once per\n    \"thread\" (i.e., green thread) and shared. For example, during instance\n    creation, a single token was created then reused 6 times.  However,\n    this scheme was far from optimal. Given that tokens, by default, have\n    a shelf life of 24H, a single token can be shared by _all_ admin\n    nova.network.neutronv2 calls in a 24-hour period.\n    \n    DocImpact\n    Signed-Off-By: Peter Feiner <email address hidden>\n    Closes-Bug: 1255594\n    \n    Change-Id: I5c743aa86030e4ab000dcdefb6a7183305512303\n    (cherry picked from commit 5c01b9e618af44640332871757ff613b2f0b66e2)\n", 
+            "date_created": "2014-10-22 01:58:57.427144+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

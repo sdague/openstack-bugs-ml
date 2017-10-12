@@ -1,0 +1,116 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-07-12 19:30:58.396781+00:00", 
+    "description": "On a new 12.10 install following https://wiki.ubuntu.com/SecurityTeam/TestingOpenStack, if I set 'libvirt_type=qemu', restart nova and then try to start an instance, I can see in /var/log/nova/nova-compute.log that it is defaulting to 'kvm' and not 'qemu'. I then end up with the following error:\n2012-07-30 14:55:48 TRACE nova.openstack.common.rpc.amqp libvirtError: internal error no supported architecture for os type 'hvm'\n\nThis might be a problem in libvirt on the host. I noticed that nested=1 for kvm_intel on my host and 'vmx' shows up in 'virsh capabilities' in the openstack guest, but in the guest I am unable to load kvm_intel (bug #1031090). However, the option for overriding with 'libvirt_type=qemu' doesn't seem to work. Also, if I reload the kvm_intel module with nested=0, and start the guest, it correctly does not load the kvm module, but nova incorrectly tries to start guests with <domain type=\"kvm\"> and nova-compute.log shows the same error (\"libvirtError: internal error no supported architecture for os type 'hvm'\").", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1031063", 
+    "owner": "None", 
+    "id": 1031063, 
+    "index": 2993, 
+    "created": "2012-07-30 20:12:47.981696+00:00", 
+    "title": "internal error no supported architecture for os type 'hvm'", 
+    "comments": [
+        {
+            "content": "On a new 12.10 install following https://wiki.ubuntu.com/SecurityTeam/TestingOpenStack, if I set 'libvirt_type=qemu', restart nova and then try to start an instance, I can see in /var/log/nova/nova-compute.log that it is defaulting to 'kvm' and not 'qemu'. I then end up with the following error:\n2012-07-30 14:55:48 TRACE nova.openstack.common.rpc.amqp libvirtError: internal error no supported architecture for os type 'hvm'", 
+            "date_created": "2012-07-30 20:12:47.981696+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "So Daviey tells me that 'libvirt_type=qemu' doesn't necessarily mean --disable-kvm. I think there is a bug in how even if I reload my host's kvm_intel with nested=0 that openstack does not fallback to qemu -disable-kvm, but that is probably not a priority. The bigger issue is that a precise host booting a quantal guest results in the quantal guest being unable to load the kvm_intel module. I'll file another bug for that.", 
+            "date_created": "2012-07-30 21:02:30.325456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "The kernel bug is bug #1031090.", 
+            "date_created": "2012-07-30 21:08:33.701625+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "This may actually be a libvirt bug. Looking at the nova-compute.log, I adjust the uuid and name and have the following xml in /tmp/foo.xml:\n<domain type=\"kvm\">\n  <uuid>3474184f-57c1-49d1-be61-8fe4ccb34682</uuid>\n  <name>foo</name>\n  <memory>524288</memory>\n  <vcpu>1</vcpu>\n  <os>\n    <type>hvm</type>\n    <boot dev=\"hd\"/>\n  </os>\n  <features>\n    <acpi/>\n  </features>\n  <clock offset=\"utc\">\n    <timer name=\"pit\" tickpolicy=\"delay\"/>\n    <timer name=\"rtc\" tickpolicy=\"catchup\"/>\n  </clock>\n  <devices>\n    <disk type=\"file\" device=\"disk\">\n      <driver type=\"qcow2\" cache=\"none\"/>\n      <source file=\"/var/lib/nova/instances/instance-00000012/disk\"/>\n      <target bus=\"virtio\" dev=\"vda\"/>\n    </disk>\n    <interface type=\"bridge\">\n      <mac address=\"fa:16:3e:71:49:da\"/>\n      <model type=\"virtio\"/>\n      <source bridge=\"br100\"/>\n      <filterref filter=\"nova-instance-instance-00000012-fa163e7149da\">\n        <parameter name=\"IP\" value=\"10.0.0.4\"/>\n        <parameter name=\"DHCPSERVER\" value=\"10.0.0.3\"/>\n        <parameter name=\"PROJNET\" value=\"10.0.0.0\"/>\n        <parameter name=\"PROJMASK\" value=\"255.255.255.0\"/>\n      </filterref>\n    </interface>\n    <serial type=\"file\">\n      <source path=\"/var/lib/nova/instances/instance-00000012/console.log\"/>\n    </serial>\n    <serial type=\"pty\"/>\n    <input type=\"tablet\" bus=\"usb\"/>\n    <graphics type=\"vnc\" autoport=\"yes\" keymap=\"en-us\" listen=\"127.0.0.1\"/>\n  </devices>\n</domain>\n\nUsing 'virsh define /tmp/foo.xml' on 12.04 it works. On 12.10 it does not:\n$ virsh define /tmp/foo.xml \nerror: Failed to define domain from /tmp/foo.xml\nerror: internal error no supported architecture for os type 'hvm'\n\nIf I change this:\n<type>hvm</type>\n\nto:\n<type arch='x86_64'>hvm</type>\n\nIt works:\n$ virsh define /tmp/foo.xml \nDomain foo defined from /tmp/foo.xml\n\nIt seems libvirt wants the 'arch' defined when specifying 'hvm'.", 
+            "date_created": "2012-07-30 22:03:19.165628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Adding a libvirt task as I don't know if this is a regression there or if nova needs to be updated to accommodate the change.", 
+            "date_created": "2012-07-30 22:05:10.202702+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "$ virsh define /tmp/foo.xml\nerror: Failed to define domain from /tmp/foo.xml\nerror: internal error no supported architecture for os type 'hvm'\n\n\nThis means that libvirt can't find any way to provide the requested domain configuration.  Since your XML shows you requested KVM, most likely this means that you have not got a KVM binary installed, or /dev/kvm does not exist.\n\nChecking 'virsh capabilities' will show what  ostype/hvtype/arch combinations libvirt has detected. Once you make virsh capabilities show the hvm+kvm+arch combination needed by the XML, then OpenStack should work as expected", 
+            "date_created": "2012-08-06 15:39:18.065533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "@Jamie,\n\ndoes comment #5 resolve the issue?\n", 
+            "date_created": "2012-08-15 15:02:48.568587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "This is my first time installing OpenStack. I am exactly the same issue when I boot a image I downloaded for testing purposes.\n\nI noticed /dev/kvm doesn't exists. Should it? I am running OpenStack from a VBox virtual machinne. The Host is powered with full virtualization capabilities. Here are my logs:\n\n * https://gist.github.com/3374691\n\nI tried to follow steps in:\n\nhttp://www.hastexo.com/resources/docs/installing-openstack-essex-4-ubuntu-1204-precise-pangolin/step-6-your-first-vm\n\nThanks in advance.", 
+            "date_created": "2012-08-17 00:11:09.794561+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jvargas-alkaid"
+        }, 
+        {
+            "content": "@Jonathan: Looks like a different issue, like KVM not installed or your CPU doesn't support virt extensions.\n@Jamie: does comment #5 resolve your issue?", 
+            "date_created": "2012-09-10 13:43:13.547965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "[Expired for nova (Ubuntu) because there has been no activity for 60 days.]", 
+            "date_created": "2012-11-10 04:18:30.563988+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "[Expired for libvirt (Ubuntu) because there has been no activity for 60 days.]", 
+            "date_created": "2012-11-10 04:18:36.377943+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "We cannot solve the issue you reported without more information. Could you please provide the requested information ?", 
+            "date_created": "2012-12-13 10:53:03.970706+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hello!\n\nIt is quite simple to reproduce this error. I can give you the info, if you like. So  far, I've made the following:\n\n1. sudo nano /usr/share/pyshared/nova/virt/libvirt.xml.template, and changed the first line from\n\n<domain type='${type}'>\n\ninto \n\n<domain type='qemu'>\n\n2. sudo service restart nova-compute\n\nAnd now I am able to run Openstack with qemu under VirtualBox.\n\n\n", 
+            "date_created": "2013-02-05 10:03:18.399847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vvbelavin"
+        }, 
+        {
+            "content": "Hi,\n\nAny update / solution on this issue?\n\nI got the same problem as I install OpenStack Grizzly on VM with OS Ubuntu 12.04 (The Host OS is Ubuntu 12.04 as well).\nset libvirt_type=qemu in nova.conf does not work too.\n\nWhen execute virsh capabilities I got...\n\n   .... some information omited...\n  <guest>\n    <os_type>hvm</os_type>\n    <arch name='x86_64'>\n      <wordsize>64</wordsize>\n      <emulator>/usr/bin/qemu-system-x86_64</emulator>\n      <machine>pc-1.0</machine>\n      <machine canonical='pc-1.0'>pc</machine>\n      <machine>pc-0.14</machine>\n      <machine>pc-0.13</machine>\n      <machine>pc-0.12</machine>\n      <machine>pc-0.11</machine>\n      <machine>pc-0.10</machine>\n      <machine>isapc</machine>\n      <domain type='qemu'>\n      </domain>\n    </arch>\n    <features>\n      <cpuselection/>\n      <deviceboot/>\n      <acpi default='on' toggle='yes'/>\n      <apic default='on' toggle='no'/>\n    </features>\n  </guest>\n\nThe domain type is already qemu. I can create VM with virt-manager without any problem.\n\n@To Valeriy,\n   I cannot find libvirt.xml.template in my machine. The libvirt version I installed is 1.0.2 on Ubuntu 12.04. Any suggestion?", 
+            "date_created": "2013-05-21 09:02:54.661412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shedoh"
+        }, 
+        {
+            "content": "@shedoh,\n\nPlease post the full xml for a failing vm.", 
+            "date_created": "2013-05-21 13:59:28.075719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "@ Serge\n\nI write down the process I have tried to solve this issue...\n\nFirst the nova-compute.log show an ERROR as follow...\n\n2013-05-21 16:19:11.230 ERROR nova.compute.manager [req-0e30e53b-8d93-4a0b-b378-672a02d6eb417c0d5d8e458f4580972e14af22e8a6ca 8d6292b82686470bb5a46d3c1a565c03] [instance: 71c40047-8422-4623-aaf0-f06353dfcb75] Error: ['Traceback (most recent call last):\\n', '  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 834, in _run_instance\\n    set_access_ip=set_access_ip)\\n', '  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 1093, in _spawn\\n    LOG.exception(_(\\'Instance failed to spawn\\'), instance=instance)\\n', '  File \"/usr/lib/python2.7/contextlib.py\", line 24, in __exit__\\n    self.gen.next()\\n', '  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 1089, in _spawn\\n    block_device_info)\\n', '  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 1520, in spawn\\n    block_device_info)\\n', '  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 2435, in _create_domain_and_network\\n    domain = self._create_domain(xml, instance=instance)\\n', '  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 2395, in _create_domain\\n    domain = self._conn.defineXML(xml)\\n', '  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 187, in doit\\n    result = proxy_call(self._autowrap, f, *args, **kwargs)\\n', '  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 147, in proxy_call\\n    rv = execute(f,*args,**kwargs)\\n', ' File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 76, in tworker\\n    rv = meth(*args,**kwargs)\\n', '  File \"/usr/lib/python2.7/dist-packages/libvirt.py\", line 2760, in defineXML\\n    if ret is None:raise libvirtError(\\'virDomainDefineXML() failed\\', conn=self)\\n', \"libvirtError: internal error no supported architecture for os type 'hvm'\\n\"]\n\nThen I check the \"/usr/lib/python2.7/dist-packages/libvirt.py\" at line 2760, it is a function in class virConnect\n\n    def defineXML(self, xml):\n        ret = libvirtmod.virDomainDefineXML(self._o, xml)\n        if ret is None:raise libvirtError('virDomainDefineXML() failed', conn=self)\n        __tmp = virDomain(self,_obj=ret)\n        return __tmp\n\nTo output the xml I add some code as follow and restart nova-compute service\n\n    def defineXML(self, xml):\n        # save xml files to a temporary location\n        import __builtin__ as bu\n        f = bu.open(\"/tmp/libvirt.xml\", \"w\")\n        f.write(xml) # Write a string to a file\n        f.close()\n\n        ret = libvirtmod.virDomainDefineXML(self._o, xml)\n        if ret is None:raise libvirtError('virDomainDefineXML() failed', conn=self)\n        __tmp = virDomain(self,_obj=ret)\n        return __tmp\n\nWhen re-create a vm use OpenStack Dashboard, I got the /tmp/libvirt.xml as follow\n\n <domain type=\"kvm\">\n  <uuid>563fab12-f8b3-4689-b9b6-b3ba89c98246</uuid>\n  <name>instance-00000007</name>\n  <memory>524288</memory>\n  <vcpu>1</vcpu>\n  <sysinfo type=\"smbios\">\n    <system>\n      <entry name=\"manufacturer\">OpenStack Foundation</entry>\n      <entry name=\"product\">OpenStack Nova</entry>\n      <entry name=\"version\">2013.1</entry>\n      <entry name=\"serial\">c56740d8-bfbc-db37-fe43-75ba7c50cdb8</entry>\n      <entry name=\"uuid\">563fab12-f8b3-4689-b9b6-b3ba89c98246</entry>\n    </system>\n  </sysinfo>\n  <os>\n    <type>hvm</type>\n    <boot dev=\"hd\"/>\n    <smbios mode=\"sysinfo\"/>\n  </os>\n  <features>\n    <acpi/>\n    <apic/>\n  </features>\n  <clock offset=\"utc\">\n    <timer name=\"pit\" tickpolicy=\"delay\"/>\n    <timer name=\"rtc\" tickpolicy=\"catchup\"/>\n  </clock>\n  <cpu mode=\"host-model\" match=\"exact\"/>\n  <devices>\n    <disk type=\"file\" device=\"disk\">\n      <driver name=\"qemu\" type=\"qcow2\" cache=\"none\"/>\n      <source file=\"/var/lib/nova/instances/563fab12-f8b3-4689-b9b6-b3ba89c98246/disk\"/>\n      <target bus=\"virtio\" dev=\"vda\"/>\n    </disk>\n    <interface type=\"bridge\">\n      <mac address=\"fa:16:3e:dd:b1:94\"/>\n      <model type=\"virtio\"/>\n      <source bridge=\"br-int\"/>\n      <target dev=\"tapcd5492b6-18\"/>\n      <virtualport type=\"openvswitch\">\n        <parameters interfaceid=\"cd5492b6-1835-464a-b705-d5fed0766237\"/>\n      </virtualport>\n    </interface>\n    <serial type=\"file\">\n      <source path=\"/var/lib/nova/instances/563fab12-f8b3-4689-b9b6-b3ba89c98246/console.log\"/>\n    </serial>\n    <serial type=\"pty\"/>\n    <input type=\"tablet\" bus=\"usb\"/>\n    <graphics type=\"vnc\" autoport=\"yes\" keymap=\"en-us\" listen=\"0.0.0.0\"/>\n  </devices>\n</domain>\n\nOne can find the first line (<domain type=\"kvm\">) that it still specify to use KVM rather than Qemu, though I already specify \"libvirt_type=qemu\" in nova.conf. According to #3 @Jamie's post, I found two possible way to solve it.\n1. change the first line to <domain type=\"qemu\">\n2. change the line 16 to <type arch='x86_64'>hvm</type>\n\nFor testing, I have added some code in /usr/lib/python2.7/dist-packages/libvirt.py to change the xml (ex. xml = xml.replace('type=\"kvm\"', 'type=\"qemu\"',1)). Both method works fine.\n\nSo I still do not sure is it the bug of libvirt of Nova?", 
+            "date_created": "2013-05-22 06:04:00.447246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shedoh"
+        }, 
+        {
+            "content": "I just hit this on Ubuntu 12.10 running trunk nova to try and spin up nested kvm VMs:\n\n# virsh capabilities\n<capabilities>\n\n  <host>\n    <uuid>3d39c1b1-7f6a-5536-de6e-c450da2036c8</uuid>\n    <cpu>\n      <arch>i686</arch>\n      <model>qemu32</model>\n      <vendor>Intel</vendor>\n      <topology sockets='1' cores='1' threads='1'/>\n      <feature name='hypervisor'/>\n      <feature name='popcnt'/>\n    </cpu>\n    <power_management>\n      <suspend_mem/>\n      <suspend_disk/>\n      <suspend_hybrid/>\n    </power_management>\n    <migration_features>\n      <live/>\n      <uri_transports>\n        <uri_transport>tcp</uri_transport>\n      </uri_transports>\n    </migration_features>\n    <secmodel>\n      <model>apparmor</model>\n      <doi>0</doi>\n    </secmodel>\n  </host>\n\n  <guest>\n    <os_type>hvm</os_type>\n    <arch name='i686'>\n      <wordsize>32</wordsize>\n      <emulator>/usr/bin/qemu-system-x86_64</emulator>\n      <machine>pc-1.2</machine>\n      <machine>none</machine>\n      <machine canonical='pc-1.2'>pc</machine>\n      <machine>pc-1.1</machine>\n      <machine>pc-1.0</machine>\n      <machine>pc-0.15</machine>\n      <machine>pc-0.14</machine>\n      <machine>pc-0.13</machine>\n      <machine>pc-0.12</machine>\n      <machine>pc-0.11</machine>\n      <machine>pc-0.10</machine>\n      <machine>isapc</machine>\n      <domain type='qemu'>\n      </domain>\n    </arch>\n    <features>\n      <cpuselection/>\n      <deviceboot/>\n      <pae/>\n      <nonpae/>\n      <acpi default='on' toggle='yes'/>\n      <apic default='on' toggle='no'/>\n    </features>\n  </guest>\n\n  <guest>\n    <os_type>hvm</os_type>\n    <arch name='x86_64'>\n      <wordsize>64</wordsize>\n      <emulator>/usr/bin/qemu-system-x86_64</emulator>\n      <machine>pc-1.2</machine>\n      <machine>none</machine>\n      <machine canonical='pc-1.2'>pc</machine>\n      <machine>pc-1.1</machine>\n      <machine>pc-1.0</machine>\n      <machine>pc-0.15</machine>\n      <machine>pc-0.14</machine>\n      <machine>pc-0.13</machine>\n      <machine>pc-0.12</machine>\n      <machine>pc-0.11</machine>\n      <machine>pc-0.10</machine>\n      <machine>isapc</machine>\n      <domain type='qemu'>\n      </domain>\n    </arch>\n    <features>\n      <cpuselection/>\n      <deviceboot/>\n      <acpi default='on' toggle='yes'/>\n      <apic default='on' toggle='no'/>\n    </features>\n  </guest>\n\n</capabilities>\n\n\n2013-05-30 17:19:06,688.688 18123 ERROR nova.compute.manager [req-a6ee869a-1875-4dd1-a832-1311cf208239 8a4a185b7a9f4256\n92145162eef5a8da c82b41ffcf5e4d63bce6d2520b26dbf1] [instance: fd55b74c-48b3-43ee-ad24-f20efaeb2b88] Error: ['Traceback \n(most recent call last):\\n', '  File \"/opt/stack/venvs/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\",\n line 949, in _build_instance\\n    set_access_ip=set_access_ip)\\n', '  File \"/opt/stack/venvs/nova/local/lib/python2.7/\nsite-packages/nova/compute/manager.py\", line 1154, in _spawn\\n    LOG.exception(_(\\'Instance failed to spawn\\'), instan\nce=instance)\\n', '  File \"/usr/lib/python2.7/contextlib.py\", line 24, in __exit__\\n    self.gen.next()\\n', '  File \"/op\nt/stack/venvs/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\", line 1150, in _spawn\\n    block_device_i\nnfo)\\n', '  File \"/opt/stack/venvs/nova/local/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 1534, in s\npawn\\n    block_device_info)\\n', '  File \"/opt/stack/venvs/nova/local/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 2451, in _create_domain_and_network\\n    domain = self._create_domain(xml, instance=instance)\\n', '  File \"/opt/stack/venvs/nova/local/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 2411, in _create_domain\\n    domain = self._conn.defineXML(xml)\\n', '  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 187, in doit\\n    result = proxy_call(self._autowrap, f, *args, **kwargs)\\n', '  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 147, in proxy_call\\n    rv = execute(f,*args,**kwargs)\\n', '  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 76, in tworker\\n    rv = meth(*args,**kwargs)\\n', '  File \"/usr/lib/python2.7/dist-packages/libvirt.py\", line 2539, in defineXML\\n    if ret is None:raise libvirtError(\\'virDomainDefineXML() failed\\', conn=self)\\n', \"libvirtError: internal error no supported architecture for os type 'hvm'\\n\"]\n", 
+            "date_created": "2013-05-30 17:48:43.569717+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "So, this happened because I had misconfigured my guest (not the nested guest) and no virtualization was available. Once I enabled vmx on it, things work fine. Removing myself as \"affected\".", 
+            "date_created": "2013-05-30 22:46:03.781015+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "I know that it's old thread but me helped change line to \"libvirt_type=qemu\" in /etc/nova/nova-compute.conf", 
+            "date_created": "2013-10-25 12:13:53.060039+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pulecp"
+        }, 
+        {
+            "content": "Ran in to the same issue with Ubuntu-12.04. I am trying to set up nova compute in a VM. I wanted to use libvit_type=qemu but i kept getting the error \"hvm not supported\".\nJust when I was about to give up and try to reboot my host with nested virtualization capability, I realized that I was adding\nlibvirt_type=qemu in /etc/nova/nova.conf while I should really be adding it in /etc/nov/nova-compute.conf\n\nDoing that resolved my issue! I can now launch a nested VM using qemu.\nHope this helps someone :-)", 
+            "date_created": "2014-02-26 06:58:17.998939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~somnath-mani"
+        }
+    ]
+}

@@ -1,0 +1,250 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-03-24 16:41:59.829278+00:00", 
+    "description": "impact\n------\n\nany concurrent use of libvirt may lockup libirt\n\ntest case\n---------\n\nuse libvirt concurrently, specifically in nwfilter + createDomain calls. e.g. run devstack-gate against this\n\nregression potential\n--------------------\n\nupstream stable branch update - should be low\n\nWe experienced a series of jenkins rejects starting overnight on Saturday whose root cause is still not quite tracked down yet. However, they all have a couple of things in common:\n\n1) they are the first attempt to use libvir 1.0.6 from havana cloud archive for ubuntu precise\n2) the fails are all related to guests not spawning correctly\n3) the n-cpu log just stops about 1/2 way through the tempest log, making my suspect that we did something to either lockup or hard crash n-cpu\n\nAfter that change went in no devstack/tempest gating project managed to merge a change.\n\nThis needs more investigation, but creating this bug to both reverify against, as well as track down this issue.", 
+    "tags": [
+        "libvirt", 
+        "libvirt1x", 
+        "verification-done"
+    ], 
+    "importance": "High", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1228977", 
+    "owner": "None", 
+    "id": 1228977, 
+    "index": 1247, 
+    "created": "2013-09-23 00:07:25.305418+00:00", 
+    "title": "n-cpu seems to crash when running with libvirt 1.1.1 from ubuntu cloud archive", 
+    "comments": [
+        {
+            "content": "We experienced a series of jenkins rejects starting overnight on Saturday whose root cause is still not quite tracked down yet. However, they all have a couple of things in common:\n\n1) they are the first attempt to use libvir 1.0.6 from havana cloud archive for ubuntu precise\n2) the fails are all related to guests not spawning correctly\n3) the n-cpu log just stops about 1/2 way through the tempest log, making my suspect that we did something to either lockup or hard crash n-cpu\n\nAfter that change went in no devstack/tempest gating project managed to merge a change.\n\nThis needs more investigation, but creating this bug to both reverify against, as well as track down this issue.", 
+            "date_created": "2013-09-23 00:07:25.305418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "On further investigation this isn't actually an n-cpu crash, it's actually a hard lockup of the nova-compute process. At some point it just stops responding, and the process running under devstack is not even ^C killable any more after this. So there is some deadlock introduced by the new packages.", 
+            "date_created": "2013-09-23 16:05:26.551628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "To replicate run an environment with 4 way tempest under testr, it exposes it 100% consistently from my experience.", 
+            "date_created": "2013-09-23 16:06:35.867161+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "nova-compute is sleeping here forever.\nsomebody should wake it up.\n\njian@ubuntu-dev:~/devstack$ ps aux | grep compute\nroot      5365  0.0  0.0  16596  1008 pts/8    S+   Sep24   0:00 sg libvirtd /usr/local/bin/nova-compute --config-file /etc/nova/nova.conf\njian      5367  1.2  1.5 1749052 62356 pts/8   Sl+  Sep24   0:49 /usr/bin/python /usr/local/bin/nova-compute --config-file /etc/nova/nova.conf\njian      5494  0.0  0.0   8104   920 pts/1    S+   00:41   0:00 grep --color=auto compute\njian@ubuntu-dev:~/devstack$ sudo strace -p 5367\nProcess 5367 attached - interrupt to quit\nfutex(0x43d934c, FUTEX_WAIT_PRIVATE, 1, NULL\n", 
+            "date_created": "2013-09-25 04:45:35.157246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Restarting nova-compute, it is blocked at 'self._conn.numOfDomains() == 0:'\n\n(Pdb) bt\n  /usr/lib/python2.7/dist-packages/eventlet/greenthread.py(194)main()\n-> result = function(*args, **kwargs)\n  /opt/stack/nova/nova/openstack/common/service.py(65)run_service()\n-> service.start()\n  /opt/stack/nova/nova/service.py(154)start()\n-> self.manager.init_host()\n  /opt/stack/nova/nova/compute/manager.py(785)init_host()\n-> self._destroy_evacuated_instances(context)\n  /opt/stack/nova/nova/compute/manager.py(541)_destroy_evacuated_instances()\n-> local_instances = self._get_instances_on_driver(context, filters)\n  /opt/stack/nova/nova/compute/manager.py(509)_get_instances_on_driver()\n-> driver_uuids = self.driver.list_instance_uuids()\n  /opt/stack/nova/nova/virt/libvirt/driver.py(725)list_instance_uuids()\n-> for domain_id in self.list_instance_ids():\n> /opt/stack/nova/nova/virt/libvirt/driver.py(700)list_instance_ids()\n-> def list_instance_ids(self):\n(Pdb) n\n> /opt/stack/nova/nova/virt/libvirt/driver.py(701)list_instance_ids()\n-> if self._conn.numOfDomains() == 0:\n(Pdb) n\n", 
+            "date_created": "2013-09-25 07:53:11.734832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "The following script will never end.\n\n#!/usr/bin/env python\n\nimport libvirt\nimport sys\n\nconn = libvirt.openReadOnly(None)\nif conn == None:\n    print 'Failed to open connection to the hypervisor'\n    sys.exit(1)\n\nnum = conn.numOfDomains() # will never return\n", 
+            "date_created": "2013-09-25 07:58:47.581636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "libvirt-bin  1.0.6-0ubuntu4~cloud0\n\nThe following script will never end.\n\n#!/usr/bin/env python\n\nimport libvirt\nimport sys\n\nconn = libvirt.openReadOnly(None)\nif conn == None:\n    print 'Failed to open connection to the hypervisor'\n    sys.exit(1)\n\nnum = conn.numOfDomains() # will never return", 
+            "date_created": "2013-09-25 08:03:45.198742+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Steps to reproduce:\n\nOn a Ubuntu 12.04 server\n\n# use cloud archive havana\nsudo apt-get install ubuntu-cloud-keyring\nsudo su -c \"echo deb http://ubuntu-cloud.archive.canonical.com/ubuntu precise-updates/havana main > /etc/apt/sources.list.d/OS_H_CA.list\"\nsudo apt-get update\n\nsudo apt-get install git\ngit clone https://github.com/openstack-dev/devstack.git\ncd devstack\n./stack.sh # Use default settings by pressing Enter multiple times\n\nsudo apt-get install testrepository\n\n./rejoin-stack.sh\n\n# create multiple screen windows to execute Tempest tests\ncd /opt/stack/tempest\ntestr init\ntestr run --parallel tempest\n\n# switch to the n-cpu window\n# wait unitil it stops logging\n", 
+            "date_created": "2013-09-25 08:24:37.244579+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Status changed to 'Confirmed' because the bug affects multiple users.", 
+            "date_created": "2013-09-25 12:12:32.647018+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "I can't reproduce this by only installing qemu-kvm and libvirt-bin on precise with the cloud-archive.  So it appears to be something which is exacerbated by configuration changes done by devstack.\n\nCan you reproduce this on saucy (which has libvirt 1.1.1)?", 
+            "date_created": "2013-09-25 20:51:21.378170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Today, I created a new Ubuntu 12.04 VM with larger disk(20G).\nAfter tempest created and deleted 641 instances,  it failed to reproduce the bug.\n\nCreated about 440 instances with nova commit 2a3b923 which was merged today or yesterday .\nCreated about 200 instances with nova commit ed8b470 which was merged last Sat.\n\nI will try to reproduce the bug with a smaller disk.", 
+            "date_created": "2013-09-26 08:08:28.060535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "I managed to reproduce it by using a smaller disk for my devstack VM.\n\nThe  backtrace of libvirtd is attached.\n\nLooks like it's related to https://bugzilla.redhat.com/show_bug.cgi?format=multiple&id=929412\n\nI guess I can reproduce the bug by  deleting and creating instances with\nNWFilter configured forever in 4 processes. I will try when I back home.", 
+            "date_created": "2013-09-27 11:23:34.659674+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Please can this be retested using the 1.1.1 version we now have in cloud-archive for Havana.\n\nThanks.", 
+            "date_created": "2013-10-11 10:16:12.172620+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Daniel Berrange is proposing that nova stop supporting libvirt older than 0.9.11 as libvirt should be able to provide pip installable python bindings for libvirt >= 0.9.11. The vast majority of our test slaves run on precise which has libvirt 0.9.8 in the base install. The only sane way for us to support libvirt >= 0.9.11 is to use the cloud archive. Can someone test this with cloud archive's libvirt 1.1.1 so that we can move to it if the problem is solved?\n\nML thread is http://lists.openstack.org/pipermail/openstack-operators/2013-November/003748.html and there is a sister thread at http://lists.openstack.org/pipermail/openstack-dev/2013-November/020172.html.", 
+            "date_created": "2013-11-22 19:14:26.641719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cboylan"
+        }, 
+        {
+            "content": "Worth noting, when running full tempest on an 8GB DevStack VM in both Rackspace and HPCloud with Ubuntu Cloud Archive added to the sources list, I get numerous job failures with corresponding repetitions of this in the console:\n\n  Traceback (most recent call last):\n    File \"tempest/scenario/test_server_basic_ops.py\", line 107, in test_server_basicops\n      self.boot_instance()\n    File \"tempest/scenario/test_server_basic_ops.py\", line 59, in boot_instance\n      instance = self.create_server(create_kwargs=create_kwargs)\n    File \"tempest/scenario/manager.py\", line 412, in create_server\n      self.status_timeout(client.servers, server.id, 'ACTIVE')\n    File \"tempest/scenario/manager.py\", line 304, in status_timeout\n      not_found_exception=not_found_exception)\n    File \"tempest/scenario/manager.py\", line 358, in _status_timeout\n      self.config.compute.build_interval):\n    File \"tempest/test.py\", line 290, in call_until_true\n      if func():\n    File \"tempest/scenario/manager.py\", line 349, in check_status\n      raise exceptions.BuildErrorException(message)\n  BuildErrorException: Server %(server_id)s failed to build and is in ERROR status\n  Details: <Server: scenario-server--tempest-1807499527> failed to get to expected status.                           In ERROR state.\n\nRemoving UCA from the sources list, all tests complete as expected.", 
+            "date_created": "2013-11-25 17:47:08.329793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Anything in the nova-compute logs when this happens?", 
+            "date_created": "2013-11-25 18:02:11.445186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "Probably--I wasn't collecting logs, just confirming whether or not gating is going to break if we reenable UCA. If nobody with nova debugging experience or interest in using UCA/newer libvirt has time to repeat that experiment, I can recreate it and find/attach the service logs some time in the next few days.", 
+            "date_created": "2013-11-25 18:58:04.328879+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I got a few minutes to recreate the failing test run and tarred up the screen-n-*.log files (attached) once it finished.", 
+            "date_created": "2013-11-29 01:43:45.487217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Adding the libvirt log as Chuck requested in IRC just now.", 
+            "date_created": "2013-11-29 02:29:17.700493+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Any progress on this? This is blocking Ceilometer testing.", 
+            "date_created": "2014-01-07 09:27:38.015661+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdanjou"
+        }, 
+        {
+            "content": "Note that we inadvertently \"tested\" libvirt from UCA on all our CI infrastructure today and ran into bug 1266711 (probably related).", 
+            "date_created": "2014-01-07 17:04:31.356995+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I don't think I've managed to reproduce this.  I do get errors, but they seem to be VMS failing to start which is more likely due to other reasons.  I tried to reproduce with the instructions in comment #7, and expected to get libvirt hung to the point that the script in comment #6 would hang.  That never happened.  If my understanding about how it should fail was wrong then please let me know.\n\n(Was trying on a ec2 c3.large precise instance)\n\nI notice that https://bugzilla.redhat.com/show_bug.cgi?format=multiple&id=929412 (from comment #11) is not yet resolved.\n", 
+            "date_created": "2014-01-07 20:21:19.635991+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "ubuntu cloud archive now has libvirt at version 1.1.1 (specifically 1.1.1-0ubuntu8~cloud2). Looking at:\nhttp://ubuntu-cloud.archive.canonical.com/ubuntu/dists/precise-updates/havana/main/binary-i386/Packages", 
+            "date_created": "2014-01-17 19:52:46.315972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/67564/ has logs with libvirt 1.1.1 from UCA \n\nHere is the specific run\n\nhttp://logs.openstack.org/64/67564/4/check/check-tempest-dsvm-full/b076c4f/logs/\n\nHere is the hang in screen-n-cpu.log\n\n2014-01-21 04:15:07.082+0000: 27080: debug : virDomainFree:2406 : dom=0x7f31a4001760, (VM: name=instance-00000049, uuid=1a6453d4-edfc-4884-8d8d-c66d6f36a004)\n2014-01-21 04:15:07.082+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31a4001760\n2014-01-21 04:15:07.082+0000: 27080: debug : virObjectUnref:258 : OBJECT_DISPOSE: obj=0x7f31a4001760\n2014-01-21 04:15:07.082+0000: 27080: debug : virDomainDispose:262 : release domain 0x7f31a4001760 instance-00000049 1a6453d4-edfc-4884-8d8d-c66d6f36a004\n2014-01-21 04:15:07.082+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31f4001f00\n2014-01-21 04:15:07.102+0000: 27080: debug : virDomainFree:2406 : dom=0x7f31a80015f0, (VM: name=instance-00000050, uuid=2c093d29-ad6e-4486-a470-a2fa09a94388)\n2014-01-21 04:15:07.102+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31a80015f0\n2014-01-21 04:15:07.102+0000: 27080: debug : virObjectUnref:258 : OBJECT_DISPOSE: obj=0x7f31a80015f0\n2014-01-21 04:15:07.102+0000: 27080: debug : virDomainDispose:262 : release domain 0x7f31a80015f0 instance-00000050 2c093d29-ad6e-4486-a470-a2fa09a94388\n2014-01-21 04:15:07.102+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31f4001f00\n2014-01-21 04:15:07.112+0000: 27080: debug : virDomainFree:2406 : dom=0x7f31bc001850, (VM: name=instance-00000053, uuid=9199131f-7ae8-4e9e-9065-0b47787180c1)\n2014-01-21 04:15:07.112+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31bc001850\n2014-01-21 04:15:07.112+0000: 27080: debug : virObjectUnref:258 : OBJECT_DISPOSE: obj=0x7f31bc001850\n2014-01-21 04:15:07.112+0000: 27080: debug : virDomainDispose:262 : release domain 0x7f31bc001850 instance-00000053 9199131f-7ae8-4e9e-9065-0b47787180c1\n2014-01-21 04:15:07.112+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31f4001f00\n2014-01-21 04:15:07.112+0000: 27080: debug : virDomainFree:2406 : dom=0x7f31ec001840, (VM: name=instance-00000053, uuid=9199131f-7ae8-4e9e-9065-0b47787180c1)\n2014-01-21 04:15:07.112+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31ec001840\n2014-01-21 04:15:07.112+0000: 27080: debug : virObjectUnref:258 : OBJECT_DISPOSE: obj=0x7f31ec001840\n2014-01-21 04:15:07.112+0000: 27080: debug : virDomainDispose:262 : release domain 0x7f31ec001840 instance-00000053 9199131f-7ae8-4e9e-9065-0b47787180c1\n2014-01-21 04:15:07.112+0000: 27080: debug : virObjectUnref:256 : OBJECT_UNREF: obj=0x7f31f4001f00\n2014-01-21 04:15:07.566+0000: 27080: debug : virNWFilterUndefine:18265 : nwfilter=0x7f31e0001650\n2014-01-21 04:15:07.566+0000: 27080: debug : virNetMessageNew:44 : msg=0x40150c0 tracked=0\n2014-01-21 04:15:07.566+0000: 27080: debug : virNetMessageEncodePayload:373 : Encode length as 92\n2014-01-21 04:15:07.566+0000: 27080: debug : virNetClientSendInternal:1952 : RPC_CLIENT_MSG_TX_QUEUE: client=0x7f31f40049d0 len=92 prog=536903814 vers=1 proc=181 type=0 status=0 serial=5238\n2014-01-21 04:15:07.566+0000: 27080: debug : virNetClientCallNew:1905 : New call 0x3ec8050: msg=0x40150c0, expectReply=1, nonBlock=0\n2014-01-21 04:15:07.566+0000: 27080: debug : virNetClientIO:1714 : Outgoing message prog=536903814 version=1 serial=5238 proc=181 type=0 length=92 dispatch=0x7f31d4001810\n2014-01-21 04:15:07.566+0000: 27080: debug : virNetClientIO:1740 : Going to sleep head=0x7f31d4001810 call=0x3ec8050\n\nThere is no sign of any activity on thread 27080 after that last line\n", 
+            "date_created": "2014-01-21 15:20:48.077386+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "2014-01-21 04:15:07.566+0000: 27080: debug : virNetClientIO:1714 : Outgoing message prog=536903814 version=1 serial=5238 proc=181 type=0 length=92 dispatch=0x7f31d4001810\n2014-01-21 04:15:07.566+0000: 27080: debug : virNetClientIO:1740 : Going to sleep head=0x7f31d4001810 call=0x3ec8050\n\nThe interesting message is the first line here - proc=181 corresponds to\n\n    REMOTE_PROC_NWFILTER_UNDEFINE = 181,\n\nSo this client log shows that Nova issued a virNWFilterUndefine API call, and libvirtd never responded with any completion. Nova hasn't hung, it is just waiting for libvirtd to finish what its doing. The question is what's libvirtd doing.....\n", 
+            "date_created": "2014-01-21 15:55:50.777788+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Unfortunately we can't see what libvirtd is doing because the job lacks the libvirtd logs - we need these two changes deployed to the gate env to capture logs\n\nhttps://review.openstack.org/#/c/65834/\nhttps://review.openstack.org/#/c/61892/", 
+            "date_created": "2014-01-21 16:02:08.649629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Ah ha, I knew I'd seen this kind of thing somewhere before. There is an outstanding, unsolved race condition in libvirt wrt nwfilters that can cause hangs\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=929412", 
+            "date_created": "2014-01-21 16:12:46.661818+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Looking slight further back in the logs before the virNWFilterUndefine API call, I see an attempt to start a guest:\n\n2014-01-21 04:15:07.124+0000: 29622: debug : virDomainCreateWithFlags:9482 : dom=0x7f31a0001900, (VM: name=instance-00000053, uuid=9199131f-7ae8-4e9e-9065-0b47787180c1), flags=0\n\nthe logs show that this never completes. This pretty much confirms that we're hitting that libvirt race condition between parallel domain start / nwfilter changes.\n", 
+            "date_created": "2014-01-21 16:30:12.572291+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "@berrange, Thanks for the quick look. I'll get a run with the server side log and report back here", 
+            "date_created": "2014-01-21 21:30:04.150993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "@berrange, \n\nI've recreated the problem with server side logging enabled. please see libvirtd.txt.gz at the following url:\n\nhttp://logs.openstack.org/64/67564/6/check/check-tempest-dsvm-full/dd0e0de/logs/\n\nThe screen-n-cpu.txt.gz has the client-side logs as usual.", 
+            "date_created": "2014-01-22 16:37:06.380808+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Thanks, that confirms my earlier guess. I've managed to reproduce the scenario locally in a way that openstack would definitely hit. Basically concurrent use of virDomainCreate and virNWFilter{Define,Undefine} is racey and unsafe as it stands. I'm working on a fix.", 
+            "date_created": "2014-01-22 16:55:29.389097+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "FYI libvirt master GIT repo has the fixed and it is being backported to all stable branches. ", 
+            "date_created": "2014-02-04 13:20:16.368136+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I've been able to confirm that the code in 1.1.1-maint libvirt tree works! Please see the last few runs of https://review.openstack.org/#/c/67564/ \n\nCan we please request the UCA team to update the UCA for precise+havana?\n\n'deb http://ubuntu-cloud.archive.canonical.com/ubuntu precise-updates/havana main'\n\nTo be specific, please see the short log - http://libvirt.org/git/?p=libvirt.git;a=shortlog;h=refs/heads/v1.1.1-maint\n\nWe need the following patches from there:\nPush nwfilter update locking up to top level v1.1.1-maint\nAdd a read/write lock implementation\nRemove use of virConnectPtr from all remaining nwfilter...\nDon't pass virConnectPtr in nwfilter 'struct domUpdateC...\nRemove virConnectPtr arg from virNWFilterDefParse*\nDon't ignore errors parsing nwfilter rules\n\n", 
+            "date_created": "2014-02-09 02:47:02.300208+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Based on the newest listed patch being 'Push nwfilter update locking up to top level', and this patch being applied in trusty, i will mark this as fix released in trusty.\n\nI'm testing a saucy package with all the v1.1.1-maint patches applied.\n", 
+            "date_created": "2014-02-10 17:48:48.414051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Can anyone please update the bug description with a brief script to reproduce?", 
+            "date_created": "2014-02-10 18:05:43.814944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Thanks for uploading the fix for this bug report to -proposed.  However, when reviewing the package in -proposed and the details of this bug report I noticed that the bug description is missing information required for the SRU process.  You can find full details at http://wiki.ubuntu.com/StableReleaseUpdates#Procedure but essentially this bug is missing some of the following: a statement of impact, a test case and details regarding the regression potential.  Thanks in advance!", 
+            "date_created": "2014-02-13 23:11:08.583579+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "Could someone please add a test case to the description?", 
+            "date_created": "2014-02-14 18:26:11.775309+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Hi,\n\nI am trying the icehouse precise proposed libvirt 1.2.1\n 'deb http://ubuntu-cloud.archive.canonical.com/ubuntu precise-proposed/icehouse main' \n\nIt looks like the following bug is still present.\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1049391\n\nHere's the trace from devstack-gate:\nhttp://logs.openstack.org/89/74889/4/check/check-tempest-dsvm-full/76baed1/logs/screen-n-cpu.txt.gz?level=TRACE\nhttp://logs.openstack.org/89/74889/4/check/check-tempest-dsvm-full/76baed1/logs/libvirtd.txt.gz\n\nHere's the patch which was supposed to have fixed this problem in libvirt git tree\nhttp://libvirt.org/git/?p=libvirt.git;a=commit;h=0e9373a5c04e5c69a95b6d1cae7cad8456332be7\n\nThanks,\ndims", 
+            "date_created": "2014-02-20 20:55:35.367527+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "libvirt-bin-1.1.1-0ubuntu8.5~cloud0 for precise in cloud-archive has a bug that is preventing the process from starting inside of a xen vm\n\nhttps://bugs.launchpad.net/cloud-archive/+bug/1248025\n", 
+            "date_created": "2014-02-20 22:05:46.576332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~breu"
+        }, 
+        {
+            "content": "Hello Sean, or anyone else affected,\n\nAccepted libvirt into saucy-proposed. The package will build now and be available at http://launchpad.net/ubuntu/+source/libvirt/1.1.1-0ubuntu8.6 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2014-03-06 21:12:40.392268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "Unfortunately the upstream libvirt patches contained a flaw, and required an additional patch to fix the issue\n\nhttps://www.redhat.com/archives/libvir-list/2014-March/msg00501.html\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1066801\n\nThe issue only appears when you have on the order of 20+ VMs being launched in a short period of time, but would definitely affect openstack.", 
+            "date_created": "2014-03-10 11:45:57.938745+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Thanks, Daniel!  I'm pushing a new proposed package with that additional patch.", 
+            "date_created": "2014-03-10 16:24:10.283378+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Hello Sean, or anyone else affected,\n\nAccepted libvirt into saucy-proposed. The package will build now and be available at http://launchpad.net/ubuntu/+source/libvirt/1.1.1-0ubuntu8.7 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2014-03-13 22:02:12.235660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "Could someone please test the package currently in saucy-proposed?\nIf it's not tested soon, it will be superseded by a security update...", 
+            "date_created": "2014-03-25 11:49:14.049784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdeslaur"
+        }, 
+        {
+            "content": "This bug was fixed in the package libvirt - 1.1.1-0ubuntu8.7\n\n---------------\nlibvirt (1.1.1-0ubuntu8.7) saucy-proposed; urgency=medium\n\n  * cherrypick d/p/add-a-mutex-to-serialize-updates-to-firewall from\n    upstream to complete the concurrency issue fix (LP: #1228977)\n\nlibvirt (1.1.1-0ubuntu8.6) saucy-proposed; urgency=medium\n\n  * Cherrypick upstream patches to fix concurrency race (LP: #1228977)\n -- Serge Hallyn <email address hidden>   Mon, 10 Mar 2014 11:22:20 -0500", 
+            "date_created": "2014-03-27 20:03:53.230525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for libvirt has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regresssions.", 
+            "date_created": "2014-03-27 20:04:05.308412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }
+    ]
+}

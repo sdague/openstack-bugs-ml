@@ -1,0 +1,55 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-27 15:59:26.739968+00:00", 
+    "description": "This behavior has been observed on the following platforms:\n\n* Nova Icehouse, Debian 12.04, QEMU 1.5.3, libvirt 1.1.3.5, with the Cinder Icehouse NFS driver, CirrOS 0.3.2 guest\n* Nova Icehouse, Debian 12.04, QEMU 1.5.3, libvirt 1.1.3.5, with the Cinder Icehouse RBD (Ceph) driver, CirrOS 0.3.2 guest\n* Nova master, Debian 14.04, QEMU 2.0.0, libvirt 1.2.2, with the Cinder master iSCSI driver, CirrOS 0.3.2 guest\n\nNova's \"detach_volume\" fires the detach method into libvirt, which claims success, but the device is still attached according to \"virsh domblklist\".  Nova then finishes the teardown, releasing the resources, which then causes I/O errors in the guest, and subsequent volume_attach requests from Nova to fail spectacularly due to it trying to use an in-use resource.\n\nThis appears to be a race condition, in that it does occasionally work fine.\n\nSteps to Reproduce:\n\nThis script will usually trigger the error condition:\n\n\u00a0\u00a0\u00a0\u00a0#!/bin/bash -vx\n\n\u00a0\u00a0\u00a0\u00a0: Setup\n\u00a0\u00a0\u00a0\u00a0img=$(glance image-list --disk-format ami | awk '/cirros-0.3.2-x86_64-uec/ {print $2}')\n\u00a0\u00a0\u00a0\u00a0vol1_id=$(cinder create 1 | awk '($2==\"id\"){print $4}')\n\u00a0\u00a0\u00a0\u00a0sleep 5\n\n\u00a0\u00a0\u00a0\u00a0: Launch\n\u00a0\u00a0\u00a0\u00a0nova boot --flavor m1.tiny --image \"$img\" --block-device source=volume,id=\"$vol1_id\",dest=volume,shutdown=preserve --poll test\n\n\u00a0\u00a0\u00a0\u00a0: Measure\n\u00a0\u00a0\u00a0\u00a0nova show test | grep \"volumes_attached.*$vol1_id\"\n\n\u00a0\u00a0\u00a0\u00a0: Poke the bear\n\u00a0\u00a0\u00a0\u00a0nova volume-detach test \"$vol1_id\"\n\u00a0\u00a0\u00a0\u00a0sudo virsh list --all --uuid | xargs -r -n 1 sudo virsh domblklist\n\u00a0\u00a0\u00a0\u00a0sleep 10\n\u00a0\u00a0\u00a0\u00a0sudo virsh list --all --uuid | xargs -r -n 1 sudo virsh domblklist\n\u00a0\u00a0\u00a0\u00a0vol2_id=$(cinder create 1 | awk '($2==\"id\"){print $4}')\n\u00a0\u00a0\u00a0\u00a0nova volume-attach test \"$vol2_id\"\n\u00a0\u00a0\u00a0\u00a0sleep 1\n\n\u00a0\u00a0\u00a0\u00a0: Measure again\n\u00a0\u00a0\u00a0\u00a0nova show test | grep \"volumes_attached.*$vol2_id\"\n\nExpected behavior:\n\nThe volumes attach/detach/attach properly\n\nActual behavior:\n\nThe second attachment fails, and n-cpu throws the following exception:\n\n\u00a0\u00a0\u00a0\u00a0Failed to attach volume at mountpoint: /dev/vdb\n\u00a0\u00a0\u00a0\u00a0Traceback (most recent call last):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 1057, in attach_volume\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0virt_dom.attachDeviceFlags(conf.to_xml(), flags)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 183, in doit\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0result = proxy_call(self._autowrap, f, *args, **kwargs)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 141, in proxy_call\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0rv = execute(f, *args, **kwargs)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 122, in execute\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0six.reraise(c, e, tb)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 80, in tworker\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0rv = meth(*args, **kwargs)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/usr/local/lib/python2.7/dist-packages/libvirt.py\", line 517, in attachDeviceFlags\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if ret == -1: raise libvirtError ('virDomainAttachDeviceFlags() failed', dom=self)\n\u00a0\u00a0\u00a0\u00a0\u00a0libvirtError: operation failed: target vdb already exists\n\nWorkaround:\n\n\"sudo virsh detach-disk $SOME_UUID $SOME_DISK_ID\" appears to cause the guest to properly detach the device, and also seems to ward off whatever gremlins caused the problem in the first place; i.e., the problem gets much less likely to present itself after firing a virsh command.", 
+    "tags": [
+        "libvirt", 
+        "openstack-version.icehouse", 
+        "volumes"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1452840", 
+    "owner": "None", 
+    "id": 1452840, 
+    "index": 454, 
+    "created": "2015-05-07 18:00:40.824201+00:00", 
+    "title": "libvirt: nova's detach_volume silently fails sometimes", 
+    "comments": [
+        {
+            "content": "This behavior has been observed on the following platforms:\n\n* Nova Icehouse, Debian 12.04, QEMU 1.5.3, libvirt 1.1.3.5, with the Cinder Icehouse NFS driver, CirrOS 0.3.2 guest\n* Nova Icehouse, Debian 12.04, QEMU 1.5.3, libvirt 1.1.3.5, with the Cinder Icehouse RBD (Ceph) driver, CirrOS 0.3.2 guest\n* Nova master, Debian 14.04, QEMU 2.0.0, libvirt 1.2.2, with the Cinder master iSCSI driver, CirrOS 0.3.2 guest\n\nNova's \"detach_volume\" fires the detach method into libvirt, which claims success, but the device is still attached according to \"virsh domblklist\".  Nova then finishes the teardown, releasing the resources, which then causes \n\nThis appears to be a race condition, in that it does occasionally work fine.\n\nSteps to Reproduce:\n\nThis script will usually trigger the error condition:\n\n    #!/bin/bash -vx\n    \n    : Setup\n    img=$(glance image-list --disk-format ami | awk '/cirros-0.3.2-x86_64-uec/ {print $2}')\n    vol1_id=$(cinder create 1 | awk '($2==\"id\"){print $4}')\n    sleep 5\n    \n    : Launch\n    nova boot --flavor m1.tiny --image \"$img\" --block-device source=volume,id=\"$vol1_id\",dest=volume,shutdown=preserve --poll test\n    \n    : Measure\n    nova show test | grep \"volumes_attached.*$vol1_id\"\n    \n    : Poke the bear\n    nova volume-detach test \"$vol1_id\"\n    sudo virsh list --all --uuid | xargs -r -n 1 sudo virsh domblklist\n    sleep 10\n    sudo virsh list --all --uuid | xargs -r -n 1 sudo virsh domblklist\n    vol2_id=$(cinder create 1 | awk '($2==\"id\"){print $4}')\n    nova volume-attach test \"$vol2_id\"\n    sleep 1\n    \n    : Measure again\n    nova show test | grep \"volumes_attached.*$vol2_id\"\n\nExpected behavior:\n\nThe volumes attach/detach/attach properly\n\nActual behavior:\n\nThe second attachment fails, and n-cpu throws the following exception:\n\n    Failed to attach volume at mountpoint: /dev/vdb\n    Traceback (most recent call last):\n        File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 1057, in attach_volume\n         virt_dom.attachDeviceFlags(conf.to_xml(), flags)\n       File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 183, in doit\n         result = proxy_call(self._autowrap, f, *args, **kwargs)\n       File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 141, in proxy_call\n         rv = execute(f, *args, **kwargs)\n       File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 122, in execute\n         six.reraise(c, e, tb)\n       File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 80, in tworker\n         rv = meth(*args, **kwargs)\n       File \"/usr/local/lib/python2.7/dist-packages/libvirt.py\", line 517, in attachDeviceFlags\n         if ret == -1: raise libvirtError ('virDomainAttachDeviceFlags() failed', dom=self)\n     libvirtError: operation failed: target vdb already exists\n\nWorkaround:\n\n\"sudo virsh detach-disk $SOME_UUID $SOME_DISK_ID\" appears to cause the guest to properly detach the device, and also seems to ward off whatever gremlins caused the problem in the first place; i.e., the problem gets much less likely to present itself after firing a virsh command.", 
+            "date_created": "2015-05-07 18:00:40.824201+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "What version of libvirt/qemu used with master nova?", 
+            "date_created": "2015-05-07 18:08:18.082080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Oh nevermind, libvirt 1.2.2 with nova master on debian.  Have you tried testing against newer/latest libvirt/qemu?", 
+            "date_created": "2015-05-07 18:09:52.752974+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Addendum:\n\nI between runs of the test script, clean up with:\n\n    nova delete test ; cinder list | awk '/avail/ {print $2}' | xargs -r cinder delete", 
+            "date_created": "2015-05-07 18:24:11.941829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "No, I'm testing with stock Ubuntu Trusty and devstack with no local.conf, i.e., all defaults, all the time.", 
+            "date_created": "2015-05-07 18:39:56.049267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "In an attempt to gain insight, I altered Nova's detach_volume method to recheck+retry+log indefinitely, to see how many tries it would take for the detach to eventually succeed.\n\nThe answer is, \"never, unless another request comes in on a different greenthread to alter the guest's configuration\".  The test provided script attaches another volume after ten seconds, so after futilely trying to detach the volume (/dev/vdb) for ten seconds, an attach request comes in, succeeds (on /dev/vdc), and unsticks libvirt with regards to detaching the volume, and cleans everything up.", 
+            "date_created": "2015-05-08 17:04:22.287021+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "Automatically discovered version icehouse in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:59:26.136443+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

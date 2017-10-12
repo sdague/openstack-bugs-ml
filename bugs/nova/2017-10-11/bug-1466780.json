@@ -1,0 +1,49 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-02-24 10:51:35.637760+00:00", 
+    "description": "Using a CPU policy of dedicated ('hw:cpu_policy=dedicated') results in vCPUs being pinned to pCPUs, per the original blueprint:\n\n\u00a0\u00a0\u00a0\u00a0http://specs.openstack.org/openstack/nova-specs/specs/kilo/implemented/virt-driver-cpu-pinning.html\n\nWhen scheduling instance with this extra spec, it would be expected that the 'VirtCPUToplogy' object used by 'InstanceNumaCell' objects (which are in turn used by an 'InstanceNumaTopology' object) should bear some reflection on the actual configuration. For example, a VM booted with four vCPUs and the 'dedicated' CPU policy should have NUMA topologies similar to one of the below:\n\n\u00a0\u00a0\u00a0\u00a0VirtCPUTopology(cores=4,sockets=1,threads=1)\n\u00a0\u00a0\u00a0\u00a0VirtCPUTopology(cores=2,sockets=1,threads=2)\n\u00a0\u00a0\u00a0\u00a0VirtCPUTopology(cores=1,sockets=2,threads=2)\n\u00a0\u00a0\u00a0\u00a0...\n\nIn summary, cores * sockets * threads = vCPUs. However, this does not appear to happen.\n\n---\n\n# Testing Configuration\n\nTesting was conducted on a single-node, Fedora 21-based (3.17.8-300.fc21.x86_64) OpenStack instance (built with devstack). The system is a dual-socket, 10 core, HT-enabled system (2 sockets * 10 cores * 2 threads = 40 \"pCPUs\". 0-9,20-29 = node0, 10-19,30-39 = node1). Two flavors were used:\n\n\u00a0\u00a0\u00a0\u00a0openstack flavor create --ram 4096 --disk 20 --vcpus 10 demo.no-pinning\n\n\u00a0\u00a0\u00a0\u00a0openstack flavor create --ram 4096 --disk 20 --vcpus 10 demo.pinning\n\u00a0\u00a0\u00a0\u00a0nova flavor-key demo.pinning set hw:cpu_policy=dedicated hw:cpu_threads_policy=separate\n\n# Results\n\nResults vary - however, we have seen very random assignments like so:\n\nFor a three vCPU instance:\n\n\u00a0\u00a0\u00a0\u00a0(Pdb) p instance.numa_topology.cells[0].cpu_topology\n\u00a0\u00a0\u00a0\u00a0VirtCPUTopology(cores=10,sockets=1,threads=1)\n\nFor a four vCPU instance:\n\n\u00a0\u00a0\u00a0\u00a0VirtCPUTopology(cores=2,sockets=1,threads=2)\n\nFor a ten vCPU instance:\n\n\u00a0\u00a0\u00a0\u00a0VirtCPUTopology(cores=7,sockets=1,threads=2)\n\nThe actual underlying libvirt XML is correct, however:\n\nFor example, for a three vCPU instance:\n\n\u00a0\u00a0\u00a0\u00a0<cputune>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<shares>3072</shares>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<vcpupin vcp='0' cpuset='1'/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<vcpupin vcp='1' cpuset='0'/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<vcpupin vcp='2' cpuset='25'/>\n\u00a0\u00a0\u00a0\u00a0</cputune>\n\nUPDATE(23/06/15): The random assignments aren't actually random (thankfully). They correspond to the number of free cores in the system. The reason they change is because the number of cores is changing (as pinned CPUs deplete resources). However, I still don't think this is correct/logical.", 
+    "tags": [
+        "libvirt", 
+        "numa"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1466780", 
+    "owner": "https://api.launchpad.net/1.0/~stephenfinucane", 
+    "id": 1466780, 
+    "index": 5612, 
+    "created": "2015-06-19 09:00:29.861889+00:00", 
+    "title": "nova libvirt pinning not reflected in VirtCPUTopology", 
+    "comments": [
+        {
+            "content": "Using a CPU policy of dedicated ('hw:cpu_policy=dedicated') results in vCPUs being pinned to pCPUs, per the original blueprint:\n\n    http://specs.openstack.org/openstack/nova-specs/specs/kilo/implemented/virt-driver-cpu-pinning.html\n\nWhen scheduling instance with this extra spec, it would be expected that the 'VirtCPUToplogy' object used by 'InstanceNumaCell' objects (which are in turn used by an 'InstanceNumaTopology' object) should bear some reflection on the actual configuration. For example, a VM booted with four vCPUs and the 'dedicated' CPU policy should have NUMA topologies similar to one of the below:\n\n    VirtCPUTopology(cores=4,sockets=1,threads=1)\n    VirtCPUTopology(cores=2,sockets=1,threads=2)\n    VirtCPUTopology(cores=1,sockets=2,threads=2)\n    ...\n\nIn summary, cores * sockets * threads = vCPUs. However, this does not appear to happen.\n\n---\n\n# Testing Configuration\n\nTesting was conducted on a single-node, Fedora 21-based (3.17.8-300.fc21.x86_64) OpenStack instance (built with devstack). The system is a dual-socket, 10 core, HT-enabled system (2 sockets * 10 cores * 2 threads = 40 \"pCPUs\". 0-9,20-29 = node0, 10-19,30-39 = node1). Two flavors were used:\n\n    openstack flavor create --ram 4096 --disk 20 --vcpus 10 demo.no-pinning\n\n    openstack flavor create --ram 4096 --disk 20 --vcpus 10 demo.pinning\n    nova flavor-key demo.pinning set hw:cpu_policy=dedicated hw:cpu_threads_policy=separate\n\n# Results\n\nResults vary - however, we have seen very random assignments like so:\n\nFor a three vCPU instance:\n\n    (Pdb) p instance.numa_topology.cells[0].cpu_topology\n    VirtCPUTopology(cores=10,sockets=1,threads=1)\n\nFor a four vCPU instance:\n\n    VirtCPUTopology(cores=2,sockets=1,threads=2)\n\nFor a ten vCPU instance:\n\n    VirtCPUTopology(cores=7,sockets=1,threads=2)\n\nThe actual underlying libvirt XML is correct, however:\n\nFor example, for a three vCPU instance:\n\n    <cputune>\n        <shares>3072</shares>\n        <vcpupin vcp='0' cpuset='1'/>\n        <vcpupin vcp='1' cpuset='0'/>\n        <vcpupin vcp='2' cpuset='25'/>\n    </cputune>", 
+            "date_created": "2015-06-19 09:00:29.861889+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stephenfinucane"
+        }, 
+        {
+            "content": "@Stephen Finucane (sfinucan):\n\nSince you are set as assignee, I switch the status to \"In Progress\".", 
+            "date_created": "2015-06-24 15:27:10.382474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Change abandoned by Stephen Finucane (<email address hidden>) on branch: master\nReview: https://review.openstack.org/197129\nReason: Duplicate", 
+            "date_created": "2015-06-30 15:22:43.194117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/197125\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8358936a24cd223046580ddfa3bfb37a943abc91\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8358936a24cd223046580ddfa3bfb37a943abc91\nAuthor: Stephen Finucane <email address hidden>\nDate:   Fri Jun 19 13:43:42 2015 +0100\n\n    Store correct VirtCPUTopology\n    \n    When booting a NUMA-enabled instance, the scheduler generates and\n    stores a meaningless VirtCPUTopology as part of the InstanceNumaCell\n    objects. A correct value is later generated and used in libvirt XML\n    generation but this is not stored. Fix this by skipping the initial\n    generation and storing of the VirtCPUTopology in favour of storing\n    the correctly generated version.\n    \n    Change-Id: Ief4fcdec0e107a233225ebd68207ac6172b3751e\n    Closes-bug: #1466780\n", 
+            "date_created": "2015-08-15 04:53:57.113942+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is not a bug at all but is acutally by design. The NUMA cell CPU topology was meant to carry information about threads that we want to expose to the single cell based on how it was fitted with regards to threading on the host, so that we can expose this information to the guest OS if possible for optimal perf. \n\nThe final topoology exposed to the guest takes this information into account as well as any request for particular topology passed in by the user and decides on the final solution. There is no reason to store this as it will be different for different hosts.\n\nThe code that does instance fitting will use this in case of a migration, which is a problem described in https://bugs.launchpad.net/nova/+bug/1501358. \n\nThe bottom line is - there is really no need to save the topology calculated for the guest - we should revert this patch and mark the bug as invalid.", 
+            "date_created": "2015-09-30 15:15:15.616957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Changed to invalid as the released patch was later reverted, per Nikola's comments.", 
+            "date_created": "2016-02-24 10:51:34.938238+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stephenfinucane"
+        }
+    ]
+}

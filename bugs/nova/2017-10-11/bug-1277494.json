@@ -1,0 +1,49 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:54:08.995366+00:00", 
+    "description": "See http://logs.openstack.org/32/71532/1/gate/gate-tempest-dsvm-full/a90b312/\n\nThe first test to fail is test_rebuild_server_in_stop_state. Sequence of events is:\n\n  1. rebuild with new image id\n  2. wait to transition to SHUTOFF/None\n  3. Test is done, run cleanup operations ...\n  4. Rebuild to old image id\n  5. Wait to hit SHUTOFF/None\n  6. Start the instance again\n\nIt is step 5 we get stuck and time out. We make this transition:\n\n  2014-02-06 22:29:51,724 State transition \"SHUTOFF/rebuilding\" ==> \"SHUTOFF/rebuild_spawning\" after 2 second wait\n\nand never transition to ACTIVE/powering-off ... which suggests we get stuck in spawn() somewhere\n\nThe last log entry for req-60fa2fbb-de78-4379-8ffa-bd0c70f52039 in n-cpu is:\n\n  [instance: a3ac8847-db15-4f5a-b087-5256b54a36f5] Start to_xml\n\nWe never get the corresponding 'End to_xml'\n\nNow ... interestingly, there's a resume operation happening around the same time (req-aeedee18-be57-419e-8775-0af26dd796de) and it fails with:\n\n  \"An error occurred while trying to launch a defined domain with xml:\"\n\nHmm ... also interestingly, there isn't another \"Start to_xml\" in the logs after this one - perhaps the stuck thread is holding a lock.", 
+    "tags": [
+        "libvirt", 
+        "testing"
+    ], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1277494", 
+    "owner": "None", 
+    "id": 1277494, 
+    "index": 1390, 
+    "created": "2014-02-07 12:51:13.807520+00:00", 
+    "title": "Stuck in vm_state SHUTOFF and task_state rebuild_spawning - stuck in to_xml() ?", 
+    "comments": [
+        {
+            "content": "See http://logs.openstack.org/32/71532/1/gate/gate-tempest-dsvm-full/a90b312/\n\nThe first test to fail is test_rebuild_server_in_stop_state. Sequence of events is:\n\n  1. rebuild with new image id\n  2. wait to transition to SHUTOFF/None\n  3. Test is done, run cleanup operations ...\n  4. Rebuild to old image id\n  5. Wait to hit SHUTOFF/None\n  6. Start the instance again\n\nIt is step 5 we get stuck and time out. We make this transition:\n\n  2014-02-06 22:29:51,724 State transition \"SHUTOFF/rebuilding\" ==> \"SHUTOFF/rebuild_spawning\" after 2 second wait\n\nand never transition to ACTIVE/powering-off ... which suggests we get stuck in spawn() somewhere\n\nThe last log entry for req-60fa2fbb-de78-4379-8ffa-bd0c70f52039 in n-cpu is:\n\n  [instance: a3ac8847-db15-4f5a-b087-5256b54a36f5] Start to_xml\n\nWe never get the corresponding 'End to_xml'\n\nNow ... interestingly, there's a resume operation happening around the same time (req-aeedee18-be57-419e-8775-0af26dd796de) and it fails with:\n\n  \"An error occurred while trying to launch a defined domain with xml:\"\n\nHmm ... also interestingly, there isn't another \"Start to_xml\" in the logs after this one - perhaps the stuck thread is holding a lock.", 
+            "date_created": "2014-02-07 12:51:13.807520+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Smells quite similar to bug #1273478 - i.e. deadlock caused by holding a lock while waiting on the async network info operation to complete, and then the async operation tries to take the same lock", 
+            "date_created": "2014-02-07 14:20:59.593423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Seen this again here: http://logs.openstack.org/02/68402/2/gate/gate-tempest-dsvm-full/b4850b1/logs/\n\ne.g.\n\n $> grep '\\(Start\\|End\\) to_xml' screen-n-cpu.txt.gz  | sed 's/\\(.*libvirt.driver\\) .* \\(\\(Start\\|End\\) .*\\)/\\1 \\2/' | cut -c 1-70 | tail -5\n 2014-02-10 10:30:18.457 DEBUG nova.virt.libvirt.driver Start to_xml ne\n 2014-02-10 10:30:18.695 DEBUG nova.virt.libvirt.driver End to_xml xml=\n 2014-02-10 10:30:31.587 DEBUG nova.virt.libvirt.driver Start to_xml ne\n 2014-02-10 10:30:31.797 DEBUG nova.virt.libvirt.driver End to_xml xml=\n 2014-02-10 10:30:47.212 DEBUG nova.virt.libvirt.driver Start to_xml ne\n", 
+            "date_created": "2014-02-10 12:49:13.324909+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Suspect this could be the root cause of many \"Timed out waiting for thing ... to become ACTIVE\" failures - see bug #1254890", 
+            "date_created": "2014-02-10 12:51:26.333278+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Hi\nI couldn't reproduce this problem again with my env.\nvif_driver = nova.virt.libvirt.vif.LibvirtGenericVIFDriver\nvirt_type = qemu\nhttp://paste.openstack.org/show/84454/\nI either couldn't paste compute log because it's too big to paste http://paste.openstack.org/ .\nBut I could watch set of Start and End to_xml process log.\n\nDoes this still happen?\n", 
+            "date_created": "2014-06-19 05:44:26.561564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~h-tanizawa"
+        }, 
+        {
+            "content": "I believe this has been fixed with upgrades to trusty and newer libvirt. please reopen if needed.", 
+            "date_created": "2014-09-06 23:58:07.208566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ]
+}

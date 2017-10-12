@@ -1,0 +1,176 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-05-17 05:51:10.527985+00:00", 
+    "description": "During migration of  an instance, using block migration with a floating IP when the router is DVR the connection to the instance breaks (e.g. Having an SSH connection to the instance).\nReconnect to the instance is successful.\n\nVersion\n======\nRHEL 7.1\npython-nova-2015.1.0-3.el7ost.noarch\npython-neutron-2015.1.0-1.el7ost.noarch\n\nHow to reproduce\n==============\n1. Create a distributed router and attach an internal and an external network to it.\n    # neutron router-create --distributed True router1\n    # neutron router-interface-add router1 <subnet1 id>\n    # neutron router-gateway-set <external network id>\n\n2. Launch an instance and associate it with a floating IP.\n    # nova boot --flavor m1.small --image fedora --nic net-id=<internal network id> vm1\n\n3. SSH into the instance which will be migrated and run a command \"while true; do echo \"Hello\"; sleep 1; done\"\n\n4. Migrate the instance using block migration \n     # nova live-migration --block-migrate <instance id>\n\n5. Verify that the connection to the instance is lost.", 
+    "tags": [
+        "l3-dvr-backlog", 
+        "live-migration", 
+        "network", 
+        "neutron"
+    ], 
+    "importance": "High", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1456073", 
+    "owner": "https://api.launchpad.net/1.0/~swaminathan-vasudevan", 
+    "id": 1456073, 
+    "index": 1747, 
+    "created": "2015-05-18 07:18:45.390591+00:00", 
+    "title": "Connection to an instance with floating IP breaks during block migration when using DVR", 
+    "comments": [
+        {
+            "content": "During migration of  an instance, using block migration with a floating IP when the router is DVR the connection to the instance breaks (e.g. Having an SSH connection to the instance).\nReconnect to the instance is successful.\n\nVersion\n======\nRHEL 7.1\npython-nova-2015.1.0-3.el7ost.noarch\npython-neutron-2015.1.0-1.el7ost.noarch\n\nHow to reproduce\n==============\n1. Create a distributed router and attach an internal and an external network to it.\n    # neutron router-create --distributed True router1\n    # neutron router-interface-add router1 <subnet1 id>\n    # neutron router-gateway-set <external network id>\n\n2. Launch an instance and associate it with a floating IP.\n    # nova boot --flavor m1.small --image fedora --nic net-id=<internal network id> vm1\n\n3. SSH into the instance which will be migrated and run a command \"while true; do echo \"Hello\"; sleep 1; done\"\n\n4. Migrate the instance using block migration \n     # nova live-migration --block-migrate <instance id>\n\n5. Verify that the connection to the instance is lost.", 
+            "date_created": "2015-05-18 07:18:45.390591+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itzikb1"
+        }, 
+        {
+            "content": "I think the reason is that after a VM live-migration from compute node A to compute node B, the l2 agent in compute node B need a little time to scan this port and get its info from neutron-server through RPC, so the connection will break", 
+            "date_created": "2015-09-08 12:16:01.697305+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shihanzhang"
+        }, 
+        {
+            "content": "Right now we don't have any pre-live-migration event notification from the NOVA to the NEUTRON, in order for Neutron to take necessary action to pre-emptively deploy the router and the additional hooks.\n\nWe need to have a Nova to Neutron handshake on pre-live-migration and when the Neutron notifies the nova with a success message, then nova should migrate.\nOtherwise we will be seeing this problem.\n", 
+            "date_created": "2015-11-21 01:12:57.381645+00:00", 
+            "author": "https://api.launchpad.net/1.0/~swaminathan-vasudevan"
+        }, 
+        {
+            "content": "Able to reproduce the issue only with a DVR router.  \nMarking this bug as confirmed.", 
+            "date_created": "2015-11-25 20:01:49.121564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hardik-italia"
+        }, 
+        {
+            "content": "I'm not sure that waiting on pre live migration step for neutron to schedule and apply DVR router on destination node would help to avoid connection loss: with legacy routers floating ips are actually assigned on controllers and this doesn't change when migrating. In DVR case floating ip is actually reassigned from one compute to another during migration.", 
+            "date_created": "2015-12-03 08:53:23.805440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~obondarev"
+        }, 
+        {
+            "content": "SSH is based on TCP, so the connection breaks only if the the disruption is so long to cause a timeout. I wonder if extending the timeout would allow us to see no perceived application disruption. If that was the case, then yes...this is most likely affected by the fact that it takes time for Neutron to react to the live migration event and reprovision resources on the landing host.\n\n@Oleg: Ensuring that DVR namespaces are on the 'landing' host before the VM gets actually migrated (what Swami is referring to as 'pre-live-migration-step') would indeed help the DVR case, because that's instrumental for the floating IP traffic to flow through the VM's fixed IP. Wouldn't you agree?", 
+            "date_created": "2015-12-04 23:51:05.336654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "I do believe this needs some extra coordination with Nova, but I don't quite have the full state machine picture of the live migration action.", 
+            "date_created": "2015-12-04 23:52:46.052377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "@Armando, I'm sure it will improve things if we wait while dvr namespaces are created on the destination host, I'm just not sure it would be enough to avoid connection loss. Anyway it's worth a try", 
+            "date_created": "2015-12-16 15:31:13.587127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~obondarev"
+        }, 
+        {
+            "content": "Some questions about floating ip migration which I think are worth discussing within neutron team before starting a cross-project discussion on this: \n - what is the right time for a floating ip to be created on destination host, if there is any for DVR scenario? \n - on pre migration step Floating IP should be active on the source host where VM is still located, so we can't prepare everything on destination host on pre migration (even if nova would wait for it). Or can we? \n - can we have same Floating IP on two nodes at the same time and what are side effects? \n - if we can will it (how will it) help to not loose ssh connection during live migration?\n - if we can't what is the right moment for floating ip transition? \n - if we have a notification from nova to neutron at the right moment (when VM is actually \"migrating\" to the destination) will it still be enough to preserve ssh connection? (in this case neutron server should notify l3 agent and agent needs to process the router, which currently means going back to server for router info)", 
+            "date_created": "2015-12-18 10:09:08.306149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~obondarev"
+        }, 
+        {
+            "content": "Oleg in my opinion, the right time to create the floatingip infrastructure would be before the vm actually migrates and is planning to migrate.\n\n1. If we get the \"future_host\" for migration information from the nova, we can prepare the host for the fip migration. \n", 
+            "date_created": "2015-12-18 18:04:43.170566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~swaminathan-vasudevan"
+        }, 
+        {
+            "content": "Oleg in my opinion, the right time to create the floatingip infrastructure would be before the vm actually migrates and is planning to migrate.\n\n1. If we get the \"future_host\" for migration information from the nova, we can prepare the host for the fip migration - like\n       Create Router namespace\n       Create FIP namespace\n       Associate the Router and FIP Namespace.\n      I have made some headway with this on this patch.\n     https://review.openstack.org/#/c/259171/\n\n2. In order for this to be there, we have to track the port with respect to the \"old_host\",  \"cur_host\" and \"new_host\" or \"future_host\".\n   For this I would suggest that we make changes to the port-binding table to handle all \"host\"    changes.\n  In this case the old_host and the cur_host can be the same. The new_host denotes where the port is intended to move. Once we get this information, the server can pre-populate the details and send it to the agent to create the fip namespace.\n  In order to address this I have already created a patch.\n  https://review.openstack.org/#/c/259299/\n\n3. The thing that we need more should we need to have a different type of \"event_notifier\" such as \"MIGRATE_START\" or \"MIGRATE_END\" for the port, or else are we going to make use of the same \"UPDATE_PORT\", \"BEFORE_UPDATE\" for this. -- This should be considered.\n\n4. With all this infrastructure, when \"NOVA\" provides us a notification before \"pre-migration\" to setup the L3, then we can go ahead and create it. \n\n5. If there are any other issues on the neutron side, we can notify 'NOVA\" that network-is-not-ready for migration and NOVA should take necessary action.\n\n6. If everything is fine, we send a \"OK\" message, and NOVA will proceed with the migration.\n\n7. If NOVA errors out, it should send a reply back to us and about its state and we should revert the state on our side.\n\nPlease let me know if you have any other questions.\n\n     ", 
+            "date_created": "2015-12-18 18:13:16.113475+00:00", 
+            "author": "https://api.launchpad.net/1.0/~swaminathan-vasudevan"
+        }, 
+        {
+            "content": "Here is the event flow diagram between Nova and Neutron for Notification on Live Migration.\n\nhttps://drive.google.com/file/d/0B4kh-7VVPWlPZkpHMExMMHBYTTA/view?usp=sharing\n", 
+            "date_created": "2015-12-21 02:50:46.895089+00:00", 
+            "author": "https://api.launchpad.net/1.0/~swaminathan-vasudevan"
+        }, 
+        {
+            "content": "Nova already has a method to set up networks on the destination host during the pre -live migration phase. See the pre_live_migrate() method in nova/compute/manager.py.\n\nFor neutron the pre_live_migrate() method is empty - but for nova networking it is used to setup the networks on the destination in advance of the migration. I think this method should be defined to call neutron to set up the networks as you want for DVR. So long as this is not a very long operation it woud be appropriate for nova to block at this point waiting for the network setup to be done.\n\nIf the pre_live_migration() method throws an exception the migration is roled back. I think that would provide all that is needed for the nova side. ", 
+            "date_created": "2016-01-06 14:15:24.696774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Oops, correction to above comment:\n\nThe pre_live_migration() method calls setup_networks_on_host() in nova's internal network api. It is the version of that method in the api specialised for neutron that is empty. The nova network version of that method does something.\n\nWe need to populate setup_networks_on_host() with code that will call neutron. That method is in the file: nova/network/neutronv2/api.py", 
+            "date_created": "2016-01-06 14:38:33.358273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Paul thanks for your suggestions. \nSeems more promising.\n", 
+            "date_created": "2016-01-06 22:12:32.627858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~swaminathan-vasudevan"
+        }, 
+        {
+            "content": "Paul I was just looking at the \"setup_networks_on_host\"  in the nova/network/neutronv2/api.py. That is where the api is not implemented.\n\nDo you still think it should be handled through an API instead of a notifier.\nWe don't expose today the network readiness through an API, but instead of an API it would be better if there is a notifier message similar to the one that we have from Neutron to Nova and that would be more clean.\n\nPlease let me know your thoughts.", 
+            "date_created": "2016-01-07 19:28:44.519982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~swaminathan-vasudevan"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/275073", 
+            "date_created": "2016-02-02 08:45:45.430761+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/275420", 
+            "date_created": "2016-02-02 21:45:06.086659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Swaminathan Vasudevan (<email address hidden>) on branch: master\nReview: https://review.openstack.org/259299\nReason: Abandon this patch, since I have an alternate one to address the same issue.", 
+            "date_created": "2016-02-10 01:13:23.274138+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is not a regression in mitaka, it's just a latent bug for a feature that's already existed.", 
+            "date_created": "2016-03-14 16:58:53.015625+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/275420\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=f0bdb798fa14b7bd5649d98789e71803127dd9f7\nSubmitter: Jenkins\nBranch:    master\n\ncommit f0bdb798fa14b7bd5649d98789e71803127dd9f7\nAuthor: Swaminathan Vasudevan <email address hidden>\nDate:   Tue Feb 2 12:44:16 2016 -0800\n\n    DVR:Pro-active router creation with live migration\n    \n    Today DVR routers are created after a dvr service port is\n    seen on a given node. But in the case of instance live\n    migration, the creation of l3 routed networks on the\n    destination node is delayed since we react to the event.\n    \n    This patch tries to proactively create routers on the\n    destination node based on the portbinding profile info\n    updated by the nova when the instance is on a pre-migration\n    state.\n    \n    Nova calls setup_network_on_host during the pre-migration\n    phase and we update the portbinding profile dict with\n    an attribute 'migrating_to' as shown below\n    \n    port:{'binding:profile':{'migrating_to': 'host'}}\n    \n    where 'host' points to the 'destination' of the port.\n    \n    L3 plugin will verify the migration profile for the port on\n    any port update and then take action to create routers in the\n    respective agents if routers have not been created.\n    \n    If the live migration fails or if reverted, then the port\n    binding profile attribute 'migrating_to' will be cleared from\n    the port profile. In this case, the router and the fip namespace\n    may be created on the destination node, but since the VM did\n    not land on the destination node, it would not cause any issues,\n    since the traffic will still be flowing out from the origination\n    node, except for the existence of the router and fip namespace.\n    \n    For some reason if the creation of the router namespace and fip\n    namespace fails, then the live migration may still proceed as\n    it is now and the agent will create the router namespace and fip\n    namespace reactively.\n    \n    The case were we report status back to Nova and Nova reacting\n    to the setup_networks_on_host status will be handled in the\n    upcoming release.\n    \n    This patch should not affect any upgrades with respect to the\n    agent or server.\n    \n    Change-Id: Ibb62f012333cfdfd468bafdc0b4501aa46b4b54d\n    Related-Bug: #1456073\n", 
+            "date_created": "2016-03-15 11:14:30.069940+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/260738\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=c04587110fef24c189d439bacbbbc7105085cbe1\nSubmitter: Jenkins\nBranch:    master\n\ncommit c04587110fef24c189d439bacbbbc7105085cbe1\nAuthor: Swaminathan Vasudevan <email address hidden>\nDate:   Tue Dec 22 13:40:33 2015 -0800\n\n    DVR: Agent side change for live migration with floatingip\n    \n    During live migration when an instance is in a pre-migration\n    state, and if the fixed_ip of the port has an associated\n    floatingip, the floatingip namespace should be created in\n    the destination node, before the VM instance lands on the\n    node.\n    \n    The server side code will handle the pre-live migration case\n    and initiate the router creation on the destination node and\n    also will provide the 'dest_host' as an additional attribute to\n    the floatingips dictionary that is being passed to the agent.\n    \n    So this patch reads the 'dest_host' and the 'host' variable\n    and if any of the two matches with the host, it will allow\n    the floatingip to be processed.\n    \n    This will be an agent side change for addressing the vm\n    migration with Floatingip enabled.\n    \n    Closes-Bug: #1456073\n    Change-Id: Idfbea7f3c66d6a1df5d3050912d620591c69b614\n", 
+            "date_created": "2016-03-15 11:16:33.182715+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/292916", 
+            "date_created": "2016-03-15 14:38:22.995814+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/292916\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=ccbef43f5bd1f7c393d7ccc90e2ba79f42f3e1e6\nSubmitter: Jenkins\nBranch:    master\n\ncommit ccbef43f5bd1f7c393d7ccc90e2ba79f42f3e1e6\nAuthor: Armando Migliaccio <email address hidden>\nDate:   Tue Mar 15 07:31:39 2016 -0700\n\n    Improve release notes for dvr fixes\n    \n    Change-Id: Ida1165add974207a4ea25696d26e1daae7914288\n    Related-bug: #1456073\n", 
+            "date_created": "2016-03-16 01:16:18.196004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/neutron 8.0.0.0rc1 release candidate.", 
+            "date_created": "2016-03-16 16:59:05.340595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I believe Live migration fixes are a priority for Mitaka", 
+            "date_created": "2016-03-17 09:09:39.775774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Live migration is a priority, but this is an old latent bug and we could consider backporting the fix as long as there aren't RPC API changes required, which I don't think there are.", 
+            "date_created": "2016-03-17 16:01:14.070834+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/275073\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=55f3d476a12dce8a70d3e485f0f2f9c752cf0b3d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 55f3d476a12dce8a70d3e485f0f2f9c752cf0b3d\nAuthor: Swaminathan Vasudevan <email address hidden>\nDate:   Tue Feb 2 00:35:24 2016 -0800\n\n    Implement setup_networks_on_host for Neutron networks\n    \n    setup_networks_on_host has not been implemented for\n    neutron networks and only implemented for nova net.\n    \n    In order to address the L3 network issues related to the\n    live-migration in neutron, 'setup_networks_on_host' should\n    be implemented in the neutronv2/api.\n    \n    This patch implements the function and updates the portbinding\n    profile dictionary with the 'migrating_to' key pointing to the\n    destination host in pre-live migration phase.\n    \n    port:{'binding:profile':{'migrating_to': 'host'}}\n    \n    When migrate_instance_finish() is called, it should clear\n    the migration profile before binding the host to the destination\n    port to prevent neutron from taking any action when the port-update\n    happens after the port migrates.\n    \n    Based on the port profile update with the destination host,\n    the neutron will be able to create any associated L3 networks\n    on the destination host.\n    \n    Further work is planned to issue a status update notification\n    to nova during the pre-live migration phase after the\n    L3 networks have been created on the destination host and\n    before the port lands on the destination host. This will\n    be addressed in a different patch, since we don't have such\n    wait state in nova at this time.\n    \n    The neutron side changes are handled in different patch sets shown\n    below [1] server side and [2] agent side.\n    \n    [1] https://review.openstack.org/#/c/275420/\n    [2] https://review.openstack.org/#/c/260738/\n    \n    NOTE: Older versions of neutron may ignore the new port binding\n    migrating profile information.\n    \n    Change-Id: Ib1cc44bf9d01baf4d1f1d26c2a368a5ca7c6ab68\n    Partial-Bug: #1456073\n", 
+            "date_created": "2016-09-08 11:54:11.356784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/367646", 
+            "date_created": "2016-09-08 21:51:53.381226+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Lee Yarwood (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/367646\nReason: Hello Swaminathan,\n\nstable/mitaka has now entered phase II support [1][2], only accepting critical bugfixes and security patches. As this review does not meet these criteria it is being abandoned at this time.\n\nHowever please reopen this review if you feel it is still suitable for stable/mitaka and the nova-stable-maint team will revisit this decision.\n\n[1] http://docs.openstack.org/project-team-guide/stable-branches.html#support-phases\n[2] https://releases.openstack.org/#release-series", 
+            "date_created": "2016-12-01 14:43:04.429133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The fix for this was merged in Newton. Marking as Fix Released.", 
+            "date_created": "2017-05-17 05:51:09.825315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }
+    ]
+}

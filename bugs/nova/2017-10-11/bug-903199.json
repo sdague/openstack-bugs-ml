@@ -1,0 +1,98 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2012-03-08 14:46:02.672082+00:00", 
+    "description": "I have noticed a trend in nova-networking where it seems to leak memory over time and then eventually stops responding or processing messages from RabbitMQ.\n\nStracing the process doesn't reveal anything enlightening. Please let me know if I can provide any further information?\n\nStopping and starting nova-network seems to be a work-around for this bug (despite LP#785955).\n\n= Process information =\n\n$ ps axfuwww | grep nova-network\nnova     27939  0.0  0.0  45824   580 ?        Ss   Nov30   0:00 su -c nova-network --flagfile=/etc/nova/nova.conf nova\nnova     27940  9.1 23.1 4730344 1416820 ?     Dl   Nov30 1566:29  \\_ /usr/bin/python /usr/bin/nova-network --flagfile=/etc/nova/nova.conf\n\n$ sudo strace -p 27940\nProcess 27940 attached - interrupt to quit\n\nSwapped (from /proc/27940/smaps):\n2788140 kB - 27940 (nova-network)\n\n$ sudo rabbitmqctl list_queues | grep -E '^network'\nnetwork.cc  3056\n\n= System Information =\n\n$ cat /etc/lsb-release \nDISTRIB_ID=Ubuntu\nDISTRIB_RELEASE=11.10\nDISTRIB_CODENAME=oneiric\nDISTRIB_DESCRIPTION=\"Ubuntu 11.10\"\n\n$ dpkg-query --show nova-network\nnova-network    2011.3-0ubuntu6.2", 
+    "tags": [
+        "canonistack"
+    ], 
+    "importance": "High", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/903199", 
+    "owner": "https://api.launchpad.net/1.0/~johannes.erdfelt", 
+    "id": 903199, 
+    "index": 538, 
+    "created": "2011-12-12 13:33:36.677928+00:00", 
+    "title": "nova-network leaks memory overtime and eventually stops responding", 
+    "comments": [
+        {
+            "content": "I have noticed a trend in nova-networking where it seems to leak memory over time and then eventually stops responding or processing messages from RabbitMQ.\n\nStracing the process doesn't reveal anything enlightening. Please let me know if I can provide any further information?\n\nStopping and starting nova-network seems to be a work-around for this bug (despite LP#785955).\n\n= Process information =\n\n$ ps axfuwww | grep nova-network\nnova     27939  0.0  0.0  45824   580 ?        Ss   Nov30   0:00 su -c nova-network --flagfile=/etc/nova/nova.conf nova\nnova     27940  9.1 23.1 4730344 1416820 ?     Dl   Nov30 1566:29  \\_ /usr/bin/python /usr/bin/nova-network --flagfile=/etc/nova/nova.conf\n\n$ sudo strace -p 27940\nProcess 27940 attached - interrupt to quit\n\nSwapped (from /proc/27940/smaps):\n2788140 kB - 27940 (nova-network)\n\n$ sudo rabbitmqctl list_queues | grep -E '^network'\nnetwork.cc  3056\n\n= System Information =\n\n$ cat /etc/lsb-release \nDISTRIB_ID=Ubuntu\nDISTRIB_RELEASE=11.10\nDISTRIB_CODENAME=oneiric\nDISTRIB_DESCRIPTION=\"Ubuntu 11.10\"\n\n$ dpkg-query --show nova-network\nnova-network    2011.3-0ubuntu6.2", 
+            "date_created": "2011-12-12 13:33:36.677928+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "Added nova config below:\n\n--dhcpbridge_flagfile=/etc/nova/nova.conf\n--dhcpbridge=/usr/bin/nova-dhcpbridge\n--logdir=/var/log/nova\n--state_path=/var/lib/nova\n--lock_path=/var/lock/nova\n--default_log_levels=DEBUG\n--my_ip=172.16.58.1\n--rabbit_host=172.16.58.1\n--sql_connection=mysql://user:pass@172.16.58.1/nova\n--glance_api_servers=172.16.58.1:9292\n--network_manager=nova.network.manager.FlatDHCPManager\n--network_size=256\n--public_interface=eth1\n--flat_interface=eth0\n--bridge=br100\n--fixed_range=172.16.60.0/24\n--flat_network_dhcp_start=172.16.60.3\n--floating_range=172.16.93.64/26\n--use_deprecated_auth\n--force_dhcp_release=True\n--iscsi_helper=tgtadm\n--verbose\n", 
+            "date_created": "2011-12-12 14:05:30.881047+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "There are some errors or warning in the rabbitmq log file?", 
+            "date_created": "2011-12-13 09:56:49.395101+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "@Andrea:\n\nThere are no warnings or errors in the 5352264 line rabbitmq log file that do not match the below regular expressions:\n\n^\\s*$\n^=INFO REPORT==== [0-9]+-[A-Za-z]{3}-[0-9]{2}::[0-9]{2}:[0-9]{2}:[0-9]{2} ===$\n^accepted TCP connection on [::]:5672 from [0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}:[0-9]+$\n\nNote that the compute nodes were processing messages from nova-api and nova-scheduler from the same rabbitmq instance while nova-network was not responding. This accounts for the ~3000 message (and growing) network queue that I discovered.", 
+            "date_created": "2011-12-13 10:55:56.568939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "I have been using Meliae to monitor memory usage in nova-network.\nThe process accumulates objects which are never recovered by the garbage collector. They are _DummyThread objects, and they are created and documented in the Python threading.py module.\n \nEach of these objects accounts for about 6KB of memory. In a simple test on Nova, creating a new instance and IP every 5 minutes, several hundred _DT objects accumulated during an overnight run. The pragmatic approach is to restart the process when the resident memory usage becomes significant.\n\nThe root cause is that certain operations are attempted from within eventlets which make a call to threading.current_thread(). The behaviour is demonstrated (not by myself) here:\nhttps://gist.github.com/1346749/\n\nThe operations I have identified which do this are:\n\n1.  The lockfiles.synchronize decorator\n2.  logging.LogRecord.__init__\n3.  threading._after_fork which I think gets called back from C after subprocess.Popen.\n\nIt is possible to monkey-patch the first two, but the third is more difficult. The design of the Python standard libraries are not at fault here.\n\nMy feeling is that some re-engineering of Nova is needed, to lighten the load on the wsgi eventlet pool (string processing and low latency look-ups only there) and to hand over more involved operations to another subsystem which deals with lengthy tasks and subprocesses.\n\nThis would enable a clearer separation of concerns in the HA environment.", 
+            "date_created": "2012-01-11 13:51:10.426184+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dave-haynes"
+        }, 
+        {
+            "content": "Hey Dave,\n\nThere is a potential patch for eventlet.  Can you see if this patch stops the memory leak:\n\nhttps://bitbucket.org/gholt/eventlet/changeset/9f3b81131ae9", 
+            "date_created": "2012-01-11 17:39:40.526724+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Hi Vish,\n\nWill do. Results early tomorrow.\n", 
+            "date_created": "2012-01-12 09:20:08.623186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dave-haynes"
+        }, 
+        {
+            "content": "A few hours' test shows that this patch is effective in preventing the accumulation of _DummyThread objects.\n\nThe memory footprint does still increase over time. At the moment, I think this is due to SQLAlchemy keeping hold of InstanceState objects. Some of the SQLA caching has an upper limit, but we will need to monitor this.\n\nTo go back to eventlet though. Vish, what side-effects can we expect from this patch? Does it not have the potential to change the synchronisation between eventlets; during locking, logging, or waiting on subprocesses?", 
+            "date_created": "2012-01-12 15:20:12.754653+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dave-haynes"
+        }, 
+        {
+            "content": "Dave,\n\nI don't know the implications, because gholt never followed up with submitting it upstream with tests, etc.  Seems like we should try and submit it and see what the eventlet maintainers have to say.\n\nVish\n\nOn Jan 12, 2012, at 1:20 AM, Dave Haynes wrote:\n\n> Hi Vish,\n> \n> Will do. Results early tomorrow.\n> \n> -- \n> You received this bug notification because you are subscribed to\n> OpenStack Compute (nova).\n> https://bugs.launchpad.net/bugs/903199\n> \n> Title:\n>  nova-network leaks memory overtime and eventually stops responding\n> \n> Status in OpenStack Compute (Nova):\n>  Confirmed\n> \n> Bug description:\n>  I have noticed a trend in nova-networking where it seems to leak\n>  memory over time and then eventually stops responding or processing\n>  messages from RabbitMQ.\n> \n>  Stracing the process doesn't reveal anything enlightening. Please let\n>  me know if I can provide any further information?\n> \n>  Stopping and starting nova-network seems to be a work-around for this\n>  bug (despite LP#785955).\n> \n>  = Process information =\n> \n>  $ ps axfuwww | grep nova-network\n>  nova     27939  0.0  0.0  45824   580 ?        Ss   Nov30   0:00 su -c nova-network --flagfile=/etc/nova/nova.conf nova\n>  nova     27940  9.1 23.1 4730344 1416820 ?     Dl   Nov30 1566:29  \\_ /usr/bin/python /usr/bin/nova-network --flagfile=/etc/nova/nova.conf\n> \n>  $ sudo strace -p 27940\n>  Process 27940 attached - interrupt to quit\n> \n>  Swapped (from /proc/27940/smaps):\n>  2788140 kB - 27940 (nova-network)\n> \n>  $ sudo rabbitmqctl list_queues | grep -E '^network'\n>  network.cc  3056\n> \n>  = System Information =\n> \n>  $ cat /etc/lsb-release \n>  DISTRIB_ID=Ubuntu\n>  DISTRIB_RELEASE=11.10\n>  DISTRIB_CODENAME=oneiric\n>  DISTRIB_DESCRIPTION=\"Ubuntu 11.10\"\n> \n>  $ dpkg-query --show nova-network\n>  nova-network    2011.3-0ubuntu6.2\n> \n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/903199/+subscriptions\n\n", 
+            "date_created": "2012-01-12 18:00:02+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "This would appear to additionally explain the memory leak behavior we see when running the unit tests\u2026", 
+            "date_created": "2012-01-26 21:11:26.918009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~klmitch"
+        }, 
+        {
+            "content": "I talked to gholt and asked him about upstreaming his patch, so hopefully that will fix everything. If someone wants to figure out how to work around it our code that would be awesome\n", 
+            "date_created": "2012-02-01 15:59:05.239471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I've proposed a patch which should fix the problem in eventlet:\n\nhttps://bitbucket.org/which_linden/eventlet/issue/115/monkey-patching-thread-will-cause", 
+            "date_created": "2012-02-29 19:31:34.003380+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Anything that would be left to do in Nova ? Or should we just close this as invalid/bug-is-in-eventlet ?", 
+            "date_created": "2012-03-06 14:11:24.752929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Good question. I don't know of anything else that needs to be done in nova. Closing it out as invalid seems appropriate.", 
+            "date_created": "2012-03-06 15:05:20.796592+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Hi all,\n\nI had to face the same problem on a setup running a VlanManager: high cpu and memory usage, service unable to contact rabbitmq, virtual machine not spawning correctly because not getting a fixed_ip. \nI did try to upgrade eventlet to trunk but it did not solve the problem.\nI found a workaround faking the result in the function fixed_ip_disassociate_all_by_timeout in nova/db/sqlalchemy/api.py\nBasically, if that function does nothing, my nova network runs smoothly even during stress tests.\nI have to deallocate fixed_ips running a sql query by cron.\n  ", 
+            "date_created": "2012-03-08 14:17:53.975972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gcivitella"
+        }, 
+        {
+            "content": "The nova version I'm running is Essex-4 ", 
+            "date_created": "2012-03-08 14:46:01.586461+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gcivitella"
+        }
+    ]
+}

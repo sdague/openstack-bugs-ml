@@ -1,0 +1,59 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-03-20 22:11:42.946703+00:00", 
+    "description": "http://logs.openstack.org/20/76020/1/check/gate-nova-python27/0109f3d/console.html\n\nThe test was backported from havana here: https://review.openstack.org/#/c/33822/\n\nThe test fail:  http://paste.openstack.org/show/69434/\n\nThere is probably some other fix for the race in havana or icehouse that changed nova.compute.manager._reclaim_queued_deletes so I'm looking for that now, maybe something that needs to be backported to stable/grizzly also.", 
+    "tags": [
+        "compute", 
+        "testing"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1284666", 
+    "owner": "None", 
+    "id": 1284666, 
+    "index": 4598, 
+    "created": "2014-02-25 14:45:09.932689+00:00", 
+    "title": "test_reclaim_queued_deletes race fail on stable/grizzly", 
+    "comments": [
+        {
+            "content": "http://logs.openstack.org/20/76020/1/check/gate-nova-python27/0109f3d/console.html\n\nThe test was backported from havana here: https://review.openstack.org/#/c/33822/\n\nThe test fail:  http://paste.openstack.org/show/69434/\n\nThere is probably some other fix for the race in havana or icehouse that changed nova.compute.manager._reclaim_queued_deletes so I'm looking for that now, maybe something that needs to be backported to stable/grizzly also.", 
+            "date_created": "2014-02-25 14:45:09.932689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Maybe this is needed: https://review.openstack.org/34620\n\nLooking at bug 1195029 for that, it was targeted for grizzly also but never backported.  I can do that.", 
+            "date_created": "2014-02-25 14:49:34.228316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Otherwise the changes in Havana around the same time in _reclaim_queued_deletes and _delete_instance are related to converting those APIs to use objects, so it's possible that something was fixed along the way there, but we aren't going to backport the objects conversion to grizzly.", 
+            "date_created": "2014-02-25 14:55:28.835489+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Actually, comparing the instance_ref that was expected in the paste (for the mox call in the test), it looks like there is some difference in the flavor information in the instance and there is a scheduled_at field in the unexpected instance that is passed to _delete_instance.\n\nThe test might be relying on the database too much here, looking at other tests in test_compute that touch nova.compute.manager._delete_instance, they don't get the instance back from the database for the mock, they just serialize it with json utils because that's what the actual compute manager is doing, it's calling conductor to get the instance which is then serialized as it's passed back to the compute manager.", 
+            "date_created": "2014-02-25 15:24:51.369974+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "For example, test_poll_rescued_instances stubs out the conductor db call here:\n\n        self.stubs.Set(self.compute.conductor_api, 'instance_get_all_by_host',\n                       fake_instance_get_all_by_host)\n\nTo return it's mock instances:\n\n        instances = [{'uuid': 'fake_uuid1', 'vm_state': vm_states.RESCUED,\n                      'launched_at': timed_out_time},\n                     {'uuid': 'fake_uuid2', 'vm_state': vm_states.ACTIVE,\n                      'launched_at': timed_out_time},\n                     {'uuid': 'fake_uuid3', 'vm_state': vm_states.ACTIVE,\n                      'launched_at': not_timed_out_time},\n                     {'uuid': 'fake_uuid4', 'vm_state': vm_states.RESCUED,\n                      'launched_at': timed_out_time},\n                     {'uuid': 'fake_uuid5', 'vm_state': vm_states.RESCUED,\n                      'launched_at': not_timed_out_time}]\n        unrescued_instances = {'fake_uuid1': False, 'fake_uuid4': False}\n\n        def fake_instance_get_all_by_host(context, host):\n            return instances\n\nWe should probably do something like that in test_reclaim_queued_deletes.", 
+            "date_created": "2014-02-25 15:31:21.852923+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Ah, furthermore, if you look for self.compute.conductor_api.instance_get_all_by_host in test_compute on stable/havana you won't find it, but it shows up a few times on stable/grizzly, so must have been a reason for needing to use that on grizzly.", 
+            "date_created": "2014-02-25 15:36:54.325340+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/76250", 
+            "date_created": "2014-02-25 16:20:19.796179+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/76250\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=12c19f33bef8754d3742ddad4d4c18e953e3627d\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 12c19f33bef8754d3742ddad4d4c18e953e3627d\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Feb 25 08:19:06 2014 -0800\n\n    Fix race for stable/grizzly backport of test_reclaim_queued_deletes\n    \n    Commit c17e0c1d backported a race condition fix from Havana to\n    stable/grizzly but the test case added to test_compute doesn't account\n    for needing to stub out the instance_get_all_by_host call to conductor,\n    which can lead to race failures on stable/grizzly.\n    \n    When comparing test_compute.py on stable/grizzly and stable/havana,\n    'instance_get_all_by_host' is stubbed out extensively in grizzly but not\n    Havana. Note that in Havana commit dce64683 changed the delete/soft_delete\n    paths use objects, so a lot of the conductor API stubs from test_compute\n    were removed in Havana due to that change. Given that Grizzly is not\n    using objects, and we won't backport commit dce64683 to Grizzly, it makes\n    sense to just stub out the conductor API DB calls in this patch.\n    \n    Closes-Bug: #1284666\n    \n    Change-Id: Ib806e0f3136e5fbef1141dcb65580524f9eb3899\n", 
+            "date_created": "2014-03-06 18:41:28.357076+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

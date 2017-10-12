@@ -1,0 +1,38 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-09-23 01:21:33.551378+00:00", 
+    "description": "How to produce this bug:\n      Compute driver: VMwareVCDriver\n      vSphere API 5.1,\n      VMware use: Administrator\n      Image: sparse type with ide controller.\n      Confiure in nova.conf: linked_clone =True.\n      Boot vm with \u201croot_disk_size\u201d (Example: 20GB)> \u201cimage_size\u201d(Example:10GB)\nIf it\u2019s first time to do this kind of vm booting, then lead to a booting failure.\nThen, try to boot a second VM with the same image and flavor of first booting, you will success this time.\n\nI noticed that vm booting failed in the virtual disk extending phase.\n\u2026 In this phase:\nIf there is no virtual disk cache(virtual disk with the targeted image and root disk size) in this host, \n    and \u201croot_disk_size\u201d (defines in flavor, Example: 20GB)> \u201cimage_size\u201d(defined in image file, Example:10GB),\nthen go to the virtual disk extending phase.\n   Tasks of  virtual disk extending phase:\n     1) Invoke virtual disk extending task (t_1) to do the disk extending thing.\n     2) Make one additional task (t_2) to check the status(queued, running, error, success) of task (t_1).\nTask (t_2) failed with an error, and this error causes the vm booting process to fail.\nSo, this causes the first VM booting failed.\n\nBut, there is no clean job to clear the (t_1) task, so the virtual disk will still in extending, and at last(very fast without zero formatting) this extending will success. \nSo, the second time we boot VM with the same image and flavor of the previous booting, the extended virtual disk(cache) is already there.So, that\u2019s why I successed in the second booting.\n\nI think the following code causes this issue:\n    def _poll_task(self, task_ref, done):\n        \"\"\"Poll the given task, and fires the given Deferred if we\n        get a result.\n        \"\"\"\n        try:\n            task_info = self._call_method(vim_util, \"get_dynamic_property\",\n                            task_ref, \"Task\", \"info\")\n            task_name = task_info.name\n\nIf task_info is None, then checking status of the task will cause exception, and we just log and reraise it in the upper caller. So lead to VM booting process failed.", 
+    "tags": [
+        "vmware"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1348495", 
+    "owner": "None", 
+    "id": 1348495, 
+    "index": 1544, 
+    "created": "2014-07-25 06:10:05.249903+00:00", 
+    "title": "VMware vCenter Driver failed to extend virtual disk while booting new VM", 
+    "comments": [
+        {
+            "content": "How to produce this bug:\n      Compute driver: VMwareVCDriver\n      vSphere API 5.1,\n      VMware use: Administrator\n      Image: sparse type with ide controller.\n      Confiure in nova.conf: linked_clone =True.\n      Boot vm with \u201croot_disk_size\u201d (Example: 20GB)> \u201cimage_size\u201d(Example:10GB)\nIf it\u2019s first time to do this kind of vm booting, then lead to a booting failure.\nThen, try to boot a second VM with the same image and flavor of first booting, you will success this time.\n\nI noticed that vm booting failed in the virtual disk extending phase.\n\u2026 In this phase:\nIf there is no virtual disk cache(virtual disk with the targeted image and root disk size) in this host, \n    and \u201croot_disk_size\u201d (defines in flavor, Example: 20GB)> \u201cimage_size\u201d(defined in image file, Example:10GB),\nthen go to the virtual disk extending phase.\n   Tasks of  virtual disk extending phase:\n     1) Invoke virtual disk extending task (t_1) to do the disk extending thing.\n     2) Make one additional task (t_2) to check the status(queued, running, error, success) of task (t_1).\nTask (t_2) failed with an error, and this error causes the vm booting process to fail.\nSo, this causes the first VM booting failed.\n\nBut, there is no clean job to clear the (t_1) task, so the virtual disk will still in extending, and at last(very fast without zero formatting) this extending will success. \nSo, the second time we boot VM with the same image and flavor of the previous booting, the extended virtual disk(cache) is already there.So, that\u2019s why I successed in the second booting.\n\nI think the following code causes this issue:\n    def _poll_task(self, task_ref, done):\n        \"\"\"Poll the given task, and fires the given Deferred if we\n        get a result.\n        \"\"\"\n        try:\n            task_info = self._call_method(vim_util, \"get_dynamic_property\",\n                            task_ref, \"Task\", \"info\")\n            task_name = task_info.name\n\nIf task_info is None, then checking status of the task will cause exception, and we just log and reraise it in the upper caller. So lead to VM booting process failed.", 
+            "date_created": "2014-07-25 06:10:05.249903+00:00", 
+            "author": "https://api.launchpad.net/1.0/~faguo"
+        }, 
+        {
+            "content": "This looks interesting.  I am not met this issue before. Do you mean the _wait_for_task failure cause boot failure. And the _wait_for_task failure is due to can not get task information. Currently I don't see cases for the task.info couldn't be retrieved?\n\nAre you using Flat images for testing?", 
+            "date_created": "2014-07-25 06:41:47.877765+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhuzhubj"
+        }, 
+        {
+            "content": "Hi zhuzhubj,\nI am testing with Sparse image:\n\nSize: 1048707072\nDisk format: vmdk\nContainer format: bare\nProperty 'vmware_disktype': sparse\nProperty 'vmware_adaptertype': ide", 
+            "date_created": "2014-07-25 07:11:28.093833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~faguo"
+        }, 
+        {
+            "content": "To solve this issue, I think we should add following handle:\n     if chek_state_task (t_2) meets exception, it should clear task (t_1) before exit.", 
+            "date_created": "2014-07-25 09:29:46.158172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~faguo"
+        }
+    ]
+}

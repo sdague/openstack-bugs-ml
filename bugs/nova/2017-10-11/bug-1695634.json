@@ -1,0 +1,86 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2017-06-06 00:01:15.229537+00:00", 
+    "description": "shade's functional tests just started breaking since yesterday. The nova changes between a passing and a failing test are:\n\n--e git+https://git.openstack.org/openstack/nova@046149825c5d6d5ac56a5f5d4498c996dfe8c7ee#egg=nova\n+-e git+https://git.openstack.org/openstack/nova@28ace935cdc2e040206a1fee84ee29d669856ca8#egg=nova\n\nFailing run (includes logging of the REST calls):\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/console.html\n\nSucceeding run from yesterday of the same patch:\n\nhttp://logs.openstack.org/95/468095/2/check/gate-shade-functional/ad48ef0/console.html\n\nLooking at the diff between the passing and failing nova changes, there do seem to be changes related to server creation and flavors. They all seem to be properly behind a microversion, but since I'm seeing failures all of a sudden, I figured I'd report it in case nova notices something funky in there.\n\nI'm continuing to investigate shade-side and will update this if I find something.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1695634", 
+    "owner": "None", 
+    "id": 1695634, 
+    "index": 6882, 
+    "created": "2017-06-03 15:35:31.677278+00:00", 
+    "title": "Something weird just broke in creating servers", 
+    "comments": [
+        {
+            "content": "shade's functional tests just started breaking since yesterday. The nova changes between a passing and a failing test are:\n\n--e git+https://git.openstack.org/openstack/nova@046149825c5d6d5ac56a5f5d4498c996dfe8c7ee#egg=nova\n+-e git+https://git.openstack.org/openstack/nova@28ace935cdc2e040206a1fee84ee29d669856ca8#egg=nova\n\nFailing run (includes logging of the REST calls):\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/console.html\n\nSucceeding run from yesterday of the same patch:\n\nhttp://logs.openstack.org/95/468095/2/check/gate-shade-functional/ad48ef0/console.html\n\nLooking at the diff between the passing and failing nova changes, there do seem to be changes related to server creation and flavors. They all seem to be properly behind a microversion, but since I'm seeing failures all of a sudden, I figured I'd report it in case nova notices something funky in there.\n\nI'm continuing to investigate shade-side and will update this if I find something.", 
+            "date_created": "2017-06-03 15:35:31.677278+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "So here:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/screen-n-sch.txt.gz#_Jun_02_12_47_09_446322\n\nI see that the scheduler has decided there are no hosts that can satisfy this request.", 
+            "date_created": "2017-06-03 15:42:38.636306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "O ho! If I'd scroll up slightly and read better, I'd see that there are no hosts in the cell:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/screen-n-sch.txt.gz#_Jun_02_12_47_09_446322\n\nI'll try to track down why that's happening.", 
+            "date_created": "2017-06-03 15:53:03.576548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "The only maybe relevant thing I can see is:\n\ndiff --git a/nova/compute/manager.py b/nova/compute/manager.py\nindex c8a4c22..d40ca77 100644\n--- a/nova/compute/manager.py\n+++ b/nova/compute/manager.py\n@@ -1150,7 +1150,14 @@ class ComputeManager(manager.Manager):\n         finally:\n             if CONF.defer_iptables_apply:\n                 self.driver.filter_defer_apply_off()\n-            self._update_scheduler_instance_info(context, instances)\n+            if instances:\n+                # We only send the instance info to the scheduler on startup\n+                # if there is anything to send, otherwise this host might\n+                # not be mapped yet in a cell and the scheduler may have\n+                # issues dealing with the information. Later changes to\n+                # instances on this host will update the scheduler, or the\n+                # _sync_scheduler_instance_info periodic task will.\n+                self._update_scheduler_instance_info(context, instances)\n\nPerhaps this is causing there to be a delay somewhere and nova is expecting an eventual consistency of some sort - but the shade test here is happening before whatever has woken up and registered something with the cell?", 
+            "date_created": "2017-06-03 16:04:00.733317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "I pushed up a revert of the nova patch:\n\nhttps://review.openstack.org/#/c/470635/\n\nand then a test commit in shade that depends on it\n\nhttps://review.openstack.org/#/c/470636/\n\nthe test commit passes tests.\n\nWhat should we do about this? It seems that maybe we need $something at the devstack level that can say \"hey, I need to wait for the cloud to be consistent with itself or something before I run these tests\"", 
+            "date_created": "2017-06-04 14:22:29.745086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "With more iterations - it seems to be racey - so I actually can't be sure the patch in question actually fixes it.", 
+            "date_created": "2017-06-04 20:55:27.325001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "I doubt that https://review.openstack.org/#/c/454426/ is the cause since all that should do is avoid a nasty stacktrace in the scheduler logs on startup when the host isn't mapped to a cell yet, especially if the compute doesn't have any instances on it yet (brand new install / new host).", 
+            "date_created": "2017-06-05 13:33:28.021043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The single compute host gets mapped to the cell here:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/devstacklog.txt.gz#_2017-06-02_12_46_19_540\n\n2017-06-02 12:46:19.540 | Creating host mapping for compute host 'ubuntu-xenial-osic-cloud1-s3500-9104911': bc5499e9-2e12-4ae6-9e5b-58b8104de163\n\nThe server create fails in the scheduler shortly after that here:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/screen-n-cond.txt.gz#_Jun_02_12_46_59_071485\n\nJun 02 12:46:59.071485 ubuntu-xenial-osic-cloud1-s3500-9104911 nova-conductor[20263]: ERROR nova.conductor.manager [None req-a92036cd-3f52-41d6-b104-cb446cfa0ca1 demo demo] Failed to schedule instances: NoValidHost_Remote: No valid host was found. There are not enough hosts available.", 
+            "date_created": "2017-06-05 15:40:30.158419+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The problem is the compute node isn't getting registered with the placement service before the server create request is made. The scheduler asks placement for the list of resource providers (compute nodes) to service a given build request, and it's getting 0 back.\n\nWe can see that before the compute host is registered with the cell, it's failing to register the compute node with placement here:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/screen-n-cpu.txt.gz#_Jun_02_12_46_14_556997\n\nIt's getting a 503 response back.\n\n5 seconds later we map the compute host to the cell:\n\n2017-06-02 12:46:19.540 | Creating host mapping for compute host 'ubuntu-xenial-osic-cloud1-s3500-9104911': bc5499e9-2e12-4ae6-9e5b-58b8104de163\n\n40 seconds later the scheduler is asked to find a host for the server create request, which asks placement for hosts and gets 0 back:\n\nJun 02 12:46:59.055921 ubuntu-xenial-osic-cloud1-s3500-9104911 nova-scheduler[20766]: DEBUG nova.filters [None req-a92036cd-3f52-41d6-b104-cb446cfa0ca1 demo demo] Starting with 0 host(s) {{(pid=20766) get_filtered_objects /opt/stack/new/nova/nova/filters.py:70}}\n\nAnd finally 15 seconds after that, the compute node is registered with placement successfully:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/screen-n-cpu.txt.gz#_Jun_02_12_47_14_576829\n\nJun 02 12:47:14.576829 ubuntu-xenial-osic-cloud1-s3500-9104911 nova-compute[21934]: INFO nova.scheduler.client.report [None req-7d543fdf-c132-45b4-b7a3-7a9c697419d0 None None] [req-f0bc362e-3492-4338-933b-5adf88a01b49] Created resource provider record via placement API for resource provider with UUID bc5499e9-2e12-4ae6-9e5b-58b8104de163 and name ubuntu-xenial-osic-cloud1-s3500-9104911.", 
+            "date_created": "2017-06-05 15:43:41.051840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It's taking >1 minute for the placement-api service to startup and start handling requests:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/screen-placement-api.txt.gz\n\nThe first request we see logged is the one from the scheduler when it's asking for a resource provider (compute node) to build the instance:\n\nJun 02 12:46:58.883989 ubuntu-xenial-osic-cloud1-s3500-9104911 <email address hidden>[22675]: DEBUG nova.api.openstack.placement.requestlog [None req-6e9651be-51e5-40e6-a887-bd72120060a0 service placement] Starting request: 10.39.244.211 \"GET /placement/resource_providers?resources=MEMORY_MB%3A256%2CVCPU%3A1\" {{(pid=22678) __call__ /opt/stack/new/nova/nova/api/openstack/placement/requestlog.py:38}}\n\nSo that means it's not handling any of the requests from the compute service.", 
+            "date_created": "2017-06-05 15:52:32.056126+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "We started placement-api in the devstack run here:\n\nhttp://logs.openstack.org/95/468095/2/gate/gate-shade-functional/3f5d8dc/logs/devstacklog.txt.gz#_2017-06-02_12_45_42_061\n\n2017-06-02 12:45:42.061 | + lib/placement:start_placement_api:172    :   echo 'Waiting for placement-api to start...'\n\nWhich is 32 seconds after we started nova-compute:\n\n2017-06-02 12:45:10.006 | + lib/nova:start_nova:903                  :   start_nova_compute", 
+            "date_created": "2017-06-05 15:57:56.966611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "To summarize the problem:\n\n(10:58:09 AM) mriedem: so we start placement-api 32 seconds after we start nova-compute,\n(10:58:23 AM) mriedem: nova-compute starts up and tries to register the compute node with placement but gets a 503 b/c placement isn't up yet,\n(10:58:34 AM) mriedem: meanwhile, the compute host is mapped to the cell and tests start,\n(10:59:01 AM) mriedem: test tries to create a server, scheduler asks placement for a resource provider (compute node) for the server, there are 0 because none are registered, and the server create fails,\n(10:59:20 AM) mriedem: 15 seconds later, n-cpu registers the compute node with placement during it's periodic task to update avialable resources (1 minute cron)", 
+            "date_created": "2017-06-05 16:00:17.719035+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/471042", 
+            "date_created": "2017-06-05 16:07:07.897273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/471042\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=7a74c2ab24dc7083996df5c9ed7baf89cbf219f3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7a74c2ab24dc7083996df5c9ed7baf89cbf219f3\nAuthor: Chris Dent <email address hidden>\nDate:   Mon Jun 5 16:06:06 2017 +0000\n\n    Start placement before services that might like to use it\n    \n    Otherwise those services, notably n-cpu, will try to register\n    resource providers before placement is ready.\n    \n    Change-Id: I89fd4fa42baf3d19ee209c59cd85b97adb97c58b\n    Closes-Bug: #1695634\n", 
+            "date_created": "2017-06-06 00:01:14.369314+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

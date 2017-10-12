@@ -1,0 +1,99 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-09-07 10:19:16.186371+00:00", 
+    "description": "version: commit ce5a2fb419f999bec0fb2c67413387c8b67a691a\n\n1. create a boot-from-volume instance prior to deploying commit 5bd222e8d854ca7f03ee6936454ee57e0d6e1a78\n2. upgrade nova to commit 5bd222e8d854ca7f03ee6936454ee57e0d6e1a78\n3. live-migrate instance\n4. observe live-migrate action fail\n\nbased on my analysis of logs and code:\n1. destination uses new-style SR naming convention in sr_uuid_map.\n2. source tries to use new-style SR naming convention in talking to XenAPI (in nova.virt.xenapi.vmops.py:VMOps.live_migrate() -> _call_live_migrate_command())\n3. xenapi throws XenAPI.Failure exception because it \"Got exception UUID_INVALID\" because it only knows the SR by the old-style naming convention\n\nexample destination nova-compute, source nova-compute, and xenapi logs from a live-migrate request to follow.", 
+    "tags": [
+        "live-migration", 
+        "xenserver"
+    ], 
+    "importance": "High", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1566622", 
+    "owner": "None", 
+    "id": 1566622, 
+    "index": 1910, 
+    "created": "2016-04-06 03:22:36.574394+00:00", 
+    "title": "live migration fails with xenapi virt driver and SRs with old-style naming convention", 
+    "comments": [
+        {
+            "content": "version: commit ce5a2fb419f999bec0fb2c67413387c8b67a691a\n\n1. create a boot-from-volume instance prior to deploying commit 5bd222e8d854ca7f03ee6936454ee57e0d6e1a78\n2. upgrade nova to commit 5bd222e8d854ca7f03ee6936454ee57e0d6e1a78\n3. live-migrate instance\n4. observe live-migrate action fail\n\nbased on my analysis of logs and code:\n1. destination uses new-style SR naming convention in sr_uuid_map.\n2. source tries to use new-style SR naming convention in talking to XenAPI (in nova.virt.xenapi.vmops.py:VMOps.live_migrate() -> _call_live_migrate_command())\n3. xenapi throws XenAPI.Failure exception because it \"Got exception UUID_INVALID\" because it only knows the SR by the old-style naming convention\n\nexample destination nova-compute, source nova-compute, and xenapi logs from a live-migrate request to follow.", 
+            "date_created": "2016-04-06 03:22:36.574394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-04-06 03:22:36.574394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "Does this mean we need to make sure that when we generate the sr_map_uuid on the source host, we need to convert the destination uuid to the new format, else we hit this bug?", 
+            "date_created": "2016-04-06 14:05:29.099881+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "@johngarbutt: i don't yet know a solution (ie still researching), but with the current code, if the SR uuid in the sr_uuid_map communicated from the destination to the host differs (ie new-style vs old-style naming convention), then when _call_live_migrate_command() tries to get the SR reference by calling xenapi's SR.get_by_uuid with the mismatching destination-provided SR UUID, then the xenapi call fails and the whole migration with it.\n\nthe root cause is this assumption in the code: \"Source and destination SRs have the same UUID, so get the reference for the local SR [by using the destination's SR UUID]\"  (see nova/virt/xenapi/vmops.py:VMOps._call_live_migrate_command()).", 
+            "date_created": "2016-04-06 14:19:02.539401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "brainstorming potential solutions:\n1. expand the sr_uuid_map to include both old and new style naming conventions (or create a shadow copy which has only old-style names) so that when lookup fails in _call_live_migrate_command() on one, it fallsback and tries the other\n2. provide enough information to _call_live_migrate_command() so that if lookup fails, then it can fall back and recreate the old-style uuid and try it\n3. ...", 
+            "date_created": "2016-04-06 14:24:02.464358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "I'm worried this may be a bigger problem than described above, and it may not be fixable without reverting the SR naming:  https://github.com/xapi-project/xen-api/blob/master/ocaml/xapi/xapi_vm_migrate.ml#L481\n\nHere XAPI explicitly checks the SR uuid on source and destination being the same before it decides that it does not have to mirror; i.e. the VDI UUIDs matching is not sufficient.\nIf the UUIDs of the SRs differ between source and destination then XAPI will attempt to copy the VDI during the migrate phase, which will be reading from the remote SR from the source host and writing back to the same remote SR from the destination host.  This is clearly not suitable.\n\nI think that perhaps the only fix would be to specify old style when connecting the SR on the destination host.", 
+            "date_created": "2016-04-06 14:54:27.738834+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Perhaps the change was too ambitious and we should add a config option to switch between the styles globally.  It could default to the current Mitaka behaviour but enable upgrades by still using the old style where there are existing VMs.", 
+            "date_created": "2016-04-06 14:57:30.430755+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "live migrations are broken for any deployer using xen with pre-mitaka instances, so a configuration option is insufficient (as i see it).\n\nthe requirement: maintain the SR and VDI UUIDs between source and destination during live-migration\n\n* VDI UUID naming convention appears to be unchanged.\n* SR UUID naming convention changed:\n** old-style: @\"FA15E-D15C-<volume id>\"@\n** new-style: @uuid.uuid5(uuid.UUID(\"3cca4135-a809-5bb3-af62-275fbfe87178\"), \"<target>/<port>/<iqn>\")@\n\nso the derived requirements are:\n\n# determine whether the source has an old or new-style named SR\n# pass that determination to the destination for use when it creates its SR name\n\nbecause this is all specific to the XenAPI virt driver and the destination creates the SR name in @pre_live_migration()@, the determination will have to be before then in @check_can_live_migrate_source()@ (ie the only place where the source's XenAPI virt driver is called beforehand).  this is somewhat of a hack because ideally this would be done in @pre_live_migration@ on the source, which doesn't exist (@pre_live_migration()@ is only done on the destination) and this isn't really \"checking if the source can live-migrate\" (ie @check_can_live_migrate_source()@).\n\nto pass this naming convention determination from source to destination, a determination that has to be done for all volumes attached to an instance (because, correct me if i'm wrong, but the instance could be created pre-mitaka with an old-style-SR volume, but then an additional volume added in mitaka with a new-style SR volume) so a @sr_uuid_naming_convention_map@ mirroring @block_device_mapping@ needs to be added to @XenapiLiveMigrateData@, bumping it's version to 1.0, and adding @obj_make_compatible()@ to it (handling the new @sr_uuid_naming_convention_map@ attribute by dropping it like how @LibvirtLiveMigrateData@ handles @target_connect_addr@ which was added in its version bump from 1.0 to 1.1).\n\nso @sr_uuid_naming_convention_map@ will be passed from source to destination in XenapiLiveMigrateData and the destination can pass it down from @pre_live_migration()@ to @parse_sr_info()@ by way of adding it to @block_device_info['block_device_mapping'][*]['connection_info']['data']@ or by modifying all 5 interfaces called on the way down to @parse_sr_info()@ to pass it separate from block_device_info data.\n\nstill need to think about the source side and how exactly to mechanize determining the naming convention style.  (well, obviously look at the SR uuids and if they start with \"FA15E-D15C-\" then it's old style.)\n\nsupporting documentation:\n\nlive-migration call-tree\n\n# destination:nova/compute/manager.py:ComputeManager.check_can_live_migrate_destination()\n## destination:nova/compute/manager.py:ComputeManager._do_check_can_live_migrate_destination()\n### nova/virt/xenapi/driver.py:XenAPIDriver.check_can_live_migrate_destination()\n#### nova/virt/xenapi/vmops.py:VMOps.check_can_live_migrate_destination()\n### source:nova/compute/manager.py:ComputeManager.check_can_live_migrate_source()\n#### nova/virt/xenapi/driver.py:XenAPIDriver.check_can_live_migrate_source()\n##### nova/virt/xenapi/vmops.py:VMOps.check_can_live_migrate_source()\n## nova/virt/xenapi/driver.py:check_can_live_migrate_destination_cleanup()\n# source:nova/compute/manager.py:ComputeManager.live_migration()\n## source:nova/compute/manager.py:ComputeManager._do_live_migration()\n### destination:nova/compute/manager.py:ComputeManager.pre_live_migration()\n#### nova/virt/xenapi/driver.py:XenAPIDriver.pre_live_migration(block_device_info)\n##### nova/virt/xenapi/vmops.py:VMOps.connect_block_device_volumes(block_device_info)\n###### @for block_device_map in block_device_info['block_device_mapping']: connection_info = block_device_map['connection_info']@\n###### nova/virt/xenapi/volumeops.py:VolumeOps.connect_volume(connection_info)\n####### nova/virt/xenapi/volumeops.py:VolumeOps._attach_volume(connection_info)\n######## @connection_data = connection_info['data']@\n######## nova/virt/xenapi/volumeops.py:VolumeOps._connect_to_volume_provider(connection_data)\n######### nova/virt/xenapi/volume_utils.py:parse_sr_info(connection_data)\n########## @params = _parse_volume_info(connection_data)@\n########## create SR UUID\n########### old-style: @\"FA15E-D15C-<volume id>\"@\n########### new-style: @uuid.uuid5(uuid.UUID(\"3cca4135-a809-5bb3-af62-275fbfe87178\"), \"<target>/<port>/<iqn>\")@\n### nova/virt/xenapi/driver.py:XenAPIDriver.live_migration()\n", 
+            "date_created": "2016-04-08 05:29:41.309881+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "If we're going to pass information from the source host to the destination _before_ we map the block device, can't we just pass the expected UUID and bypass the calculation entirely?\n\nvolume_utils.parse_sr_info will honor the sr_uuid if it is present in the connection_data for the block device.\nCan we inject the UUID from the source into the connection_data when passing it to the dest?", 
+            "date_created": "2016-04-08 10:05:27.922149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/303348", 
+            "date_created": "2016-04-08 10:47:54.987562+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by John Garbutt (<email address hidden>) on branch: master\nReview: https://review.openstack.org/303348\nReason: just for a discussion.", 
+            "date_created": "2016-04-08 10:48:08.065804+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@bob-ball\n\nyes, we can pass a volume-SR mapping from the source to the destination... *if* i can figure out how to best determine the volume from the SR.  (me limiting my thinking to passing the SR UUID *naming convention*, instead of the SR UUID *itself*, was just my daftness.)\n\ni haven't found an existing function/method in the XenAPI virt driver that takes a SR and returns a volume.  i investigated the output of the xe command (eg \"xe sr-list\") on the dom0 of a host with Nova-spawned boot-from-volume instances, and the closest i can get is the volume is encoded in the sr-associated iSCSI IQN as the storage target name (but reverse engineering it from there feels so dirty).  is there a xen-api function that supports SR-to-volume lookups but doesn't have a \"wrapper\" implemented in the XenAPI virt driver?\n\ni can always brute force the SR-to-volume mapping by working it backwards: calculating SRs names from volumes (as originally done when creating the SR), except i might have to calculate twice as many SR names as needed, because each volume can result in two different SR names (old and new style).  that process is doable, but feels brutish, where something more clever is definitely preferred (if possible).", 
+            "date_created": "2016-04-11 04:40:40.857694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "As far as I know I don't think there is a key we can use.  I see that the attach_volume / detach_volume also take a mountpoint, which is used as the unique key - is that anywhere in the block device info?  In which case, it would be good to use the same logic as detach.\n\nI would think that the existing method to calculate the name (new style first, fall back to old style) would be fine as a fall back.", 
+            "date_created": "2016-04-11 09:41:26.165000+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/307541", 
+            "date_created": "2016-04-19 02:36:40.491967+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/307541\nReason: This code hasn't been updated in a long time, and is in merge conflict. I am going to abandon this review, but feel free to restore it if you're still working on this.", 
+            "date_created": "2016-07-26 20:20:56.299614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Unassigned as the patch has been abandoned and there has been no other progress for 5 months. Feel free to take back if there is work being done.", 
+            "date_created": "2016-09-07 10:19:14.756277+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }
+    ]
+}

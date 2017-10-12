@@ -1,0 +1,153 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-06-02 19:12:41.396309+00:00", 
+    "description": "By default, libvirt on the receiving end of a live migration starts a qemu process listening on 0.0.0.0 waiting for a tcp connection from the sender.  During block migration, qemu-nbd is started similarly.  This is bad because compute nodes have interfaces on the guest network.  As a result, guests can interfere with live migrations.\n\nThere is a flag during migration to remedy this called VIR_MIGRATE_TUNNELLED,\nwhich tunnels traffic over the libvirt socket (which can be secured with TLS).  This seems like a great option. Unfortunately it doesn't work with the new nbd-based block migration code, so there isn't a great option for securing the traffic.\n\nRelated to this, libvirt just added:\n\n\u00a0- Default migration bind()/listen() IP addr in /etc/libvirt/qemu.conf\n\u00a0- Pass in bind()/listen() IP address to migration APIs\n\nSo with libvirt >= 1.1.4, Nova will have the ability to control the\ninterface used\n\n(Problem originally reported by Vish Ishaya)", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "Low", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1240554", 
+    "owner": "None", 
+    "id": 1240554, 
+    "index": 5933, 
+    "created": "2013-10-16 14:45:30.371582+00:00", 
+    "title": "Insecure live migration with libvirt driver", 
+    "comments": [
+        {
+            "content": "Russell Bryant wrote:\n>  Daniel P. Berrange wrote:\n>>  Vishvananda Ishaya wrote:\n>>> Hi guys,\n>>>\n>>> So we were investigating how to secure live-migration without having to stick a\n>>> shared ssh key on all of the hosts. We thought it would be as simple as using\n>>> TLS and throwing around a few certs, but in the process we found a number of\n>>> places in the live migration path that have scary security implications.\n>>>\n>>> By default libvirt on the receiving end will spin up a qemu process listening \n>>> on 0.0.0.0 waiting for tcp connections from the sender. During block migration,\n>>> qemu-nbd is started similarly. It should be clear that this is very bad. Since\n>>> the compute nodes often have interfaces on the guest network (for dnsmasq for\n>>> example), guests can interfere with live migrations.\n>>\n>> Yes, QEMU provides zero non-sucky options for securing live migration by\n>> default. Their answer has always been that the migration should be done\n>> on a secure LAN not accessible to untrusted users.\n>>\n>>> There is a flag during migration to remedy this called VIR_MIGRATE_TUNNELLED,\n>>> which tunnels traffic over the libvirt socket (which can be secured with TLS).\n>>> This seems like a great option. Unfortunately it doesn't work with the new\n>>> nbd-based block migration code, so there isn't a great option for securing\n>>> the traffic.\n>>\n>> Yep, we added VIR_MIGRATED_TUNNELLED to deal with the horrible security\n>> characteristics of QEMU's native TCP support for migration. That it does\n>> not support nbd-block migration is a pain. I'm not sure if we've got a\n>> plan for addressing that or not.\n>>\n>>> I suggest we do the following\n>>>\n>>> 1) recommend people use the flag VIR_MIGRATE_TUNNELLED and turn it on\n>>> by default in live_migration_flag and block_migration_flag\n>>>\n>>> 2) try to get support for tunnelling the block migration nbd traffic\n>>> into libvirt ASAP\n>>>\n>>> An alternative approach to 2 would be to get libvirt to support\n>>> configuration options for the ip to listen on for qemu and qemu-nbd and\n>>> get them to support TLS somehow, but that seems significantly more\n>>> difficult.\n>>\n>> Adding a listen IP addr for migration is a reasonable RFE regardless.\n>>\n>> I have previously requested that QEMU itself support TLS natively, but\n>> no one ever made that happen.\n>>\n>>> In addition: Long term, it would be nice to have nova set up TLS certs\n>>> and modify policy so that the only remote libvirt connection is allowed\n>>> from the source node, but this is a long term goal that requires a bunch\n>>> more pieces.\n>>>\n>>> So the question is, does this deserve a vulnerability report in both nova\n>>> and libvirt?\n>>\n>> Not from libvirt's POV at least. What you describe is just a known\n>> limitation of QEMU migration, which requires a trusted LAN & firewall\n>> setup.\n>\n> Thanks a lot to you both for all of this information.\n>\n> I suspect the vulnerability management team will think it's worth\n> issuing a security advisory for #1 since nova's default configuration\n> allows guests to interfere with migration.  Vish, can you file a private\n> nova bug on this?\n>\n> For the parts that require work elsewhere, we need to get the issues at\n> least documented for OpenStack, perhaps with a link to relevant RFEs so\n> we can follow up on their progress.\n\nWhat ever happened to this issue ? Was there a vulnerability report and\nor fix in Nova ?\n\nFWIW, we just added a patch to libvirt allowing\n\n - Default migration bind()/listen() IP addr in /etc/libvirt/qemu.conf\n - Pass in bind()/listen() IP address to migration APIs\n\nSo with libvirt >= 1.1.4, Nova will have the ability to control the\ninterface used\n\nDaniel", 
+            "date_created": "2013-10-16 14:45:30.371582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Even ignoring this live migration issue, guest VMs should never be allowed to access services on the host, except those explicitly intended for their usage - eg a DNS & DHCP service. So if Nova/Neutron have set up a guest on the same network as a host, they should also setup firewall rules to block access to *all* host ports, except for a whitelist of intended services.", 
+            "date_created": "2013-10-16 16:09:39.020063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Ouch. The trick will be to fix this in a backportable security patch :)", 
+            "date_created": "2013-10-21 14:01:54.866350+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "We have a way to address this in cases where libvirt >= 1.1.4, but is there anything to be done in Nova for older versions?  It sounds like advising deployers to setup firewall rules is the best option so far.", 
+            "date_created": "2013-11-27 21:49:00.959914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "So there are two approaches here...\n\nOne is to find a way to fix this that would still fit our backporting guidelines, in which cas we can issue an advisory about this and plug the hole\n\nThe other is to document this issue in a OSSN so that deployers are aware of the issue, while we push new features (and/or libvirt requirements) in a future version so that it's no longer a deployment issue in the future.\n\nDan, what's your take on this ?", 
+            "date_created": "2014-01-15 13:39:34.256898+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Per my comment #1 I think there's really two issues here. There's the specific live migration problem which we can directly solve with a newer libvirt version. More broadly though, if the guest is able to see the host's networks, then there could be other arbitrary things listening on TCP ports on the host OS, which the guest can possibly exploit. \n\nSo regardless of the technical fix with new libvirt which we should definitely do, I think we need something at the network level in general. Either we find a way for nova-network/neutron to explicitly block access to *anything* on the host OS, except explicitly intended services, or we have to document this and let admins figure out how to block this themselves.\n\nI'm inclined to say we should\n\n 1. Use the libvirt fix if available\n 2. document the firewall issue wrt host services listening on TCP\n 3. Look at what if anything can be done in nova-network/neutron to fix this in general\n\nI'd say we probably want items 1+2 for the immediate OSSA, and have item 3 be something we look at separately as long term \"hardening\" task", 
+            "date_created": "2014-02-05 13:38:08.122619+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "(Adding OSSG team contacts)\n\nThe libvirt fix is not really an option for the OSSA, since we can't really backport it as a stable branch update.\n\nSo... if we can find a lightweight way to efficiently prevent VMs from accessing those ports (without changing behavior too much for other ports), then I think we could do an OSSA for Grizzly/havana/icehouse for this.\n\nIf we can't, I would document the issue as an OSSN, and fix the issue in future versions -- probably using a combination of libvirt upgrade AND generally protecting the host from VM access.\n\nThe attack is imho a little bit limited anyway, as you can only interact with the receiving end and will most likely not provide it what it expects.", 
+            "date_created": "2014-02-05 14:03:06.423663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "So: If steps have not been taken to isolate the Compute host from attempted access from Guest instances it is possible that a malicious virtual machine could interfere with migrations even when SSL is enabled, as SSL does not affect ndb-based block migration - Is this correct?\n\nThere are typically options for stopping a guest VM seeing anything on the host, EBTables and IPTables typically, I imagine we can document that in an OSSN, it should also be added to the OpenStack Security Guide.\n\nQuestion:\nI'm not familiar with nbd but I'd like it if SSL worked _and_ interface binding works, anyone know if that's on the roadmap?", 
+            "date_created": "2014-02-05 20:29:54.890925+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Yes, Rob, your first paragraph is correct.\n\nI don't think that there's anything we can do here to fix this in Nova (or even Neutron?).  This is really a libvirt issue.  To make things even more complicated, the version of libvirt needed is currently incompatible with OpenStack (due to deadlock issues that are being actively worked on).  Alas...\n\nI think the action that this group can take immediately is to issue 2 security notes:\n\n1) Discuss the importance of separating networks.\n\n2) Discuss the concerns related to live migration and how to mitigate them.", 
+            "date_created": "2014-02-05 21:13:12.751055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bdpayne"
+        }, 
+        {
+            "content": "I believe that when we were investigating this, we also determined that the bug didn't occur if you used the ssh-based live migration. Obviously allowing nodes to ssh into each other has serious security implications, and I'm not comfortable recommending that to users as a fix.\n\nAs Bryan mentioned, the nbd protocol is unencrypted, not tunneled over TLS, and has no authentication. Ideally, an organization should consider at least using ipsec to protect the data on the wire.\n\n> The attack is imho a little bit limited anyway, as you can only interact\n> with the receiving end and will most likely not provide it what it expects.\n\nI don't believe this is quite correct. It's been a while since I looked at the code, but as I remember it, the source end opens the nbd server, from which anyone can read during the transfer period (including local guests if there is no firewall), and the receiving end opens up the libivrt listener which can be secured with TLS (but is not by default). So you've got potential vulnerabilities on both ends.", 
+            "date_created": "2014-02-05 22:25:49.830859+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "@Dan: could you confirm the source end is also affected ?", 
+            "date_created": "2014-02-06 14:00:11.611545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The NBD stuff isn't my area of expertise, but I asked another libvirt maintainer what libvirt does\n\n   the dst: \"nbd-server-start @ port\", and then for each disk \"nbd-server-add $disk_alias\"; then on the src: \"drive-mirror $dik_alia snbd:dest:port:$disk_alias\" for each disk\n\nIOW, the QEMU process on the target host is opening a NBD socket for listening, and the source QEMU pushes the data to the target.\n\nSo in both cases the listening TCP socket is on the target host, never the client.", 
+            "date_created": "2014-02-06 15:58:58.300831+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "@Nova-core: do you see a lightweight (enough to be backportable) way to efficiently prevent VMs from accessing those ports (without changing behavior too much for other ports) ? That would be plan A (we would issue an OSSA).\n\nAs mentioned above, plan B is to issue as an OSSN, and fix the issue in future versions -- probably using a combination of libvirt upgrade AND generally protecting the host from VM access.", 
+            "date_created": "2014-02-10 15:42:44.699459+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This might be a good reasons to consider bumping the minimum libvirt version in Juno, maybe issue a deprecation warning when we release icehouse?", 
+            "date_created": "2014-02-21 16:06:45.995910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "It seems that \"plan B\" is the best way forward here.", 
+            "date_created": "2014-02-21 16:07:13.745793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "I agree with plan B. I don't think there's an acceptably low risk thing we can do in the stable branches for this.", 
+            "date_created": "2014-02-21 16:11:21.598824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "OK, plan B it is then.\n\nRob, Bryan: do you want to keep this bug private until you have time to draft the OSSN ? Might take some time to research appropriate extra firewalling rules inside compute nodes...", 
+            "date_created": "2014-02-24 15:42:51.550854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Yes please, this is not going to be a trivial one to write.", 
+            "date_created": "2014-02-24 15:57:53.709906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "I'd like to bring Nathan Kinder in on this.", 
+            "date_created": "2014-02-28 12:37:55.715707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "I will start drafting an OSSN to discuss the live migration concerns and outline actions that can be taken to address them:\r\n\r\n- libvirt upgrade\r\n- firewall config on Compute nodes", 
+            "date_created": "2014-02-28 18:03:28.030911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }, 
+        {
+            "content": "Libvirt uses the port range of 49152-49215 for QEMU migration by default.  Is this port range also used for NBD migration?", 
+            "date_created": "2014-03-04 20:22:43.299163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }, 
+        {
+            "content": "Yes, the migration port range is used for NBD too.", 
+            "date_created": "2014-03-05 17:28:13.775531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "This issue is covered by the OSSN that was written for bug 1287194.  That OSSN was just published to the following locations:\n\n- Wiki (https://wiki.openstack.org/wiki/OSSN/OSSN-0007)\n- <email address hidden>\n- <email address hidden>\n\nI would like to make this bug public now, as the above OSSN describes the issue in detail.  Are there any objections?", 
+            "date_created": "2014-03-06 19:41:13.174509+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }, 
+        {
+            "content": "Public is public is public. If the gory details are public, then there is no reason for this bug to remain private.", 
+            "date_created": "2014-03-07 03:59:16.800133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "An updated summary of what we think is required in Nova would be helpful.\n\nEspecially taking into account that VIR_MIGRATE_TUNNELLED is now enabled by default: https://review.openstack.org/74600", 
+            "date_created": "2015-11-22 09:57:08.768232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Reading through this whole bug it seems like with newer libvirt, and markmc's changes to new defaults, we're basically fixed here. Does anything else still need to be addressed?\n\nMarking as Incomplete, if no one chimes up in 60 days this will close out. ", 
+            "date_created": "2016-02-19 20:54:50.430716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "As Sean suggested, marking this bug has invalid. Feel free to reopen.", 
+            "date_created": "2016-06-02 19:12:29.437393+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pushkar-umaranikar"
+        }
+    ]
+}

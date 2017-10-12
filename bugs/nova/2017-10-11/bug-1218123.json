@@ -1,0 +1,63 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:43:18.501125+00:00", 
+    "description": "While refactoring the NFS code and moving the higher level functions in to brick it was noticed that the NFS driver doesn't actually \"do anything\" on a disconnect_volume.  Understood that disconnecting NFS mounts is tricky, but leaving stale connections around in a large scale env like OpenStack seems like pretty bad practice.\n\nThere should probably be some tracking here, eharney had a good suggestion of using something like a ref counter of attaches and perhaps an audit process could kill them all when none are in use anymore (I winged that a bit, he may have a better idea/description here).\n\nAlso note that this issues is present in the existing Nova code base as well, it was just copied over in to the cinder/brick modules.", 
+    "tags": [
+        "nfs"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1218123", 
+    "owner": "None", 
+    "id": 1218123, 
+    "index": 4024, 
+    "created": "2013-08-29 00:08:21.175422+00:00", 
+    "title": "shared filesystem drivers never disconnect", 
+    "comments": [
+        {
+            "content": "While refactoring the NFS code and moving the higher level functions in to brick it was noticed that the NFS driver doesn't actually \"do anything\" on a disconnect_volume.  Understood that disconnecting NFS mounts is tricky, but leaving stale connections around in a large scale env like OpenStack seems like pretty bad practice.\n\nThere should probably be some tracking here, eharney had a good suggestion of using something like a ref counter of attaches and perhaps an audit process could kill them all when none are in use anymore (I winged that a bit, he may have a better idea/description here).\n\nAlso note that this issues is present in the existing Nova code base as well, it was just copied over in to the cinder/brick modules.", 
+            "date_created": "2013-08-29 00:08:21.175422+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "I will add my thoughts on this issue since I've given it a lot of thought.\n\nSince file-based drivers may mount a filesystem once and then use many different files within the filesystem as block devices, when it's time to \"disconnect\" each of those block devices we don't need to do anything until the last one disconnects. The problem is that detecting the last one is not a simple as you'd think. I have 2 basic proposals, but each has flaws:\n\n1) We could refcount the number of times we access a mount, and then unmount when the refcount falls to zero. The problem is that filesystems can be shared between multiple processes, and it becomes tough to implement a refcounting scheme that works system-wide.\n\n2) We could simply query the kernel to find out if a filesystem has open files, and consider it safe to unmount if there are none. However, this forces users of the brick library to hold an open file handle to their mount or risk the filesystem getting unmounted unexpectedly.\n\nTo put this problem in perspective, most systems will never have more than a small number of NFS shares mounted, because we expect there to be a high degree of sharing of NFS filesystems (for example it's easy to host thousands of cinder volumes using only ten or so NFS mounts). Also the problem will primarily affect Nova because a Cinder backend will typically need to keep all of its shares mounted just to support ongoing reporting of free space.", 
+            "date_created": "2013-08-30 01:18:23.833529+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bswartz"
+        }, 
+        {
+            "content": "Note that this seems to be common to all file system drivers.  See code in nova/virt/libvirt/volume.py - NFS, GlusterFS, and Scality don't implement disconnect_volume.  GPFS and other are in the same category - see the brick patch - https://review.openstack.org/#/c/44170/", 
+            "date_created": "2013-08-30 12:29:58.492358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~avishay-il"
+        }, 
+        {
+            "content": "@Avishay\nYes, given they're all built off of the original NFS driver.  Sorry I tend to use \"NFS\" as a general shared-fs term.  I've fixed up the title hopefully that's less confusing.\n\n@Ben\nThanks for looking at it, the decision may be that it's not a real problem so it's not fixed/changed but I do think it should at least be logged here so we don't forget about it.  ", 
+            "date_created": "2013-08-30 14:19:10.840178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Seems reasonable to me.", 
+            "date_created": "2013-09-01 08:03:23.941311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~avishay-il"
+        }, 
+        {
+            "content": "Nova does this now, see bug 1285209.\n\nThe problem with doing this in Cinder is that it isn't really obvious at present that there is a sensible time to unmount the shares.  Every time we want to poll for volume stats, we currently remount the share anyway to measure the amount of free space it has.  Unmounting and remounting them seems worse than just leaving them mounted.\n\nWe could consider some mechanism to remember how much space they have for a period of time and assume nothing else is consuming/freeing it, but that seems like a lot of complexity for not much benefit.", 
+            "date_created": "2014-04-17 15:04:10.465020+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "Still cinder side contains this issue ... ?", 
+            "date_created": "2014-10-08 08:05:11.455013+00:00", 
+            "author": "https://api.launchpad.net/1.0/~h-tanizawa"
+        }, 
+        {
+            "content": "Closing stale bug. If this is still an issue please reopen.", 
+            "date_created": "2015-11-01 21:30:18.443003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:43:17.614295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

@@ -1,0 +1,136 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:10:26.134295+00:00", 
+    "description": "When using nova evacuate to move an instance from one compute host to another, the command silently fails. The issue seems to be that the rebuild process builds an incorrect libvirt.xml file that no longer correctly references the ceph volume.\n\nSpecifically under the <disk> section I see:\n\n<source protocol=\"rbd\" name=\"volumes/instance-00000004_disk\">\n\nwhere in the original libvirt.xml the file was:\n\n<source protocol=\"rbd\" name=\"volumes/volume-9e1a7835-b780-495c-a88a-4558be784dde\">", 
+    "tags": [
+        "compute", 
+        "in-stable-icehouse", 
+        "in-stable-juno", 
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 110, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1249319", 
+    "owner": "https://api.launchpad.net/1.0/~flwang", 
+    "id": 1249319, 
+    "index": 1304, 
+    "created": "2013-11-08 11:41:15.300813+00:00", 
+    "title": "evacuate on ceph backed volume fails", 
+    "comments": [
+        {
+            "content": "When using nova evacuate to move an instance from one compute host to another, the command silently fails. The issue seems to be that the rebuild process builds an incorrect libvirt.xml file that no longer correctly references the ceph volume.\n\nSpecifically under the <disk> section I see:\n\n<source protocol=\"rbd\" name=\"volumes/instance-00000004_disk\">\n\nwhere in the original libvirt.xml the file was:\n\n<source protocol=\"rbd\" name=\"volumes/volume-9e1a7835-b780-495c-a88a-4558be784dde\">", 
+            "date_created": "2013-11-08 11:41:15.300813+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blane"
+        }, 
+        {
+            "content": "The problem seems to be as follows:\n\nDuring the rebuild prep_block_device calls _prep_block_device - this in turn calls DriverVolumeBlockDevice with the existing bdms as the argument - this bdms does not seem to have source_type or destination_type set, and so the call fails.", 
+            "date_created": "2013-11-12 16:26:48.717025+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blane"
+        }, 
+        {
+            "content": "As a work-around, changing the relevant block_device_mapping_get_all_by_instance call to not use legacy mode seems to work:", 
+            "date_created": "2013-11-12 17:14:00.923382+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blane"
+        }, 
+        {
+            "content": "I see the same thing on Havana -- Blane, which version are you running?", 
+            "date_created": "2013-11-13 12:08:31.647855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mattt416"
+        }, 
+        {
+            "content": "Hi Matt, yes this is with Havana.", 
+            "date_created": "2013-11-13 12:24:50.586174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blane"
+        }, 
+        {
+            "content": "The same problem occurs when evacuating an instance on a volume with an NFS backend - the libvirt.xml file on the destination compute host is built incorrectly and references a disk image instead of the cinder volume. Testing done in Havana release.\n\nI applied the patch Blane provided and that seems to fix the problem.\n", 
+            "date_created": "2014-03-14 17:25:48.809680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bartwensley"
+        }, 
+        {
+            "content": "The patch that Blane provided is working ok with Ceph Backend also.", 
+            "date_created": "2014-03-21 12:56:03.103519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andres-i-benavides"
+        }, 
+        {
+            "content": "Blane just a question, Could we this patch as a solution for this bug?", 
+            "date_created": "2014-03-21 17:34:18.837911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andres-i-benavides"
+        }, 
+        {
+            "content": "Hi Andres, of course.", 
+            "date_created": "2014-03-21 19:07:09.879518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blane"
+        }, 
+        {
+            "content": "Andres,\n\nBefore you fix this, it would be good to understand if any of the other calls to block_device_mapping_get_all_by_instance in nova.compute.manager.py that do not set legacy=False are also broken. If they are, they should also be fixed. I don't have a good enough understanding of this code myself to make that determination, but perhaps someone who is following this bug can comment?\n\nBart\n", 
+            "date_created": "2014-03-21 19:23:25.131582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bartwensley"
+        }, 
+        {
+            "content": "Yes Bart, I am going to investigate the other calls in nova.compute.manager.py", 
+            "date_created": "2014-03-25 13:02:19.042240+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andres-i-benavides"
+        }, 
+        {
+            "content": "I did not find anything unusual respect to other calls in nova.compute.manager. I do not know if someone who is following this bug can comment?", 
+            "date_created": "2014-03-28 19:20:49.269435+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andres-i-benavides"
+        }, 
+        {
+            "content": "Hi,\n\nanyone can help me for the details on how to do the tweak?\n\n--- old/manager.py\t2013-11-12 15:21:23.824525122 +0000\n+++ new/manager.py\t2013-11-12 17:11:07.952673903 +0000\n@@ -2021,7 +2021,7 @@\n             if bdms is None:\n                 bdms = self.conductor_api.\\\n                         block_device_mapping_get_all_by_instance(\n-                                context, instance)\n+                                context, instance, False)\n \n             # NOTE(sirp): this detach is necessary b/c we will reattach the\n             # volumes in _prep_block_devices below.", 
+            "date_created": "2014-07-11 08:26:02.355449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rmasalta"
+        }, 
+        {
+            "content": "I've seen a lot of \"if bdms is None:\" blocks in manager.py file. Do I have to modify all of them?\n", 
+            "date_created": "2014-07-11 08:33:28.048230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rmasalta"
+        }, 
+        {
+            "content": "Having a hard time applying the workaround in icehouse. Any help would be much appreciated.", 
+            "date_created": "2014-07-14 09:34:03.324042+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rmasalta"
+        }, 
+        {
+            "content": "I confirm this bug. Patch works for IBM SVC driver also. ", 
+            "date_created": "2014-08-07 11:09:39.563841+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pavlk-jakub"
+        }, 
+        {
+            "content": "The bug is mirrored in MOS there: https://bugs.launchpad.net/mos/+bug/1367610", 
+            "date_created": "2014-09-10 07:26:05.434973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dmitrymex"
+        }, 
+        {
+            "content": "There's a related (potentially duplicate) bug #1340411.", 
+            "date_created": "2014-09-16 23:40:49.577875+00:00", 
+            "author": "https://api.launchpad.net/1.0/~angdraug"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/131613", 
+            "date_created": "2014-10-29 00:48:44.453160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121745\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=91d3272b975572d9866b7d959547e438142dc4fb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 91d3272b975572d9866b7d959547e438142dc4fb\nAuthor: Fei Long Wang <email address hidden>\nDate:   Tue Sep 16 15:43:37 2014 +1200\n\n    Fix nova evacuate issues for RBD\n    \n    For RBD scenario, there are some issues in Nova code\n    now against evacuate function:\n    \n    1. Based on current implementation, nova evacuate and\n    nova rebuild are sharing some code. When user enables\n    the on_shared_storage option for nova evacuate, nova\n    will check if the instance path is accessible. For\n    the RBD scenario, the volume(block) is shared between\n    different hosts, though the path isn't shared at the\n    filesystem level. This patch fixes this issue and adds\n    test cases for that.\n    \n    2. Missing the 'recreate' parameter for rebuild method.\n    Though the libvirt driver doesn't implement rebuild\n    method(only Ironic driver implements it), but we really\n    need to set 'recreate' in kwargs so it gets passed to\n    _rebuild_default_impl so we don't call driver.destroy\n    on evacuate for shared filesystem/block storage cases.\n    It is fixed in this patch and test case is added as well.\n    \n    Closes-Bug: 1249319\n    Closes-Bug: 1340411\n    \n    Change-Id: Idc8c45b055e986cf85730235d5d25777632ad1c1\n", 
+            "date_created": "2014-10-29 01:48:41.190705+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/131629", 
+            "date_created": "2014-10-29 04:03:03.485861+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/131613\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7920cfdab2fb10e01544eeb713a1e3bc79bc4996\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 7920cfdab2fb10e01544eeb713a1e3bc79bc4996\nAuthor: Fei Long Wang <email address hidden>\nDate:   Tue Sep 16 15:43:37 2014 +1200\n\n    Fix nova evacuate issues for RBD\n    \n    For RBD scenario, there are some issues in Nova code\n    now against evacuate function:\n    \n    1. Based on current implementation, nova evacuate and\n    nova rebuild are sharing some code. When user enables\n    the on_shared_storage option for nova evacuate, nova\n    will check if the instance path is accessible. For\n    the RBD scenario, the volume(block) is shared between\n    different hosts, though the path isn't shared at the\n    filesystem level. This patch fixes this issue and adds\n    test cases for that.\n    \n    2. Missing the 'recreate' parameter for rebuild method.\n    Though the libvirt driver doesn't implement rebuild\n    method(only Ironic driver implements it), but we really\n    need to set 'recreate' in kwargs so it gets passed to\n    _rebuild_default_impl so we don't call driver.destroy\n    on evacuate for shared filesystem/block storage cases.\n    It is fixed in this patch and test case is added as well.\n    \n    Closes-Bug: 1249319\n    Closes-Bug: 1340411\n    \n    Change-Id: Idc8c45b055e986cf85730235d5d25777632ad1c1\n    (cherry picked from commit 91d3272b975572d9866b7d959547e438142dc4fb)\n", 
+            "date_created": "2014-11-14 10:58:58.895773+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/131629\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=3de3f1066fa47312b8c3075abf790631034d67a3\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 3de3f1066fa47312b8c3075abf790631034d67a3\nAuthor: Fei Long Wang <email address hidden>\nDate:   Tue Sep 16 15:43:37 2014 +1200\n\n    Fix nova evacuate issues for RBD\n    \n    For RBD scenario, there are some issues in Nova code\n    now against evacuate function:\n    \n    1. Based on current implementation, nova evacuate and\n    nova rebuild are sharing some code. When user enables\n    the on_shared_storage option for nova evacuate, nova\n    will check if the instance path is accessible. For\n    the RBD scenario, the volume(block) is shared between\n    different hosts, though the path isn't shared at the\n    filesystem level. This patch fixes this issue and adds\n    test cases for that.\n    \n    2. Missing the 'recreate' parameter for rebuild method.\n    Though the libvirt driver doesn't implement rebuild\n    method(only Ironic driver implements it), but we really\n    need to set 'recreate' in kwargs so it gets passed to\n    _rebuild_default_impl so we don't call driver.destroy\n    on evacuate for shared filesystem/block storage cases.\n    It is fixed in this patch and test case is added as well.\n    \n    Closes-Bug: 1249319\n    Closes-Bug: 1340411\n    \n    Conflicts:\n            nova/tests/compute/test_compute_mgr.py\n            nova/tests/virt/libvirt/test_libvirt.py\n            nova/virt/libvirt/driver.py\n    \n    Change-Id: Idc8c45b055e986cf85730235d5d25777632ad1c1\n    (cherry picked from commit 91d3272b975572d9866b7d959547e438142dc4fb)\n    (cherry picked from commit 7920cfdab2fb10e01544eeb713a1e3bc79bc4996)\n", 
+            "date_created": "2014-11-23 04:12:21.247492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

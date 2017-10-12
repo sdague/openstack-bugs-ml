@@ -1,0 +1,135 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-09-26 05:42:02.828098+00:00", 
+    "description": "Referring to Liberty, Compute runs with xen hypervisor:\n\nWhen trying to boot an instance from volume via Horizon, the VM fails to spawn because of an invalid block device mapping. I found a cause for that in a default initial \"device_name=vda\" in the file /srv/www/openstack-dashboard/openstack_dashboard/dashboards/project/instances/workflows/create_instance.py.\nLog file nova-compute.log reports \n\"Ignoring supplied device name: /dev/vda\"\n\n, but in the next step it uses it anyway and says\n\n\"Booting with blank volume at /dev/vda\".\n\nTo test my assumption, I blanked the device_name and edited the array dev_mapping_2 to only append device_name if it's not empty. That works perfectly for Booting from Horizon and could be one way to fix this.\nBut if you use nova boot command, you can still provide (multiple) device names, for example if you launch an instance and attach a blank volume.\n\nIt seems that libvirt is indeed ignoring the supplied device name, but only if it's not the root device. If I understand correctly, a user-supplied device_name should also be nulled out for root_device_name and picked by libvirt, if it's not valid. And also the default value for device_name in Horizon dashboard should be None. If there is one supplied, it should be processed and probably validated by libvirt.\n\nSteps to reproduce from Horizon:\nUse Xen as hypervisor\n\n1. Go to the Horizon dashboard and launch an instance\n2. Select \"Boot from image (creates a new volume)\" as Instance Boot Source\n\nExpected result:\nInstance starts with /dev/xvda as root device.\n\nActual result:\nBuild of instance fails, nova-compute.log reports \n\"BuildAbortException: Build of instance c15f3344-f9e3-4853-9c18-ea8741563205 aborted: Block Device Mapping is Invalid\"\n\nSteps to reproduce from nova cli:\n\n1. Launch an instance from command line via\nnova boot --flavor 1 --block-device source=image,id=IMAGE_ID,dest=volume,size=1,shutdown=remove,bootindex=0,device=vda  --block-device source=blank,dest=volume,size=1,shutdown=remove,device=vdb VM\n\nExpected result:\nInstance starts with /dev/xvda as root device.\n\nActual result:\nBuild of instance fails, device name for vdb is ignored and replaced correctly, but the root device is not.", 
+    "tags": [
+        "libvirt", 
+        "openstack-version.liberty", 
+        "openstack-version.mitaka"
+    ], 
+    "importance": "Low", 
+    "heat": 50, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1560965", 
+    "owner": "None", 
+    "id": 1560965, 
+    "index": 712, 
+    "created": "2016-03-23 12:58:43.597160+00:00", 
+    "title": "libvirt selects wrong root device name", 
+    "comments": [
+        {
+            "content": "Referring to Liberty, Compute runs with xen hypervisor:\n\nWhen trying to boot an instance from volume via Horizon, the VM fails to spawn because of an invalid block device mapping. I found a cause for that in a default initial \"device_name=vda\" in the file /srv/www/openstack-dashboard/openstack_dashboard/dashboards/project/instances/workflows/create_instance.py.\nLog file nova-compute.log reports \n\"Ignoring supplied device name: /dev/vda\"\n\n, but in the next step it uses it anyway and says\n\n\"Booting with blank volume at /dev/vda\".\n\nTo test my assumption, I blanked the device_name and edited the array dev_mapping_2 to only append device_name if it's not empty. That works perfectly for Booting from Horizon and could be one way to fix this.\nBut if you use nova boot command, you can still provide (multiple) device names, for example if you launch an instance and attach a blank volume.\n\nIt seems that libvirt is indeed ignoring the supplied device name, but only if it's not the root device. If I understand correctly, a user-supplied device_name should also be nulled out for root_device_name and picked by libvirt, if it's not valid. And also the default value for device_name in Horizon dashboard should be None. If there is one supplied, it should be processed and probably validated by libvirt.\n\nSteps to reproduce from Horizon:\nUse Xen as hypervisor\n\n1. Go to the Horizon dashboard and launch an instance\n2. Select \"Boot from image (creates a new volume)\" as Instance Boot Source\n\nExpected result:\nInstance starts with /dev/xvda as root device.\n\nActual result:\nBuild of instance fails, nova-compute.log reports \n\"BuildAbortException: Build of instance c15f3344-f9e3-4853-9c18-ea8741563205 aborted: Block Device Mapping is Invalid\"\n\nSteps to reproduce from nova cli:\n\n1. Launch an instance from command line via\nnova boot --flavor 1 --block-device source=image,id=IMAGE_ID,dest=volume,size=1,shutdown=remove,bootindex=0,device=vda  --block-device source=blank,dest=volume,size=1,shutdown=remove,device=vdb VM\n\nExpected result:\nInstance starts with /dev/xvda as root device.\n\nActual result:\nBuild of instance fails, device name for vdb is ignored and replaced correctly, but the root device is not.", 
+            "date_created": "2016-03-23 12:58:43.597160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "Find attached a diff on my changes for Horizon, this worked for me, but I'm not sure about any side effects or if this is the way to go here.", 
+            "date_created": "2016-03-24 11:15:43.285432+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "Hi eblock, I have just come across the same problem, thanks for your useful analysis. Some questions:\n\n1) Should this bug not be logged against Horizon rather than Nova?\n2) Is setting the initial device_name in Horizon to blank not enough to make libvirt autoselect the boot device? Or do you explicitly need to remove it from the request dict as you have done in your patch?", 
+            "date_created": "2016-03-30 10:50:40.642010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pauldbourke"
+        }, 
+        {
+            "content": "3) You mentioned in your mailing list post that you set the \"Device Name\" field in Horizon to visible - could you let me know how you did this?", 
+            "date_created": "2016-03-30 11:01:09.013374+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pauldbourke"
+        }, 
+        {
+            "content": "Hi Paul,\n\n> 1) Should this bug not be logged against Horizon rather than Nova?\n\nIn my opinion, the faulty behavior in Horizon is only a result of the wrong device name selection by libvirt. If Horizon provides the wrong device name it should be checked within libvirt (nova) and then pick a correct name. But I'm hoping for the professionals here to correct me as I'm quite new to Openstack.\n\n> 2) Is setting the initial device_name in Horizon to blank not enough to make libvirt autoselect the boot device? \n\nBy default, you can't provide your own device name as the respective field is blank. So if you launched a VM from volume via Horizon, you would always have the default device_name \"vda\" passed to nova, which would lead to the termination of that VM. I only made that field visible for testing purposes because I don't want users to bother about device names. That's why I set the default device_name to blank. \n\n> 3) you set the \"Device Name\" field in Horizon to visible - could you let me know how you did this?\n\nSure:\ncontrol1:~ # diff -u /srv/www/openstack-dashboard/openstack_dashboard/local/local_settings.py /srv/www/openstack-dashboard/openstack_dashboard/local/local_settings.py.dist\n--- /srv/www/openstack-dashboard/openstack_dashboard/local/local_settings.py    2016-03-29 14:49:07.583429716 +0200\n+++ /srv/www/openstack-dashboard/openstack_dashboard/local/local_settings.py.dist       2016-03-22 11:50:52.832377033 +0100\n@@ -203,7 +203,7 @@\n # can_set_mount_point to True will add the option to set the mount point\n # from the UI.\n OPENSTACK_HYPERVISOR_FEATURES = {\n-    'can_set_mount_point': False,\n+    'can_set_mount_point': True,\n     'can_set_password': False,\n     'requires_keypair': False,\n }\n\n", 
+            "date_created": "2016-03-30 11:38:48.261939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "I have to add another note on your second question:\n\nIf you don't remove device_name from the dict if it's empty,  apache will report an error like this:\n\n   \"Invalid input for field/attribute device_name. Value: None. None is not of type 'string'\"\n\nThat's why I removed it. ", 
+            "date_created": "2016-03-30 12:55:21.766133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "I upgraded my cloud env to Mitaka and was facing the same issue as described. Unfortunately, my first patch mentioned here had no effect. I started digging once again and noticed that the respective code in create_instance.py is not executed anymore. So it seems that now it's the code in /srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js which is responsible for the faulty device names. Here's what I did to let nova choose the device name:\n\n---cut here---\ncontrol1:~ # diff -u /srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js.dist /srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js\n--- /srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js.dist        2016-04-24 00:57:26.000000000 +0200\n+++ /srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js     2016-05-13 16:12:39.915755258 +0200\n@@ -164,8 +164,8 @@\n         source: [],\n         // REQUIRED for JS logic\n         vol_create: false,\n-        // May be null\n-        vol_device_name: 'vda',\n+        // Not set by default to let nova choose autom.\n+        vol_device_name: 'NOTSET',\n         vol_delete_on_instance_delete: false,\n         vol_size: 1\n       };\n@@ -546,17 +546,32 @@\n         // Specify null to get Autoselection (not empty string)\n         var deviceName = finalSpec.vol_device_name ? finalSpec.vol_device_name : null;\n         finalSpec.block_device_mapping_v2 = [];\n-        finalSpec.block_device_mapping_v2.push(\n-          {\n-            'device_name': deviceName,\n-            'source_type': SOURCE_TYPE_IMAGE,\n-            'destination_type': SOURCE_TYPE_VOLUME,\n-            'delete_on_termination': finalSpec.vol_delete_on_instance_delete,\n-            'uuid': finalSpec.source_id,\n-            'boot_index': '0',\n-            'volume_size': finalSpec.vol_size\n-          }\n-        );\n+        if (finalSpec.vol_device_name=='NOTSET') {\n+          finalSpec.block_device_mapping_v2.push(\n+            {\n+//              'device_name': deviceName,\n+              'source_type': SOURCE_TYPE_IMAGE,\n+              'destination_type': SOURCE_TYPE_VOLUME,\n+              'delete_on_termination': finalSpec.vol_delete_on_instance_delete,\n+              'uuid': finalSpec.source_id,\n+              'boot_index': '0',\n+              'volume_size': finalSpec.vol_size\n+            }\n+          );\n+        }\n+        else {\n+          finalSpec.block_device_mapping_v2.push(\n+            {\n+              'device_name': deviceName,\n+              'source_type': SOURCE_TYPE_IMAGE,\n+              'destination_type': SOURCE_TYPE_VOLUME,\n+              'delete_on_termination': finalSpec.vol_delete_on_instance_delete,\n+              'uuid': finalSpec.source_id,\n+              'boot_index': '0',\n+              'volume_size': finalSpec.vol_size\n+            }\n+          );\n+        }\n         finalSpec.source_id = null;\n       }\n     }\n---cut here---\n\nI also added horizon to the affected projects of this bug, I'm not sure if nova is correct anymore.", 
+            "date_created": "2016-05-17 09:02:53.028142+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "I think bug 1217874 is an older bug which describes the same issue.", 
+            "date_created": "2016-05-17 13:36:05.613153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Actually, I don't see that as a duplicate.\nWhat I'm describing is the failure to launch an instance at all if you choose to boot it from volume on Xen hypervisor. Attaching volumes to running instances works fine, so it's not related to cinder.\nThe cause is a default device name 'vda' in the file launch-instance-model.service.js. To let nova choose the device name it should be empty as default, which works as you can see in my tests. I will remove the duplicate mark from this bug.", 
+            "date_created": "2016-05-26 09:17:25.680170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "On Mitaka with KVM hypervisor this bug also is visible.\nWhen booting instance from volume created from image with \"hw_scsi_model=virtio-scsi\" metadata, device names should be in /dev/sd* format. Horizon enforces /dev/vda for first disk, so it is named /dev/vda in cinder & nova metadata, but /dev/sda in libvirt and guest system.\n\nFurther bug caused by this issue is an impossibility to attach another volume, as nova volume-attach tries to use seemingly free name /dev/sda for next device. This causes conflict in building XML in libvirt:\n2016-10-20 17:38:41.780 13818 ERROR oslo_messaging.rpc.dispatcher libvirtError: internal error: unable to execute QEMU command 'device_add': Duplicate ID 'scsi0-0-0-0' for device\n", 
+            "date_created": "2016-10-20 15:42:33.297974+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tomekg"
+        }, 
+        {
+            "content": "This issue is developing. Just to summarize: \nfirst it was the python file /srv/www/openstack-dashboard/openstack_dashboard/dashboards/project/instances/workflows/create_instance.py that had a wrong default device name \"vda\". I had my workaround and then the workflow changed to use the javascript file in /srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js, my workaround had become unusable. So I made some changes to that file that I had to patch it every time I updated my control node. And recently I found that my patch doesn't work anymore. I searched again and found out that now it seems that Horizon is using \n\n/srv/www/openstack-dashboard/openstack_dashboard/dashboards/project/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js\n\ninstead of \n\n/srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js.\n\nThese files are identical, so I applied the same patch to that file and now it works again with the block devices. \n\nI hope someone will fix this, it's kind of annoying for users (and admins).", 
+            "date_created": "2016-11-01 10:04:25.209426+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "@eblock - can you please paste a diff of your create_instance.py file !", 
+            "date_created": "2016-11-21 06:06:45.095871+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matthew-taylor-f"
+        }, 
+        {
+            "content": "I can't provide a diff from that file, It's the distributed file I'm using since my changes from March didn't have any effects anymore. The only differences regarding Horizon are in the files /srv/www/openstack-dashboard/openstack_dashboard/dashboards/project/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js and\n/srv/www/openstack-dashboard/static/dashboard/project/workflow/launch-instance/launch-instance-model.service.js, see comment #6 for the diff.", 
+            "date_created": "2016-11-21 08:17:40.769695+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "Can confirm that what you provided in #6 fixes the issue (with Mitaka, looks the same for Newton), and it makes complete sense to let the image metadata, or the hypervisor software (ie. xen/kvm) dictate what the primary disk is going to be labeled.\n\nI also had the same issue, where we had set \"disk_prefix = sd\" in nova.conf, along with \"hw_scsi_model=virtio-scsi\" and \"hw_disk_bus=scsi\" on images (as we're using Ceph), however the the primary disk would appear as /dev/vda in Horzion, and /dev/sda in the VM.\n\nConsequent disk's being added from there would appear as /dev/sd[b/d/c] in horizon, however they would not mount due to the device being in use and cause all sorts of issues from there (to the point that the VM will not boot if restarted).\n\nAfter applying the patch (from #6), disks appear as expected in order (eg. /dev/sd[a/b/c]).", 
+            "date_created": "2016-11-22 01:59:14.247051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matthew-taylor-f"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/400463", 
+            "date_created": "2016-11-22 02:13:14.620110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Needs more work for Newton. this'll be a WIP for me for a while.\n", 
+            "date_created": "2016-11-22 03:17:22.600198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matthew-taylor-f"
+        }, 
+        {
+            "content": "Testing on Mitaka and confirming this is still very messy. I'd be interested to know why the relevant code seems to have moved from create_instance.py to Javascript as eblock has pointed out.\n\nFor some reason I haven't figured out yet, eblock's latest patch is not working for me, though a similar patch to the function below (setFinalSpecBootFromVolumeDevice) works for the volume->volume case (attached).\n\nHere is some relevant info while it's fresh in my mind:\n\n* Both image->volume and volume->volume appear to work via the API but not Horizon, so this is absolutely a Horizon problem imo.\n\n* Reading the docs on Nova BDM specifiying the device name as Horizon currently does (vda) is not recommended, so eblock's patch should be the correct approach.\n\n* setFinalSpecBootFromVolumeDevice seems to be hardcoded to use BDM v1, I'm not sure if there's a reason for this, but updating it to use v2 as in my patch seems to work ok for both KVM and Xen.", 
+            "date_created": "2016-12-14 16:27:22.421637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pauldbourke"
+        }, 
+        {
+            "content": "Change abandoned by David Lyle (<email address hidden>) on branch: master\nReview: https://review.openstack.org/400463\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-02-17 17:15:57.368616+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Automatically discovered version liberty in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:56:42.970598+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I don't know if I was supposed to do that, but since this description also applies to Mitaka, I added the respective tag.", 
+            "date_created": "2017-06-28 06:49:41.839728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "Hello,\n\nI had the same problem in Openstack Newton. I had exactly the same problem as Tomasz G\u0142uch (tomekg) wrote in #9. I applied the patch that was proposed in #6 but when I tried to create a volume from the image and then boot a VM from that volume the problem still existed. As Paul Bourke suggested in #16 I changed (setFinalSpecBootFromVolumeDevice) but in a different way. Now everything works as expected. My patch is attached and I hope it helps.", 
+            "date_created": "2017-08-31 08:57:57.213089+00:00", 
+            "author": "https://api.launchpad.net/1.0/~skoffas"
+        }, 
+        {
+            "content": "Hi Guys, \n\nAny news about this bug ? it still happen in Ocata. \nIf you use nova along with \"hw_scsi_model=virtio-scsi\" and \"hw_disk_bus=scsi\" to launch your instances, you can't attach a new cinder volume then, because of the error \"libvirtError: internal error: unable to execute QEMU command 'device_add': Duplicate ID 'scsi0-0-0-0' for device\", and as a result of this the / volume turns in read-only state.\nNova uses the same name for both the / volume and the new cinder one, both are /dev/sda.  ", 
+            "date_created": "2017-09-25 18:32:23.044785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~massimo-6"
+        }, 
+        {
+            "content": "Hi Maximiliano,\n\nHave you tried the patch that I attached in my comment above (#20). I think that it\nsolves the problem. You can find the file that is used by the Openstack dashboard\n(horizon) in /var/lib/openstack-dashboard/static/dashboard/js/ . Please give it a try\nand if you have any problems tell me.\n\nPS: I know that if I believe that my patch solves the problem I should make a proper PR\nand I will give it a try when find some free time :)", 
+            "date_created": "2017-09-26 05:42:01.476728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~skoffas"
+        }
+    ]
+}

@@ -1,0 +1,44 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-01-27 00:52:36.459800+00:00", 
+    "description": "If an instance with 'hw:cpu_thread_policy=isolate' is scheduled on a non-HT host, the pinned pCPUs are not properly accounted for.  This can lead to multiple instances running on the same pCPUs\n\nThe problem is that in LibvirtDriver._get_host_numa_topology() when calculating the NUMACell.siblings field we filter out single cpus.  On a non-HT host this means that NUMACell.siblings is an empty list.\n\nLater when _update_usage() runs it ends up eventually running NUMACell.pin_cpus_with_siblings().  This contains the following code:\n\n    def pin_cpus_with_siblings(self, cpus):\n        pin_siblings = set()\n        for sib in self.siblings:\n            if cpus & sib:\n                pin_siblings.update(sib)\n        self.pin_cpus(pin_siblings)\n\nSince \"self.siblings\" is empty, we end up calling self.pin_cpus() with an empty list, which means that we don't update self.pinned_cpus.\n\nStephen Finucane has suggested the correct fix might be to leave single pCPUs in the NUMACell.siblings field.  This needs to be verified to make sure that it doesn't cause other problems.", 
+    "tags": [
+        "compute", 
+        "numa"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1635674", 
+    "owner": "https://api.launchpad.net/1.0/~snikitin", 
+    "id": 1635674, 
+    "index": 4657, 
+    "created": "2016-10-21 16:37:18.998726+00:00", 
+    "title": "'hw:cpu_thread_policy=isolate' is not accounted properly on non-HT hosts", 
+    "comments": [
+        {
+            "content": "If an instance with 'hw:cpu_thread_policy=isolate' is scheduled on a non-HT host, the pinned pCPUs are not properly accounted for.  This can lead to multiple instances running on the same pCPUs\n\nThe problem is that in LibvirtDriver._get_host_numa_topology() when calculating the NUMACell.siblings field we filter out single cpus.  On a non-HT host this means that NUMACell.siblings is an empty list.\n\nLater when _update_usage() runs it ends up eventually running NUMACell.pin_cpus_with_siblings().  This contains the following code:\n\n    def pin_cpus_with_siblings(self, cpus):\n        pin_siblings = set()\n        for sib in self.siblings:\n            if cpus & sib:\n                pin_siblings.update(sib)\n        self.pin_cpus(pin_siblings)\n\nSince \"self.siblings\" is empty, we end up calling self.pin_cpus() with an empty list, which means that we don't update self.pinned_cpus.\n\nStephen Finucane has suggested the correct fix might be to leave single pCPUs in the NUMACell.siblings field.  This needs to be verified to make sure that it doesn't cause other problems.", 
+            "date_created": "2016-10-21 16:37:18.998726+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/391416", 
+            "date_created": "2016-10-28 10:36:07.320736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Stephen's suggested is not quite right because NUMACell.siblings field is often used to check does host has HyperThreading or not. If we will add single siblings into this field it will disrupt the logic in other files. Better solution is call pin_cpus_with_siblings() only if cell has siblings (i.e. has HyperThreading). In this case CPU isolation will be guaranteed by 'dedicated' CPU allocation policy. Remember that 'isolate' CPU thread allocation policy can be used only combined with 'dedicated' CPU allocation policy'.", 
+            "date_created": "2016-10-28 11:04:59.700556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~snikitin"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/391416\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9f12b592d1d26a985699fefde2a7ce0164d0b5d3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9f12b592d1d26a985699fefde2a7ce0164d0b5d3\nAuthor: Sergey Nikitin <email address hidden>\nDate:   Fri Dec 9 17:42:14 2016 +0400\n\n    Mark sibling CPUs as 'used' for cpu_thread_policy = 'isolated'\n    \n    'isolated' CPU allocation thread policy is guarantee\n    that no vCPUs from other guests wouldn't be able to be\n    placed on the cores of booted VM (In this case core is\n    a set of sibling vCPUs).\n    \n    But we still able to boot VMs with 'dedicated' CPU\n    allocation policy on these cores. This problem is actual\n    for hosts without HyperThreading. In this case sets of\n    siblings vCPUs are empty for each core but we are still\n    trying to work with them as with HyperThreading cores.\n    This causes the problem when one \"isolated\" core\n    is used by several VMs.\n    \n    To fix it we must use method unpin_cpus_with_siblings()\n    only if NUMA cell has siblings (i.e. has HyperThreading).\n    For cells without HyperThreading CPU isolation is\n    guaranteed by 'dedicated' CPU allocation policy.\n    \n    Closes-Bug: #1635674\n    \n    Change-Id: I8f72187153c930cd941b7ee7e835a20ed0c0de03\n", 
+            "date_created": "2016-12-20 09:28:19.285266+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b3 development milestone.", 
+            "date_created": "2017-01-27 00:52:35.504293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

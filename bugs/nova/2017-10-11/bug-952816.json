@@ -1,0 +1,53 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-03-21 17:43:15.849367+00:00", 
+    "description": "Xenapi resize fails on Essex4 while using COW and image caching.\nWhen it happens I can read in XenServer's /var/log/SMlog  errors like the following:\n\n<32418> 2012-03-07 08:51:10.233487      *~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*\n<32418> 2012-03-07 08:51:10.233559               ***********************\n<32418> 2012-03-07 08:51:10.233627               *  E X C E P T I O N  *\n<32418> 2012-03-07 08:51:10.233693               ***********************\n<32418> 2012-03-07 08:51:10.233774      gc: EXCEPTION util.SMException, Parent VDI 6c1b8515-4f63-427d-8923-4d6990f57885 of 5e35c299-607d-4d93-ba16-8a2419f31745 not found\n<32418> 2012-03-07 08:51:10.233840        File \"/opt/xensource/sm/cleanup.py\", line 2509, in gc\n    _gc(None, srUuid, dryRun)\n  File \"/opt/xensource/sm/cleanup.py\", line 2412, in _gc\n    _gcLoop(sr, dryRun)\n  File \"/opt/xensource/sm/cleanup.py\", line 2366, in _gcLoop\n    sr.scanLocked()\n  File \"/opt/xensource/sm/cleanup.py\", line 1283, in scanLocked\n    self.scan(force)\n  File \"/opt/xensource/sm/cleanup.py\", line 1844, in scan\n    self._buildTree(force)\n  File \"/opt/xensource/sm/cleanup.py\", line 1800, in _buildTree\n    raise util.SMException(\"Parent VDI %s of %s not \" \\\n\nAs soon as I put in my nova.conf \n\n--use_cow_images=false\n--cache_images=false\n\nthe resize starts working again.", 
+    "tags": [
+        "xenserver"
+    ], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/952816", 
+    "owner": "None", 
+    "id": 952816, 
+    "index": 2798, 
+    "created": "2012-03-12 09:04:55.613866+00:00", 
+    "title": "xenapi resize fails on Essex4 while using COW", 
+    "comments": [
+        {
+            "content": "Xenapi resize fails on Essex4 while using COW and image caching.\nWhen it happens I can read in XenServer's /var/log/SMlog  errors like the following:\n\n<32418> 2012-03-07 08:51:10.233487      *~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*\n<32418> 2012-03-07 08:51:10.233559               ***********************\n<32418> 2012-03-07 08:51:10.233627               *  E X C E P T I O N  *\n<32418> 2012-03-07 08:51:10.233693               ***********************\n<32418> 2012-03-07 08:51:10.233774      gc: EXCEPTION util.SMException, Parent VDI 6c1b8515-4f63-427d-8923-4d6990f57885 of 5e35c299-607d-4d93-ba16-8a2419f31745 not found\n<32418> 2012-03-07 08:51:10.233840        File \"/opt/xensource/sm/cleanup.py\", line 2509, in gc\n    _gc(None, srUuid, dryRun)\n  File \"/opt/xensource/sm/cleanup.py\", line 2412, in _gc\n    _gcLoop(sr, dryRun)\n  File \"/opt/xensource/sm/cleanup.py\", line 2366, in _gcLoop\n    sr.scanLocked()\n  File \"/opt/xensource/sm/cleanup.py\", line 1283, in scanLocked\n    self.scan(force)\n  File \"/opt/xensource/sm/cleanup.py\", line 1844, in scan\n    self._buildTree(force)\n  File \"/opt/xensource/sm/cleanup.py\", line 1800, in _buildTree\n    raise util.SMException(\"Parent VDI %s of %s not \" \\\n\nAs soon as I put in my nova.conf \n\n--use_cow_images=false\n--cache_images=false\n\nthe resize starts working again.", 
+            "date_created": "2012-03-12 09:04:55.613866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gcivitella"
+        }, 
+        {
+            "content": "I expect this is a regression to the fast cloning feature, I am checking with the guys that worked on this, so see if there is anything obvious before I take a look myself.", 
+            "date_created": "2012-03-13 16:13:09.195290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Seems here, with cow and cache resize fail. It seems that the last snapshot copied haven't got parents.\nAnother bug is in scheduler, if disabling only cow the instances, during spawning gone on error to more uses of image cached.\n\nI thinks that this feature need some other code review ;-)", 
+            "date_created": "2012-03-13 21:01:14.932171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~federico-iezzi"
+        }, 
+        {
+            "content": "OK, so I am not able to make resize fail in the way you are describing.\n\nIn your setup are you using multiple machines?", 
+            "date_created": "2012-03-20 16:28:41.006728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I can repro this now.\n\nIf doing a resize on the same machine, it works fine.\n\nIf resizes causes a move to another machine, it fails when COW is on, due to missing parent VDI on the destination.\n\nThis will probably affect migration too, (when VM moves to another server).\n\nNoticed that this VDI chain check only happens in the glance plugin, it should probably happen here too in the migration plugin:\nhttps://github.com/openstack/nova/commit/1da6a00a3b351e035998345e92c44a94b502d0f8\n", 
+            "date_created": "2012-03-22 19:02:52.591998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "This is a little bit related to this: https://bugs.launchpad.net/nova/+bug/1028092", 
+            "date_created": "2012-09-12 10:45:57.248040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "COW is on by default, and cache_image=all and I have resized, and everything seemed to work.", 
+            "date_created": "2013-03-21 17:42:56.035276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }
+    ]
+}

@@ -1,0 +1,36 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-03-02 12:21:59.872621+00:00", 
+    "description": "Version: icehouse. Though looking in to the code in the master I believe bug is still there\nHypervisor: libvirt\nFrequency: very rare, under heavy load (stress tests)\nSteps to reproduce: as an operator I issue \"nova delete\" command. Instead of being deleted that vm gets into ERROR state.\n\nrelevant nova-compute.log: http://paste.openstack.org/show/183111/\n\nHere's probably why it happens:\nIt's a race condition. There are two threads (coroutines if eventlet patched) - thread-1 which handles termination request (nova.compute.manager.ComputeManager.terminate_instance) and thread-2 which dispatches events from hypervisor.\n1) thread-1: manager clears (deletes) all queued events for that vm and switches to thread-2 https://github.com/openstack/nova/blob/983f755562cb87a0b498af5d62be9bd2010bc999/nova/compute/manager.py#L2526\n2) thread-2: hypervisor emits one more event and switches to thread-1 without dispatching event\n3) thread-1: manager deletes image files, marks instance as deleted in the db. Thread finishes and exits normally\n4) thread-2: manager tries to dispatch one more event. But fails as there is no such instance anymore. To be more precise - there is no InstanceInfoCache for that vm.\n\n\nUPD: more logs: https://www.dropbox.com/sh/r0ek3w7g95qoetw/AADTfgN9tD2Mt_fOXjB9OCzva?dl=0\n- Cluster is in HA mode (three nova-api files)\n- debug=False\n- conductor-logs contain only \"connecting, reconnecting to rabbitmq\". \n- cat ... | grep -A 15 -B 15 -r 09ac0ed2-07cb-4394-b0c8-aff3ab74dcdb", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1426524", 
+    "owner": "None", 
+    "id": 1426524, 
+    "index": 5450, 
+    "created": "2015-02-27 19:22:36.713948+00:00", 
+    "title": "race condition prevents intance deletion", 
+    "comments": [
+        {
+            "content": "Version: icehouse. Though looking in to the code in the master I believe bug is still there\nHypervisor: libvirt\nFrequency: very rare, under heavy load (stress tests)\nSteps to reproduce: as an operator I issue \"nova delete\" command. Instead of being deleted that vm gets into ERROR state.\n\n\nI couldn't reproduce this issue on my own though there are some logs (nova-compute): http://paste.openstack.org/show/183111/\nHere's why it happens:\nIt's a race condition. There are two threads (coroutines if eventlet patched) - thread-1 which handles termination request (nova.compute.manager.ComputeManager.terminate_instance) and thread-2 which dispatches events from hypervisor.\n1) thread-1: manager clears (deletes) all queued events for that vm and switches to thread-2 https://github.com/openstack/nova/blob/983f755562cb87a0b498af5d62be9bd2010bc999/nova/compute/manager.py#L2526\n2) thread-2: hypervisor emits one more event, stores it to manager.instance_events and switches to thread-1\n3) thread-1: manager deletes image files, marks instance as deleted in the db. Thread finishes and exits normally\n4) thread-2: manager tries to dispatch one more event. But fails as there is no such instance anymore. To be more precise - there is no InstanceInfoCache for that vm.", 
+            "date_created": "2015-02-27 19:22:36.713948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eafonichev"
+        }, 
+        {
+            "content": "Evgeniy,\n\nCan you please upload a larger set of logs? nova compute, conductor and api around the time this happens please.\n\nthanks,\ndims", 
+            "date_created": "2015-02-27 19:45:55.570383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "added logs to description", 
+            "date_created": "2015-02-27 22:54:53.227580+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eafonichev"
+        }, 
+        {
+            "content": "couldn't reproduce. Also I suspect that volume attach/detach led to db inconsistencies", 
+            "date_created": "2015-03-02 12:21:59.349432+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eafonichev"
+        }
+    ]
+}

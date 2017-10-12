@@ -1,0 +1,75 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-10-03 22:30:15.650617+00:00", 
+    "description": "Reproduce steps:\n1. Create net01: net01__subnet, 192.168.1.0/24:\nneutron net-create net01\nneutron subnet-create net01 192.168.1.0/24 --enable-dhcp --name net01__subnet\n2. Boot instance vm1 in net01:\nNET_ID=$(neutron net-list | grep 'net01' | awk '{print $2}')\nnova boot --flavor m1.micro --image TestVM --nic net-id=$NET_ID --security-groups default vm1 \n3. Note the fixed IP of vm1:\nnova show vm1 | grep network\n| net01 network                        | 192.168.1.36                                             |\n4. Try to remove incorrect fixed IP from vm1:\nnova remove-fixed-ip vm1 192.168.1.37\n\nExpected result:\nA message appears informing that the operation was not correct\n\nActual result:\nNothing happens and displayed\n\n\nNova version - http://paste.openstack.org/show/483603/", 
+    "tags": [
+        "api", 
+        "network", 
+        "neutron"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1534186", 
+    "owner": "None", 
+    "id": 1534186, 
+    "index": 5964, 
+    "created": "2016-01-14 14:44:08.594262+00:00", 
+    "title": "Nova remove-fixed-ip doesn't return an error message when incorrect fixed IP is removed", 
+    "comments": [
+        {
+            "content": "Reproduce steps:\n1. Create net01: net01__subnet, 192.168.1.0/24:\nneutron net-create net01\nneutron subnet-create net01 192.168.1.0/24 --enable-dhcp --name net01__subnet\n2. Boot instance vm1 in net01:\nNET_ID=$(neutron net-list | grep 'net01' | awk '{print $2}')\nnova boot --flavor m1.micro --image TestVM --nic net-id=$NET_ID --security-groups default vm1 \n3. Note the fixed IP of vm1:\nnova show vm1 | grep network\n| net01 network                        | 192.168.1.36                                             |\n4. Try to remove incorrect fixed IP from vm1:\nnova remove-fixed-ip vm1 192.168.1.37\n\nExpected result:\nA message appears informing that the operation was not correct\n\nActual result:\nNothing happens and displayed\n\n\nNova version - http://paste.openstack.org/show/483603/", 
+            "date_created": "2016-01-14 14:44:08.594262+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ababich"
+        }, 
+        {
+            "content": "I confirmed that the remove_fixed_ip_from_instance method in nova/network/neutronv2/api.py throws a fairly generic exception when an error is encountered. Improving the exception information could improve user experience. Additionally I audited the unit test coverage for this method and found exception states are not directly tested (eg, what happens when an invalid IP is provided as the argument to this particular method). I would suggest the fix for this bug is 2 parts, 1) improve exception information for  remove_fixed_ip_from_instance and 2) improve unit test coverage for error states.", 
+            "date_created": "2016-01-14 22:54:21.692669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "I'm sorry, I completely misread the bug and realized that the issue is the exception information is being lost on its way back to the client. I am still working to confirm this.", 
+            "date_created": "2016-01-14 22:57:03.139145+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "I ran the test_remove_fixed_ip_from_instance unit test in test_neutronv2.py [1], and when I stepped through the code, I saw an exception was being hit, \"'Unexpected method call Client.update_port(\\\\'my_portid1\\\\', {\\\\'port\\\\': {\\\\'fixed_ips\\\\': []}}) -> None'\", and then the code [2] indicates it's logged if debug logging is enabled. I'm not sure if this is by design but in this case it means the unit test is passing even if the fixed ip removal fails. I am going to confirm this and ask that someone else who has more context take a look at it to make sure this is the intention. If dropping the exception is the intention, then at minimum a comment needs to be added to that section indicating why and also documentation updated if appropriate.\n\n[1] https://github.com/openstack/nova/blob/master/nova/tests/unit/network/test_neutronv2.py#L2314\n[2] https://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L943", 
+            "date_created": "2016-01-14 23:22:10.254206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "Also, the unit test needs to be updated so it is actually testing the test_remove_fixed_ip_from_instance. If the decision is to drop the exception, then another step should happen in that test to check that the ip was actually removed.", 
+            "date_created": "2016-01-14 23:31:22.042326+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "Zhihai,\nIt's been a while since this bug was assigned to you and no patch yet. Removing you as assigned. Please assign yourself again if you are working on a fix. ", 
+            "date_created": "2016-04-18 16:46:49.705692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sarafraj-singh"
+        }, 
+        {
+            "content": "I think there is an rpc cast call from nova api to network api https://github.com/openstack/nova/blob/master/nova/compute/rpcapi.py#L789.\n\nrpc cast sends a message, doesn't wait for a reply. This is a async operation. For async API operations, you don't return an error code from the API if the operation fails. Hence, the API returns 202 response even if we pass a wrong IP as a argument. Also, 202 response suggests the request is accepted, it does not indicate that the response is OK. \n\nHence, marking this bug as invalid. Please feel free to reopen If I am missing something.\n ", 
+            "date_created": "2016-05-17 18:59:44.635934+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pushkar-umaranikar"
+        }, 
+        {
+            "content": "But if we have no Error message for end user when trying to delete incorrect fixed IP, it looks confusing and inaccurate. What about adding a microversion with support of IP validation before RPC  request sending?", 
+            "date_created": "2016-05-23 15:25:57.912456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ababich"
+        }, 
+        {
+            "content": "I am not sure about adding a microversion. I observed similar behavior when user tries an attach an invalid IP. Its not only restricted to a remove-fixed IP API.\nCalling network api directly from compute API (without rpc cast call to compute manager) can resolve a problem. But I think rpc cast call is needed to redirect request to either nova network or neutron. Please correct me if I am wrong.\nkindly, connect with nova cores on IRC for their suggestion. Marking bug as incomplete till that time. ", 
+            "date_created": "2016-05-31 21:44:16.739747+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pushkar-umaranikar"
+        }, 
+        {
+            "content": "We cannot solve the issue you reported without more information. Could you please provide the requested information ?", 
+            "date_created": "2016-07-12 21:28:59.218203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pushkar-umaranikar"
+        }, 
+        {
+            "content": "I've marked this as confirmed because there should be some communication to the end user that this operation failed or at least that there was a problem. If a mechanism already exists for this (eg, turning on debug logs) then we should clarify expectation that in our documentation.", 
+            "date_created": "2016-10-03 22:30:14.713750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }
+    ]
+}

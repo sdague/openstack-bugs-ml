@@ -1,0 +1,51 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 12:43:46.823658+00:00", 
+    "description": "oslo changeset efba20239c1253c3e6ce4a68eed97585a74b8a46 made a change to logging_context_format_string to fix a ceilo issue - https://bugs.launchpad.net/oslo/+bug/1075095.\n\nThis changed default for logging_context_format_string doesn't work for nova, as it assumes the prior keys in it's use of logging in many places. Running unit tests with the new logging_context_format_string passes, however many many logging stack traces are thrown in the process, like:\n\n    test_init_host                                               Traceback (most recent call last):\n  File \"/usr/lib/python2.7/logging/__init__.py\", line 850, in emit\n    msg = self.format(record)\n  File \"/usr/lib/python2.7/logging/__init__.py\", line 723, in format\n    return fmt.format(record)\n  File \"/home/sdague/code/openstack/nova/nova/openstack/common/log.py\", line 427, in format\n    return logging.Formatter.format(self, record)\n  File \"/usr/lib/python2.7/logging/__init__.py\", line 467, in format\n    s = self._fmt % record.__dict__\nKeyError: 'user'\nLogged from file vm_utils.py, line 1860\n\nWe need to either revert the oslo change, or come up with a way for nova to specify a new default, otherwise nova can't use the oslo logging code as is.", 
+    "tags": [], 
+    "importance": "Critical", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1083218", 
+    "owner": "https://api.launchpad.net/1.0/~dims-v", 
+    "id": 1083218, 
+    "index": 99, 
+    "created": "2012-11-26 16:27:02.635554+00:00", 
+    "title": "oslo changes to logging_context_format_string not compatible with nova", 
+    "comments": [
+        {
+            "content": "oslo changeset efba20239c1253c3e6ce4a68eed97585a74b8a46 made a change to logging_context_format_string to fix a ceilo issue - https://bugs.launchpad.net/oslo/+bug/1075095.\n\nThis changed default for logging_context_format_string doesn't work for nova, as it assumes the prior keys in it's use of logging in many places. Running unit tests with the new logging_context_format_string passes, however many many logging stack traces are thrown in the process, like:\n\n    test_init_host                                               Traceback (most recent call last):\n  File \"/usr/lib/python2.7/logging/__init__.py\", line 850, in emit\n    msg = self.format(record)\n  File \"/usr/lib/python2.7/logging/__init__.py\", line 723, in format\n    return fmt.format(record)\n  File \"/home/sdague/code/openstack/nova/nova/openstack/common/log.py\", line 427, in format\n    return logging.Formatter.format(self, record)\n  File \"/usr/lib/python2.7/logging/__init__.py\", line 467, in format\n    s = self._fmt % record.__dict__\nKeyError: 'user'\nLogged from file vm_utils.py, line 1860\n\nWe need to either revert the oslo change, or come up with a way for nova to specify a new default, otherwise nova can't use the oslo logging code as is.", 
+            "date_created": "2012-11-26 16:27:02.635554+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "The review that introduced the probelm - https://review.openstack.org/15956\n\nA workaround nova can use is to do CONF.set_default('logging_context_format_string') but that method is really intended for testing not runtime\n\nWe don't have a great answer to this generally - how do we add a hooks to an API to allow the defaults of cfg-registered config options to be tweaked by the projects consuming the API\n\nHmm, maybe we could do something like this:\n\n  opts = [\n      StrOpt('foo'),\n      BoolOpt('bar', default=False),\n  ]\n\n  def set_defaults(bar=False):\n      cfg.set_defaults(opts, bar=bar)\n\ni.e. each module would explicitly say which defaults it encourages tweaking\n\nand cfg would have:\n\n  def set_defaults(self, opts, **kwargs):\n      for name, default in kwargs.items():\n          for opt in opts:\n              if opt.dest == name:\n                  opt.default = default\n                  break\n\nand nova/config would do:\n\n  def parse_args(argv):\n      logging.set_defaults(bar=True)\n      cfg.CONF(argv[1:], project='nova')", 
+            "date_created": "2012-11-26 16:52:25.385859+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "To reproduce the current issue you need to copy the new oslo log library into nova (update.py will do it), then run the nova unit tests. Until we have a solution we can't synchronize the log library from oslo into nova.", 
+            "date_created": "2012-11-28 19:13:47.484972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "git review here for oslo:\nhttps://review.openstack.org/17205\n\nonce that change is in, then it's easy to edit nova to set what's needed.\n\n def parse_args(argv, default_config_files=None):\n     cfg.CONF.disable_interspersed_args()\n+    log.set_defaults(logging_context_format_string=\n+                     '%(asctime)s %(levelname)s %(name)s [%(request_id)s '\n+                     '%(user_id)s %(project_id)s] %(instance)s'\n+                     '%(message)s')\n     return argv[:1] + cfg.CONF(argv[1:],\n                                project='nova',\n                                default_config_files=default_config_files)\n", 
+            "date_created": "2012-11-30 15:35:00.525785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Davanum pointed out that this applies to the rpc control_exchange option, as well.  See https://bugs.launchpad.net/nova/+bug/1083944", 
+            "date_created": "2012-12-01 14:34:58.709771+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/17558", 
+            "date_created": "2012-12-05 21:13:44.707896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/17558\nCommitted: http://github.com/openstack/oslo-incubator/commit/9b8128910787ac5f3e80ab81266d971ff20d1805\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9b8128910787ac5f3e80ab81266d971ff20d1805\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Wed Dec 5 16:11:48 2012 -0500\n\n    Allow nova and others to override some logging defaults\n    \n    - In log.py, indicate that logging module allows tweaking\n    of just logging_context_format_string option\n    - In cfg.py, add a method that can alter the default given\n    the options and new default\n    - add testcases for log.set_defaults and cfg.set_defaults\n    \n    Fixes LP #1083218\n    \n    Change-Id: Iefdbce8505eb7a07f2b59d4ed7564b0146f1b0cd\n", 
+            "date_created": "2012-12-06 23:36:22.485058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

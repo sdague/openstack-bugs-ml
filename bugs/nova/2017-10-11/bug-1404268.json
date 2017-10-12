@@ -1,0 +1,114 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:48:49.422912+00:00", 
+    "description": "The nova request context tracks a security context and other request information, including a request id that is added to log entries associated with this request.  The request context is passed around explicitly in many chunks of OpenStack code.  But nova/context.py also stores the RequestContext in the thread's local store (when the RequestContext is created, or when it is explicitly stored through a call to update_store).  The nova logger will use an explicitly passed context, or look for it in the local.store. \n\nA recent change in community openstack code has resulted in the context not being set for many nova log messages during spawn:\n\nhttps://bugs.launchpad.net/neutron/+bug/1372049\n\nThis change spawns a new thread in nova/compute/manager.py build_and_run_instance, and the spawn runs in that new thread.  When the original RPC thread created the nova RequestContext, the context was set in the thread's local store.  But the context does not get set in the newly-spawned thread.\n\nExample of log messages with missing req id during spawn:\n\n014-12-13 22:20:30.987 18219 DEBUG nova.openstack.common.lockutils [-] Acquired semaphore \"87c7fc32-042e-40b7-af46-44bff50fa1b4\" lock /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:229\n2014-12-13 22:20:30.987 18219 DEBUG nova.openstack.common.lockutils [-] Got semaphore / lock \"_locked_do_build_and_run_instance\" inner /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:271\n2014-12-13 22:20:31.012 18219 AUDIT nova.compute.manager [req-bd959d69-86de-4eea-ae1d-a066843ca317 None] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Starting instance...\n...\n2014-12-13 22:20:31.280 18219 DEBUG nova.openstack.common.lockutils [-] Created new semaphore \"compute_resources\" internal_lock /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:206\n2014-12-13 22:20:31.281 18219 DEBUG nova.openstack.common.lockutils [-] Acquired semaphore \"compute_resources\" lock /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:229\n2014-12-13 22:20:31.282 18219 DEBUG nova.openstack.common.lockutils [-] Got semaphore / lock \"instance_claim\" inner /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:271\n2014-12-13 22:20:31.284 18219 DEBUG nova.compute.resource_tracker [-] Memory overhead for 512 MB instance; 0 MB instance_claim /usr/lib/python2.6/site-packages/nova/compute/resource_tracker.py:1272014-12-13 22:20:31.290 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Attempting claim: memory 512 MB, disk 10 GB2014-12-13 22:20:31.292 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Total memory: 131072 MB, used: 12288.00 MB2014-12-13 22:20:31.296 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] memory limit not specified, defaulting to unlimited2014-12-13 22:20:31.300 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Total disk: 2097152 GB, used: 60.00 GB2014-12-13 22:20:31.304 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] disk limit not specified, defaulting to unlimited\n...\n\n2014-12-13 22:20:32.850 18219 DEBUG nova.network.neutronv2.api [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] get_instance_nw_info() _get_instance_nw_info /usr/lib/python2.6/site-packages/nova/network/neutronv2/api.py:611\n\nProposed patch:\n\none new line of code at the beginning of nova/compute/manager.py _do_build_and_run_instance:\n\n    context.update_store()", 
+    "tags": [
+        "in-stable-kilo", 
+        "kilo-backport-potential"
+    ], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1404268", 
+    "owner": "https://api.launchpad.net/1.0/~alaski", 
+    "id": 1404268, 
+    "index": 1661, 
+    "created": "2014-12-19 14:55:43.448317+00:00", 
+    "title": "Missing nova context during spawn", 
+    "comments": [
+        {
+            "content": "The nova request context tracks a security context and other request information, including a request id that is added to log entries associated with this request.  The request context is passed around explicitly in many chunks of OpenStack code.  But nova/context.py also stores the RequestContext in the thread's local store (when the RequestContext is created, or when it is explicitly stored through a call to update_store).  The nova logger will use an explicitly passed context, or look for it in the local.store. \n\nA recent change in community openstack code has resulted in the context not being set for many nova log messages during spawn:\n\nhttps://bugs.launchpad.net/neutron/+bug/1372049\n\nThis change spawns a new thread in nova/compute/manager.py build_and_run_instance, and the spawn runs in that new thread.  When the original RPC thread created the nova RequestContext, the context was set in the thread's local store.  But the context does not get set in the newly-spawned thread.\n\nExample of log messages with missing req id during spawn:\n\n014-12-13 22:20:30.987 18219 DEBUG nova.openstack.common.lockutils [-] Acquired semaphore \"87c7fc32-042e-40b7-af46-44bff50fa1b4\" lock /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:229\n2014-12-13 22:20:30.987 18219 DEBUG nova.openstack.common.lockutils [-] Got semaphore / lock \"_locked_do_build_and_run_instance\" inner /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:271\n2014-12-13 22:20:31.012 18219 AUDIT nova.compute.manager [req-bd959d69-86de-4eea-ae1d-a066843ca317 None] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Starting instance...\n...\n2014-12-13 22:20:31.280 18219 DEBUG nova.openstack.common.lockutils [-] Created new semaphore \"compute_resources\" internal_lock /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:206\n2014-12-13 22:20:31.281 18219 DEBUG nova.openstack.common.lockutils [-] Acquired semaphore \"compute_resources\" lock /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:229\n2014-12-13 22:20:31.282 18219 DEBUG nova.openstack.common.lockutils [-] Got semaphore / lock \"instance_claim\" inner /usr/lib/python2.6/site-packages/nova/openstack/common/lockutils.py:271\n2014-12-13 22:20:31.284 18219 DEBUG nova.compute.resource_tracker [-] Memory overhead for 512 MB instance; 0 MB instance_claim /usr/lib/python2.6/site-packages/nova/compute/resource_tracker.py:1272014-12-13 22:20:31.290 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Attempting claim: memory 512 MB, disk 10 GB2014-12-13 22:20:31.292 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Total memory: 131072 MB, used: 12288.00 MB2014-12-13 22:20:31.296 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] memory limit not specified, defaulting to unlimited2014-12-13 22:20:31.300 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] Total disk: 2097152 GB, used: 60.00 GB2014-12-13 22:20:31.304 18219 AUDIT nova.compute.claims [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] disk limit not specified, defaulting to unlimited\n...\n\n2014-12-13 22:20:32.850 18219 DEBUG nova.network.neutronv2.api [-] [instance: 87c7fc32-042e-40b7-af46-44bff50fa1b4] get_instance_nw_info() _get_instance_nw_info /usr/lib/python2.6/site-packages/nova/network/neutronv2/api.py:611\n\nProposed patch:\n\none new line of code at the beginning of nova/compute/manager.py _do_build_and_run_instance:\n\n    context.update_store()", 
+            "date_created": "2014-12-19 14:55:43.448317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijuwang"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/143647", 
+            "date_created": "2014-12-23 10:34:07.158760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by jichenjc (<email address hidden>) on branch: master\nReview: https://review.openstack.org/144531\nReason: https://review.openstack.org/#/c/160348/9/nova/context.py\n\nremoved that", 
+            "date_created": "2015-03-10 21:13:30.388572+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Numan Siddique (<email address hidden>) on branch: master\nReview: https://review.openstack.org/143647\nReason: This fix is no longer required because of  patch [1]\n\n[1] https://review.openstack.org/#/c/160348/9", 
+            "date_created": "2015-03-11 10:41:22.657832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The  message on the abandoned patch is incorrect.  That patch attempted to fix two issues and one of them was handled by  https://review.openstack.org/#/c/160348/9.  But the issue reported here with context being lost during build_and_run_instance is still valid.", 
+            "date_created": "2015-04-07 18:47:54.750818+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/171506", 
+            "date_created": "2015-04-08 07:41:21.061516+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Qin Zhao (<email address hidden>) on branch: master\nReview: https://review.openstack.org/171506", 
+            "date_created": "2015-04-13 09:55:01.133400+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I agree this is a big pain, but this isn't in progress and I don't think its worth holding up an RC for.", 
+            "date_created": "2015-04-14 22:09:39.860327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "This is in progress with https://review.openstack.org/#/c/171299/.  Not sure why that didn't get picked up and added here.", 
+            "date_created": "2015-04-15 13:50:47.804857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/171299\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=90f114969715f35e8c2fdba49096324b8bc9b7e0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 90f114969715f35e8c2fdba49096324b8bc9b7e0\nAuthor: Andrew Laski <email address hidden>\nDate:   Tue Apr 7 12:59:41 2015 -0400\n\n    Store context in local store after spawn_n\n    \n    After a utils.spawn_n call we lose the context for logging because it's\n    not in the local thread store.  This was causing log lines to miss\n    context.  Additionally a call to context.get_admin_context() would add\n    that context to the local store making it appear that the context had\n    changed during a request.\n    \n    This wraps methods being called with spawn_n so that they add the\n    context to the local store immediately.\n    \n    Closes-Bug: 1404268\n    \n    Change-Id: Ia5175c9729069df3d779237ba6039cf5bc920018\n", 
+            "date_created": "2015-04-28 17:49:22.469126+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/183144", 
+            "date_created": "2015-05-14 18:10:43.473468+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/183144\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7f293ec49ce87ec022798003470f5903dae603fa\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7f293ec49ce87ec022798003470f5903dae603fa\nAuthor: Qin Zhao <email address hidden>\nDate:   Fri May 15 01:54:21 2015 +0800\n\n    Ensure to store context in thread local after spawn/spawn_n\n    \n    https://review.openstack.org/#/c/171299/ introduces a wrapper for utils.spawn_n\n    to update context in thread local store. However, there are other routines in\n    driver code which calls greenthread.spawn or greenthread.spawn_n, so that they\n    will not update context in thread local store. The commit adds utils.spawn as a\n    new wrapper, and also make those codes call spawn/spawn_n of utils, in order to\n    ensure the context of logging is correct.\n    \n    Change-Id: I3623e60c49e442e2431cf017540422aa59bc285a\n    Related-Bug: 1404268\n", 
+            "date_created": "2015-06-15 19:50:05.953829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/193649", 
+            "date_created": "2015-06-19 17:19:27.514436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/193653", 
+            "date_created": "2015-06-19 17:27:31.049408+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/193649\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=fc7f1ab6140093d91e3b6d91fe48f3e8bf6df219\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit fc7f1ab6140093d91e3b6d91fe48f3e8bf6df219\nAuthor: Andrew Laski <email address hidden>\nDate:   Tue Apr 7 12:59:41 2015 -0400\n\n    Store context in local store after spawn_n\n    \n    After a utils.spawn_n call we lose the context for logging because it's\n    not in the local thread store.  This was causing log lines to miss\n    context.  Additionally a call to context.get_admin_context() would add\n    that context to the local store making it appear that the context had\n    changed during a request.\n    \n    This wraps methods being called with spawn_n so that they add the\n    context to the local store immediately.\n    \n    Closes-Bug: 1404268\n    \n    Change-Id: Ia5175c9729069df3d779237ba6039cf5bc920018\n    (cherry picked from commit 90f114969715f35e8c2fdba49096324b8bc9b7e0)\n", 
+            "date_created": "2015-06-30 05:08:49.398564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/193653\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=48a62170065386cea6004c090fb5273ed9ec8d2b\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 48a62170065386cea6004c090fb5273ed9ec8d2b\nAuthor: Qin Zhao <email address hidden>\nDate:   Fri May 15 01:54:21 2015 +0800\n\n    Ensure to store context in thread local after spawn/spawn_n\n    \n    https://review.openstack.org/#/c/171299/ introduces a wrapper for utils.spawn_n\n    to update context in thread local store. However, there are other routines in\n    driver code which calls greenthread.spawn or greenthread.spawn_n, so that they\n    will not update context in thread local store. The commit adds utils.spawn as a\n    new wrapper, and also make those codes call spawn/spawn_n of utils, in order to\n    ensure the context of logging is correct.\n    \n    Change-Id: I3623e60c49e442e2431cf017540422aa59bc285a\n    Related-Bug: 1404268\n    (cherry picked from commit 7f293ec49ce87ec022798003470f5903dae603fa)\n", 
+            "date_created": "2015-06-30 23:21:04.180197+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/211643", 
+            "date_created": "2015-08-11 15:54:04.060690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/195713\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=97821a9c7e1aff420ef2de319e158630ce811551\nSubmitter: Jenkins\nBranch:    master\n\ncommit 97821a9c7e1aff420ef2de319e158630ce811551\nAuthor: Ryan Rossiter <email address hidden>\nDate:   Tue Aug 11 15:10:48 2015 +0000\n\n    Add hacking check for greenthread.spawn()\n    \n    Because greenthread.spawn() and spawn_n() are missing a nova context\n    (see I3623e60c49e442e2431cf017540422aa59bc285a and\n    Ia5175c9729069df3d779237ba6039cf5bc920018), nova.utils.spawn() and\n    spawn_n() should be used when spawning threads. This change adds a\n    hacking check to assert this is being done during pep8.\n    \n    Change-Id: Id52c30bb5ded2184d772e6026b0f04f9a0efeb55\n    Related-Bug: #1404268\n    Closes-Bug: #1468513\n", 
+            "date_created": "2015-08-13 17:10:00.292371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/211643\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6179854ae77960d4ae883349626069023b407cb0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6179854ae77960d4ae883349626069023b407cb0\nAuthor: Ryan Rossiter <email address hidden>\nDate:   Thu Jun 25 14:41:49 2015 +0000\n\n    Add hacking check for eventlet.spawn()\n    \n    Change Id52c30bb5ded2184d772e6026b0f04f9a0efeb55 added a hacking check\n    for greenthread.spawn(). Since eventlet.spawn() calls\n    greenthread.spawn() under the covers, it should also be checked. Because\n    there are still occurrences of eventlet.spawn(), these were also cleaned\n    up in order to pass the added hacking check.\n    \n    Co-Authored-By: Qin Zhao <email address hidden>\n    \n    Change-Id: Ia125b4ad5e84bf48091af5a7a483b89629f0ec31\n    Related-Bug: #1404268\n    Closes-Bug: #1468513\n", 
+            "date_created": "2015-10-08 03:43:07.275652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

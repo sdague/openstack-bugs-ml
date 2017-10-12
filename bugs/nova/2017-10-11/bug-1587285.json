@@ -1,0 +1,105 @@
+{
+    "status": "Incomplete", 
+    "last_updated": "2017-08-02 09:40:04.348767+00:00", 
+    "description": "* (06/06/2016)I corrected steps to reproduce by #3's description.\n* (15/09/2016)I improved steps to reproduce by #5's description.\n\n[Summary]\nVolume status will be changed to \"available\" in spite of still attached to VM instance.\n\n[Version]\nLater than 13.0.0\n\n[Impact]\nUnder specific condition, volume status will be changed to \"available\" in spite of still attached to VM instance.\nIn this case, guest OS of VM instance can I/O.\n\nIf this volume would be attached to other VM instance, volume data would corrupted by I/O from both VM instance.\n\n[Steps to reproduce]\n\n1. Create a volume named \"volume-A\".\n\n2. Add following break-point to nova-compute.\n   And, Please restart nova-compute.\n\n-------------------------------------------------------\ndiff --git a/nova/compute/manager.py b/nova/compute/manager.py\nindex 9783d39..948a02e 100644\n--- a/nova/compute/manager.py\n+++ b/nova/compute/manager.py\n    def _build_and_run_instance(self, context, instance, image, injected_files,\n            admin_password, requested_networks, security_groups,\n            block_device_mapping, node, limits, filter_properties):\n[...]\n                 self._validate_instance_group_policy(context, instance,\n                         filter_properties)\n                 image_meta = objects.ImageMeta.from_dict(image)\n+                import pdb;pdb.set_trace()\n                 with self._build_resources(context, instance,\n                         requested_networks, security_groups, image_meta,\n                         block_device_mapping) as resources:\n\n-------------------------------------------------------\n\n3. Launch \"VM-A\" without volume.\n   Please wait until \"VM-A\"'s status is changed to \"ACTIVE\".\n\n4. Launch \"VM-B\" with \"volume-A\".\n   (Please specify \"block-device-mapping\" option.)\n\n5. Kill nova-compute process while that is stopped by break-point.\n   (Use \"kill\" command. This is instead of unexpected disaster.)\n   After killing, please restart nova-compute.\n\n6. \"VM-B\"'s status is changed to \"ERROR\" from \"BUILD\" as a result.\n   \"Volume-A\"'s status is still \"available\".\n\n7. Attach \"volume-A\" to \"VM-A\" by volume-attach API.\n\n8. Volume-attach API is completed.\n   \"volume-A\"'s status is changed to \"in-use\" from \"available\".\n\n9. Delete \"VM-B\".\n\n10. Deleting \"VM-B\" is completed.\n    And \"volume-A\"'s status is changed to \"available\" from \"in-use\"!\n    Even \"volume-A\" is still attached to \"VM-A\"!\n\nI think \"volume-A\"'s status should not be changed by deleting \"VM-A\" at step-10 because \"volume-A\" was attached to \"VM-B\".", 
+    "tags": [
+        "compute", 
+        "mitaka-backport-potential", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1587285", 
+    "owner": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6", 
+    "id": 1587285, 
+    "index": 4544, 
+    "created": "2016-05-31 07:28:13.528894+00:00", 
+    "title": "Volume status will be changed to 'available' in spite of still attached to VM instance", 
+    "comments": [
+        {
+            "content": "[Summary]\nUnexpected volume-detach happen under a specific condition.\n\n[Version]\nLater than 13.0.0\n\n[Steps to reproduce]\n\n1. Attach \"volume-A\" to \"VM-A\" by volume-attach API.\n\ne.g.\n$ nova volume-attach <VM-A id> <volume-A id> /dev/vdb\n\n2. Volume-attach API is failed in nova-api by unexpected reasons(e.g. terminating nova-api), and destroying block_device_mapping is failed too.\n   \"volume-A\"'s status is still \"available\".\n\n* If you want to reproduce, you should apply following code instead of terminating nova-api.\n  (Terminating nova-api in good timing is so difficult.)\n-------------------------------------------------------\n--- a/nova/compute/api.py\n+++ b/nova/compute/api.py\n@@ -3108,10 +3108,12 @@ class API(base.Base):\n         volume_bdm = self._create_volume_bdm(\n             context, instance, device, volume_id, disk_bus=disk_bus,\n             device_type=device_type)\n+        raise Exception\n         try:\n             self._check_attach_and_reserve_volume(context, volume_id, instance)\n             self.compute_rpcapi.attach_volume(context, instance, volume_bdm)\n         except Exception:\n+            raise Exception\n             with excutils.save_and_reraise_exception():\n                 volume_bdm.destroy()\n-------------------------------------------------------\n\n* Before do step-3, please remove the applied code and restart nova-api.\n\n3. Attach \"volume-A\" to \"VM-B\" by volume-attach API.\n\ne.g.\n$ nova volume-attach <VM-B id> <volume-A id> /dev/vdb\n\n4. Volume-attach API is completed.\n   \"volume-A\"'s status is changed to \"in-use\" from \"available\".\n\n5. Delete \"VM-A\".\n\ne.g.\n$ nova delete <VM-A id>\n\n6. Deleting \"VM-A\" is completed.\n   And \"volume-A\"'s status is changed to \"available\" from \"in-use\"!\n\n\nI think \"volume-A\"'s status should not be changed by deleting \"VM-A\" at step-6 because \"volume-A\" was attached to \"VM-B\".", 
+            "date_created": "2016-05-31 07:28:13.528894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }, 
+        {
+            "content": "Rikimaru San\n\nThe case you are talking about looks like unreproducible to me.\n\nThe code snippet posted by you\n\n         volume_bdm = self._create_volume_bdm(\n             context, instance, device, volume_id, disk_bus=disk_bus,\n             device_type=device_type)\n+ raise Exception\n\nwould raise an exception at that point, which won't be handled as it has no corresponding exception handling code. As such nova wouldn't come further.\n\nAssuming the first exception was not present and only the 2nd one was present, a proper cleanup would be done and the bdm database entry would be destroyed. \n\nCan I please ask you whether you faced such a situation somewhere without the code hack ?", 
+            "date_created": "2016-06-03 06:34:19.739897+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parora"
+        }, 
+        {
+            "content": "Rikimaru San\n\nThe case you are talking about looks like unreproducible to me.\n\nThe code snippet posted by you\n\n         volume_bdm = self._create_volume_bdm(\n             context, instance, device, volume_id, disk_bus=disk_bus,\n             device_type=device_type)\n+ raise Exception\n\nwould raise an exception at that point, which won't be handled as it has no corresponding exception handling code. As such nova wouldn't come further.\n\nAssuming the first exception was not present and only the 2nd one was present, a proper cleanup would be done and the bdm database entry would be destroyed. \n\nCan I please ask you whether you faced such a situation somewhere without the code hack ?", 
+            "date_created": "2016-06-03 06:38:11.396781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parora"
+        }, 
+        {
+            "content": "Hi Prateek,\n\nThank you for reproducing.\nAnd, sorry for bothering you.\nThe steps to reproduce was incomplete.\n\n> Assuming the first exception was not present and only the 2nd one was present, a proper cleanup would be done and the bdm database entry would be destroyed.\nYes, you are right if cleanup would be done.\nBut, I would like to say that there is a possibility of failing to clean bdm records.\n\n> Can I please ask you whether you faced such a situation somewhere without the code hack ?\nFor example, nova-api process was dead between creating bdm record and executing reserve-volume API.\nIn this case, bdm record will remain.\n\nFollowing steps are improved procedures to reproduce.\n\n1. Add following break-point to nova-api.\n\n-------------------------------------------------------\n--- a/nova/compute/api.py\n+++ b/nova/compute/api.py\n@@ -3108,10 +3108,12 @@ class API(base.Base):\n         volume_bdm = self._create_volume_bdm(\n             context, instance, device, volume_id, disk_bus=disk_bus,\n             device_type=device_type)\n         try:\n+            import pdb;pdb.set_trace()\n             self._check_attach_and_reserve_volume(context, volume_id, instance)\n             self.compute_rpcapi.attach_volume(context, instance, volume_bdm)\n         except Exception:\n             with excutils.save_and_reraise_exception():\n                 volume_bdm.destroy()\n-------------------------------------------------------\n\n2. Please launch two nova-api processes that's like High availability.(*1)\n   (Two processes reference same DB, and listen different address & port.)\n\n3. Attach \"volume-A\" to \"VM-A\" by volume-attach API.\n\n4. Kill nova-api process that was received volume-attach API while nova-api process was stopped by break-point.\n\n   \"Volume-A\"'s status is still \"available\" as a result.\n\n5. Attach \"volume-A\" to \"VM-B\" by volume-attach API.\n   (Send API to the nova-api process that was not killed.)\n\n6. Please press \"c\" at break-point for continuing volume-attach.\n\n7. Volume-attach API is completed.\n   \"volume-A\"'s status is changed to \"in-use\" from \"available\".\n\n8. Delete \"VM-A\".\n   (Send API to the nova-api process that was not killed.)\n\n9. Deleting \"VM-A\" is completed.\n   And \"volume-A\"'s status is changed to \"available\" from \"in-use\"!\n\n\n*1: If there is only one process, remaining bdm record will be cleaned when nova-api is restarted.", 
+            "date_created": "2016-06-06 06:19:34.583676+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }, 
+        {
+            "content": "After I wrote #3, I improved title and bug description.\n\n* I improved title and [Summary].\n* I added [Impact] to bug description.\n* I corrected [Steps to reproduce].", 
+            "date_created": "2016-06-06 06:56:50.291529+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }, 
+        {
+            "content": "I wrote another reproduce steps.\nThis is easier than above procedures.\n\n\n1. Create a volume named \"volume-A\".\n\n2. Add following break-point to nova-compute.\n   And, Please restart nova-compute.\n\n-------------------------------------------------------\ndiff --git a/nova/compute/manager.py b/nova/compute/manager.py\nindex 9783d39..948a02e 100644\n--- a/nova/compute/manager.py\n+++ b/nova/compute/manager.py\n    def _build_and_run_instance(self, context, instance, image, injected_files,\n            admin_password, requested_networks, security_groups,\n            block_device_mapping, node, limits, filter_properties):\n[...]\n                 self._validate_instance_group_policy(context, instance,\n                         filter_properties)\n                 image_meta = objects.ImageMeta.from_dict(image)\n+                import pdb;pdb.set_trace()\n                 with self._build_resources(context, instance,\n                         requested_networks, security_groups, image_meta,\n                         block_device_mapping) as resources:\n\n-------------------------------------------------------\n\n3. Launch \"VM-A\" without volume.\n   Please wait until \"VM-A\"'s status is changed to \"ACTIVE\".\n\n4. Launch \"VM-B\" with \"volume-A\".\n   (Please specify \"block-device-mapping\" option.)\n   \n5. Kill nova-compute process while that is stopped by break-point.\n   (Use \"kill\" command. This is instead of unexpected disaster.)\n   After killing, please restart nova-compute.\n\n6. \"VM-B\"'s status is changed to \"ERROR\" from \"BUILD\" as a result.\n   \"Volume-A\"'s status is still \"available\".\n\n7. Attach \"volume-A\" to \"VM-A\" by volume-attach API.\n\n8. Volume-attach API is completed.\n   \"volume-A\"'s status is changed to \"in-use\" from \"available\".\n\n9. Delete \"VM-B\".\n\n10. Deleting \"VM-B\" is completed.\n    And \"volume-A\"'s status is changed to \"available\" from \"in-use\"!\n    Even \"volume-A\" is still attached to \"VM-A\"!\n", 
+            "date_created": "2016-08-12 06:28:51.845432+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/354617", 
+            "date_created": "2016-08-12 09:42:43.930548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I do not like the \"under specific conditions\" part. Intentional killing compute process plus pdb may simulate a possible unexpected disaster, but I just can't see anything but a very narrow corner case. I guess someone wiser has to take a look; adding needs-attention tag.", 
+            "date_created": "2016-08-12 20:42:48.782270+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mszankin"
+        }, 
+        {
+            "content": "Thank you for adding tag!\n\nCertainly this is a narrow corner case.\nBut, I think that this case is very dangerous.\nSomeone could attach the volume to other instances if the attached volume's status have been changed to \"available\".\nAnd the volume will be attached to two instances at the same time.", 
+            "date_created": "2016-08-15 04:32:10.142610+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }, 
+        {
+            "content": "Ah, so the problem is that when we do a delete, we clean up an attachment that we never actually owned. Thats seems like it should be fixed.\n", 
+            "date_created": "2016-08-15 14:44:49.944531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "While the impact might be high, the likelyhood is low, so I have gone for medium.", 
+            "date_created": "2016-08-15 14:45:17.328935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "> 6. \"VM-B\"'s status is changed to \"ERROR\" from \"BUILD\" as a result.\n>    \"Volume-A\"'s status is still \"available\".\n\nShouldn't we focus on this part and ensure that when the instance is moved to an ERROR state that we also clean up any associated bdms etc from the DB to avoid :\n\n> 10. Deleting \"VM-B\" is completed.\n>     And \"volume-A\"'s status is changed to \"available\" from \"in-use\"!\n>     Even \"volume-A\" is still attached to \"VM-A\"!", 
+            "date_created": "2016-09-16 13:04:10.056971+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Hi Lee,\n\nSorry for replying late.\n\nYour idea is basically good.\nBut, the idea doesn't resolve following cases.\n\n* case1: Call volume-attach API instead of creating VM-B. And, volume-attach API is failed between creating bdm and reserve_volume by nova-api death.\nIn this case, VM-B is not changed to \"ERROR\", and bdm record remains.\n\n* case2: Attach \"volume-A\" to \"VM-A\" before restarting nova-compute. And, delete VM-B.", 
+            "date_created": "2016-12-04 04:50:53.509178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }, 
+        {
+            "content": "(Reprint from gerrit)\n\nI have rethought how to resolve this problem after submitting patch-set 9.\nBut, I couldn't bethink better ideas.\nI think that the current idea is the only feasible one.\n\n\nThe other ideas below have big problems.\n--------------\n(1)Delete garbage BDM records when new BDM record is created.\n\n\n pros:\n* This idea is very simple.\n* This idea guards BDM table from corruption.\n\n\n cons:\n* There will be several corrected BDM records if we specify a multi-attached volume.[1] In this case, distinguishing gaarbage records from in-progress records is impossible.\n\n\n[1]\"multi-attach-volume\" bp (https://blueprints.launchpad.net/nova/+spec/multi-attach-volume) is in-progress.\n\n--------------\n(2)Cinder decide to process or not.\nCinder decide to process or not by self when it receives terminate_connection API/detach API.\n\n\nI think that we can use volume_attachment records for above decision.\nBut, volume_attachment record is currently created at detach API process. This is too late.\nvolume_attachment record should be created at first of initialize_connection API process for above decision.\n\n\nAnd, we should add \"instance_uuid\" parameter to initialize_connection API.\nOtherwise we couldn't find out the volume_attachment record created at initialize_connection API in detach API process.\n\npros:\n* Cinder already decide to change status or not in detach process. So adding conditional branches to cinder is looks natural to me.\n\ncons:\n* Changing initialize-connection API interface doesn't support backward compatibility.\n\n--------------\n", 
+            "date_created": "2016-12-04 11:37:40.620076+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/354617\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 09:57:25.862403+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There are no currently open reviews on this bug, changing the status back to the previous state and unassigning. If there are active reviews related to this bug, please include links in comments. ", 
+            "date_created": "2017-08-01 10:17:02.631096+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I'm still working to this bug.\nBut I'm fixing following a related bug now.\n\nUnnecessary bdm entry is created if same volume is attached twice to an instance\nhttps://bugs.launchpad.net/nova/+bug/1427060\n\nI'll return to this bug after finishing that.", 
+            "date_created": "2017-08-02 09:39:49.636462+00:00", 
+            "author": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6"
+        }
+    ]
+}

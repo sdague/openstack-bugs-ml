@@ -1,0 +1,76 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2012-05-24 14:45:24.176179+00:00", 
+    "description": "This is the error from the build log\n\n======================================================================\nERROR: test_compute_can_update_available_resource (nova.tests.test_service.ServiceTestCase)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/build/buildd/nova-2011.3~d2~20110601.1130/nova/tests/test_service.py\", line 334, in test_compute_can_update_available_resource\n    {'wait': wait_func})\n  File \"/usr/lib/pymodules/python2.7/mox.py\", line 256, in CreateMock\n    new_mock = MockObject(class_to_mock, attrs=attrs)\n  File \"/usr/lib/pymodules/python2.7/mox.py\", line 553, in __init__\n    for method in dir(class_to_mock):\nTypeError: __dir__() must return a list, not MockMethod\n\nIt turns out the semantics around __dir__ changed in 2.7.2. I'm guessing we're mocking a mock object, and MockAnything's __init__ calls dir(class_to_mock) which calls __dir__ which gets intercepted by __getattr__ (or maybe __call__ I'm not sure right now), which returns a MockMethod rather than a list.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/791221", 
+    "owner": "None", 
+    "id": 791221, 
+    "index": 2157, 
+    "created": "2011-06-01 12:43:38.593654+00:00", 
+    "title": "Nova's test suite fails with python 2.7.2rc1", 
+    "comments": [
+        {
+            "content": "This is the error from the build log\n\n======================================================================\nERROR: test_compute_can_update_available_resource (nova.tests.test_service.ServiceTestCase)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/build/buildd/nova-2011.3~d2~20110601.1130/nova/tests/test_service.py\", line 334, in test_compute_can_update_available_resource\n    {'wait': wait_func})\n  File \"/usr/lib/pymodules/python2.7/mox.py\", line 256, in CreateMock\n    new_mock = MockObject(class_to_mock, attrs=attrs)\n  File \"/usr/lib/pymodules/python2.7/mox.py\", line 553, in __init__\n    for method in dir(class_to_mock):\nTypeError: __dir__() must return a list, not MockMethod\n\nIt turns out the semantics around __dir__ changed in 2.7.2. I'm guessing we're mocking a mock object, and MockAnything's __init__ calls dir(class_to_mock) which calls __dir__ which gets intercepted by __getattr__ (or maybe __call__ I'm not sure right now), which returns a MockMethod rather than a list.", 
+            "date_created": "2011-06-01 12:43:38.593654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "I've not had time to whip up anything coherent to file a bug report upstream. If someone else wants to, please feel free to do so.", 
+            "date_created": "2011-06-01 12:44:31.522241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "Reported upstream as:\n\nhttp://code.google.com/p/pymox/issues/detail?id=35", 
+            "date_created": "2011-06-02 19:36:19.357793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "It's almost certainly related to this entry in Misc/NEWS:\n\n- Correct lookup of __dir__ on objects. Among other things, this causes errors\n  besides AttributeError found on lookup to be propagated.\n\nand this log entry:\n\n\nchangeset:   70312:b2fc6b9f850f\nbranch:      2.7\nparent:      70304:9d004a9a2ced\nuser:        Benjamin Peterson <email address hidden>\ndate:        Mon May 23 16:11:05 2011 -0500\nfiles:       Lib/test/test_descr.py Misc/NEWS Objects/object.c\ndescription:\ncorrectly lookup __dir__\n\n\nAs there's no issue number to link this to the Python tracker, I need to as Benjamin why this change was made and whether it's really appropriate for an rc, let alone a patch release.", 
+            "date_created": "2011-06-02 20:45:25.484071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~barry"
+        }, 
+        {
+            "content": "This reproduces the problem:\n\n\n=== mymodule.py ===\n\nclass MyClass(object):\n    pass\n\n\n=== reproduce.py ===\n\nimport mox\nimport mymodule\n\nclass Test(object):\n    def __init__(self):\n        self.mox = mox.Mox()\n        self.mox.StubOutWithMock(mymodule, 'MyClass', use_mock_anything=True)\n        self.mox.CreateMock(mymodule.MyClass)\n\nTest()\n\n\n\n\n\n\nI don't know if this is CPython changing its behaviour to be closer to spec and pymox depending on CPython implementation details. I'm hoping someone else can clear this up.", 
+            "date_created": "2011-06-02 21:01:39.235375+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "I think this one is even simpler to illustrate the change:\n\nclass Foo:\n    def __dir__(self):\n        return ['a', 'b', 'c']\n\nclass Bar:\n    def __dir__(self):\n        return ('a', 'b', 'c')\n\nprint dir(Foo())\nprint dir(Bar())\n\nAFAICT, in Python 2.7.1 you get two lines of ['a', 'b', 'c'] while in 2.7.2rc2, the second line gives you the TypeError.\n", 
+            "date_created": "2011-06-02 21:09:55.609133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~barry"
+        }, 
+        {
+            "content": "http://bugs.python.org/issue12248\n", 
+            "date_created": "2011-06-02 23:32:58.382634+00:00", 
+            "author": "https://api.launchpad.net/1.0/~barry"
+        }, 
+        {
+            "content": "This is what you actually get on 2.7.1:\n\n$ python\nPython 2.7.1 (r271:86832, Mar 24 2011, 22:44:47) \n[GCC 4.4.5] on linux2\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> class Foo:\n...     def __dir__(self):\n...         return ['a', 'b', 'c']\n... \n>>> class Bar:\n...     def __dir__(self):\n...         return ('a', 'b', 'c')\n... \n>>> print dir(Foo())\n['__dir__', '__doc__', '__module__']\n>>> print dir(Bar())\n['__dir__', '__doc__', '__module__']\n\nSo __dir__ was actually completely broken on old-style classes in 2.7.1. You're only seeing the behavior it would have had if __dir__ worked.\n", 
+            "date_created": "2011-06-03 20:59:44.613948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~benjaminp"
+        }, 
+        {
+            "content": "This bug was fixed in the package python-mox - 0.5.3-1ubuntu2\n\n---------------\npython-mox (0.5.3-1ubuntu2) oneiric; urgency=low\n\n  * python-2.7.2-compat.patch: Python 2.7.2 calls __dir__ for old-style\n    classes. Make sure a MockAnything returns a list of some sort\n    instead of a MockMethod (LP: #791221)\n -- Soren Hansen <email address hidden>   Mon, 06 Jun 2011 10:36:48 +0200", 
+            "date_created": "2011-06-06 09:20:12.116969+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Anything left to do on Nova upstream or ubuntu/nova packaging ?", 
+            "date_created": "2011-06-06 12:44:24.568691+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thierry: No", 
+            "date_created": "2011-06-06 12:54:41.619929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "BTW, reverting/working around the change was rejected for 2.7.2 so upstream will need to adjust.", 
+            "date_created": "2011-06-15 14:58:56.118599+00:00", 
+            "author": "https://api.launchpad.net/1.0/~barry"
+        }
+    ]
+}

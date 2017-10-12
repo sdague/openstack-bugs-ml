@@ -1,0 +1,133 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-04-19 13:10:29.717338+00:00", 
+    "description": "This was noticed on the stable/juno ironic sideways grenade jobs, but is also confirmed to be happening on the check-tempest-dsvm-ironic-parallel-nv job, which runs a similarly configured tempest run against Ironic:\n\nhttp://logs.openstack.org/84/137684/1/check/check-grenade-dsvm-ironic-sideways/6d118bc/\n\nA number of the early compute tests will fail to spawn an instance, getting a scheduling error on the client side:\n\nBuildErrorException: Server %(server_id)s failed to build and is in ERROR status\nDetails: Server eb81ee40-ceba-484d-b665-92ec3bf4fedd failed to build and is in ERROR status\nDetails: {u'message': u'No valid host was found. ', u'created': u'2014-11-27T17:44:05Z', u'code': 500}\n\nLooking through the nova logs, the request never even makes to the nova-scheduler.  The last error is reported in conductor:\n\n2014-11-27 17:44:01.005 WARNING nova.scheduler.driver [req-a3c046e5-66db-4bca-a6f8-2263763e49a6 SecurityGroupsTestJSON-2119055496 SecurityGroupsTestJSON-1381566740] [instance: 9008811a-f400-42ae-98d5-caf828fa34dc] NoValidHost exception with message: 'No valid host was found.'\n\nLooking at the time stamps of the requests, the first instance is requested at 17:44:00\n\n2014-11-27 17:44:00.944 24730 DEBUG tempest.common.rest_client [req-a3c046e5-66db-4bca-a6f8-2263763e49a6 None] Request (SecurityGroupsTestJSON:test_server_security_groups): 202 POST http://127.0.0.1:8774/v2/adf4838f0d15462da4601a5d853eafbf/servers 0.515s\n\nHowever, on the nova-compute side, the resource tracker has not been updated to include the enlisted Ironic nodes until much later.  This first time the tracker contains any of the ironic resources is at  17:44:06:\n\n2014-11-27 17:44:06.224 21645 AUDIT nova.compute.resource_tracker [-] Total physical ram (MB): 512, total allocated virtual ram (MB): 0\n\nSo there's a race between the resource tracker's initial inclusion of available resources and Tempest running the first set of tests that require an instance.   This can be worked around in a couple of ways:\n\n* Adjust the periodic task interval on nova-compute to update much more frequently, tho this will just narrow the window.  \n* Have tempest run an admin 'nova hypervisor-stats' call on the client side and wait for resources before running any instances (in the case of baremetal only)\n* Adjust devstack's nova cpu deployment to spin until hypervisor-stats reflect the ironic node parameters", 
+    "tags": [
+        "in-stable-juno"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1398128", 
+    "owner": "None", 
+    "id": 1398128, 
+    "index": 5301, 
+    "created": "2014-12-01 18:33:10.661182+00:00", 
+    "title": "ironic tempest tests periodically failing: No valid host was found", 
+    "comments": [
+        {
+            "content": "This was noticed on the stable/juno ironic sideways grenade jobs, but is also confirmed to be happening on the check-tempest-dsvm-ironic-parallel-nv job, which runs a similarly configured tempest run against Ironic:\n\nhttp://logs.openstack.org/84/137684/1/check/check-grenade-dsvm-ironic-sideways/6d118bc/\n\nA number of the early compute tests will fail to spawn an instance, getting a scheduling error on the client side:\n\nBuildErrorException: Server %(server_id)s failed to build and is in ERROR status\nDetails: Server eb81ee40-ceba-484d-b665-92ec3bf4fedd failed to build and is in ERROR status\nDetails: {u'message': u'No valid host was found. ', u'created': u'2014-11-27T17:44:05Z', u'code': 500}\n\nLooking through the nova logs, the request never even makes to the nova-scheduler.  The last error is reported in conductor:\n\n2014-11-27 17:44:01.005 WARNING nova.scheduler.driver [req-a3c046e5-66db-4bca-a6f8-2263763e49a6 SecurityGroupsTestJSON-2119055496 SecurityGroupsTestJSON-1381566740] [instance: 9008811a-f400-42ae-98d5-caf828fa34dc] NoValidHost exception with message: 'No valid host was found.'\n\nLooking at the time stamps of the requests, the first instance is requested at 17:44:00\n\n2014-11-27 17:44:00.944 24730 DEBUG tempest.common.rest_client [req-a3c046e5-66db-4bca-a6f8-2263763e49a6 None] Request (SecurityGroupsTestJSON:test_server_security_groups): 202 POST http://127.0.0.1:8774/v2/adf4838f0d15462da4601a5d853eafbf/servers 0.515s\n\nHowever, on the nova-compute side, the resource tracker has not been updated to include the enlisted Ironic nodes until much later.  This first time the tracker contains any of the ironic resources is at  17:44:06:\n\n2014-11-27 17:44:06.224 21645 AUDIT nova.compute.resource_tracker [-] Total physical ram (MB): 512, total allocated virtual ram (MB): 0\n\nSo there's a race between the resource tracker's initial inclusion of available resources and Tempest running the first set of tests that require an instance.   This can be worked around in a couple of ways:\n\n* Adjust the periodic task interval on nova-compute to update much more frequently, tho this will just narrow the window.  \n* Have tempest run an admin 'nova hypervisor-stats' call on the client side and wait for resources before running any instances (in the case of baremetal only)\n* Adjust devstack's nova cpu deployment to spin until hypervisor-stats reflect the ironic node parameters", 
+            "date_created": "2014-12-01 18:33:10.661182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/138158", 
+            "date_created": "2014-12-01 19:28:34.284487+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/138164", 
+            "date_created": "2014-12-01 19:53:26.537071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Workaround fix was merged to Grenade stable/juno branch https://review.openstack.org/138170", 
+            "date_created": "2014-12-02 16:21:27.559558+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/138158\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=c78e4671098f08c2eaf0b033777d3c01082141cd\nSubmitter: Jenkins\nBranch:    master\n\ncommit c78e4671098f08c2eaf0b033777d3c01082141cd\nAuthor: Adam Gandelman <email address hidden>\nDate:   Mon Dec 1 11:24:37 2014 -0800\n\n    Wait for hypervisor-stats to reflect ironic nodes\n    \n    When enrolling nodes into Ironic, poll nova's hypervisor-stats until\n    the hypervisor count reflects the number of enrolled nodes.  This\n    eliminates a race where devstack completes and an instance is spawned\n    before the first post-enrollment periodic task ticks on the Nova side,\n    which has recently started popping up in the gate.\n    \n    Change-Id: Ib3d8005e0094ee8af2d5fcb65aca6cd92736da90\n    Closes-bug: #1398128\n", 
+            "date_created": "2014-12-04 14:03:39.308114+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "http://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiTm92YSBoeXBlcnZpc29yLXN0YXRzIGRpZCBub3QgcmVnaXN0ZXIgYXQgbGVhc3QgMyBub2Rlc1wiIiwiZmllbGRzIjpbXSwib2Zmc2V0IjowLCJ0aW1lZnJhbWUiOiI0MzIwMCIsImdyYXBobW9kZSI6ImNvdW50IiwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjE0MTc3ODQzODI2NDZ9\n\nAs the bugfix is not fixing the race condition (and that's not trivial, due to how RT provides resources to the scheduler), it creates a side-effect issue.\n\nMaybe we could try to improve the number of retries ? That said, 120 seconds for booting 3 nodes is still big IMHO.", 
+            "date_created": "2014-12-05 13:31:44.915761+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/138164\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=ab0a04735f8b54783d6bb2614ac5f2e22e6836bf\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit ab0a04735f8b54783d6bb2614ac5f2e22e6836bf\nAuthor: Adam Gandelman <email address hidden>\nDate:   Mon Dec 1 11:24:37 2014 -0800\n\n    Wait for hypervisor-stats to reflect ironic nodes\n    \n    When enrolling nodes into Ironic, poll nova's hypervisor-stats until\n    the hypervisor count reflects the number of enrolled nodes.  This\n    eliminates a race where devstack completes and an instance is spawned\n    before the first post-enrollment periodic task ticks on the Nova side,\n    which has recently started popping up in the gate.\n    \n    Conflicts:\n    \tlib/ironic\n    \n    Change-Id: Ib3d8005e0094ee8af2d5fcb65aca6cd92736da90\n    Closes-bug: #1398128\n    (cherry picked from commit c78e4671098f08c2eaf0b033777d3c01082141cd)\n", 
+            "date_created": "2014-12-05 13:53:49.707134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Adam! I've seen this issue as well. Can something be done on Ironic side?", 
+            "date_created": "2014-12-05 15:37:10.869236+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }, 
+        {
+            "content": "So the devstack patch solves the issue in the grenade migration, where we start n-cpu early and don't enroll nodes till much later.  But this is error still showing up  in the check-tempest-dsvm-ironic-parallel-nv job, frequently.  Symptoms, via http://logs.openstack.org/87/139687/1/check/check-tempest-dsvm-ironic-parallel-nv/55ce684/logs/:\n\nTest case fails with the following on the tempest/client side:\n\nDetails: {u'code': 500, u'created': u'2014-12-05T18:02:26Z', u'message': u'No valid host was found. There are not enough hosts available.'}\n\nOn deployment, devstack waits till nova reports 3 nodes in the hypervisor stats, finishes:\n\n2014-12-05 18:01:27.371 | ++ '[' 3 -ge 3 ']'\n\nn-cpu's first syncs of the 3 nodes, ironic reports each node's node properties, but for all updates nova registers 0mb/0gb/0cpu:\n\nhttp://logs.openstack.org/87/139687/1/check/check-tempest-dsvm-ironic-parallel-nv/55ce684/logs/screen-n-cpu.txt.gz#_2014-12-05_18_01_26_804\n\n2014-12-05 18:01:26.904 30461 INFO nova.compute.resource_tracker [-] Compute_service record created for devstack-trusty-hpcloud-b3-3341906:7048e6e1-e180-4295-8e0a-81eb0416a10a\n2014-12-05 18:01:26.999 30461 INFO nova.compute.resource_tracker [-] Compute_service record created for devstack-trusty-hpcloud-b3-3341906:a4768094-3818-4e04-b55f-6ec7b34ffce3\n2014-12-05 18:01:27.088 30461 INFO nova.compute.resource_tracker [-] Compute_service record created for devstack-trusty-hpcloud-b3-3341906:75fe1fde-6f4e-4b31-8b7c-7683d96e9b88\n\nThe next set of periodic tasks run 1min later and this time, resources for the nodes are updated appropriately, 512mb/1gb/1cpu:\n\nhttp://logs.openstack.org/87/139687/1/check/check-tempest-dsvm-ironic-parallel-nv/55ce684/logs/screen-n-cpu.txt.gz#_2014-12-05_18_02_27_875\n\n2014-12-05 18:02:27.958 30461 INFO nova.compute.resource_tracker [-] Compute_service record updated for devstack-trusty-hpcloud-b3-3341906:7048e6e1-e180-4295-8e0a-81eb0416a10a\n2014-12-05 18:02:28.077 30461 INFO nova.compute.resource_tracker [-] Compute_service record updated for devstack-trusty-hpcloud-b3-3341906:a4768094-3818-4e04-b55f-6ec7b34ffce3\n2014-12-05 18:02:28.162 30461 INFO nova.compute.resource_tracker [-] Compute_service record updated for devstack-trusty-hpcloud-b3-3341906:75fe1fde-6f4e-4b31-8b7c-7683d96e9b88\n\nThe first instance that tempest spawns fails just before the second periodic task sync.  It looks like the initial resource sync picks up the nodes but does not update nova's resources, only the # of available hypervisors.   Node properties (ram/mem/cpu)  are associated with nodes when they are enrolled, so that data is being received on the nova side if its updating its hypervisor count.\n", 
+            "date_created": "2014-12-05 22:11:39.730716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "If we really wanted to band-aid this, we could enhance devstack's resource polling to also wait for mem/cpu/gb to reach an expected state, though I wonder if there's something happening in Nova that's causing this.  This seems like a new issue we're hitting so perhaps something has changed recently on that front?", 
+            "date_created": "2014-12-05 22:14:30.784389+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "OK, so we did some more digging here.  Devananda caught that the hosts ssh credentials to access local libvirt are created after the nodes are enrolled.  Ironic can't validate power state of the nodes until it can connect to libvirt, nova wont take into account a nodes resources until its power state has been validated, causing a delay in schedule-able nodes.", 
+            "date_created": "2014-12-06 00:48:30.167936+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/139770", 
+            "date_created": "2014-12-06 00:51:44.936456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/139770\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=0354640587cde740aa0299c722f019ae1c01e05d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0354640587cde740aa0299c722f019ae1c01e05d\nAuthor: Adam Gandelman <email address hidden>\nDate:   Fri Dec 5 16:49:12 2014 -0800\n\n    Move ironic ssh key creation early in preparation\n    \n    SSH creds should be in place before nodes are enrolled.  If not,\n    ironic cannot sync power state causing nova to skip nodes in\n    its resource tracker.\n    \n    Change-Id: I6b98ae57ce33783f69e2cf9ba357807d384b3012\n    Closes-bug: #1398128\n", 
+            "date_created": "2014-12-09 17:21:49.169075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/140417", 
+            "date_created": "2014-12-09 17:54:49.559428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So the merged devstack patch does not seem to help much, still the same failure altho ssh key creation has moved much earlier in the timeline:\n\n# devstack\n2014-12-09 18:13:42.602 | ++ configure_ironic_auxiliary  # ssh key setup\n2014-12-09 18:16:11.869 | ++ enroll_nodes\n2014-12-09 18:16:36.082 | ++ '[' 3 -ge 3 ']' # nova reports hypervisor count=3\n\n# Tempest first instance fail\nDetails: Server 6b7c6c7e-1e86-4f8f-a19f-8d93c350d2a0 failed to build and is in ERROR status\nDetails: {u'message': u'No valid host was found. There are not enough hosts available.', u'code': 500, u'created': u'2014-12-09T18:17:20Z'}\n\n# first n-cpu periodic to pick up node *count*\n2014-12-09 18:16:34.322 30099 DEBUG nova.openstack.common.periodic_task [-] Running periodic task ComputeManager.update_available_resource run_periodic_tasks\n\n# first n-cpu periodic to pick up node *resources*\n2014-12-09 18:17:34.841 30099 DEBUG nova.openstack.common.periodic_task [-] Running periodic task ComputeManager.update_available_resource run_periodic_tasks \n\nIt looks as if the first periodic sync that picks up the enrolled nodes is still missing parameters that prevent the driver from including its  node resources in nova's resource tracker.  Some debug logging in Ironic would help here if its proving to be this non-obvious.", 
+            "date_created": "2014-12-09 20:10:17.893491+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Looks like the ironic-conductor's first periodic task  / sync_power_state()  run post-enrollment doesn't happen until 18:16:46, which is after nova's initial discovery of the nodes.  ", 
+            "date_created": "2014-12-09 20:46:50.323356+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/140512", 
+            "date_created": "2014-12-09 22:49:17.225518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/140512\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=0c99e2f65b6e86236c0d29928c110628f1e32f3d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0c99e2f65b6e86236c0d29928c110628f1e32f3d\nAuthor: Adam Gandelman <email address hidden>\nDate:   Tue Dec 9 14:44:24 2014 -0800\n\n    Poll resource tracker for ironic cpus as well as count\n    \n    When ironic nodes are enrolled, their resources are not available\n    to the nova scheduler until after a round of ironic and nova periodic\n    tasks have run  In addition to waiting for ironic nodes to show up in\n    the resource tracker, also wait for associated CPU resources.  In\n    the worst case, this means waiting for 3 total rounds of periodic\n    tasks.\n    \n    Change-Id: Idbbc43bf74ff5fff3d50f3494148454bb51e378f\n    Closes-bug: #1398128\n", 
+            "date_created": "2014-12-12 23:52:53.054913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/141697", 
+            "date_created": "2014-12-15 03:25:38.268455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/140417\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=a6a31428575eb12e6ff58c64e6047cb0c1498899\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit a6a31428575eb12e6ff58c64e6047cb0c1498899\nAuthor: Adam Gandelman <email address hidden>\nDate:   Fri Dec 5 16:49:12 2014 -0800\n\n    Move ironic ssh key creation early in preparation\n    \n    SSH creds should be in place before nodes are enrolled.  If not,\n    ironic cannot sync power state causing nova to skip nodes in\n    its resource tracker.\n    \n    Closes-bug: #1398128\n    (cherry picked from commit 0354640587cde740aa0299c722f019ae1c01e05d)\n    \n    Conflicts:\n    \tlib/ironic\n    \n    Change-Id: I6b98ae57ce33783f69e2cf9ba357807d384b3012\n", 
+            "date_created": "2015-01-16 00:22:59.479183+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/141697\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=67d547c9bbd8a7568ac2250deca46d7cf5ee3995\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 67d547c9bbd8a7568ac2250deca46d7cf5ee3995\nAuthor: Adam Gandelman <email address hidden>\nDate:   Tue Dec 9 14:44:24 2014 -0800\n\n    Poll resource tracker for ironic cpus as well as count\n    \n    When ironic nodes are enrolled, their resources are not available\n    to the nova scheduler until after a round of ironic and nova periodic\n    tasks have run  In addition to waiting for ironic nodes to show up in\n    the resource tracker, also wait for associated CPU resources.  In\n    the worst case, this means waiting for 3 total rounds of periodic\n    tasks.\n    \n    Closes-bug: #1398128\n    (cherry picked from commit 0c99e2f65b6e86236c0d29928c110628f1e32f3d)\n    \n    Conflicts:\n    \tlib/ironic\n    \n    Change-Id: Idbbc43bf74ff5fff3d50f3494148454bb51e378f\n", 
+            "date_created": "2015-01-17 08:25:35.569938+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is back as of 4/17:\n\nhttp://logstash.openstack.org/#eyJmaWVsZHMiOltdLCJzZWFyY2giOiJtZXNzYWdlOlwiTm8gdmFsaWQgaG9zdCB3YXMgZm91bmRcIiBBTkQgdGFnczpcImNvbnNvbGVcIiBBTkQgKCBidWlsZF9uYW1lOlwiY2hlY2stZ3JlbmFkZS1kc3ZtLWlyb25pYy1zaWRld2F5c1wiIE9SIGJ1aWxkX25hbWU6XCJnYXRlLWdyZW5hZGUtZHN2bS1pcm9uaWMtc2lkZXdheXNcIiBPUiBidWlsZF9uYW1lOlwiY2hlY2stdGVtcGVzdC1kc3ZtLWlyb25pYy1wYXJhbGxlbC1udlwiICkiLCJ0aW1lZnJhbWUiOiI2MDQ4MDAiLCJncmFwaG1vZGUiOiJjb3VudCIsIm9mZnNldCI6MCwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjE0Mjk0NDczODc3NjR9\n\nMaybe something with the grenade refactor work that is going on?", 
+            "date_created": "2015-04-19 12:43:51.477394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Opened a new bug 1445917 for the new failure.", 
+            "date_created": "2015-04-19 13:10:29.153420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

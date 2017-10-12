@@ -1,0 +1,137 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-01-21 23:19:09.356682+00:00", 
+    "description": "[Impact] \n\n * Without the backport, booting from volume requires flavor disk size larger than volume size, which is wrong. This patch skips flavor disk size checking when booting from volume.\n\n[Test Case]\n\n * 1. create a bootable volume\n   2. boot from this bootable volume with a flavor that has disk size smaller than the volume size\n   3. error should be reported complaining disk size too small\n   4. apply this patch\n   5. boot from that bootable volume with a flavor that has disk size smaller than the volume size again\n   6. boot should succeed\n\n[Regression Potential] \n\n * none\n\n\nVersion: 1:2015.1.0-0ubuntu1~cloud0 on Ubuntu 14.04\n\nI attempt to boot an instance from a volume:\n\nnova boot --nic net-id=[NET ID] --flavor v.512mb --block-device source=volume,dest=volume,id=[VOLUME ID],bus=virtio,device=vda,bootindex=0,shutdown=preserve vm\n\nThis results in nova-api raising a FlavorDiskTooSmall exception in the \"_check_requested_image\" function in compute/api.py. However, according to [1], the root disk limit should not apply to volumes.\n\n[1] http://docs.openstack.org/admin-guide-cloud/content/customize-flavors.html\n\nLog (first line is debug output I added showing that it's looking at the image that the volume was created from):\n\n2015-05-21 10:28:00.586 25835 INFO nova.compute.api [req-1fb882c7-07ae-4c2b-86bd-3d174602d0ae f438b80d215c42efb7508c59dc80940c 8341c85ad9ae49408fa25074adba0480 - - -] image: {'min_disk': 0, 'status': 'active', 'min_ram': 0, 'properties': {u'container_format': u'bare', u'min_ram': u'0', u'disk_format': u'qcow2', u'image_name': u'Ubuntu 14.04 64-bit', u'image_id': u'cf0dffef-30ef-4032-add0-516e88048d85', u'libvirt_cpu_mode': u'host-passthrough', u'checksum': u'76a965427d2866f006ddd2aac66ed5b9', u'min_disk': u'0', u'size': u'255524864'}, 'size': 21474836480}\n2015-05-21 10:28:00.587 25835 INFO nova.api.openstack.wsgi [req-1fb882c7-07ae-4c2b-86bd-3d174602d0ae f438b80d215c42efb7508c59dc80940c 8341c85ad9ae49408fa25074adba0480 - - -] HTTP exception thrown: Flavor's disk is too small for requested image.\n\nTemporary solution: I have special flavor for volume-backed instances so I just set the root disk on those to 0, but this doesn't work if volume are used on other flavors.\nReproduce: create flavor with 1 GB root disk size, then try to boot an instance from a volume created from an image that is larger than 1 GB.", 
+    "tags": [
+        "in-stable-kilo", 
+        "launch", 
+        "sts", 
+        "verification-done", 
+        "volumes"
+    ], 
+    "importance": "Undecided", 
+    "heat": 48, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1457517", 
+    "owner": "https://api.launchpad.net/1.0/~mbooth-9", 
+    "id": 1457517, 
+    "index": 5551, 
+    "created": "2015-05-21 14:46:01.690564+00:00", 
+    "title": "Unable to boot from volume when flavor disk too small", 
+    "comments": [
+        {
+            "content": "Version: 1:2015.1.0-0ubuntu1~cloud0 on Ubuntu 14.04\n\nI attempt to boot an instance from a volume:\n\nnova boot --nic net-id=[NET ID] --flavor v.512mb --block-device source=volume,dest=volume,id=[VOLUME ID],bus=virtio,device=vda,bootindex=0,shutdown=preserve vm\n\nThis results in nova-api raising a FlavorDiskTooSmall exception in the \"_check_requested_image\" function in compute/api.py. However, according to [1], the root disk limit should not apply to volumes.\n\n[1] http://docs.openstack.org/admin-guide-cloud/content/customize-flavors.html\n\nLog:\n\n2015-05-21 10:28:00.586 25835 INFO nova.compute.api [req-1fb882c7-07ae-4c2b-86bd-3d174602d0ae f438b80d215c42efb7508c59dc80940c 8341c85ad9ae49408fa25074adba0480 - - -] image: {'min_disk': 0, 'status': 'active', 'min_ram': 0, 'properties': {u'container_format': u'bare', u'min_ram': u'0', u'disk_format': u'qcow2', u'image_name': u'Ubuntu 14.04 64-bit', u'image_id': u'cf0dffef-30ef-4032-add0-516e88048d85', u'libvirt_cpu_mode': u'host-passthrough', u'checksum': u'76a965427d2866f006ddd2aac66ed5b9', u'min_disk': u'0', u'size': u'255524864'}, 'size': 21474836480}\n2015-05-21 10:28:00.587 25835 INFO nova.api.openstack.wsgi [req-1fb882c7-07ae-4c2b-86bd-3d174602d0ae f438b80d215c42efb7508c59dc80940c 8341c85ad9ae49408fa25074adba0480 - - -] HTTP exception thrown: Flavor's disk is too small for requested image.", 
+            "date_created": "2015-05-21 14:46:01.690564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fbastani"
+        }, 
+        {
+            "content": "it's confirmed.But I think we have to discuss whether it's a bug.\nFor example:\ncreate a 2G bootable volume and the image is large than 1G(maybe 1.5G)\nthen the error \"flavor disk too small\" is ok.\n", 
+            "date_created": "2015-05-25 02:37:10.460728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wangxiyuan"
+        }, 
+        {
+            "content": "Hm, why is it okay in that case? The admin documentation I linked above indicates that the flavor root disk limit does not apply to volumes. It seems like it is fine if the flavor has root disk 1 GB but you want to boot a larger image from it.\n\nAlso I'm not certain whether it is comparing the image size against the flavor root disk limit, or comparing the volume size. If it is comparing the volume size then I think this is an even larger problem. But if it's image size it's still bad, since what if you have a 20 GB snapshot that you want to provision volume-backed instance from on a small flavor?", 
+            "date_created": "2015-05-25 08:03:50.110022+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fbastani"
+        }, 
+        {
+            "content": "You are right. There is no need to check the disk in flavor if boot from volume.\n\nBut in nova code, it is a common function :\nhttps://github.com/openstack/nova/blob/master/nova/compute/api.py#L651\n\nIf boot from image,we must check it. So there is two ways to solve this problem.One is to check whether is boot from volume before _check_requested_image().The other one is to check it in _check_requested_image() to avoid it.\n\nI have submit a patch about this problem with the second way.You can test whether it's solved or not :)", 
+            "date_created": "2015-05-25 10:33:18.304348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wangxiyuan"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/185322/", 
+            "date_created": "2015-05-25 10:34:17.148128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wangxiyuan"
+        }, 
+        {
+            "content": "I looked at the patch, it seems like it still compares the size of the image that volume was created from with the flavor root disk size. I can understand why this check is needed for the min_ram / flavor memory, but why is it needed for the disk?\n\nI'm afraid of situation where user creates a large snapshot, creates a volume from it, and then is unable to boot it from a flavor that has small memory / disk parameters.", 
+            "date_created": "2015-05-25 15:35:50.983268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fbastani"
+        }, 
+        {
+            "content": "My patch just avoid raising FlavorDiskTooSmall error in some ways.\n\nSo,the best way is that we don't have to check disk size with flavor if booting from volume.\n\nlike this:\n        if root_gb and not boot_from_volume:              # add a judgment condition\n            if int(image.get('size') or 0) > root_gb * (1024 ** 3):\n                raise exception.FlavorDiskTooSmall()\n            if int(image.get('min_disk') or 0) > root_gb:\n                    raise exception.FlavorDiskTooSmall()\n\n\nis it looks ok?", 
+            "date_created": "2015-05-26 01:10:09.978296+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wangxiyuan"
+        }, 
+        {
+            "content": "Change abandoned by wangxiyuan (<email address hidden>) on branch: master\nReview: https://review.openstack.org/185322\nReason: I think We should have a discuess about how to check bdm in api side.\n\nFirst of all,maybe we should fix RT's bug :\n\nhttps://bugs.launchpad.net/nova/+bug/1334974", 
+            "date_created": "2015-05-30 03:55:22.285407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This bug is similar to the one below :\n\nhttps://bugs.launchpad.net/nova/+bug/1334974\n\nand it's difficulte to reach an agreement about how to solve it.\n\nso I hava abandoned the patch.You can follow it if you are interested .", 
+            "date_created": "2015-06-01 08:12:43.059878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wangxiyuan"
+        }, 
+        {
+            "content": "Solving an inconsistency: The bug is \"in progress\" but without an assignee.\nI set the status back to \"new\" because of comment #8 (possible duplicate?).\n\nFeel free to assign the bug to yourself. If you do so, please set it to\n\"in progress\".", 
+            "date_created": "2015-06-15 16:03:56.939502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/204635", 
+            "date_created": "2015-07-22 14:27:59.515799+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/204635\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=642c986f0636d52a9ba279c87e25082b4aa9b3b8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 642c986f0636d52a9ba279c87e25082b4aa9b3b8\nAuthor: Matthew Booth <email address hidden>\nDate:   Wed Jul 22 14:56:52 2015 +0100\n\n    Don't check flavor disk size when booting from volume\n    \n    When creating a volume from an image, cinder copies the image metadata\n    into volume properties. When booting from the volume, we read this\n    metadata from the volume and use it as image metadata once again.\n    \n    While fixing the check against min_ram,\n    change I861a78b5c7efa71e4bf7206d388b8d0d8048c78e introduced a\n    regression which prevents a user from booting a volume which is larger\n    than the flavor's disk. As we are not creating this disk, this check\n    does not make sense. Similarly, it checks the image metadata's\n    min_disk against the flavor disk size, which is not being used.\n    \n    This change leaves the image metadata check unaltered when creating a\n    flavor disk. When booting from a volume, we check min_disk from image\n    metadata against the actual size of the volume. We don't check the\n    volume size at all. The check against min_ram is retained unaltered.\n    \n    Closes-Bug: #1457517\n    Closes-Bug: #1459491\n    Closes-Bug: #1466305\n    Change-Id: I264493172da20b664df571e32876030246c2a87c\n", 
+            "date_created": "2015-08-12 18:03:11.815360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Feodor Tersin (<email address hidden>) on branch: master\nReview: https://review.openstack.org/196569", 
+            "date_created": "2015-08-13 05:02:27.232627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/213308", 
+            "date_created": "2015-08-14 19:09:42.282164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Status changed to 'Confirmed' because the bug affects multiple users.", 
+            "date_created": "2015-08-26 18:09:47.329404+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/213308\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8794b938dcb983b7c918718807c2396cb255b4ce\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 8794b938dcb983b7c918718807c2396cb255b4ce\nAuthor: Matthew Booth <email address hidden>\nDate:   Wed Jul 22 14:56:52 2015 +0100\n\n    Don't check flavor disk size when booting from volume\n    \n    When creating a volume from an image, cinder copies the image metadata\n    into volume properties. When booting from the volume, we read this\n    metadata from the volume and use it as image metadata once again.\n    \n    While fixing the check against min_ram,\n    change I861a78b5c7efa71e4bf7206d388b8d0d8048c78e introduced a\n    regression which prevents a user from booting a volume which is larger\n    than the flavor's disk. As we are not creating this disk, this check\n    does not make sense. Similarly, it checks the image metadata's\n    min_disk against the flavor disk size, which is not being used.\n    \n    This change leaves the image metadata check unaltered when creating a\n    flavor disk. When booting from a volume, we check min_disk from image\n    metadata against the actual size of the volume. We don't check the\n    volume size at all. The check against min_ram is retained unaltered.\n    \n    Closes-Bug: #1457517\n    Closes-Bug: #1459491\n    Closes-Bug: #1466305\n    Change-Id: I264493172da20b664df571e32876030246c2a87c\n    (cherry picked from commit 642c986f0636d52a9ba279c87e25082b4aa9b3b8)\n", 
+            "date_created": "2015-09-01 21:17:58.862436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Adding debdiff, which is also available in the ubuntu vivid upload queue (merged into lp:~ubuntu-server-dev/nova/vivid)", 
+            "date_created": "2015-09-09 23:23:40.062140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~billy-olsen"
+        }, 
+        {
+            "content": "This fix is in the current wily package, so marking fix released there.", 
+            "date_created": "2015-10-01 16:39:55.355467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Pushed the debdiff from comment #16 to New sru queue - thanks.", 
+            "date_created": "2015-10-01 16:52:31.407093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Hello Favyen, or anyone else affected,\n\nAccepted nova into vivid-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/nova/1:2015.1.1-0ubuntu2 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2015-10-01 18:06:43.985099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "I was able to verify this bug fix today by the following:\n\n1. Setup a vivid-kilo openstack cloud\n2. Create a 5G volume from a cirros image\n3. Boot an m1.tiny instance using the 5G volume created as the boot source, \n   --> verify command is rejected due to size issue\n4. Log into nova-cloud-controller and upgrade nova-* packages to version 1:2015.1.1-0ubuntu2 from the proposed pocket.\n5. Boot an m1.tiny instance using the %G volume created as the boot source\n  --> verify command is accepted and instance boots\n\n", 
+            "date_created": "2015-10-07 00:57:56.263149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~billy-olsen"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2015-10-14 13:48:10.694629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 1:2015.1.1-0ubuntu2\n\n---------------\nnova (1:2015.1.1-0ubuntu2) vivid; urgency=medium\n\n  [ Corey Bryant ]\n  * d/rules: Prevent dh_python2 from guessing dependencies.\n\n  [ Liang Chen ]\n  * d/p/not-check-disk-size.patch: Fix booting from volume error\n    when flavor disk too small (LP: #1457517)\n\n -- Corey Bryant <email address hidden>  Thu, 13 Aug 2015 15:13:43 -0400", 
+            "date_created": "2015-10-14 13:58:11.205911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ]
+}

@@ -1,0 +1,71 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:42:17.263045+00:00", 
+    "description": "When creating a new instance using \"nova boot --block-device-mapping\" and requesting a volume to be attached as either the boot medium or additional storage, the volume is attached to the new instance regardless of its current state.\n\nExpected behaviour is to refuse to attach a volume to a new instance if that volume is attached elsewhere in exactly the same way that attaching existing volumes to existing instances works.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 28, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1166770", 
+    "owner": "https://api.launchpad.net/1.0/~parthipan", 
+    "id": 1166770, 
+    "index": 3344, 
+    "created": "2013-04-09 12:51:48.169935+00:00", 
+    "title": "nova boot with colume should fail if the volume is already attached to another instance", 
+    "comments": [
+        {
+            "content": "When creating a new instance using \"nova boot --block-device-mapping\" and requesting a volume to be attached as either the boot medium or additional storage, the volume is attached to the new instance regardless of its current state.\n\nExpected behaviour is to refuse to attach a volume to a new instance if that volume is attached elsewhere in exactly the same way that attaching existing volumes to existing instances works.", 
+            "date_created": "2013-04-09 12:51:48.169935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~proffalken"
+        }, 
+        {
+            "content": "Fix in progress, to be submitted later today.", 
+            "date_created": "2013-04-09 12:53:03.711434+00:00", 
+            "author": "https://api.launchpad.net/1.0/~proffalken"
+        }, 
+        {
+            "content": "Research continues into this, turns out it's not what I thought it was...", 
+            "date_created": "2013-04-15 09:17:19.736192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~proffalken"
+        }, 
+        {
+            "content": "I can reproduce this issue in devstack:\n\n$ nova volume-list\n+--------------------------------------+-----------+--------------+------+-------------+-------------+\n| ID                                   | Status    | Display Name | Size | Volume Type | Attached to |\n+--------------------------------------+-----------+--------------+------+-------------+-------------+\n| 5d08f199-319b-48cf-a966-5b5491e1d6cf | available | None         | 1    | None        |             |\n| fb9ecf49-c108-4bb2-b9e7-51bc38d72258 | available | None         | 1    | None        |             |\n+--------------------------------------+-----------+--------------+------+-------------+-------------+\n\n$ nova list\n+--------------------------------------+------+--------+--------------------------------+\n| ID                                   | Name | Status | Networks                       |\n+--------------------------------------+------+--------+--------------------------------+\n| 7e30dfbb-52a2-48c6-a4ed-ff3335e58a7d | p001 | ACTIVE | private=10.0.0.5, 172.24.4.226 |\n| f7cba80e-4996-4bb6-97aa-99f841764540 | p002 | ACTIVE | private=10.0.0.2, 172.24.4.225 |\n+--------------------------------------+------+--------+--------------------------------+\n\n$ nova volume-attach 7e30dfbb-52a2-48c6-a4ed-ff3335e58a7d 5d08f199-319b-48cf-a966-5b5491e1d6cf /dev/vdc\n+----------+--------------------------------------+\n| Property | Value                                |\n+----------+--------------------------------------+\n| device   | /dev/vdc                             |\n| serverId | 7e30dfbb-52a2-48c6-a4ed-ff3335e58a7d |\n| id       | 5d08f199-319b-48cf-a966-5b5491e1d6cf |\n| volumeId | 5d08f199-319b-48cf-a966-5b5491e1d6cf |\n+----------+--------------------------------------+\n\nNow try to attach this volume to a new instance at boot (note that it's still attached to an instance):\n\n$ nova boot --flavor 1 --image 740e7cd1-5713-4356-931f-0af8a8444c48 --block-device-mapping vdd=5d08f199-319b-48cf-a966-5b5491e1d6cf::: --security-groups pg --key-name pkey n003\n+-----------------------------+--------------------------------------+\n| Property                    | Value                                |\n+-----------------------------+--------------------------------------+\n| status                      | BUILD                                |\n| updated                     | 2013-04-30T11:33:51Z                 |\n| OS-EXT-STS:task_state       | scheduling                           |\n| key_name                    | pkey                                 |\n| image                       | cirros-0.3.1-x86_64-uec              |\n| hostId                      |                                      |\n| OS-EXT-STS:vm_state         | building                             |\n| flavor                      | m1.tiny                              |\n| id                          | c02a4197-cdef-4081-8ec2-71fa2f65aef1 |\n| security_groups             | [{u'name': u'pg'}]                   |\n| user_id                     | a2880591b5c64bc6916fe22c9261242a     |\n| name                        | n003                                 |\n| adminPass                   | fFKYYQrwP74o                         |\n| tenant_id                   | dad5e07b0b264b61838d21e8da15100b     |\n| created                     | 2013-04-30T11:33:50Z                 |\n| OS-DCF:diskConfig           | MANUAL                               |\n| metadata                    | {}                                   |\n| accessIPv4                  |                                      |\n| accessIPv6                  |                                      |\n| progress                    | 0                                    |\n| OS-EXT-STS:power_state      | 0                                    |\n| OS-EXT-AZ:availability_zone | nova                                 |\n| config_drive                |                                      |\n+-----------------------------+--------------------------------------+\n\nNow things start going wrong:\n\n1. The new instance never came up (because it couldn't get the volume):\n\n$ nova list\n+--------------------------------------+------+--------+--------------------------------+\n| ID                                   | Name | Status | Networks                       |\n+--------------------------------------+------+--------+--------------------------------+\n| c02a4197-cdef-4081-8ec2-71fa2f65aef1 | n003 | ERROR  | private=10.0.0.7               |\n| 7e30dfbb-52a2-48c6-a4ed-ff3335e58a7d | p001 | ACTIVE | private=10.0.0.5, 172.24.4.226 |\n| f7cba80e-4996-4bb6-97aa-99f841764540 | p002 | ACTIVE | private=10.0.0.2, 172.24.4.225 |\n+--------------------------------------+------+--------+--------------------------------+\n\n2. The original vm to which it was attached still has it.\n\n$ lspci\n00:00.0 Class 0600: 8086:1237\n00:01.0 Class 0601: 8086:7000\n00:01.1 Class 0101: 8086:7010\n00:01.2 Class 0c03: 8086:7020\n00:01.3 Class 0680: 8086:7113\n00:03.0 Class 0200: 1af4:1000\n00:04.0 Class 0100: 1af4:1001\n00:05.0 Class 00ff: 1af4:1002\n00:06.0 Class 0100: 1af4:1001\n$ sudo fdisk -l\n\nDisk /dev/vda: 25 MB, 25165824 bytes\n16 heads, 63 sectors/track, 48 cylinders, total 49152 sectors\nUnits = sectors of 1 * 512 = 512 bytes\nSector size (logical/physical): 512 bytes / 512 bytes\nI/O size (minimum/optimal): 512 bytes / 512 bytes\nDisk identifier: 0x00000000\n\nDisk /dev/vda doesn't contain a valid partition table\n\nDisk /dev/vdb: 1073 MB, 1073741824 bytes\n16 heads, 63 sectors/track, 2080 cylinders, total 2097152 sectors\nUnits = sectors of 1 * 512 = 512 bytes\nSector size (logical/physical): 512 bytes / 512 bytes\nI/O size (minimum/optimal): 512 bytes / 512 bytes\nDisk identifier: 0x00000000\n\nDisk /dev/vdb doesn't contain a valid partition table\n\n\n3. CLI doesn't see the volume as attached:\n\n$ nova volume-list\n+--------------------------------------+-----------+--------------+------+-------------+-------------+\n| ID                                   | Status    | Display Name | Size | Volume Type | Attached to |\n+--------------------------------------+-----------+--------------+------+-------------+-------------+\n| 5d08f199-319b-48cf-a966-5b5491e1d6cf | available | None         | 1    | None        |             |\n| fb9ecf49-c108-4bb2-b9e7-51bc38d72258 | available | None         | 1    | None        |             |\n+--------------------------------------+-----------+--------------+------+-------------+-------------+\n\n4. Trying to attach this volume fails (correct, despite the wrong CLI status)\n\n$ nova volume-attach 7e30dfbb-52a2-48c6-a4ed-ff3335e58a7d 5d08f199-319b-48cf-a966-5b5491e1d6cf /dev/vdc\nERROR: The supplied device path (/dev/vdc) is in use. (HTTP 409) (Request-ID: req-1ae16382-b229-4d40-989b-c8dcb889e608)\n\n\n\n", 
+            "date_created": "2013-04-30 11:51:13.590960+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/27810", 
+            "date_created": "2013-04-30 13:17:32.993696+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "In addition to checking if the volume is 'available' and in the same AZ, I think we also should be reserving the volume to prevent it from being attached elsewhere (following the attach_volume logic).", 
+            "date_created": "2013-04-30 16:33:59.447275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/27810\nCommitted: http://github.com/openstack/nova/commit/8e4eec840d504d27a3a4c640dba67b3b47e81730\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8e4eec840d504d27a3a4c640dba67b3b47e81730\nAuthor: Loganathan Parthipan <email address hidden>\nDate:   Tue Apr 30 13:13:33 2013 +0000\n\n    Checks if volume can be attached\n    \n    This patches makes a boot fail fast if one of the volumes cannot\n    be attached at boot time. Currently the request is accepted but\n    spawning fails in addition to leaving the volume state as\n    available which is an inconsistent state\n    \n    Change-Id: I35b2034f8aa9574fcb8a34b58ead9f5e9ef27664\n    fixes: bug 1166770\n", 
+            "date_created": "2013-05-02 14:48:36.429003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/28082", 
+            "date_created": "2013-05-02 19:21:05.609143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/28968", 
+            "date_created": "2013-05-13 15:32:24.951512+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/29818", 
+            "date_created": "2013-05-20 20:07:13.193295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28082\nCommitted: http://github.com/openstack/nova/commit/2f0f1c25553dff0e8e9e3199331087151f5077e8\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 2f0f1c25553dff0e8e9e3199331087151f5077e8\nAuthor: Loganathan Parthipan <email address hidden>\nDate:   Tue Apr 30 13:13:33 2013 +0000\n\n    Checks if volume can be attached\n    \n    This patches makes a boot fail fast if one of the volumes cannot\n    be attached at boot time. Currently the request is accepted but\n    spawning fails in addition to leaving the volume state as\n    available which is an inconsistent state\n    \n    fixes: bug 1166770\n    (cherry picked from commit 8e4eec840d504d27a3a4c640dba67b3b47e81730)\n    \n    Conflicts:\n    \n    \tnova/tests/compute/test_compute.py\n    \n    Change-Id: I35b2034f8aa9574fcb8a34b58ead9f5e9ef27664\n", 
+            "date_created": "2013-07-27 15:57:22.290784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

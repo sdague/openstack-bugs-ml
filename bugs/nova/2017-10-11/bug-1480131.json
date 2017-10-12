@@ -1,0 +1,64 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2017-09-12 21:25:05.684201+00:00", 
+    "description": "Version: Kilo Stable\n\nProblem Description: querying nova for volume attachments returns the wrong volume_attachment_id.\nI receive the volume_id instead of the volume_attachment_id.\n\nExample:\n\ncurl -g -H \"X-Auth-Token: $ADMIN_TOKEN\" -X GET https://compute:8774/v2/(tenant_id)/servers/56293904-9384-48f8-9329-c961056583f1/os-volume_attachments\n\n{\"volumeAttachments\": [{\"device\": \"/dev/vdb\", \"serverId\": \"56293904-9384-48f8-9329-c961056583f1\", \"id\": \"a75bec42-77b5-42ff-90e5-e505af14b84a\", \"volumeId\": \"a75bec42-77b5-42ff-90e5-e505af14b84a\"}]}\n\n\nHaving a look at the database directly, I see the real volume_attachment_id:\n\nselect (id, volume_id, instance_uuid) from volume_attachment where volume_id='a75bec42-77b5-42ff-90e5-e505af14b84a';\n\n(9cb82021-e77e-495f-8ade-524bc5ccf68c,a75bec42-77b5-42ff-90e5-e505af14b84a,56293904-9384-48f8-9329-c961056583f1)\n\n\nCinder API gets it right, though.\n\n\nFurther Impact:\nHorizon uses the returned volume_attachment_id to query  for volume_details.\nThat is wrong and only works now because of the broken nova behaviour.", 
+    "tags": [
+        "api", 
+        "volumes"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1480131", 
+    "owner": "https://api.launchpad.net/1.0/~yuywz", 
+    "id": 1480131, 
+    "index": 1717, 
+    "created": "2015-07-31 07:34:06.944864+00:00", 
+    "title": "Volume_Attachment_ID uses Volume_ID", 
+    "comments": [
+        {
+            "content": "Version: Kilo Stable\n\nProblem Description: querying nova for volume attachments returns the wrong volume_attachment_id.\nI receive the volume_id instead of the volume_attachment_id.\n\nExample:\n\ncurl -g -H \"X-Auth-Token: $ADMIN_TOKEN\" -X GET https://compute:8774/v2/(tenant_id)/servers/56293904-9384-48f8-9329-c961056583f1/os-volume_attachments\n\n{\"volumeAttachments\": [{\"device\": \"/dev/vdb\", \"serverId\": \"56293904-9384-48f8-9329-c961056583f1\", \"id\": \"a75bec42-77b5-42ff-90e5-e505af14b84a\", \"volumeId\": \"a75bec42-77b5-42ff-90e5-e505af14b84a\"}]}\n\n\nHaving a look at the database directly, I see the real volume_attachment_id:\n\nselect (id, volume_id, instance_uuid) from volume_attachment where volume_id='a75bec42-77b5-42ff-90e5-e505af14b84a';\n\n(9cb82021-e77e-495f-8ade-524bc5ccf68c,a75bec42-77b5-42ff-90e5-e505af14b84a,56293904-9384-48f8-9329-c961056583f1)\n\n\nCinder API gets it right, though.\n\n\nFurther Impact:\nHorizon uses the returned volume_attachment_id to query  for volume_details.\nThat is wrong and only works now because of the broken nova behaviour.", 
+            "date_created": "2015-07-31 07:34:06.944864+00:00", 
+            "author": "https://api.launchpad.net/1.0/~maurice-schreiber"
+        }, 
+        {
+            "content": "Cinder API gets it right *because* \"volume_attachment\" is a cinder table :) right?", 
+            "date_created": "2015-07-31 13:20:09.137102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This would have impact on the documentation too. Currently the apiref [1] also shows two identical UUIDs for \"id\" and \"volumeId\".\n\n[1] http://developer.openstack.org/api-ref-compute-v2-ext.html#listVolumeAttachments", 
+            "date_created": "2015-07-31 13:27:50.035819+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "The 'id' in the block_device_mapping table is sequential numbers, not some randomly generated uuid. Where will this 'id' be used?\nHowever, os-volume_attachments shouldn't return the volume_id in the place of 'id'.", 
+            "date_created": "2015-08-03 02:16:18.163069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~szhsong"
+        }, 
+        {
+            "content": "It looks like this is intentional:\n\nhttps://github.com/openstack/nova/blob/master/nova/api/openstack/compute/volumes.py#L203\n\nThat might just be from the create call though, since the attach is async the response in the POST is the volume_id since we don't know the attachment ID.  We should be able to know that in the GET though.", 
+            "date_created": "2015-09-18 14:31:18.423280+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "In the case of GET, nova-api only gets the block_device_mapping information for the given instance and volume, it doesn't actually call off to cinder to get the attachment information:\n\nhttps://github.com/openstack/nova/blob/master/nova/api/openstack/compute/volumes.py#L264\n\nSo the only way to know the attachment ID is if it's stored in the BlockDeviceMapping object.  And we don't have the attachment_id in the BDM object today:\n\nhttps://github.com/openstack/nova/blob/master/nova/objects/block_device.py#L63\n\nThat's not to say it couldn't be added, but it'd be an objects version change and an API change to show it - so this would require a microversion for the nova API and requires a blueprint and spec.", 
+            "date_created": "2015-09-18 14:34:03.354933+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Given our policy on no more API proxies to other services, I'm inclined to mark this as 'won't fix':\n\nhttp://docs.openstack.org/developer/nova/project_scope.html#no-more-api-proxies\n\nYou can get the attachment id from the volume API.", 
+            "date_created": "2015-09-18 15:24:33.613709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hi Matt,\n\nI think using volume.id as volume_attachment.id will make confusion, especially for cloud admin.  I agree on \"no more API proxies to other services\" but return a \"wrong\" value in API response can't be appropriate(even leave the 'id' field as None seems to be more reasonable to me).\n\nI've drafted a spec for this bug, please review:\nhttps://review.openstack.org/#/c/214021/", 
+            "date_created": "2015-09-21 01:04:00.819088+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yuywz"
+        }, 
+        {
+            "content": "Change abandoned by John Garbutt (<email address hidden>) on branch: master\nReview: https://review.openstack.org/214021\nReason: This one seems suck, please use the usual channels to resolve that.", 
+            "date_created": "2015-11-23 16:33:00.651828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

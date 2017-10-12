@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-05-27 08:04:31.924806+00:00", 
+    "description": "Hey,\n\nI am running Xubuntu 12.04.2 and I installed OpenStack Grizzly through Ubuntu Cloud Archive. \nI configured nova-compute to use LVM as instance storage backend and I put these two lines in nova.conf.\n\nlibvirt_images_type=lvm\nlibvirt_images_volume_group=nova\n\nWhen I am trying to boot a VM with a self-created flavor like:\nnova flavor-create --ephemeral 10 m1.myWithEphSmall 7 4096 20 2\n(with ephemeral block device != 0) the VM doesn't boot.\n\nAll VM with pre-defined flavors works fine.\n\nhere the /var/log/nova/nova-compute.log:\nhttp://paste.openstack.org/show/41529/\n\nsome other infos:\nhttp://paste.openstack.org/show/41533/\n\nnova.conf:\nhttp://paste.openstack.org/show/41534/\n\n\nmany thanks...", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1204424", 
+    "owner": "https://api.launchpad.net/1.0/~vladik-romanovsky", 
+    "id": 1204424, 
+    "index": 3874, 
+    "created": "2013-07-24 09:04:57.541543+00:00", 
+    "title": "Unable to create VM with ephemeral block device in lvm", 
+    "comments": [
+        {
+            "content": "Hey,\n\nI am running Xubuntu 12.04.2 and I installed OpenStack Grizzly through Ubuntu Cloud Archive. \nI configured nova-compute to use LVM as instance storage backend and I put these two lines in nova.conf.\n\nlibvirt_images_type=lvm\nlibvirt_images_volume_group=nova\n\nWhen I am trying to boot a VM with a self-created flavor like:\nnova flavor-create --ephemeral 10 m1.myWithEphSmall 7 4096 20 2\n(with ephemeral block device != 0) the VM doesn't boot.\n\nAll VM with pre-defined flavors works fine.\n\nhere the /var/log/nova/nova-compute.log:\nhttp://paste.openstack.org/show/41529/\n\nsome other infos:\nhttp://paste.openstack.org/show/41533/\n\nnova.conf:\nhttp://paste.openstack.org/show/41534/\n\n\nmany thanks...", 
+            "date_created": "2013-07-24 09:04:57.541543+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-muhl"
+        }, 
+        {
+            "content": "Patches are in:\n\nhttps://review.openstack.org/#/c/48527/\nhttps://review.openstack.org/#/c/48362/\n", 
+            "date_created": "2013-10-03 19:14:53.967058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vladik-romanovsky"
+        }, 
+        {
+            "content": "Should I try it or what is the standard procedure?\n\nregards", 
+            "date_created": "2013-10-07 12:56:00.399314+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-muhl"
+        }, 
+        {
+            "content": "If so, how? ;)\nreplacing all files?", 
+            "date_created": "2013-10-07 12:58:07.829338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-muhl"
+        }, 
+        {
+            "content": "Hi,\n\nSure, I'll be happy if you will try. However, the fix is not distribution specific, since the same problem exists in upstream Havana. \nThe best way is to test it with devstack.. \nI'll check if I can backport it to Grizzly.\n\n\n", 
+            "date_created": "2013-10-07 13:25:46.516423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vladik-romanovsky"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/48362\nCommitted: http://github.com/openstack/nova/commit/474e48bf1169a24123e92381f45650b29990d3bf\nSubmitter: Jenkins\nBranch:    master\n\ncommit 474e48bf1169a24123e92381f45650b29990d3bf\nAuthor: Vladik Romanovsky <email address hidden>\nDate:   Thu Sep 26 16:41:40 2013 -0400\n\n    Fixing ephemeral disk creation.\n    \n    The patch addresses 2 scenarios, which occur when\n    CONF.default_ephemeral_format was provided:\n    \n    1. Creation of ephemeral block devices would fail,\n       due to permission issues, during an attempt to format it without sudo,\n       in _create_local.\n    2. The device/image would be formatted twice, while the final\n       filesystem will differ from the one provided in\n       CONF.default_ephemeral_format.\n    \n    This patch will format only once, relying on the changed\n    disk.mkfs command, that takes CONF.default_ephemeral_format\n    into consideration.\n    It will also run the command as root only for block devices,\n    according to the disk_image is_block_dev property.\n    \n    Closes-Bug: #1204424\n    Change-Id: I2bf7abc982e20eaaf7bca7cd798b4134b76d10a8\n", 
+            "date_created": "2013-10-24 00:23:04.372536+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hey, it's me again.\nI don't think I will confirm the fix in the future, because I have not the time to do that. I have tried it but without success. \nI hope it can be handled by someone else. Sorry.\n\nregards", 
+            "date_created": "2014-01-09 20:41:09.882672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-muhl"
+        }, 
+        {
+            "content": "\nIt seems that patch breaks integration with RBD in IceHouse. In particular in _create_ephemeral() this is not called for block devices (and nova fails):\n\nself._create_local(target, ephemeral_size) \n\nSo, as far as I understand, when RBD is set as a Nova backend, then ephemeral disk is created on a filesystem, then it is formatted with mkfs and only then then imported to Ceph (effectiveness of such algorithm is a separate issue). So, I see in IceHouse that if I replace\n\nif not is_block_dev:\n     self._create_local(target, ephemeral_size)\n\nto just \n\nself._create_local(target, ephemeral_size)\n\nthen Nova does not fail.\n", 
+            "date_created": "2014-05-27 08:04:30.702023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shapovalovts"
+        }
+    ]
+}

@@ -1,0 +1,109 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-06-02 19:32:39.298998+00:00", 
+    "description": "Changing ssh key generation from OpenSSH's ssh-keygen to the Paramiko library [1][2] changed (unintentionally?) the ASN.1 encoding format of SSH private keys from DER to BER.  (DER is a strict subset of BER, so anything that can read BER can read DER, but not necessarily the other way around.)\n\nSome third-party tools only support DER and this has created at least one issue [3] (specifically because Go's standard library only supports DER).\n\nI have provided Paramiko with a small change that makes its SSH private key output equal to OpenSSH's ssh-keygen output (and presumably DER formatted) [4].\n\nProviding a change to Paramiko is just one method of addressing this backwards-incompatibility and interoperability issue.  Should the Paramiko change be accepted the unit test output vectors will need to be changed, but should it not, is a reversion of or modification to Nova acceptable to maintain backwards-compatibility and interoperability?\n\n[1] https://review.openstack.org/157931\n[2] http://git.openstack.org/cgit/openstack/nova/commit/?id=3f3f9bf22efd2fb209d2a2fe0246f4857cd2d21a\n[3] https://github.com/mitchellh/packer/issues/2526\n[4] https://github.com/paramiko/paramiko/pull/572", 
+    "tags": [
+        "crypto", 
+        "security"
+    ], 
+    "importance": "Low", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1483132", 
+    "owner": "https://api.launchpad.net/1.0/~coreywright", 
+    "id": 1483132, 
+    "index": 540, 
+    "created": "2015-08-10 06:47:13.016567+00:00", 
+    "title": "ssh-keygen-to-Paramiko change breaks third-party tools", 
+    "comments": [
+        {
+            "content": "Changing ssh key generation from OpenSSH's ssh-keygen to the Paramiko library [1][2] changed (unintentionally?) the ASN.1 encoding format of SSH private keys from DER to BER.  (DER is a strict subset of BER, so anything that can read BER can read DER, but not necessarily the other way around.)\n\nSome third-party tools only support DER and this has created at least one issue [3] (specifically because Go's standard library only supports DER).\n\nI have provided Paramiko with a small change that makes its SSH private key output equal to OpenSSH's ssh-keygen output (and presumably DER formatted) [4].\n\nProviding a change to Paramiko is just one method of addressing this backwards-incompatibility and interoperability issue.  Should the Paramiko change be accepted the unit test output vectors will need to be changed, but should it not, is a reversion of or modification to Nova acceptable to maintain backwards-compatibility and interoperability?\n\n[1] https://review.openstack.org/157931\n[2] http://git.openstack.org/cgit/openstack/nova/commit/?id=3f3f9bf22efd2fb209d2a2fe0246f4857cd2d21a\n[3] https://github.com/mitchellh/packer/issues/2526\n[4] https://github.com/paramiko/paramiko/pull/572", 
+            "date_created": "2015-08-10 06:47:13.016567+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "Note: The backport of this change to stable/kilo got stopped [1].\n\n[1] https://review.openstack.org/#/c/191206/", 
+            "date_created": "2015-08-10 07:54:21.079631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "The review [1] doesn't waste a word about the encoding, so I would assume that this was unintentional. I struggle with myself to decide if the private SSH key of a keypair should be seen as an interface which Nova exposes for consumption for third party tools. From a security point of view, the stricter DER seems to fit better our needs, so I would assume that a rollback of [1] would be justifiable. Unfortunately I'm no expert here and I need another opinion.\n\n[1] https://review.openstack.org/157931", 
+            "date_created": "2015-08-10 08:52:11.640811+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Paramiko update: Once https://github.com/paramiko/paramiko/pull/394 is merged (switching Paramiko from PyCrypto to Cryptography which uses OpenSSL) and a new release is made (planned for September), then the private key output will be DER.", 
+            "date_created": "2015-08-19 23:34:05.520595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "I just noticed the update, so not sure if this is still an open problem, but since paramiko still hasn't merged that pull, there's an easy workaround on nova's side. By using pyasn1 (already in global requirements), you nova should be able to just do:\n\nasn1 = pyasn1.codec.ber.decode(berdata)[0]\nderdata = pyasn1.codec.der.encode(ans1)\n\n(with proper wrapping/unwrapping for base64 and other of course)\n\nThis will be compatible, even after paramiko is fixed.", 
+            "date_created": "2015-12-10 01:28:19.093128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "I do feel like private key format is not part of the nova contract. I'm sorry Go tools are so limitted with what they support. The right path is working with upstream paramiko on this. ", 
+            "date_created": "2016-02-19 20:50:33.284545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Paramiko 2.0 is released where the referenced PR is merged. Could we get a bump in paramiko to bring DER encoding back to nova-generated keys?  That would be awesome!", 
+            "date_created": "2016-04-29 22:47:52.580351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marco-voelz"
+        }, 
+        {
+            "content": "@marco-voelz\n\nas the current nova requirements on the \"master\" branch are \"paramiko>=1.16.0\" (see http://git.openstack.org/cgit/openstack/nova/tree/requirements.txt?id=5bafd5fba508174f557acfeddbf85de0438c51d7#n24) i believe paramiko 2.0.0 will be pulled in for all future releases (though this also means that unit tests will break / are breaking as they were changed to ber with the original commit (that prompted this \"bug\" report) and need to change back to the original der.\n\n@all\n\nfor the record my PR (see https://github.com/paramiko/paramiko/pull/572) was not merged, but the larger pycrypto-to-cryptography PR (see https://github.com/paramiko/paramiko/pull/394), which obviated my PR, was merged and present in paramiko 2.0.0.", 
+            "date_created": "2016-05-02 03:21:12.446912+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "@marco-voelz\n\nnevermind, i'm an idiot: i forgot about the upper-constraints.txt referenced in tox.ini, which currently contains \"paramiko===1.16.0\" (see https://git.openstack.org/cgit/openstack/requirements/tree/upper-constraints.txt?id=5c1dcc21174c8fdc5e4e0fbde37ae9fb96dcdeb6#n236) and therefor needs a bump to 2.0.0 (as you requested) to resolve this bug.", 
+            "date_created": "2016-05-02 03:38:47.400814+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "@coreywright thanks for the hint to the constraints file. I'm not sure on how to proceed now; should I be the one who bumps paramiko in that file? I haven't done a single change in OpenStack, so not sure on how to proceed here.\n\nAlso: Could we move this bug from \"Won't Fix\" (because @sdague wanted to take this upstream to paramiko, which now happened) back to \"open\"?", 
+            "date_created": "2016-05-06 12:25:13.926836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marco-voelz"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-05-06 13:27:11.522056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "The attached patch allows nova (\"master\" branch as of May 3 / HEAD commit 8185dcb57e55f7579b60040649fcd0588177d714) to pass unit tests with either Paramiko 1.x or 2.x.\n\nNova will probably not support both Paramiko 1.x and 2.x simultaneously (due to upper-constraints.txt pinning Paramiko to a specific release; currently it is \"1.16.0\", but that will probably be changed to \"2.0.0\" or such), so my patch also includes comments on how to remove the Paramiko 1.x work-around and simply and directly use the appropriate and original Paramiko interface (ie revert change If88beeb3983705621fe736995939ac20b2daf1f3 / commit 1fd0f4f69b21cbd20c0eb0e2f8f4506061f4a211).", 
+            "date_created": "2016-05-06 13:35:28.745230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "@marco-voelz\n\nI'm not familiar with how OpenStack manages the upper-constraint.txt file (as that file is doubtfully specific to Nova, but merely used by it).\n\nThe best course of action is probably to ping sdague on IRC and ask him the best course of action (as he was the last Nova core reviewer to touch this bug), but any Nova core reviewer should suffice:\n\n1. Open a new bug?\n\n2. Merge the attached patch so that Nova supports both 1.x and 2.x independent of when Paramiko's constraint is upgraded?\n\n3. Prepare a patch that is specific to only Paramiko 2.x (ignoring Paramiko 1.x) and will be merged immediately following the Paramiko constraint being \"upgraded\" from 1.x to 2.x?", 
+            "date_created": "2016-05-06 13:43:45.988357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~coreywright"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/314592", 
+            "date_created": "2016-05-10 14:12:01.560072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/314639", 
+            "date_created": "2016-05-10 15:41:24.213849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/314592\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c05b338f163e0bafbe564c6c7c593b819f2f2eac\nSubmitter: Jenkins\nBranch:    master\n\ncommit c05b338f163e0bafbe564c6c7c593b819f2f2eac\nAuthor: Corey Wright <email address hidden>\nDate:   Tue May 3 23:13:24 2016 -0500\n\n    crypto: Add support for Paramiko 2.x\n    \n    Only use PyCrypto/PyCryptodome work-around with Paramiko 1.x and use\n    straight-forward Paramiko interface with 2.x.\n    \n    TODO: Revert this and PyCrypto/PyCryptodome work-around when Paramiko\n    is upgraded to 2.x (ie replace `generate_keys(bits)` call with\n    `paramiko.RSAKey.generate(bits)`).\n    \n    Change If88beeb3983705621fe736995939ac20b2daf1f3 added a work-around\n    for the partially-PyCrypto-compatible PyCryptodome causing Paramiko,\n    which has a dependency on PyCrypto, to break.  This work-around\n    entails implementing Paramiko internals (ie how to generate a key) in\n    Nova in a way compatible with both PyCrypto and PyCryptodom.\n    \n    This work-around is itself a source of failure with Paramiko 2 which\n    has replaced the PyCrypto requirement with the cryptography Python\n    package.  As Paramiko no longer depends on PyCrypto, Nova doesn't have\n    an explicit PyCrypto requirement, and there's no implicit dependency\n    on PyCrypto, when Nova tries to import PyCrypto it fails.  Even if\n    PyCrypto was installed, the work-around would still fail because the\n    Paramiko interface that Nova is using as part of the work-around\n    changed with the major version change (ie 1.x => 2.x).\n    \n    Change-Id: I5d6543e690a3b4495476027fd8a4894ff8c42bf6\n    Related-Bug: #1483132\n", 
+            "date_created": "2016-05-10 18:34:08.662544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/314639\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6b1293fd6f5bcb35f317f36c540f543b1192928c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6b1293fd6f5bcb35f317f36c540f543b1192928c\nAuthor: Sean Dague <email address hidden>\nDate:   Tue May 10 11:39:11 2016 -0400\n\n    Drop paramiko < 2 compat code\n    \n    This drops the paramiko < 2 compatibility code so we only need to\n    support one major version.\n    \n    Depends-On: I2369638282b4fefccd8484a5039fcfa9795069a7\n    (global requirements change)\n    \n    Change-Id: Ife4df9e64299e1182d77d568d1deed5ec3b608b3\n    Closes-Bug: #1483132\n", 
+            "date_created": "2016-05-11 21:20:51.293059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:32:38.686366+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ]
+}

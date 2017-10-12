@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:27:21.360759+00:00", 
+    "description": "With current devstack I ensured I had \"GroupAntiAffinityFilter\" in scheduler_default_filters in /etc/nova/nova.conf, restarted nova-scheduler, then ran:\n\n\nnova server-group-create --policy anti-affinity antiaffinitygroup\n\n\nnova server-group-list\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| Id                                   | Name              | Policies           | Members | Metadata |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| 5d639349-1b77-43df-b13f-ed586e73b3ac | antiaffinitygroup | [u'anti-affinity'] | []      | {}       |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n\n\nnova boot --flavor=1 --image=cirros-0.3.1-x86_64-uec --hint group=5d639349-1b77-43df-b13f-ed586e73b3ac cirros0\n\nnova list\n+--------------------------------------+---------+--------+------------+-------------+--------------------+\n| ID                                   | Name    | Status | Task State | Power State | Networks           |\n+--------------------------------------+---------+--------+------------+-------------+--------------------+\n| a7a3ec40-85d9-4b72-a522-d1c0684f3ada | cirros0 | ACTIVE | -          | Running     | private=10.4.128.2 |\n+--------------------------------------+---------+--------+------------+-------------+--------------------+\n\n\n\nThen I tried listing the groups, and it didn't print the newly-booted instance as a member:\n\nnova server-group-list\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| Id                                   | Name              | Policies           | Members | Metadata |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| 5d639349-1b77-43df-b13f-ed586e73b3ac | antiaffinitygroup | [u'anti-affinity'] | []      | {}       |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n\n\nRerunning the nova command with --debug we see that the problem is in nova, not novaclient:\n\nRESP BODY: {\"server_groups\": [{\"members\": [], \"metadata\": {}, \"id\": \"5d639349-1b77-43df-b13f-ed586e73b3ac\", \"policies\": [\"anti-affinity\"], \"name\": \"antiaffinitygroup\"}]}\n\n\nLooking at the database, we see that the instance is actually tracked as a member of the list (along with two other instances that haven't been marked as deleted yet, which is also a bug I think).\n\nmysql> select * from instance_group_member;\n+---------------------+------------+------------+---------+----+--------------------------------------+----------+\n| created_at          | updated_at | deleted_at | deleted | id | instance_id                          | group_id |\n+---------------------+------------+------------+---------+----+--------------------------------------+----------+\n| 2014-03-26 20:19:14 | NULL       | NULL       |       0 |  1 | d289502b-57fc-46f6-b39d-66a1db3a9ebc |        1 |\n| 2014-03-26 20:25:04 | NULL       | NULL       |       0 |  2 | e07f1f15-4e93-4845-9203-bf928c196a78 |        1 |\n| 2014-03-26 20:35:11 | NULL       | NULL       |       0 |  3 | a7a3ec40-85d9-4b72-a522-d1c0684f3ada |        1 |\n+---------------------+------------+------------+---------+----+--------------------------------------+----------+\n3 rows in set (0.00 sec)", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1298494", 
+    "owner": "https://api.launchpad.net/1.0/~cbf123", 
+    "id": 1298494, 
+    "index": 1455, 
+    "created": "2014-03-27 16:38:59.111334+00:00", 
+    "title": "'nova server-group-list' doesn't show members of the group", 
+    "comments": [
+        {
+            "content": "With current devstack I ensured I had \"GroupAntiAffinityFilter\" in scheduler_default_filters in /etc/nova/nova.conf, restarted nova-scheduler, then ran:\n\n\nnova server-group-create --policy anti-affinity antiaffinitygroup\n\n\nnova server-group-list\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| Id                                   | Name              | Policies           | Members | Metadata |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| 5d639349-1b77-43df-b13f-ed586e73b3ac | antiaffinitygroup | [u'anti-affinity'] | []      | {}       |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n\n\nnova boot --flavor=1 --image=cirros-0.3.1-x86_64-uec --hint group=5d639349-1b77-43df-b13f-ed586e73b3ac cirros0\n\nnova list\n+--------------------------------------+---------+--------+------------+-------------+--------------------+\n| ID                                   | Name    | Status | Task State | Power State | Networks           |\n+--------------------------------------+---------+--------+------------+-------------+--------------------+\n| a7a3ec40-85d9-4b72-a522-d1c0684f3ada | cirros0 | ACTIVE | -          | Running     | private=10.4.128.2 |\n+--------------------------------------+---------+--------+------------+-------------+--------------------+\n\n\n\nThen I tried listing the groups, and it didn't print the newly-booted instance as a member:\n\nnova server-group-list\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| Id                                   | Name              | Policies           | Members | Metadata |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n| 5d639349-1b77-43df-b13f-ed586e73b3ac | antiaffinitygroup | [u'anti-affinity'] | []      | {}       |\n+--------------------------------------+-------------------+--------------------+---------+----------+\n\n\nRerunning the nova command with --debug we see that the problem is in nova, not novaclient:\n\nRESP BODY: {\"server_groups\": [{\"members\": [], \"metadata\": {}, \"id\": \"5d639349-1b77-43df-b13f-ed586e73b3ac\", \"policies\": [\"anti-affinity\"], \"name\": \"antiaffinitygroup\"}]}\n\n\nLooking at the database, we see that the instance is actually tracked as a member of the list (along with two other instances that haven't been marked as deleted yet, which is also a bug I think).\n\nmysql> select * from instance_group_member;\n+---------------------+------------+------------+---------+----+--------------------------------------+----------+\n| created_at          | updated_at | deleted_at | deleted | id | instance_id                          | group_id |\n+---------------------+------------+------------+---------+----+--------------------------------------+----------+\n| 2014-03-26 20:19:14 | NULL       | NULL       |       0 |  1 | d289502b-57fc-46f6-b39d-66a1db3a9ebc |        1 |\n| 2014-03-26 20:25:04 | NULL       | NULL       |       0 |  2 | e07f1f15-4e93-4845-9203-bf928c196a78 |        1 |\n| 2014-03-26 20:35:11 | NULL       | NULL       |       0 |  3 | a7a3ec40-85d9-4b72-a522-d1c0684f3ada |        1 |\n+---------------------+------------+------------+---------+----+--------------------------------------+----------+\n3 rows in set (0.00 sec)", 
+            "date_created": "2014-03-27 16:38:59.111334+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "I did some tracing down in db.sqlalchemy.api.instance_get_all_by_filters().  Before this line the query output looks good:\n\n query_prefix = regex_filter(query_prefix, models.Instance, filters)\n\nbut after that line there are no instances left in the filter results.", 
+            "date_created": "2014-03-27 21:35:50.981123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Looks like the problem is with the filter, it should be using \n\nfilters = {'uuid': group.members, 'deleted': False}\n\ninstead of \n\nfilters = {'uuid': group.members, 'deleted_at': None}", 
+            "date_created": "2014-03-27 21:53:28.153804+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Just to make things interesting, this passes in the unit tests using sqlite but fails with mysql.  Opening bug 1298690 to cover that issue.", 
+            "date_created": "2014-03-27 23:45:03.831108+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/83625", 
+            "date_created": "2014-03-27 23:54:41.537719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/83625\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8ce30b6ac7ea8d2e036a621a9904b35cb1563672\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8ce30b6ac7ea8d2e036a621a9904b35cb1563672\nAuthor: Chris Friesen <email address hidden>\nDate:   Thu Mar 27 16:49:31 2014 -0600\n\n    Fix display of server group members\n    \n    The previous code was failing to display the members of server\n    groups because it was filtering them all out.\n    \n    Interestingly, the previous code passes the unit tests due to a\n    bug where we treat regex comparisons differently when using mysql\n    vs sqlite (tracked under bug 1298690).\n    \n    Change-Id: I7be9c180f4284dd18cd02e510e77e3c1e3fc9925\n    Closes-bug: 1298494\n", 
+            "date_created": "2014-04-22 01:43:37.164857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/89657", 
+            "date_created": "2014-04-22 17:46:10.289306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/89657\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=40ae1eefe42f093631e2988814e60f45defdb3c3\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 40ae1eefe42f093631e2988814e60f45defdb3c3\nAuthor: Chris Friesen <email address hidden>\nDate:   Thu Mar 27 16:49:31 2014 -0600\n\n    Fix display of server group members\n    \n    The previous code was failing to display the members of server\n    groups because it was filtering them all out.\n    \n    Interestingly, the previous code passes the unit tests due to a\n    bug where we treat regex comparisons differently when using mysql\n    vs sqlite (tracked under bug 1298690).\n    \n    Change-Id: I7be9c180f4284dd18cd02e510e77e3c1e3fc9925\n    Closes-bug: 1298494\n    (cherry picked from commit 8ce30b6ac7ea8d2e036a621a9904b35cb1563672)\n", 
+            "date_created": "2014-04-24 15:16:14.828200+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }
+    ]
+}

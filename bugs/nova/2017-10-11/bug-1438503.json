@@ -1,0 +1,59 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-04-07 17:21:08.111623+00:00", 
+    "description": "In no way should a disabled service be considered \"up\". I checked the code and indeed, there is no test for whether the service record from the DB is disabled or not:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/servicegroup/drivers/db.py#n68\n\nThe DB driver's get_all() method -- which is used by, say, the scheduler to grab a list of compute nodes that it can scheduler to -- *does* only get the non-disabled hosts. You wouldn't know that by looking at the servicegroup.drivers.db.Driver.get_all() code, though:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/servicegroup/drivers/db.py#n91\n\nSince all it does is call the DB API's service_get_all_by_topic() method.\n\nHowever, look deeper in that method and lo and behold, there is a hard-coded disabled=False filter in the SQLAlchemy query:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/db/sqlalchemy/api.py#n479\n\nThe DB driver's is_up() method should check to see if the service_ref['disabled'] field is False, otherwise, return False.", 
+    "tags": [
+        "low-hanging-fruit", 
+        "servicegroups"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1438503", 
+    "owner": "None", 
+    "id": 1438503, 
+    "index": 4194, 
+    "created": "2015-03-31 03:52:10.653751+00:00", 
+    "title": "servicegroup.api.service_is_up() reports UP state for disabled hosts", 
+    "comments": [
+        {
+            "content": "In no way should a disabled service be considered \"up\". I checked the code and indeed, there is no test for whether the service record from the DB is disabled or not:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/servicegroup/drivers/db.py#n68\n\nThe DB driver's get_all() method -- which is used by, say, the scheduler to grab a list of compute nodes that it can scheduler to -- *does* only get the non-disabled hosts. You wouldn't know that by looking at the servicegroup.drivers.db.Driver.get_all() code, though:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/servicegroup/drivers/db.py#n91\n\nSince all it does is call the DB API's service_get_all_by_topic() method.\n\nHowever, look deeper in that method and lo and behold, there is a hard-coded disabled=False filter in the SQLAlchemy query:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/db/sqlalchemy/api.py#n479\n\nThe DB driver's is_up() method should check to see if the service_ref['disabled'] field is False, otherwise, return False.", 
+            "date_created": "2015-03-31 03:52:10.653751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "please do not take bugs without a patch being posted", 
+            "date_created": "2015-03-31 11:48:31.680048+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "This is basically a dupe of my response on the mailing list...just thought I'd put it here too for completeness.\n\nI don't think it's a bug that is_up() doesn't check whether the service is disabled.  It makes sense to have the administrative state (enabled/disabled) tracked separately from the operational state (up/down).\n\nIf we administratively disable a compute node, that just means that the scheduler won't put new instances on it.  It doesn't do anything to the instances already there.  It's up to something outside of nova (the admin user, or some orchestration software) to move them elsewhere if appropriate.\n\nIt actually makes sense to only allow evacuating from an operationally down compute node, because if the compute node is operationally up (even if administratively disabled) then you could do a migration (live or cold) which would be cleaner than an evacuate.  The evacuate code assumes the instance isn't currently running, and that assumption is only true if the compute node is operationally down.", 
+            "date_created": "2015-03-31 14:28:27.568238+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Hi Chris,\n\nSo, you make an interesting point. I've actually been pondering it actually for the last hour or so :)\n\nIn my mind, I guess I don't really see the point of having a disabled node show up as \"UP\", but I can see the difference between administratively putting something in maintenance mode versus an operational state of \"UP\", meaning \"the resources exposed by this node are working\".\n\nBut, this gets back to your original ML thread about what functionality you added to Nova... you had mentioned that you added functionality to override the service_is_up() return to immediately return False if some external event triggered something -- for instance if some external monitoring service saw that, say, memory faults were occurring with some frequency. You want your code to be able to immediately trigger an evacuation, but evacuation cannot be done on an \"UP\" host, and \"UP\" is determined by some interval in seconds (service_down_time).\n\nWhat I'm curious about, though, is if the evacuation assumes all stopped instances, does your code that is triggered from an external monitoring system call `nova stop $INSTANCE` for all instances on the compute host, and *then* call `nova evacuate $HOST`?\n\nPerhaps we should just change the evacuate code to instead of relying on the node being down, we just calling stop_instance() on each instance and force the evacuation immediately?\n\nBest,\n-jay", 
+            "date_created": "2015-03-31 14:46:56.338674+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "\nFirst, a small correction.  The functionality we added to override is_up() to return False doesn't do so for just any external event, it only does so if the compute node is literally not available.  (So no need to stop the instance first.)\n\nIdeally we want to do a controlled migration.  Evacuation is  the option of last resort once we've determined that we can't do a controlled migration.  Ideally you'd want STONITH before triggering an evacuation, since you really don't want to have multiple instances running off the same shared storage or using the same cinder volume.\n\nOne problem I see with having the evacuation just \"stop\" the instance first instead of checking whether the compute node is down is that the stop uses an rpc cast, which means that there's no guarantee if or when it'll actually get processed.  So if someone tries to evacuate an instance from a really busy compute node there's a risk we could start up the new instance before the old one was shut down--potentially leading to filesystem corruption.", 
+            "date_created": "2015-03-31 15:55:03.501311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Hi Chris,\n\nQq, how does your software decide that the service operationally down before the service_down_time from the interestring discussion above it seems like if the compute host is administratively *disabled* and the compute service is operationally *down* then your software can predict it before the service_down_time and then trigger evacuate.  Is that what you trying to achieve ? or there is something more under the hood.\n\nJFYI, there is a blueprint proposed by Joshua Harlow https://review.openstack.org/#/c/138607/9/specs/kilo/approved/service-group-using-tooz.rst which will \"replace service groups with the tooz groups\" can be helpful to solve such kind of problems. ", 
+            "date_created": "2015-03-31 18:45:54.489636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vilobhmm"
+        }, 
+        {
+            "content": "Hi Vilobh,\n\nSorry for the delay, just noticed your comment now.\n\nTo decide that the service is operationally down we monitor the health of critical processes, and checkpoint at a relatively high rate over one or more network links to a (highly-available) central health monitoring agent.  There are existing open-source systems like Pacemaker that can do this sort of thing.\n\nThe compute host doesn't have to be administratively disabled, it works fine on an enabled system as well.  The idea though is that it takes nova 60 seconds (by default) to notice that the compute node is down.  If our health monitoring software can be confident within say 5 seconds that the compute node is gone, we want to be able to evacuate right away instead of waiting for 55 seconds.  So we need a way to tell nova that the compute node is actually down, so that nova will let us do the evacuation.  Incidentally, something like this has been proposed for liberty: \"https://review.openstack.org/#/c/169836\"\n\nI feel like we've sort of gotten off the track of *this* bug though...if we agree that it's valid to separate operational from administrative states then I think this bug could be closed and any further discussion might make more sense in the review for the spec referenced above.", 
+            "date_created": "2015-04-07 17:05:30.394467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "I agree that it is valid to have a disabled host be operationally up (and vice versa). Marking as Invalid. Chris, I'll try to get to a review of your proposal this week.", 
+            "date_created": "2015-04-07 17:21:07.326104+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }
+    ]
+}

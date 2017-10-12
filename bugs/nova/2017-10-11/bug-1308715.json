@@ -1,0 +1,65 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:27:54.917202+00:00", 
+    "description": "We are getting deadlocks for concurrent quota reservations that we did not see in grizzly:\n\nsee https://bugs.launchpad.net/nova/+bug/1283987\n\nThe deadlock handling needs to be fixed as per above, but we shouldn't be deadlocking, here. It seems this is due to bad indexes in the database:\n\nmysql> show index from quota_usages;\n+--------------+------------+---------------------------------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+\n| Table        | Non_unique | Key_name                        | Seq_in_index | Column_name | Collation | Cardinality | Sub_part | Packed | Null | Index_type | Comment | Index_comment |\n+--------------+------------+---------------------------------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+\n| quota_usages |          0 | PRIMARY                         |            1 | id          | A         |           8 |     NULL | NULL   |      | BTREE      |         |               |\n| quota_usages |          1 | ix_quota_usages_project_id      |            1 | project_id  | A         |           8 |     NULL | NULL   | YES  | BTREE      |         |               |\n| quota_usages |          1 | ix_quota_usages_user_id_deleted |            1 | user_id     | A         |           8 |     NULL | NULL   | YES  | BTREE      |         |               |\n| quota_usages |          1 | ix_quota_usages_user_id_deleted |            2 | deleted     | A         |           8 |     NULL | NULL   | YES  | BTREE      |         |               |\n+--------------+------------+---------------------------------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+\n4 rows in set (0.01 sec)\n \nmysql> explain select * from quota_usages where project_id='foo' and user_id='bar' and deleted=0;\n+----+-------------+--------------+------+------------------------------------------------------------+----------------------------+---------+-------+------+------------------------------------+\n| id | select_type | table        | type | possible_keys                                              | key                        | key_len | ref   | rows | Extra                              |\n+----+-------------+--------------+------+------------------------------------------------------------+----------------------------+---------+-------+------+------------------------------------+\n|  1 | SIMPLE      | quota_usages | ref  | ix_quota_usages_project_id,ix_quota_usages_user_id_deleted | ix_quota_usages_project_id | 768     | const |    1 | Using index condition; Using where |\n+----+-------------+--------------+------+------------------------------------------------------------+----------------------------+---------+-------+------+------------------------------------+\n1 row in set (0.00 sec)\n\nWe should have an index on project_id/deleted and project_id/user_id/deleted instead of the current values.", 
+    "tags": [
+        "havana-backport-potential", 
+        "icehouse-backport-potential", 
+        "in-stable-havana"
+    ], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1308715", 
+    "owner": "https://api.launchpad.net/1.0/~vishvananda", 
+    "id": 1308715, 
+    "index": 1479, 
+    "created": "2014-04-16 19:21:28.470899+00:00", 
+    "title": "Deadlock on quota_usages", 
+    "comments": [
+        {
+            "content": "We are getting deadlocks for concurrent quota reservations that we did not see in grizzly:\n\nsee https://bugs.launchpad.net/nova/+bug/1283987\n\nThe deadlock handling needs to be fixed as per above, but we shouldn't be deadlocking, here. It seems this is due to bad indexes in the database:\n\nmysql> show index from quota_usages;\n+--------------+------------+---------------------------------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+\n| Table        | Non_unique | Key_name                        | Seq_in_index | Column_name | Collation | Cardinality | Sub_part | Packed | Null | Index_type | Comment | Index_comment |\n+--------------+------------+---------------------------------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+\n| quota_usages |          0 | PRIMARY                         |            1 | id          | A         |           8 |     NULL | NULL   |      | BTREE      |         |               |\n| quota_usages |          1 | ix_quota_usages_project_id      |            1 | project_id  | A         |           8 |     NULL | NULL   | YES  | BTREE      |         |               |\n| quota_usages |          1 | ix_quota_usages_user_id_deleted |            1 | user_id     | A         |           8 |     NULL | NULL   | YES  | BTREE      |         |               |\n| quota_usages |          1 | ix_quota_usages_user_id_deleted |            2 | deleted     | A         |           8 |     NULL | NULL   | YES  | BTREE      |         |               |\n+--------------+------------+---------------------------------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+\n4 rows in set (0.01 sec)\n \nmysql> explain select * from quota_usages where project_id='foo' and user_id='bar' and deleted=0;\n+----+-------------+--------------+------+------------------------------------------------------------+----------------------------+---------+-------+------+------------------------------------+\n| id | select_type | table        | type | possible_keys                                              | key                        | key_len | ref   | rows | Extra                              |\n+----+-------------+--------------+------+------------------------------------------------------------+----------------------------+---------+-------+------+------------------------------------+\n|  1 | SIMPLE      | quota_usages | ref  | ix_quota_usages_project_id,ix_quota_usages_user_id_deleted | ix_quota_usages_project_id | 768     | const |    1 | Using index condition; Using where |\n+----+-------------+--------------+------+------------------------------------------------------------+----------------------------+---------+-------+------+------------------------------------+\n1 row in set (0.00 sec)\n\nWe should have an index on project_id/deleted and project_id/user_id/deleted instead of the current values.", 
+            "date_created": "2014-04-16 19:21:28.470899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "alternatively we could clean up the _get_user_quotas and _get_project_quotas to be a single query:\n\nhttps://github.com/openstack/nova/blob/0e080bdcdbf44286f2e01a4546378442580dbce5/nova/db/sqlalchemy/api.py#L3033\n\n", 
+            "date_created": "2014-04-16 19:30:13.050826+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/88081", 
+            "date_created": "2014-04-16 22:22:45.396115+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/88081\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=da1fa5dc93e6e64d397e8d00769e34828669e010\nSubmitter: Jenkins\nBranch:    master\n\ncommit da1fa5dc93e6e64d397e8d00769e34828669e010\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Wed Apr 16 13:41:17 2014 -0700\n\n    Use one query instead of two for quota_usages\n    \n    The second query was unnecessary and not using a proper index. It\n    seemed to be contributing to a deadlock issue as well.\n    \n    Change-Id: I1031451b25140d71380c8149d3c83827eec0d4a9\n    Closes-Bug: #1308715\n    Co-Authored-by: Chris Behrens <email address hidden>\n", 
+            "date_created": "2014-04-22 01:42:48.749755+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/92488", 
+            "date_created": "2014-05-06 23:24:04.251189+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/92488\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bedb66f1117764e10c0b179171f0772cd08cdf80\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit bedb66f1117764e10c0b179171f0772cd08cdf80\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Wed Apr 16 13:41:17 2014 -0700\n\n    Use one query instead of two for quota_usages\n    \n    The second query was unnecessary and not using a proper index. It\n    seemed to be contributing to a deadlock issue as well.\n    \n    Change-Id: I1031451b25140d71380c8149d3c83827eec0d4a9\n    Closes-Bug: #1308715\n    Co-Authored-by: Chris Behrens <email address hidden>\n    (cherry picked from commit da1fa5dc93e6e64d397e8d00769e34828669e010)\n", 
+            "date_created": "2014-05-28 01:30:52.486964+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Dropped from ER tracking", 
+            "date_created": "2014-06-12 20:50:18.434004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/104116", 
+            "date_created": "2014-07-02 08:57:32.596977+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104116\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0f5032be9c7a9af3a1e73d49f8c07f9c1c04519d\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 0f5032be9c7a9af3a1e73d49f8c07f9c1c04519d\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Wed Apr 16 13:41:17 2014 -0700\n\n    Use one query instead of two for quota_usages\n    \n    The second query was unnecessary and not using a proper index. It\n    seemed to be contributing to a deadlock issue as well.\n    \n    Change-Id: I1031451b25140d71380c8149d3c83827eec0d4a9\n    Closes-Bug: #1308715\n    Co-Authored-by: Chris Behrens <email address hidden>\n    (cherry picked from commit da1fa5dc93e6e64d397e8d00769e34828669e010)\n    (cherry picked from commit bedb66f1117764e10c0b179171f0772cd08cdf80)\n", 
+            "date_created": "2014-07-30 18:40:06.291158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

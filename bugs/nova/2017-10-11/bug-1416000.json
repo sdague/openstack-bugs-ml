@@ -1,0 +1,38 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-03-04 03:31:29.143361+00:00", 
+    "description": "I'm running the following command:\n\ncinder create --image-id a24f216f-9746-418e-97f9-aebd7fa0e25f 1\n\nThe write side of the data transfer (a VMwareHTTPWriteFile object) returns an error in write() which I haven't debugged, yet. However, this error is never reported to the user, although it does show up in the logs. The effect is that the transfer sits in the 'downloading' state until the 7200 second timeout, when it reports the timeout.\n\nThe reason is that the code which waits on transfer completion (in start_transfer) does:\n\n    try:\n        # Wait on the read and write events to signal their end\n        read_event.wait()\n        write_event.wait()\n    except (timeout.Timeout, Exception) as exc:\n        ...\n\nThat is, it waits for the read thread to signal completion via read_event before checking write_event. However, because write_thread has died, read_thread is blocking and will never signal completion. You can demonstrate this by swapping the order. If you want for write first it will die immediately, which is what you want. However, that's not right either because now you're missing read errors.\n\nIdeally this code needs to be able to notice an error at either end and stop immediately.", 
+    "tags": [
+        "vmware"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1416000", 
+    "owner": "None", 
+    "id": 1416000, 
+    "index": 245, 
+    "created": "2015-01-29 16:49:24.136344+00:00", 
+    "title": "VMware: write error lost while transferring volume", 
+    "comments": [
+        {
+            "content": "I'm running the following command:\n\ncinder create --image-id a24f216f-9746-418e-97f9-aebd7fa0e25f 1\n\nThe write side of the data transfer (a VMwareHTTPWriteFile object) returns an error in write() which I haven't debugged, yet. However, this error is never reported to the user, although it does show up in the logs. The effect is that the transfer sits in the 'downloading' state until the 7200 second timeout, when it reports the timeout.\n\nThe reason is that the code which waits on transfer completion (in start_transfer) does:\n\n    try:\n        # Wait on the read and write events to signal their end\n        read_event.wait()\n        write_event.wait()\n    except (timeout.Timeout, Exception) as exc:\n        ...\n\nThat is, it waits for the read thread to signal completion via read_event before checking write_event. However, because write_thread has died, read_thread is blocking and will never signal completion. You can demonstrate this by swapping the order. If you want for write first it will die immediately, which is what you want. However, that's not right either because now you're missing read errors.\n\nIdeally this code needs to be able to notice an error at either end and stop immediately.", 
+            "date_created": "2015-01-29 16:49:24.136344+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "The same problem exists in Nova as we use the same approach for image transfer:\n\nhttps://github.com/openstack/nova/blob/master/nova/virt/vmwareapi/images.py#L181", 
+            "date_created": "2015-01-29 17:04:02.579454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rgerganov"
+        }, 
+        {
+            "content": "Also oslo.vmware:\n\nhttps://github.com/openstack/oslo.vmware/blob/master/oslo_vmware/image_transfer.py#L376", 
+            "date_created": "2015-01-29 17:08:12.546906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Cinder is now using oslo.vmware, so you can remove Cinder from the affected projects", 
+            "date_created": "2015-02-18 08:41:43.444729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rgerganov"
+        }
+    ]
+}

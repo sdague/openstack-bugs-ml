@@ -1,0 +1,110 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-01-04 02:46:53.856371+00:00", 
+    "description": "After creating an OpenStack Essex MySQL schema only a single table uses the 'latin1' charset by default: dns_domains.\n\nWe should refactor this table format in Folsom such that dns_domains properly supports getting converted to utf8 like everything else.\n\nTo reproduce you can do the following in a python-migrate script:\n\n    # NOTE(dprince): Trying to create a fresh utf8 dns_domains tables\n    # with a domain primary key length of 512 fails w/\n    # 'Specified key was too long; max key length is 767 bytes'.\n    dns_domains = Table('dns_domains', meta,\n        Column('created_at', DateTime),\n        Column('updated_at', DateTime),\n        Column('deleted_at', DateTime),\n        Column('deleted', Boolean),\n        Column('domain', String(length=512), primary_key=True, nullable=False),\n        Column('scope', String(length=255)),\n        Column('availability_zone', String(length=255)),\n        Column('project_id', String(length=255), ForeignKey('projects.id')),\n        mysql_engine='InnoDB',\n        mysql_charset='utf8'\n    )\n\n----\n\nI think one solution would be to quit using 'domain' as the primary key and instead just create an index on the 'domain' column. Having a  monotonically increasing primary key is often a good idea anyway.", 
+    "tags": [
+        "db", 
+        "in-stable-essex", 
+        "verification-done"
+    ], 
+    "importance": "Medium", 
+    "heat": 32, 
+    "link": "https://bugs.launchpad.net/nova/+bug/993663", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 993663, 
+    "index": 2893, 
+    "created": "2012-05-03 01:23:16.444195+00:00", 
+    "title": "[SRU] dns_domains table mysql charset is 'latin1'. Should be 'utf8'", 
+    "comments": [
+        {
+            "content": "After creating an OpenStack Essex MySQL schema only a single table uses the 'latin1' charset by default: dns_domains.\n\nWe should refactor this table format in Folsom such that dns_domains properly supports getting converted to utf8 like everything else.\n\nTo reproduce you can do the following in a python-migrate script:\n\n    # NOTE(dprince): Trying to create a fresh utf8 dns_domains tables\n    # with a domain primary key length of 512 fails w/\n    # 'Specified key was too long; max key length is 767 bytes'.\n    dns_domains = Table('dns_domains', meta,\n        Column('created_at', DateTime),\n        Column('updated_at', DateTime),\n        Column('deleted_at', DateTime),\n        Column('deleted', Boolean),\n        Column('domain', String(length=512), primary_key=True, nullable=False),\n        Column('scope', String(length=255)),\n        Column('availability_zone', String(length=255)),\n        Column('project_id', String(length=255), ForeignKey('projects.id')),\n        mysql_engine='InnoDB',\n        mysql_charset='utf8'\n    )\n\n----\n\nI think one solution would be to quit using 'domain' as the primary key and instead just create an index on the 'domain' column. Having a  monotonically increasing primary key is often a good idea anyway.", 
+            "date_created": "2012-05-03 01:23:16.444195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "I think you meant create a unique index on the 'domain' column, but yeah, I agree that 'domain' shouldn't be the primary key in this case.", 
+            "date_created": "2012-05-03 14:20:00.322414+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "I agree that there should be a surrogate primary key (id auto_increment), with a unique secondary key on the 'domain' column. AFAICT, no other tables reference the 'domain' column, and all the references in api.py which modify the 'dns_domains' table include the 'domain' column in the WHERE clause, so I think this change should be pretty straight forward.", 
+            "date_created": "2012-05-03 16:19:39.951631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Yeah. Looks like things are worse than I thought. We can't even cleanly drop this primary key:\n\n\nmysql> desc dns_domains;\n+-------------------+--------------+------+-----+---------+-------+\n| Field             | Type         | Null | Key | Default | Extra |\n+-------------------+--------------+------+-----+---------+-------+\n| created_at        | datetime     | YES  |     | NULL    |       |\n| updated_at        | datetime     | YES  |     | NULL    |       |\n| deleted_at        | datetime     | YES  |     | NULL    |       |\n| deleted           | tinyint(1)   | YES  |     | NULL    |       |\n| domain            | varchar(512) | NO   | PRI | NULL    |       |\n| scope             | varchar(255) | YES  |     | NULL    |       |\n| availability_zone | varchar(255) | YES  |     | NULL    |       |\n| project_id        | varchar(255) | YES  | MUL | NULL    |       |\n+-------------------+--------------+------+-----+---------+-------+\n8 rows in set (0.01 sec)\n\nmysql> ALTER TABLE dns_domains DROP PRIMARY KEY;\nERROR 1025 (HY000): Error on rename of './nova/#sql-6cf_855' to './nova/dns_domains' (errno: 150)\nmysql> desc dns_domains;\nERROR 1146 (42S02): Table 'nova.dns_domains' doesn't exist\n\n----\n\nWhat we'll need to do is create a new table, migration the data over, drop the old table, and then rename the new table to 'dns_domains'. Quite a mess!", 
+            "date_created": "2012-05-03 17:18:06.226117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Need to correct my previous comment -- InnoDB does not support a unique index longer than 767 bytes, even with the newer file formats in 5.1 or 5.5. (You can have a regular index on longer columns, though.)\n\nOne solution is to shorten the 'domain' column to 255 characters.", 
+            "date_created": "2012-05-03 19:32:13.571218+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Thanks Devanda,\n\nYou are correct. A column w/ a unique key can only be a max of 255 characters. So I guess we'll go with that.", 
+            "date_created": "2012-05-04 20:33:05.335339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "The trunk (Folsom) fix for this issue is here:\n\nhttps://review.openstack.org/#/c/7139/\n\nThis creates a new dns_domains table with a varchar 255 domain column that is utf8. This fixes issues where the MySQL schema can't be imported after a backup.\n\nI'd like to do a similar fix for Essex that runs on 'nova-manage db sync' but doesn't claim a new migration number. In this manner we should be able to fix the issue for Essex users (fixing MySQL backup/restore) is probably important. In any case running the Folsom migration on any Essex patch will re-create the table again... but that won't hurt anything. I do like keeping it as a migration for Folsom.", 
+            "date_created": "2012-05-05 17:22:03.858246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Dan: wrt to Essex, consider two things\n\n  1) what high impact, user-visible problem does it fix which justifies the risk of doing something in Essex?\n\n  2) will upgrades from any stable versions Essex to the Folsom release continue to work?", 
+            "date_created": "2012-05-08 11:40:29.520658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/7139\nCommitted: http://github.com/openstack/nova/commit/7b5fdac84b513c6b606848cc353995d6abb9a7c9\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7b5fdac84b513c6b606848cc353995d6abb9a7c9\nAuthor: Dan Prince <email address hidden>\nDate:   Fri May 4 17:01:14 2012 -0400\n\n    Create a utf8 version of the dns_domains table.\n    \n    The old dns_domains table was encoded in the 'latin1'\n    charset and has its primary key length set to 512.\n    This is too long to be a valid pkey in a proper 'utf8' encoded\n    table and seems to cause a slew of errors like:\n    \n    1) Dumping a database with mysqldump and trying to import it fails\n    because this table is latin1 but fkeys to utf8 tables (projects).\n    \n    2) Trying to alter the old dns_domains table fails with errors\n    like:\n     mysql> ALTER TABLE dns_domains DROP PRIMARY KEY;\n     ERROR 1025 (HY000): Error on rename of './nova/#sql-6cf_855'....\n    \n    This patch creates a new migration that re-creates the dns_domains\n    table with a shorter 'domain' column which works with the utf8\n    charset.\n    \n    Fixes LP Bug #993663.\n    \n    Change-Id: I2060d39cbdabd20f410ebd501160a04c51641755\n", 
+            "date_created": "2012-05-11 22:29:57.078139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/8344", 
+            "date_created": "2012-06-08 16:46:32.176273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/8356", 
+            "date_created": "2012-06-08 21:07:49.342477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8356\nCommitted: http://github.com/openstack/nova/commit/f0a9f475c5d82493f90debd1082b913511ebacf0\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit f0a9f475c5d82493f90debd1082b913511ebacf0\nAuthor: Dan Prince <email address hidden>\nDate:   Fri Jun 8 16:59:27 2012 -0400\n\n    Create a utf8 version of the dns_domains table.\n    \n    The old dns_domains table was encoded in the 'latin1'\n    charset and has its primary key length set to 512.\n    This is too long to be a valid pkey in a proper 'utf8' encoded\n    table and seems to cause a slew of errors like:\n    \n    1) Dumping a database with mysqldump and trying to import it fails\n    because this table is latin1 but fkeys to utf8 tables (projects).\n    \n    2) Trying to alter the old dns_domains table fails with errors\n    like:\n    mysql> ALTER TABLE dns_domains DROP PRIMARY KEY;\n    ERROR 1025 (HY000): Error on rename of './nova/#sql-6cf_855'....\n    \n    This patch creates an Essex fix that re-creates the dns_domains\n    table with a shorter 'domain' column which works with the utf8\n    charset. This database upgrade will run on MySQL databases only\n    which have a dns_domains table with a domain column length of\n    VARCHAR(512).\n    \n    Fixes LP Bug #993663 on Essex.\n    \n    Change-Id: I97888fbc18ebfc0e25c9ba31160588c9cdf5c448\n", 
+            "date_created": "2012-06-11 13:09:36.670040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "** Impact **\n\nCreate a utf8 version of the dns_domains table.\n\n    The old dns_domains table was encoded in the 'latin1'\n    charset and has its primary key length set to 512.\n    This is too long to be a valid pkey in a proper 'utf8' encoded\n    table and seems to cause a slew of errors like:\n\n    1) Dumping a database with mysqldump and trying to import it fails\n    because this table is latin1 but fkeys to utf8 tables (projects).\n\n    2) Trying to alter the old dns_domains table fails with errors\n    like:\n    mysql> ALTER TABLE dns_domains DROP PRIMARY KEY;\n    ERROR 1025 (HY000): Error on rename of './nova/#sql-6cf_855'....\n\n    This patch creates an Essex fix that re-creates the dns_domains\n    table with a shorter 'domain' column which works with the utf8\n    charset. This database upgrade will run on MySQL databases only\n    which have a dns_domains table with a domain column length of\n    VARCHAR(512).\n\n    Fixes LP Bug #993663 on Essex.\n\n** Development Fix **\n\nThis is fixed in the development trunk at https://review.openstack.org/7139 and in quantal\n\n** Stable Fix **\n\nThis is fixed in the stable/essex branch at https://review.openstack.org/8356.\n\n** Test Case **\n\n1. Make a database backup of the nova database.\n2. Drop the nova database.\n3. Try to restore the database.\n\n** Regression Impact **\n\nMinimal this has been tested in the openstack-ci lab.", 
+            "date_created": "2012-06-11 14:39:51.399993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "Hello Dan, or anyone else affected,\n\nAccepted nova into precise-proposed. The package will build now and be available in a few hours. Please help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed. Your feedback will aid us getting this update out to other Ubuntu users.  If this package fixes the bug for you please change the bug tag from verification-needed to verification-done.  If it does not, change the tag to verification-failed.  In either case details of your testing will help us make a better decision.  Further information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification . Thank you in advance!", 
+            "date_created": "2012-06-25 20:06:05.869258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vorlon"
+        }, 
+        {
+            "content": "Ran through two verifications, one on a single node virtual instance with mysql and nova-api running locally and another on a live mulit node cluster with running instances and a populated database.\n\nOverview of the latter captured here:\n\nAfter deployment and configuration of nova packages 2012.1-0ubuntu2.3.\n\nBefore upgrade, verification of bug:\n\n(...on mysql server)\n# mysql -u root\nmysql> create database test_nova;\nmysql> grant all privileges on test_nova.* to 'nova'@'localhost' identified by 'nova';\nmysql> Bye\n# mysqldump -u nova -p nova > nova-backup-1.sql\nEnter password:\n# mysql -u nova -p test_nova < nova-backup-1.sql\nEnter password:\nERROR 1005 (HY000) at line 1071: Can't create table 'test_nova.projects' (errno: 150)\n\nAfter upgrade, verification of fix:\n\n(...on Nova node, precise-proposed enabled.)\n~# apt-get upgrade\n~# dpkg -l | grep nova-common\nii  nova-common                      2012.1+stable~20120612-3ee026e-0ubuntu1   OpenStack Compute - common files\n~# nova-manage db sync\n2012-07-02 16:30:00 AUDIT nova.db.sqlalchemy.fix_dns_domains [-] Applying database fix for Essex dns_domains table.\n(...on mysql server)\n# mysqldump -u nova -p nova  > nova-backup-2.sql\nEnter password:\n# mysql -u nova -p test_nova < nova-backup-2.sql\nEnter password:\n\nThe database can be successfully restored from a backup. I've also verified there are no adverse affects post-upgrade in terms of usability of the cloud (instances still spawn, security groups can be created,  floating IPs associated, API requests serviced fine, etc)\n\n\n\n", 
+            "date_created": "2012-07-02 20:37:04.990726+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2012.1+stable~20120612-3ee026e-0ubuntu1\n\n---------------\nnova (2012.1+stable~20120612-3ee026e-0ubuntu1) precise-proposed; urgency=low\n\n  * New upstream snapshot. (LP: #1010473)\n  * Dropped, superseeded by new snapshot:\n    - debian/patches/upstream/0001-fix-bug-where-nova-ignores-glance-host-in-imageref.patch\n    - debian/patches/upstream/0002-Stop-libvirt-test-from-deleting-instances-dir.patch\n    - debian/patches/upstream/0003-Allow-unprivileged-RADOS-users-to-access-rbd-volumes.patch\n    - debian/patches/upstream/0004-Fixed-bug-962840-added-a-test-case.patch\n    - debian/patches/upstream/0005-Populate-image-properties-with-project_id-again.patch\n    - debian/patches/upstream/0006-Use-project_id-in-ec2.cloud._format_image.patc\n    - debian/patches/CVE-2012-2101.patch\n    - debian/patches/CVE-2012-2654.patch\n  * Resynchronize with stable/essex:\n    - 3ee026e Only invoke .lower() on non-None protocols. (LP: #1010514)\n    - f0a9f47 Create a utf8 version of the dns_domains table. (LP: #993663)\n    - 84a43e1 Report memory correctly on Xen. (LP: #997014)\n    - 8c72924 Add libvirt get_console_output tests: pty and file. (LP: #990237)\n    - 4e423cd Fix Multi_Scheduler to process host capabilities. (LP: #1000403)\n    - 4aea7f1 Nail pep8 dependencies to 1.0.1\n    - 2b3bbc4 handle updated qemu-img info output. (LP: #1000261)\n    - 2d7d51c Fix type of snapshot_id column to match db. (LP: #962615)\n    - ec70c69 Generate a Changelog for Nova\n    - e5e890f Fix nova.tests.test_nova_rootwrap on Fedora 17. (LP: #992916)\n    - 9e9a554 Ec2 handle strings with \"0x\" (LP: #983206)\n    - 26dc6b7 QuantumManager will start dnsmasq during startup. Fixes (LP: #977759)\n    - 7028d66 Introduced flag base_dir_name. (LP: #973194)\n    - 76b525a Get unit tests functional in OS X.\n    - facb936 Update KillFilter to handle 'deleted' exe's. (LP: #967931)\n    - 1209af4 Checks if value is string or not before decode. (LP: #952176)\n    - 1209af4 Fix timeout in EC2 CloudController.create_image(). (LP: #989764)\n    - 108e74b Re-add console_log from console_console_output(). (LP: #987335)\n    - 48a0768 Don't leak RPC connections on timeouts or other exceptions. (LP: #968843)\n    - 7c64de9 Cloudpipe tap vpn not always working. (LP: #975043)\n    - 5ab5051 add libvirt_inject_key flag fix (LP: #971640)\n    - 6c68ef5 Xen: Pass session to destroy_vdi. (LP: #988615)\n    - 015744e Delete fixed_ips when network is deleted. (LP: #754900)\n  * Add debian/scripts/changelog.sh to help generate the changelog.\n  * Add debian/nova-common.docs:\n    - Include changelog and README.rst\n  * debian/rules: Generate a tarball from git snapshot.\n  * debian/patches/fix-pep8-errors.patch: Fix pep8 errors due to pep8 upstream\n    migration.\n -- Chuck Short <email address hidden>   Tue, 05 Jun 2012 09:50:59 -0400", 
+            "date_created": "2012-07-03 01:00:20.059959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "The verification of this Stable Release Update has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regresssions.", 
+            "date_created": "2012-09-03 15:23:23.104996+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "I tried using this patch on essex on an environment which got already corrupted, will it only work on new installations? \n\nI thought it should fix a corrupted environment? The environment is built from source though and the patch has been applied individually. (I know this is not a normal environment and not suggested, its using devstack to install essex on production envs)\n\nThis is the error log: http://paste.openstack.org/show/28622/", 
+            "date_created": "2013-01-04 02:46:51.996350+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sammiestoel"
+        }
+    ]
+}

@@ -1,0 +1,166 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-24 04:53:15.417075+00:00", 
+    "description": "The code for retrieving the list of ips to make source security groups is very inefficient. It is possible to create a set of rules using source security groups that will lead to an explosion of get_network_info calls.\n\nExample:\n\n# create a security group\nnova secgroup-create foo foo\n\n# add source group rules referencing the same group\nfor i in {1..10}; do\n  nova secgroup-add-group-rule foo foo tcp $i $i\ndone\n\n# launch 10 instances\nnova boot --flavor 1 --image precise --num-instances 10 --security-groups foo test\n\nWhen each instance boots it sends out a notification to each of the other instances to update their iptables rules. Here is what happens when the 10th instance boots:\n\nfor num instances in group that is referenced in a source rule: 10\n  for num rules referencing a source group: 10\n    for num instances in the source group: 10\n      call get_nw_info()\n\nThat means 1000 individual requests to get_nw_info for a single instance launch. In this case you have You can see how these numbers could get out of hand very quickly, for example launching 20 instances:\ninstance number(n) : num calls (n^2) * 10 \n1 :  10\n2 :  20\n3 :  90\n...\n18 : 3240\n19 : 3610\n20 : 4000\n...\n$ python -c \"print sum(n * n * 10 for n in xrange(1, 21))\"\n28700\n\n28,700 calls to get_network info by the time the launch completes. In reality this number of calls creates a DOS where nova-network can't respond in time and instance launches start to timeout.\n\nThere are multiple fixes needed:\n\na) constructing a list of all needed instances instead of making a separate request for each rule.\nb) a single call to retrieve nw_info (or at least fixed ip info) for multiple instances at once.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 268, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1184041", 
+    "owner": "https://api.launchpad.net/1.0/~vishvananda", 
+    "id": 1184041, 
+    "index": 1107, 
+    "created": "2013-05-24 23:46:44.030188+00:00", 
+    "title": "[OSSA 2013-020] Denial of Service in Nova network source security groups (CVE-2013-4185)", 
+    "comments": [
+        {
+            "content": "The code for retrieving the list of ips to make source security groups is very inefficient. It is possible to create a set of rules using source security groups that will lead to an explosion of get_network_info calls.\n\nExample:\n\n# create a security group\nnova secgroup-create foo foo\n\n# add source group rules referencing the same group\nfor i in {1..10}; do\n  nova secgroup-add-group-rule foo foo tcp $i $i\ndone\n\n# launch 10 instances\nnova boot --flavor 1 --image precise --num-instances 10 --security-groups foo test\n\nWhen each instance boots it sends out a notification to each of the other instances to update their iptables rules. Here is what happens when the 10th instance boots:\n\nfor num instances in group that is referenced in a source rule: 10\n  for num rules referencing a source group: 10\n    for num instances in the source group: 10\n      call get_nw_info()\n\nThat means 1000 individual requests to get_nw_info for a single instance launch. In this case you have You can see how these numbers could get out of hand very quickly, for example launching 20 instances:\ninstance number(n) : num calls (n^2) * 10 \n1 :  10\n2 :  20\n3 :  90\n...\n18 : 3240\n19 : 3610\n20 : 4000\n...\n$ python -c \"print sum(n * n * 10 for n in xrange(1, 21))\"\n28700\n\n28,700 calls to get_network info by the time the launch completes. In reality this number of calls creates a DOS where nova-network can't respond in time and instance launches start to timeout.\n\nThere are multiple fixes needed:\n\na) constructing a list of all needed instances instead of making a separate request for each rule.\nb) a single call to retrieve nw_info (or at least fixed ip info) for multiple instances at once.", 
+            "date_created": "2013-05-24 23:46:44.030188+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Not totally convinced we should issue an OSSA about this one... It's a bit of a slippery slope since authenticated users have a lot of ways to consume resources . Only wildly assymetric attacks should trigger OSSAs, but that may well be the case here.\r\n\r\nThat only affects Nova when used with nova-network (not Quantum), right ?", 
+            "date_created": "2013-05-27 13:34:47.585250+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "ttx: I'm not sure if it needs an OSSA, although this case is particularly nasty. It isn't just that you are using resources, you can cause the system to become so overloaded that all nova-computes in the system cannot respond to messages. So it basically borks the entire cloud.", 
+            "date_created": "2013-05-31 22:56:02.650524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "It definitely sounds nasty.  It seems OSSA worthy to me.  I guess we could use some more opinions.  Sometimes I feel overly conservative when considering DOS vulnerabilities.\n\nIf I understand this correctly, the number we're talking about is blocking rpc calls made to the network service.  Starting 20 instances isn't too hard, and resulting in 28,700 rpc calls in this example is pretty darn bad.", 
+            "date_created": "2013-05-31 23:50:43.120171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "This reasoning also takes us back to the earlier discussion about authenticated vs. unauthenticated and whether we can infer what that means for all deployers. With today's free trials and otherwise minimally vetted users I'm leaning toward disregarding that axis in appraising the severity of a risk from the project perspective.", 
+            "date_created": "2013-06-01 00:16:52.217048+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Agreed on OSSA need. Now do we have a fix ? :)", 
+            "date_created": "2013-06-03 09:22:01.688914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposed impact description...\n\nTitle: Denial of Service in Nova network source security groups\nReporter: Vishvananda Ishaya (Nebula)\nProducts: Nova\nAffects: All versions\n\nVishvananda Ishaya from Nebula reported a denial of service\nvulnerability in Nova's handling of network source security group\npolicy updates. By performing a large number of server creation\noperations, the proportion of updates increases quadratically and\nmay overwhelm nova-network such that it is no longer able to service\nother requests in a timely fashion. Only setups relying on\nnova-network are affected.", 
+            "date_created": "2013-06-03 22:43:54.628546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Impact ++", 
+            "date_created": "2013-06-04 15:53:53.834211+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Vish: do you have a fix for that, or should we look for someone else to do one ?", 
+            "date_created": "2013-06-07 09:27:54.386002+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I don't have a fix yet no, just the method by which to construct one outlined in the bug report.", 
+            "date_created": "2013-06-12 15:39:41.138076+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Beating the drum on this one to see if we're any closer to having a fix, or whether we should pull in some additional development resources as subscribers... thoughts?", 
+            "date_created": "2013-06-25 19:00:11.907769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Found a much simpler solution to this after some experimenting. The original solution touches a ton of files but this one is pretty simple. It uses the cached ip addresses to construct the security group rules.", 
+            "date_created": "2013-07-19 17:30:23.760901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "nice work!  +2  My only other question is whether any tests are needed to cover this.", 
+            "date_created": "2013-07-19 17:35:49.155671+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Applies to grizzly with some very minor line continuation changes.", 
+            "date_created": "2013-07-22 17:47:00.690915+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "And the folsom version", 
+            "date_created": "2013-07-22 17:47:28.449664+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Folsom version", 
+            "date_created": "2013-07-22 17:49:57.393708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "+2 on the backports", 
+            "date_created": "2013-07-22 17:52:29.717401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Note that we're going to be unable to land anything on stable/folsom until someone picks up nova bug 1200336 and devises a fix (also we'll need to manually merge https://review.openstack.org/36698 to d-g since we're deadlocked on multiple regressions in the folsom gate now).", 
+            "date_created": "2013-07-24 20:49:16.360887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Just came across https://bugs.launchpad.net/nova/+bug/1202893 which looks like a duplicate ...", 
+            "date_created": "2013-07-26 14:25:38.189937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Agreed, it looks like the same set of symptoms. I think we should open this bug public and mark that one as a duplicate, then use the normal review process to wrap things up from this point forward. Anyone disagree?", 
+            "date_created": "2013-07-27 17:33:54.425207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Nope, sounds good to me.", 
+            "date_created": "2013-07-29 09:33:29.759535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/39541", 
+            "date_created": "2013-07-31 18:07:14.683025+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/39543", 
+            "date_created": "2013-07-31 18:11:30.906336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/39544", 
+            "date_created": "2013-07-31 18:12:27.766959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/39541\nCommitted: http://github.com/openstack/nova/commit/85aac04704350566d6b06aa7a3b99649946c672c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 85aac04704350566d6b06aa7a3b99649946c672c\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Fri Jul 19 10:23:59 2013 -0700\n\n    Use cached nwinfo for secgroup rules\n    \n    This stops a potential DOS with source security groups by using the\n    db cached version of the network info instead of calling out to\n    the network api multiple times.\n    \n    Fixes bug 1184041\n    \n    Change-Id: Id5f24ecf0e8cce60c27a9aecbc6e606c4c44d6b6\n", 
+            "date_created": "2013-08-01 16:15:38.119174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/39543\nCommitted: http://github.com/openstack/nova/commit/52ad911963da4095b213952dee3a430fe0c4c30f\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 52ad911963da4095b213952dee3a430fe0c4c30f\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Fri Jul 19 10:23:59 2013 -0700\n\n    Use cached nwinfo for secgroup rules\n    \n    This stops a potential DOS with source security groups by using the\n    db cached version of the network info instead of calling out to\n    the network api multiple times.\n    \n    Fixes bug 1184041\n    \n    Change-Id: Id5f24ecf0e8cce60c27a9aecbc6e606c4c44d6b6\n    (cherry picked from commit 85aac04704350566d6b06aa7a3b99649946c672c)\n", 
+            "date_created": "2013-08-01 19:03:41.991763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/39544\nCommitted: http://github.com/openstack/nova/commit/d4ee081c5c0a5132781235177c430ebcf72b0b0b\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit d4ee081c5c0a5132781235177c430ebcf72b0b0b\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Fri Jul 19 10:23:59 2013 -0700\n\n    Use cached nwinfo for secgroup rules\n    \n    This stops a potential DOS with source security groups by using the\n    db cached version of the network info instead of calling out to\n    the network api multiple times.\n    \n    Fixes bug 1184041\n    \n    Change-Id: Id5f24ecf0e8cce60c27a9aecbc6e606c4c44d6b6\n    (cherry picked from commit 85aac04704350566d6b06aa7a3b99649946c672c)\n", 
+            "date_created": "2013-08-01 19:04:04.284154+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This has a side affect of breaking security group linking via source groups.\n\nExample:\n\nSecgroup \"Server\" has rule\n\n+-------------+-----------+---------+----------+---------------+\n| IP Protocol | From Port | To Port | IP Range | Source Group  |\n+-------------+-----------+---------+----------+---------------+\n| tcp         | 8140      | 8140    |          | client |\n+-------------+-----------+---------+----------+---------------+\n\nInstance A is running and is associated with the \"Server\" secgroup\n\nNow if a create a new instance with the \"client\" security group it should add a rule to instance A to all the new instance to talk to it.\n\nThis no longer gets added as it uses the cached version.\n\nRestarting nova-compute will fix this and the rule will be applied.\n\n\n", 
+            "date_created": "2013-08-23 04:24:06.440166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "@Sam: could you file a separate bug about this regression ? It will be easier to track rather than reusing the original bug.", 
+            "date_created": "2013-08-23 18:44:45.037388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Created new bug #1216720", 
+            "date_created": "2013-08-26 01:14:24.974430+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }
+    ]
+}

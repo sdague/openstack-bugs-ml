@@ -1,0 +1,53 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-08-28 07:04:24.132543+00:00", 
+    "description": "I have multinode devstack setup with 2 compute and a controller node.\nThe hostnames of the nodes are as follows:\ncontroller: controller.example.com\ncompute0: compute0.example.com\ncompute1: compute1.example.com\n\nReproduction steps:\n\n1) I have created a host-aggregate in availability zone \"nova\".\n\u00a0\u00a0\u00a0\u00a0nova aggregate-create test_agg nova\n\n2) Then I set metadata on that host-aggregate.\n\u00a0\u00a0\u00a0\u00a0nova aggregate-set-metadata 1 ssd=true\n\n3) Then I added compute hosts mentioned above to host-aggregate.\n\u00a0\u00a0\u00a0\u00a0nova aggregate-add-host test_agg COMPUTE0.example.com\n\u00a0\u00a0\u00a0\u00a0nova aggregate-add-host test_agg compute1.example.com\n\nWhile adding compute0 to host-aggregate, if I provide hostname as \"COMPUTE0.example.com\", instead of\nthrowing HostNotFound error, it is added to host-aggregate.\n\n4) After that I have created a flavor.\nnova flavor-create ssd.large 6 8192 80 4\n\n5) Added metadata to flavor.\nnova flavor-key ssd.large set ssd=true\n\nNow when I try to create instance with above mentioned flavor, I can't spawn it on compute0 host. As scheduler is filtering only compute1 with AggregateInstanceExtraSpecsFilter filter.\n\nExpected Result: while adding the case-sensitive host to host-aggregate, nova-api should have thrown HostNotFound error.\n\nNote: when I add the correct hostname \"compute0.example.com\", I am able to spawn instance on with above mentioned flavor on compute0 host and it is filtered by AggregateInstanceExtraSpecFilter as well.", 
+    "tags": [
+        "api"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1709260", 
+    "owner": "https://api.launchpad.net/1.0/~ratailor", 
+    "id": 1709260, 
+    "index": 957, 
+    "created": "2017-08-08 07:43:57.915169+00:00", 
+    "title": "Addition of host to host-aggregate should be case -sensitive", 
+    "comments": [
+        {
+            "content": "I have multinode devstack setup with 2 compute and a controller node.\nThe hostnames of the nodes are as follows:\ncontroller: controller.example.com\ncompute0: compute0.example.com\ncompute1: compute1.example.com\n\nReproduction steps:\n\n1) I have created a host-aggregate in availability zone \"nova\".\n    nova aggregate-create test_agg nova\n\n2) Then I set metadata on that host-aggregate.\n    nova aggregate-set-metadata 1 ssd=true\n\n3) Then I added compute hosts mentioned above to host-aggregate.\n    nova aggregate-add-host test_agg COMPUTE0.example.com\n    nova aggregate-add-host test_agg compute1.example.com\n\nWhile adding compute0 to host-aggregate, if I provide hostname as \"COMPUTE0.example.com\", instead of\nthrowing HostNotFound error, it is added to host-aggregate.\n\n4) After that I have created a flavor.\nnova flavor-create ssd.large 6 8192 80 4\n\n5) Added metadata to flavor.\nnova flavor-key ssd.large set ssd=true\n\nNow when I try to create instance with above mentioned flavor, I can't spawn it on compute0 host. As scheduler is filtering only compute1 with AggregateInstanceExtraSpecsFilter filter.\n\nExpected Result: while adding the case-sensitive host to host-aggregate, nova-api should have thrown HostNotFound error.", 
+            "date_created": "2017-08-08 07:43:57.915169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ratailor"
+        }, 
+        {
+            "content": "For clarity on the bug report, could you please provide the nova-sceduler log that shows the filter missing that host because the name is different ?\n\nTBC, all FQDNs are case-sensitive, so we should probably indeed return a 404 when you're trying to add a host with the wrong case. The only point I wonder is whether it would require a new API microversion since we were previously accepting that from a REST perpective (my guts tend to say yes to that :( )", 
+            "date_created": "2017-08-08 09:08:57.139067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Hi Sylvain,\n\nI have debugged the issue and found that IMO it has nothing to do with scheduler.\n\nWhile adding host to host-aggregate, the below db query should not matched to existing db record.\nSince mysql doesn't support case-sensitive column.\n\nThe problematic block of code is below:\nhttps://github.com/openstack/nova/blob/master/nova/objects/host_mapping.py#L90-L93\n\n\n    def _get_by_host_from_db(context, host):\n        db_mapping = (context.session.query(api_models.HostMapping)\n                      .options(joinedload('cell_mapping'))\n                      .filter(api_models.HostMapping.host == host)).first()", 
+            "date_created": "2017-08-08 10:58:08.450698+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ratailor"
+        }, 
+        {
+            "content": "I think it is the problem of inconsistent behavior between mysql DB and the in-memory cache in the nova scheduler.\n\nThe mysql Db doesn't support case-sensitive filtering, so the API layer can ensure the host existed. But there is in-memory cache build in the scheduler https://github.com/openstack/nova/blob/master/nova/scheduler/host_manager.py#L359, it becomes case-senstive for the key of a dict.", 
+            "date_created": "2017-08-08 11:34:52.661648+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "Please find the attached n-sch logs for more information.", 
+            "date_created": "2017-08-08 12:09:33.632756+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ratailor"
+        }, 
+        {
+            "content": "related bug https://bugs.launchpad.net/nova/+bug/1538011", 
+            "date_created": "2017-08-10 09:25:52.623068+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/498334", 
+            "date_created": "2017-08-28 07:04:23.712811+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

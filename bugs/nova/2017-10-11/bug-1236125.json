@@ -1,0 +1,89 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2013-11-28 21:40:26.303372+00:00", 
+    "description": "Nova's PowerVM driver is currently set to AutoAdd any host key over SSH.  As per the SSH protocol, host key fingerprints should be verified either by comparing with known hosts (like through a known_hosts file) or having a person verify its the host they wish to connect with.\n\nIn particular,\nhttps://github.com/openstack/nova/blob/master/nova/virt/powervm/common.py\nuses paramiko.AutoAddPolicy() which will automatically accept any host key.  Doing so allows Nova to be susceptible to a man-in-the-middle.\n\nThere should instead be an option in nova.conf to specify a known_hosts file and the paramiko policy to use.  That way someone could set the policy to Reject and specify a file with known_hosts which are acceptable.  Communication therefore would never occur to unknown hosts and allow a potential release of a user/pwd.", 
+    "tags": [
+        "powervm", 
+        "security"
+    ], 
+    "importance": "Low", 
+    "heat": 266, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1236125", 
+    "owner": "None", 
+    "id": 1236125, 
+    "index": 5912, 
+    "created": "2013-10-07 01:38:44.568581+00:00", 
+    "title": "PowerVM driver ignores host keys", 
+    "comments": [
+        {
+            "content": "Nova's PowerVM driver is currently set to AutoAdd any host key over SSH.  As per the SSH protocol, host key fingerprints should be verified either by comparing with known hosts (like through a known_hosts file) or having a person personal verify its the host they wish to connect with.\n\nIn particular, \nhttps://github.com/openstack/nova/blob/master/nova/virt/powervm/common.py\n\nuses paramiko.AutoAddPolicy() which will automatically accept any host key.  Doing so, allows Nova to be susceptible to a man-in-the-middle.  \n\nThere should instead be an option in nova.conf to specify a known_hosts file and the paramiko policy to use.  That way someone could set the policy to Reject and specify a file with known_hosts which are acceptable.  Communication therefore would never occur to unknown hosts and allow a potential release of a user/pwd.", 
+            "date_created": "2013-10-07 01:38:44.568581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ericwb"
+        }, 
+        {
+            "content": "It's worth noting that AutoAddPolicy() only adds the key if it hasn't connected to that host before, and remembers it from that point on (so called \"trust on first use\" model), but that does still present a potential TOCTOU race. If paramiko suddenly starts trying to talk to a MitM host with a different key than it saw initially, it will at least fail with:\n\n    Traceback (most recent call last):\n      File \"<stdin>\", line 1, in <module>\n      File \"/usr/lib/python2.7/site-packages/paramiko/client.py\", line 331, in connect\n        raise BadHostKeyException(hostname, server_key, our_server_key)\n    paramiko.BadHostKeyException: Host key for server testhost does not match!\n\nI'll let the nova devs speak to what specific risks are exposed there before determining whether this warrants an advisory.", 
+            "date_created": "2013-10-07 14:33:08.944538+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "In our case, it might be more problematic.  That's because the nova process runs as a user named 'nova'.  This nova user is a daemon user with no shell associated with it.  As a result, it has no home directory and no default known_hosts file.  So paramiko does not persist the host key for the connection in a file.  Its only in memory.  So the next time the nova service is restarted, it has lost all information on known host keys.\n\nThat's why I believe it would be greatly beneficial for nova.conf to have a new option in the powervm section to define a path to a known_hosts file and the default paramiko policy .\n\nnova.conf:\n#\n# Options defined in nova.virt.powervm.driver\n#\n....\n....\n.....\n# Path to known_hosts file for paramiko to verify known hosts\n#powervm_known_hosts_path=/home/nova/.ssh/known_hosts\n\n# Paramiko host key policy.  One of: AutoAdd, Reject, Warning\n# Default: Reject\n#powervm_missing_host_key_policy=Reject\n", 
+            "date_created": "2013-10-07 19:20:44.362093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ericwb"
+        }, 
+        {
+            "content": "@Eric: the nova user may still have a home directory, that depends on packaging and implementation ? But I agree that adding a known_hosts config key would be beneficial.\n\nTo correctly assess this vulnerability, could you expand on what that PowerVM SSh connection is used for, and if it happens over a management network or a guest-accessible network ?", 
+            "date_created": "2013-10-21 14:10:59.892260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Its true, a deployment may choose to give the nova user a shell.  I would not recommend it given that Nova has code to run commands as root using sudo.\n\nThe PowerVM SSH connection is used to manage the IBM Integrated Virtualization Manager (http://www-03.ibm.com/systems/power/hardware/whitepapers/ivm.html) and deploy/stop/start/etc virtual machines.  \n\nI would agree that most deployments would probably use their management network, but I can't assume that is always the case.  \n\nVerifying the authenticity of the SSH Server using a host key is equivalent to verifying a web server's authenticity using a certificate.  Although, certificates have trusted authorities (CAs), and SSH does not.", 
+            "date_created": "2013-10-24 23:49:22.339111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ericwb"
+        }, 
+        {
+            "content": "Oh, I perfectly agree on the need to fix this. It's just that this kind of patch (adding a new layer of security through the introduction of new configuration parameters) does not really make a good security patch for past stable releases (we can't really add new config options there). So the question is, can we consider this a strengthening opportunity (and communicate the weakness existing in previous versions, advising to use PowerVM over a management network), or consider it an exploitable vulnerability and try to come up with a creative patch that does not involve new configuration options or features...", 
+            "date_created": "2013-10-28 14:58:12.503940+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "So... Unless someone objects, I'd like to put this on the pile of \"improvements to encrypted communications within the openstack management-side networks\" -- we already had a number of unencrypted or non-CA-verified SSL connections out there, so at this point the management network should still be considered a bit \"trusted\".\n\nThat way this bug can be fixed by adding new config options (ideally defaulting to security enabled) in Icehouse.\n\nSidenote: it would be great to have a blueprint covering all management-side encrypted communications gaps so that we can call it \"done\" by icehouse... and start considering gaps as unexpected vulnerabilities.", 
+            "date_created": "2013-11-14 11:02:54.439575+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thierry, I'm fine with your approach.", 
+            "date_created": "2013-11-14 17:16:08.838103+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This seems like a sane solution. Otherwise we'd be inconsistently prioritizing it over other similar management network security improvements.", 
+            "date_created": "2013-11-14 17:24:54.977869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I agree also.  Blueprint is probably the best avenue.  \n\nThere are other areas I've seen with similar issues.  Some Cinder drivers, like nova, use paramiko with AutoAddPolicy.  Also the Nova vsphere/esxi driver doesn't appear to have a mechanism to authenticate the vcenter/esxi host its communicating with.  \n\nI could start the blueprint if people don't mind.", 
+            "date_created": "2013-11-14 21:19:29.641195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ericwb"
+        }, 
+        {
+            "content": "@eric: that would be awesome. For each project someone needs to go over all internal communications and fix them all. Once we get to a good baseline for a project we can declare the management network hostile and consider any regression in that area as a vulnerability.", 
+            "date_created": "2013-11-15 11:05:37.909115+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sounds like this will end up being part of a bigger blueprint", 
+            "date_created": "2013-11-18 05:51:53.614285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "So unless you want to do something to fix this in havana, I think it can be marked as 'won't fix' due to this:\n\nhttps://review.openstack.org/#/c/57774/", 
+            "date_created": "2013-11-21 23:26:14.112931+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Depending on the documentation this sounds like it might be a security vulnerability. Even if the code is removed it was present and vulnerable (and thus a CVE may be needed). ", 
+            "date_created": "2013-11-28 21:40:25.574742+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kseifried"
+        }
+    ]
+}

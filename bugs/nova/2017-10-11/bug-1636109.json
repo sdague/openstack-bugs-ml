@@ -1,0 +1,81 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-19 12:02:27.001540+00:00", 
+    "description": "When a virtual machine is rescheduled and fails eith some storage exception, getting an error that\n'NetworkInfo' object has no attribute 'wait' instead of actual storage issue\n\nIn nova/compute/manager\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2088 is actually throwing above exception because , network_info is a 'NetworkInfoAsyncWrapper' object in first time deploy case and  'NetworkInfo' object in a reschedule case, so during reschedule it is throwing 'wait' attribute is not there.\n\n def _build_networks_for_instance(self, context, instance,\n            requested_networks, security_groups):\n\n        # If we're here from a reschedule the network may already be allocated.\n        if strutils.bool_from_string(\n                instance.system_metadata.get('network_allocated', 'False')):\n            # NOTE(alex_xu): The network_allocated is True means the network\n            # resource already allocated at previous scheduling, and the\n            # network setup is cleanup at previous. After rescheduling, the\n            # network resource need setup on the new host.\n            self.network_api.setup_instance_network_on_host(\n                context, instance, instance.host)\n            return self.network_api.get_instance_nw_info(context, instance)   --------  this block gets called for reschedule case which returns NetworkInfo object\n\n        if not self.is_neutron_security_groups:\n            security_groups = []\n\n        macs = self.driver.macs_for_instance(instance)\n        dhcp_options = self.driver.dhcp_options_for_instance(instance)\n        network_info = self._allocate_network(context, instance,\n                requested_networks, macs, security_groups, dhcp_options)  ----------------- this block is called for deploy on first host which returns NetworkInfoAsyncWrapper which has wait.\n\n        return network_info", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1636109", 
+    "owner": "https://api.launchpad.net/1.0/~eshaseth", 
+    "id": 1636109, 
+    "index": 2001, 
+    "created": "2016-10-24 07:57:45.538543+00:00", 
+    "title": "Reschedule of a virtual machine fails with  'NetworkInfo' object has no 'wait'", 
+    "comments": [
+        {
+            "content": "When a virtual machine is rescheduled and fails eith some storage exception, getting an error that\n'NetworkInfo' object has no attribute 'wait' instead of actual storage issue\n\nIn nova/compute/manager\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2088 is actually throwing above exception because , network_info is a 'NetworkInfoAsyncWrapper' object in first time deploy case and  'NetworkInfo' object in a reschedule case, so during reschedule it is throwing 'wait' attribute is not there.\n\n def _build_networks_for_instance(self, context, instance,\n            requested_networks, security_groups):\n\n        # If we're here from a reschedule the network may already be allocated.\n        if strutils.bool_from_string(\n                instance.system_metadata.get('network_allocated', 'False')):\n            # NOTE(alex_xu): The network_allocated is True means the network\n            # resource already allocated at previous scheduling, and the\n            # network setup is cleanup at previous. After rescheduling, the\n            # network resource need setup on the new host.\n            self.network_api.setup_instance_network_on_host(\n                context, instance, instance.host)\n            return self.network_api.get_instance_nw_info(context, instance)   --------  this block gets called for reschedule case which returns NetworkInfo object\n\n        if not self.is_neutron_security_groups:\n            security_groups = []\n\n        macs = self.driver.macs_for_instance(instance)\n        dhcp_options = self.driver.dhcp_options_for_instance(instance)\n        network_info = self._allocate_network(context, instance,\n                requested_networks, macs, security_groups, dhcp_options)  ----------------- this block is called for deploy on first host which returns NetworkInfoAsyncWrapper which has wait.\n\n        return network_info", 
+            "date_created": "2016-10-24 07:57:45.538543+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ymadhavi"
+        }, 
+        {
+            "content": "This appears to be a regression issue caused by https://github.com/openstack/nova/commit/61fc1b9ee11e416aecbf3a29e1d150a53fc890e8 , which reverted the previous fix made by https://github.com/openstack/nova/commit/24a04c405ab2c98e52ea1edf8775489907526c6d", 
+            "date_created": "2016-11-03 13:25:57.745189+00:00", 
+            "author": "https://api.launchpad.net/1.0/~edmondsw"
+        }, 
+        {
+            "content": "I can't remember exactly why we needed to do:\n\nhttps://github.com/openstack/nova/commit/61fc1b9ee11e416aecbf3a29e1d150a53fc890e8\n\nBut it probably had something to do with test failures.\n\nSee what breaks if you add the wait method back in from:\n\nhttps://review.openstack.org/#/c/290780/6/nova/network/model.py\n\nMy guess unit tests might fail, but maybe you could stub that wait() method out in the unit tests but leave it in at runtime.", 
+            "date_created": "2016-11-03 14:00:02.670824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Would be helpful if we had a test that shows the failure so we can work on testing fixes.", 
+            "date_created": "2016-11-03 14:01:50.022808+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The quick fix would be to just re-add the noop wait method to NetworkInfo, the only reason it was removed was as a cleanup so it should not negatively impact anything to add it back.\n\nThe better fix may be to modify the workflow a little bit so that NetworkInfo is wrapped in the async wrapper at a clear point that would ensure that the schedule and reschedule case can be handled the same way.", 
+            "date_created": "2016-11-04 17:04:07.422422+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/394854", 
+            "date_created": "2016-11-08 09:37:12.269112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Esha Seth (<email address hidden>) on branch: master\nReview: https://review.openstack.org/394854\nReason: The fix is checked in under https://review.openstack.org/#/c/394854", 
+            "date_created": "2016-11-08 16:42:56.055256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Esha Seth (<email address hidden>) on branch: master\nReview: https://review.openstack.org/394854\nReason: The fix is checked in under https://review.openstack.org/#/c/393669", 
+            "date_created": "2016-11-08 16:44:27.539594+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/393669\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1b351ef5356e0472aef51221ff02376dd8b42954\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1b351ef5356e0472aef51221ff02376dd8b42954\nAuthor: Esha Seth <email address hidden>\nDate:   Fri Nov 4 05:48:32 2016 -0400\n\n    Add a no-op wait method to NetworkInfo\n    \n    The normal deploy flow uses a NetworkInfoAsyncWrapper for network\n    allocation, and because of that many places have to call that class's\n    wait method to make sure it has completed. During a reschedule where\n    the network was allocated by a previous build attempt, a NetworkInfo\n    instance is retrieved instead, which does not have a wait method. This\n    then results in an exception complaining the missing method when it is\n    called. This fix addresses that by adding a no-op wait method to the\n    NetworkInfo class. Alternatively could have used isinstance or hasattr\n    to avoid making wait calls on NetworkInfo, but that could be\n    problematic to maintain as more places need to make wait calls in the\n    future and may not know to make the isinstance/hasattr check.\n    \n    This fixes a regression issue caused by\n    61fc1b9ee11e416aecbf3a29e1d150a53fc890e8 ,\n    which reverted the previous fix made under\n    24a04c405ab2c98e52ea1edf8775489907526c6d\n    \n    Change-Id: Id7a71b2eb46ea7df19e7da0afbc0eafa87cac965\n    Closes-Bug: 1636109\n", 
+            "date_created": "2016-11-10 09:37:06.725019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/396151", 
+            "date_created": "2016-11-10 12:09:03.133595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/396151\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=329cd1649703ac801b95fce28afa99b67f9f45aa\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 329cd1649703ac801b95fce28afa99b67f9f45aa\nAuthor: Esha Seth <email address hidden>\nDate:   Fri Nov 4 05:48:32 2016 -0400\n\n    Add a no-op wait method to NetworkInfo\n    \n    The normal deploy flow uses a NetworkInfoAsyncWrapper for network\n    allocation, and because of that many places have to call that class's\n    wait method to make sure it has completed. During a reschedule where\n    the network was allocated by a previous build attempt, a NetworkInfo\n    instance is retrieved instead, which does not have a wait method. This\n    then results in an exception complaining the missing method when it is\n    called. This fix addresses that by adding a no-op wait method to the\n    NetworkInfo class. Alternatively could have used isinstance or hasattr\n    to avoid making wait calls on NetworkInfo, but that could be\n    problematic to maintain as more places need to make wait calls in the\n    future and may not know to make the isinstance/hasattr check.\n    \n    This fixes a regression issue caused by\n    61fc1b9ee11e416aecbf3a29e1d150a53fc890e8 ,\n    which reverted the previous fix made under\n    24a04c405ab2c98e52ea1edf8775489907526c6d\n    \n    Change-Id: Id7a71b2eb46ea7df19e7da0afbc0eafa87cac965\n    Closes-Bug: 1636109\n    (cherry picked from commit 1b351ef5356e0472aef51221ff02376dd8b42954)\n", 
+            "date_created": "2016-11-15 02:22:21.194482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:11:46.012585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.3 release.", 
+            "date_created": "2016-12-19 12:02:26.110998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

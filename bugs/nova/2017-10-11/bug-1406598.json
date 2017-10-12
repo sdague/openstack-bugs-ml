@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-06-19 05:44:31.941674+00:00", 
+    "description": "When creating a cell using the nova-manage cell create command, the transport_url generated in the database is url-encoded (i.e. '=' is changed to '%3D', etc.)  That's propably the correct behavior, since the connection string is stored as URL.\n\nHowever, nova-cells doesn't properly decode that string.  So for transport_url credentials that contain url-encodable characters, nova-cells uses the url encoded string, rather than the actual correct credentials.\n\nSteps to reproduce:\n\n- Create a cell using nova-manage with credentials containing url-encodable characters:\n\nnova-manage cell create  --name=cell_02 --cell_type=child --username='the=user' --password='the=password' --hostname='hostname' --port=5672 --virtual_host=/ --woffset=1 --wscale=1\n\n- nova.cells table now contains a url-encoded transport_url:\n\nmysql> select * from cells \\G\n*************************** 1. row ***************************\n   created_at: 2014-12-30 17:30:41\n   updated_at: NULL\n   deleted_at: NULL\n           id: 3\n      api_url: NULL\nweight_offset: 1\n weight_scale: 1\n         name: cell_02\n    is_parent: 0\n      deleted: 0\ntransport_url: rabbit://the%3Duser:the%3Dpassword@hostname:5672//\n1 row in set (0.00 sec)\n\n- nova-cells uses the literal credentials 'the%3Duser' and 'the%3Dpassword' to connect to RMQ, rather than the correct 'the=user' and 'the=password' credentials.", 
+    "tags": [
+        "cells"
+    ], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1406598", 
+    "owner": "https://api.launchpad.net/1.0/~dims-v", 
+    "id": 1406598, 
+    "index": 209, 
+    "created": "2014-12-30 17:30:22.820425+00:00", 
+    "title": "nova-cells doesn't url decode transport_url", 
+    "comments": [
+        {
+            "content": "When creating a cell using the nova-manage cell create command, the transport_url generated in the database is url-encoded (i.e. '=' is changed to '%3D', etc.)  That's propably the correct behavior, since the connection string is stored as URL.\n\nHowever, nova-cells doesn't properly decode that string.  So for transport_url credentials that contain url-encodable characters, nova-cells uses the url encoded string, rather than the actual correct credentials.\n\nSteps to reproduce:\n\n- Create a cell using nova-manage with credentials containing url-encodable characters:\n\nnova-manage cell create  --name=cell_02 --cell_type=child --username='the=user' --password='the=password' --hostname='hostname' --port=5672 --virtual_host=/ --woffset=1 --wscale=1\n\n- nova.cells table now contains a url-encoded transport_url:\n\nmysql> select * from cells;\n+---------------------+------------+------------+----+---------+---------------+--------------+---------+-----------+---------+-----------------------------------------------------------------------+\n| created_at          | updated_at | deleted_at | id | api_url | weight_offset | weight_scale | name    | is_parent | deleted | transport_url                                                         |\n+---------------------+------------+------------+----+---------+---------------+--------------+---------+-----------+---------+-----------------------------------------------------------------------+\n| 2014-12-30 17:18:53 | NULL       | NULL       |  2 | NULL    |             1 |            1 | cell_02 |         0 |       0 | rabbit://the%3Duser:the%3Dpassword@hostname:5672//                  |\n+---------------------+------------+------------+----+---------+---------------+--------------+---------+-----------+---------+-----------------------------------------------------------------------+\n\n- nova-cells uses the literal credentials 'the%3Duser' and 'the%3Dpassword' to connect to RMQ, rather than the correct 'the=user' and 'the=password' credentials.", 
+            "date_created": "2014-12-30 17:30:22.820425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdorman-m"
+        }, 
+        {
+            "content": "usename and password are parsed by oslo.messaging here: https://github.com/openstack/oslo.messaging/blob/master/oslo/messaging/transport.py#L305-L309", 
+            "date_created": "2014-12-31 01:43:45.323321+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liyingjun"
+        }, 
+        {
+            "content": "It sounds like the values are being stored and managed outside of oslo.messaging. I'm not sure why this is reported against the library in addition to nova. Is there something we'll need to fix in the library, too?", 
+            "date_created": "2015-03-16 14:11:59.680684+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/168103", 
+            "date_created": "2015-03-26 18:23:06.684867+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/168103\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f16dd6ba95ca59a76cf07f397a559163e711c84a\nSubmitter: Jenkins\nBranch:    master\n\ncommit f16dd6ba95ca59a76cf07f397a559163e711c84a\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Thu Mar 26 14:16:36 2015 -0400\n\n    Store cells credentials in transport_url properly\n    \n    Looks like we need to store the decoded version in the\n    database, not the encoded version...ie:\n        rabbit://the=user:the=password@hostname:5672//\n    instead of:\n        rabbit://the%3Duser:the%3Dpassword@hostname:5672//\n    \n    Once we build up the transport_url and transform it into\n    a string, we just call unquote to convert %xx escapes back\n    to their single-character equivalent.\n    \n    Closes-Bug: #1406598\n    Change-Id: I34be01de08f515c5931ff04e1eaf9815e3c2fa82\n", 
+            "date_created": "2015-03-31 20:17:21.881166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is not nova's fault, oslo.messaging should decode username password and vhost in url\n\nIt's fixed in oslo.messaging.\n\nhttps://review.openstack.org/#/c/316552/", 
+            "date_created": "2016-06-14 20:31:04.629507+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jiajunsu"
+        }, 
+        {
+            "content": "Fixed in oslo.messaging\n\nhttps://bugs.launchpad.net/oslo.messaging/+bug/1557496", 
+            "date_created": "2016-06-19 05:44:12.510836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jiajunsu"
+        }
+    ]
+}

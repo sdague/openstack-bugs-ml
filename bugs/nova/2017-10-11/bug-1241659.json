@@ -1,0 +1,59 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:44:25.633360+00:00", 
+    "description": "I ran a resize an the although --poll shows that resize has finished, the instance status does not change to rresize and we cannot confirm. \n\nthe only thing I can find in the log is this: \n\n/var/log/nova/compute.log:2013-10-18 17:59:43.796 2478 DEBUG nova.virt.disk.api [req-b4863e39-05b9-473c-a752-6fada31d9b04 bbce236d5aac4d1dbc086a8835ed0ebc d09f3bf0f9224affa92ab97010b37270] Unable to mount image /var/lib/nova/instances/c9b579bd-c392-4ab6-bdb8-ff5801f804cd/disk with error Error mounting /var/lib/nova/instances/c9b579bd-c392-4ab6-bdb8-ff5801f804cd/disk with libguestfs (mount_options: /dev/sda on / (options: ''): mount: you must specify the filesystem type). Cannot resize. is_image_partitionless /usr/lib/python2.6/site-packages/nova/virt/disk/api.py:183\n\n\nbut the image is find and instance has rhel installed on it. \n\nto reproduce this: \ntry to resize an instance \n\nPlease note that I am working with glusterfs as cinder and glance backend on Havana", 
+    "tags": [
+        "libvirt", 
+        "resize"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1241659", 
+    "owner": "None", 
+    "id": 1241659, 
+    "index": 4208, 
+    "created": "2013-10-18 15:09:15.323823+00:00", 
+    "title": "resize returns success when the command is invoked to target flavor size, but doesn't reflect in reality.", 
+    "comments": [
+        {
+            "content": "I ran a resize an the although --poll shows that resize has finished, the instance status does not change to rresize and we cannot confirm. \n\nthe only thing I can find in the log is this: \n\n/var/log/nova/compute.log:2013-10-18 17:59:43.796 2478 DEBUG nova.virt.disk.api [req-b4863e39-05b9-473c-a752-6fada31d9b04 bbce236d5aac4d1dbc086a8835ed0ebc d09f3bf0f9224affa92ab97010b37270] Unable to mount image /var/lib/nova/instances/c9b579bd-c392-4ab6-bdb8-ff5801f804cd/disk with error Error mounting /var/lib/nova/instances/c9b579bd-c392-4ab6-bdb8-ff5801f804cd/disk with libguestfs (mount_options: /dev/sda on / (options: ''): mount: you must specify the filesystem type). Cannot resize. is_image_partitionless /usr/lib/python2.6/site-packages/nova/virt/disk/api.py:183\n\n\nbut the image is find and instance has rhel installed on it. \n\nto reproduce this: \ntry to resize an instance \n\nPlease note that I am working with glusterfs as cinder and glance backend on Havana", 
+            "date_created": "2013-10-18 15:09:15.323823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dron-3"
+        }, 
+        {
+            "content": "The code above is only called from finish_migration in the libvirt virt driver.  What do you have set for use_cow_images in nova.conf?\n\nWhat's the metadata on the image?", 
+            "date_created": "2013-11-16 22:17:18.174215+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Bug 1246852 looks related.", 
+            "date_created": "2013-11-18 03:16:19.407634+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "the problem was that it was a AIO and I had to configure: \nallow_resize_to_same_host=True\nscheduler_default_filters=AllHostsFilter", 
+            "date_created": "2014-05-19 08:57:01.527432+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dron-3"
+        }, 
+        {
+            "content": "Matt, I have testing environments which I install and re-install constantly and that specific one is no longer in existence :) \nHowever, the default installation is probably the one that I had so in use_cow_images in nova conf we use:\n#images_type=default\n\nJust so you know I did do further testing on this and configured AIO resize + tested with both qcow and raw images and with thin and raw images and  I found that we have a bug in icehouse 9probably with the scheduler) where sometimes we call migration (which fails the resize) and sometimes we do not (and resize succeeds). \n\nI think that this bug is actually related to libguestfs ", 
+            "date_created": "2014-06-06 08:19:44.507398+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dron-3"
+        }, 
+        {
+            "content": "A related RDO bug that can be reproduced in a 2-node IceHouse setup -- https://bugzilla.redhat.com/show_bug.cgi?id=1045515\n\nDescription: \n    Re-sizing an ACTIVE Nova instance returns success (albeit, bogus):\n    resize returns success when the command is invoked  to target flavor\n    size, but doesn't reflect in reality.", 
+            "date_created": "2014-06-12 07:33:01.107664+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "I also meet the problem in my environment, I found that the owner of /var/lib/nova/instances/uuid/disk is root, instead of qemu.\n\nSo, I check the libervert configure file in /etc/libvirt/qume.conf:\n\n# Some examples of valid values are:\n#\n#       user = \"qemu\"   # A user named \"qemu\"\n#       user = \"+0\"     # Super user (uid=0)\n#       user = \"100\"    # A user named \"100\" or a user with uid=100\n#\nuser = \"root\"\n\n# The group for QEMU processes run by the system instance. It can be\n# specified in a similar way to user.\ngroup = \"root\"\n\n# Whether libvirt should dynamically change file ownership\n# to match the configured user/group above. Defaults to 1.\n# Set to 0 to disable file ownership changes.\ndynamic_ownership = 0\n\n\nIt 's \"root\" instead of \"qemu\", change it to qemu and libvirtd server, The problem is salved.", 
+            "date_created": "2016-05-05 06:56:17.502868+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xiexianbin"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:44:25.066324+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

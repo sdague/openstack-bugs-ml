@@ -1,0 +1,108 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-05-18 14:45:08.919365+00:00", 
+    "description": "We are having GRE performance issues with Juno installation. From VM to network node, we can only get 3Gbit on 10Gbit interface. Finally, I tracked and solved the issue but that requires patches to nova and neutron-plugin-openvswitch. I am reporting this bug to find a clean solution instead of a hack.\n\nThe isssue is caused by MTU setting and lack of multiqueue net support in kvm. As official openstack documentation suggests, MTU settings are 1500 by default. This creates a bottleneck in VMs and it's only possible to process 3Gbit network traffic with 1500 MTU  and without MQ support enabled in KVM.\n\nWhat I did to solve the issue:\n1- Set physical interface (em1) mtu to 9000\n2- Set network_device_mtu = 8950 in nova and neutron.conf (both on compute/network nodes)\n3- Set br-int mtu to 8950 manually\n4- Set br-tun mtu to 8976 manually\n5- Set VM MTU to be 8950 in dnsmasq-neutron.conf\n6- Patch nova config code to add <device driver='vhost' queue='4'> element in libvirt.xml\n7- Run \"ethtool -L eth0 combined 4\" in VMs\n\nWith network_device_mtu setting, tap/qvo/qvb in compute nodes and internal legs in the router/dhcp namespace in network node can be set automatically. However, it only solves half of the problem. I still need to set mtu to br-int and br-tun interfaces.\n\nTo enable MQ support in KVM, I needed to patch nova. Currently, there is no possible way to set queues in libvirt.xml. Without MQ support, even if jumbo frames are enabled, VMs are limited to 5Gbit. This is because of the fact that [vhost-xxxx] process is bound to one CPU and network load cannot be distributed to other CPUs. When MQ is enabled, [vhost-xxxx] can be distributed to other cores, which gives 9.3Gbit performance.\n\nI am adding my ugly hacks just to give some idea on code change. I know that it is not a right way. Let's discuss how to properly address this issue.\n\nShould I open another related bug to nova as this issue needs a change in nova code as well?\n\nNote: this is a different bug than https://bugs.launchpad.net/bugs/1252900 affecting Juno release.", 
+    "tags": [
+        "neutron-core"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 48, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1419069", 
+    "owner": "None", 
+    "id": 1419069, 
+    "index": 1665, 
+    "created": "2015-02-06 17:27:46.037256+00:00", 
+    "title": "Network Performance Problem with GRE using Openvswitch", 
+    "comments": [
+        {
+            "content": "We are having GRE performance issues with Juno installation. From VM to network node, we can only get 3Gbit on 10Gbit interface. Finally, I tracked and solved the issue but that requires patches to nova and neutron-plugin-openvswitch. I am reporting this bug to find a clean solution instead of a hack.\n\nThe isssue is caused by MTU setting and lack of multiqueue net support in kvm. As official openstack documentation suggests, MTU settings are 1500 by default. This creates a bottleneck in VMs and it's only possible to process 3Gbit network traffic with 1500 MTU  and without MQ support enabled in KVM.\n\nWhat I did to solve the issue:\n1- Set physical interface (em1) mtu to 9000\n2- Set network_device_mtu = 8950 in nova and neutron.conf (both on compute/network nodes)\n3- Set br-int mtu to 8950 manually\n4- Set br-tun mtu to 8976 manually\n5- Set VM MTU to be 8950 in dnsmasq-neutron.conf\n6- Patch nova config code to add <device driver='vhost' queue='4'> element in libvirt.xml\n7- Run \"ethtool -L eth0 combined 4\" in VMs\n\nWith network_device_mtu setting, tap/qvo/qvb in compute nodes and internal legs in the router/dhcp namespace in network node can be set automatically. However, it only solves half of the problem. I still need to set mtu to br-int and br-tun interfaces.\n\nTo enable MQ support in KVM, I needed to patch nova. Currently, there is no possible way to set queues in libvirt.xml. Without MQ support, even if jumbo frames are enabled, VMs are limited to 5Gbit. This is because of the fact that [vhost-xxxx] process is bound to one CPU and network load cannot be distributed to other CPUs. When MQ is enabled, [vhost-xxxx] can be distributed to other cores, which gives 9.3Gbit performance.\n\nI am adding my ugly hacks just to give some idea on code change. I know that it is not a right way. Let's discuss how to properly address this issue.\n\nShould I open another related bug to nova as this issue needs a change in nova code as well?\n\nNote: this is a different bug than https://bugs.launchpad.net/bugs/1252900 affecting Juno release.", 
+            "date_created": "2015-02-06 17:27:46.037256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-02-06 17:27:46.037256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-02-06 17:28:51.268900+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "For the full history how how I came up with a solution, please take a look at this thread on openstack mailing list: http://lists.openstack.org/pipermail/openstack/2015-January/011207.html\n\nThis issue is solved by \"ethtool -K em1 tx off\". And the performance problem is solved as I explained in the bug report.", 
+            "date_created": "2015-02-06 17:30:41.298876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "Just as a matter of style/taste/whatnot I would probably separate the MTU issue from the virtio multiqueue issue.  Separate bugs.  Indeed, they both (along, I suspect with NIC HW offload support for GRE/VxLAN encapsulated traffic) contribute to performance, but they don't need to be bundled in the one defect.  That's just my stripe of color on the bikeshed...", 
+            "date_created": "2015-02-06 18:08:40.199130+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rick-jones2"
+        }, 
+        {
+            "content": "This is excellent feedback and investigation, Eren. I've forwarded this and your mailing list thread to our Fuel engineers to digest (since part of the solution relates to the configuration of the bare-metal bridge interfaces). I think we can mark the Nova part of this as confirmed after verifying that you cannot set the multiple queues attribute in libvirt.xml.", 
+            "date_created": "2015-02-06 18:12:39.936413+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "@rick-jones: That may be doeble but the get full saturation of the link in VMs, MQ support should be enabled in nova. When we seperate the issues and fix only MTU part, VMs can only have (at most) 5Gbit due to lack of MQ support. CPU cannot handle the traffic and this gives you only half of the available bandwidth.\n\n@jaypipes: Thank you! I'm pretty sure that we cannot set multiple queue attribute in nova. Whenever I grep, I couldn't find a reference to related part of the code. There is an open blueprint that wasn't accepted regarding to the issue but that blueprint suggests setting queues based on image attributes (the number of VCPUs in the instance). Marking the the queue based on image attribute can be done but I prefer the simplicity of writing the configuration in nova.conf. If the queues are enabled based on VCPU number, tiny instances will not get full link because there will be only 1 queue wheres other instances will be able to use it.\n\nNevertheless, we need to resurrect the MQ feature discussion.\n\nhttps://blueprints.launchpad.net/nova/+spec/libvirt-virtio-net-multiqueue\n", 
+            "date_created": "2015-02-06 18:23:56.404894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "A spec to solve MTU issues is approved for Kilo and in progress: https://github.com/openstack/neutron-specs/blob/master/specs/kilo/mtu-selection-and-advertisement.rst", 
+            "date_created": "2015-02-09 11:46:40.927238+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "On 09-02-2015 13:46, Ihar Hrachyshka wrote:\n> A spec to solve MTU issues is approved for Kilo and in progress:\n> https://github.com/openstack/neutron-specs/blob/master/specs/kilo/mtu-\n> selection-and-advertisement.rst\n\nGreat news! What about multiqueue-net support for nova? If we cannot set MQ\nsupport, VMs will be bound to 5Gbit for single CPU (depending on the power of\none CPU, of course).\n\nWith MQ support in Nova, I believe performance problems will be solved forever.\n\n-- \nSystem Administrator\nhttps://skyatlas.com/\n", 
+            "date_created": "2015-02-09 12:05:34+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "I believe Vladik is planning to re-submit the virtio multiqueue specification for Liberty.", 
+            "date_created": "2015-03-25 01:07:23.023210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sgordon"
+        }, 
+        {
+            "content": "In fact looks like he already did, would be great to see more feedback on the relevant proposal: https://review.openstack.org/#/c/128825/", 
+            "date_created": "2015-03-25 20:29:39.850738+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sgordon"
+        }, 
+        {
+            "content": "On 25-03-2015 22:29, Stephen Gordon wrote:\n> In fact looks like he already did, would be great to see more feedback\n> on the relevant proposal: https://review.openstack.org/#/c/128825/\n\nThanks for the link! I didn't know it was submitted again recently. I\nhope it gets accepted this time.\n\n-- \nEren T\u00fcrkay, System Administrator\nhttps://skyatlas.com/ | +90 212 483 7555\n\nYildiz Teknik Universitesi Davutpasa Kampusu\nTeknopark Bolgesi, D2 Blok No:107\nEsenler, Istanbul Pk.34220\n\n", 
+            "date_created": "2015-03-26 06:21:32+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "I'm setting this to Confirmed for now. I think this might be addressed in the scope of some effort introducing changeble mtu.", 
+            "date_created": "2015-04-06 16:50:50.914488+00:00", 
+            "author": "https://api.launchpad.net/1.0/~enikanorov"
+        }, 
+        {
+            "content": "\nGRO support for GRE with OVS has been added in 4.0 kernels. \n\nThat boosts TCP stream bandwidth significantly when you are using OVS with GRO - so you dont have to set MTUs all the way from the eth to the VM.\n\nIf you are running 3.x kernels, you can try this kernel module to boost the bandwidth \n(I authored that kernel module but found it was fixed in 4.x already by the OVS folks)\n\nhttp://marc.info/?t=144468885300003&r=1&w=2\n\n", 
+            "date_created": "2015-11-04 17:52:30.511855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ramu-ramamurthy"
+        }, 
+        {
+            "content": "On 04-11-2015 20:52, Ramu Ramamurthy wrote:\n> That boosts TCP stream bandwidth significantly when you are using OVS\n> with GRO - so you dont have to set MTUs all the way from the eth to the\n> VM.\n\nSo that leaves us to the multiqueue support in the VMs, which is already merged\ninto Liberty (partial). With this change and newer kernels, that should fix the\nproblem without changing the MTU. However, for 3.x kernels, we need to compile\nthe kernel module.\n\nAre there any documentation on how to build this module and use it? Or should\nwe just update to 4.x kernel and leave OVS version same to benefit from this\nchange?\n\n-- \nEren T\u00fcrkay, System Administrator\nhttps://skyatlas.com/ | +90 850 885 0357\n\nYildiz Teknik Universitesi Davutpasa Kampusu\nTeknopark Bolgesi, D2 Blok No:107\nEsenler, Istanbul Pk.34220\n\n", 
+            "date_created": "2015-11-09 09:03:41+00:00", 
+            "author": "https://api.launchpad.net/1.0/~erent"
+        }, 
+        {
+            "content": "\n\nInstructions to build that kernel module depend on the distribution (ubuntu/centos/etc) - but is quite straightforward, and is well documented.  \n\nYou could try the 4.x kernel (and keep the same ovs) as well although I cannot confirm it as I have not tested with 4.x kernels and ovs.", 
+            "date_created": "2015-11-10 22:45:31.585587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ramu-ramamurthy"
+        }, 
+        {
+            "content": "From Neutron perspective, the following fixes should cover MTU setting as of Mitaka:\n\nbug 1542475\nbug 1542108\n", 
+            "date_created": "2016-03-11 16:25:48.178191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "@Eren: If I understand your comment #14 correctly, the issue(s) described in this bug report are solved, I'm setting it to \"Fix released\". If this is not the case, it makes sense to open a new bug report which describes only one specific issue (not multiple at once).", 
+            "date_created": "2016-05-18 14:44:58.013665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

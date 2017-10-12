@@ -1,0 +1,84 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-09-16 15:03:28.698651+00:00", 
+    "description": "db.instance_get_all_by_filters() calls _instance_fill_metadata() to add system metadata to the instance object.\n\nHowever in the case of a deleted instance (filter includes 'deleted') this filter is not passed on to the metadata query, and so system metadata is not returned.\n\nThis makes the instance object inconsistent compared to non-deleted instances, resulting in KeyError exceptions in other parts of the code", 
+    "tags": [
+        "compute", 
+        "db"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1224927", 
+    "owner": "None", 
+    "id": 1224927, 
+    "index": 4085, 
+    "created": "2013-09-13 11:54:18.203510+00:00", 
+    "title": "instance_get_all_by_filters() does not propagate reading of deleted rows", 
+    "comments": [
+        {
+            "content": "db.instance_get_all_by_filters() calls _instance_fill_metadata() to add system metadata to the instance object.\n\nHowever in the case of a deleted instance (filter includes 'deleted') this filter is not passed on to the metadata query, and so system metadata is not returned.\n\nThis makes the instance object inconsistent compared to non-deleted instances, resulting in KeyError exceptions in other parts of the code", 
+            "date_created": "2013-09-13 11:54:18.203510+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "I'm having a hard time seeing the difference in the flows here when deleted is in the filters dict and how that would impact getting the system_metadata.  In the flow you're describing here, is the columns_to_join arg to instance_get_all_by_filters None?", 
+            "date_created": "2013-09-13 18:12:45.377257+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Could you provide more information? The 'test_instance_get_all_by_filters_deleted_and_soft_deleted' test shows that 'metadata' and 'system_metadata' are returned.", 
+            "date_created": "2013-09-13 18:16:49.573096+00:00", 
+            "author": "https://api.launchpad.net/1.0/~timello"
+        }, 
+        {
+            "content": "From other bugs you've opened recently, I think this stems from the _cleanup_running_deleted_instances periodic task when running_deleted_instance_action is set to reap which will call nova.compute.manager._running_deleted_instances and this is the filters dict:\n\n        filters = {'deleted': True,\n                   'soft_deleted': False,\n                   'host': self.host}\n\nThat will call nova.compute.manager._get_instances_on_driver which eventually calls db.instance_get_all_by_filters and columns_to_join is None so it should be defaulting to ['info_cache', 'security_groups'].  In that case, we get manual_joins = ['metadata', 'system_metadata'], and that should get us the 'system_metadata' for the deleted instance.\n\nIs there something going on because this is added to the query filter in the case that deleted=True is in the filters dict?\n\n                query_prefix = query_prefix.\\\n                    filter(models.Instance.deleted == models.Instance.id)", 
+            "date_created": "2013-09-13 18:25:36.149418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hi Matt,\n\nYep running_deleted_instance is where I came across the issue.   The problem I think is that the manual joins for metadata and system_metadata don't look at deleted rows in the instances_metadata and instances_system_metadata in this case\n\nAt least that's my reading of the code.  I didn't dig too deeply as the fix to my problem was to not send the notification messages anyway. ", 
+            "date_created": "2013-09-13 18:36:41.490788+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "test_instance_get_all_by_filters_deleted_and_soft_deleted looks like it ignores 'system_metadata' among other fields so I don't think that's probably definitive.", 
+            "date_created": "2013-09-13 18:44:22.050954+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Phil, from nova.db.sqlalchemy.api._instance_system_metadata_get_multi, it looks like it would just get the system_metadata for the instance regardless of the deleted value as long as the instance uuid is in the IN clause.", 
+            "date_created": "2013-09-13 18:45:58.293620+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Phil, can you reproduce to get a stack trace with the KeyError and throw that into a paste?", 
+            "date_created": "2013-09-13 18:46:41.106158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm wondering if the problem is that when the manual join is done on the instance UUID to find the InstanceSystemMetadata, the read_deleted argument is not set on the model_query call so it defaults to 'no' in the context, which is maybe filtering out the InstanceSystemMetadata result for the given instance uuid (which is deleted)?  I'll see if I can work up a patch that you can test.", 
+            "date_created": "2013-09-13 18:52:55.662158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Phil, can you try this patch and see if it fixes the issue you're seeing?", 
+            "date_created": "2013-09-13 19:02:34.996261+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think my patch is invalid because in nova.compute.manager._cleanup_running_deleted_instances, before it does the queries it changes the context with this:\n\nwith utils.temporary_mutation(context, read_deleted=\"yes\"):\n\nSo it changes the value to pull deleted instances while it's doing that query, so the KeyError must be coming further down the stack.", 
+            "date_created": "2013-09-13 19:18:11.323717+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm trying to reproduce the issue but can't seem to get it to work.  I set the following in my nova.conf:\n\nrunning_deleted_instance_action = reap\nrunning_deleted_instance_poll_interval = 120\n\nI went into the database and changed my active instance to deleted:\n\nmysql> select deleted,vm_state,power_state,display_name,deleted_at from instances where hostname='mriedem-test-bug-1224927';\n+---------+----------+-------------+--------------------------+---------------------+\n| deleted | vm_state | power_state | display_name             | deleted_at          |\n+---------+----------+-------------+--------------------------+---------------------+\n|       1 | active   |           1 | mriedem-test-bug-1224927 | 2013-09-13 12:15:15 |\n+---------+----------+-------------+--------------------------+---------------------+\n1 row in set (0.00 sec)\n\n\nAnd restarted the nova-compute service so that the polling task would run every 2 minutes but it doesn't seem to hook in to my deleted instance.\n\nThe other weird thing is that nova hypervisor-show 1 is not reporting any running VMs on my hypervisor but when I get on it, I see my running VM:\n\n(0) padmin @ olyblade02: /home/padmin\n$ lssyscfg -r lpar -F name\nCPT1V1\nvs396-instance-00000056\nvs457-instance-00000023\n\nThe last one is mine (I'm using the powervm driver here so that's why it looks weird).", 
+            "date_created": "2013-09-13 20:02:00.120915+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think the reason you can't reproduce this is because it looks like Nova no longer deletes instance_system_metadata rows when it deletes the instance record.\n\nI assume this bug (captured as https://bugs.launchpad.net/nova/+bug/1226049  ) was introduced as part of the change to the object model (we've been tracking trunk, so I have old deleted instances that do have deleted instance_system_metadata rows).\n\n As these rows are currently not being deleted, the query on a deleted instance will (for now) populate the metadata structure.\n\nYou can reproduce the issue I was seeing by marking the corresponding rows in instance_system_metadata as deleted.\n\nHowever - having done that and traced the issue further, the issue isn't actually in the DB layer at all, but in the logic of extracting flavors from an instance record.  I've captured this a new bug (https://bugs.launchpad.net/nova/+bug/1226083)  so this one can be closed.   \n\n\n", 
+            "date_created": "2013-09-16 15:03:08.372679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }
+    ]
+}

@@ -1,0 +1,185 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-07-17 21:01:03.976329+00:00", 
+    "description": "During a tempest run occasionally a during the \ntempest.api.compute.servers.test_delete_server.DeleteServersTestJSON.test_delete_server_while_in_verify_resize_state \ntest it will fail when the test attempts to delete a server in the verify_resize state. The failure is caused by a 500 response given being returned from nova. Looking at the nova-api log this is caused by an rpc call never receiving a response:\n\nhttp://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81/logs/screen-n-api.txt.gz#_2014-09-19_10_24_07_221\n\nlooking at the n-cpu logs for the handling of that rpc call yields:\n\nhttp://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81/logs/screen-n-cpu.txt.gz#_2014-09-19_10_24_31_404\n\nWhich looks like it is coming from attempting to updating the resource tracker being triggered by the server deletion. However the volume from that failure according to the tempest log is coming from a different test, in the test class ServerRescueNegativeTestJSON. It appears the tearDownClass for that test class is running concurrently with the failed test, and causing a race in the resource tracker, where the volume it expects to be there disappears, so when it goes to get the size it fails.\n\nFull logs for an example run that tripped this is here:\nhttp://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81", 
+    "tags": [
+        "compute", 
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "Critical", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1371677", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1371677, 
+    "index": 211, 
+    "created": "2014-09-19 16:13:01.980174+00:00", 
+    "title": "Race in resource tracker causes 500 response on deleting during verify_resize state ", 
+    "comments": [
+        {
+            "content": "During a tempest run occasionally a during the \ntempest.api.compute.servers.test_delete_server.DeleteServersTestJSON.test_delete_server_while_in_verify_resize_state \ntest it will fail when the test attempts to delete a server in the verify_resize state. The failure is caused by a 500 response given being returned from nova. Looking at the nova-api log this is caused by an rpc call never receiving a response:\n\nhttp://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81/logs/screen-n-api.txt.gz#_2014-09-19_10_24_07_221\n\nlooking at the n-cpu logs for the handling of that rpc call yields:\n\nhttp://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81/logs/screen-n-cpu.txt.gz#_2014-09-19_10_24_31_404\n\nWhich looks like it is coming from attempting to updating the resource tracker being triggered by the server deletion. However the volume from that failure according to the tempest log is coming from a different test, in the test class ServerRescueNegativeTestJSON. It appears the tearDownClass for that test class is running concurrently with the failed test, and causing a race in the resource tracker, where the volume it expects to be there disappears, so when it goes to get the size it fails.\n\nFull logs for an example run that tripped this is here:\nhttp://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81", 
+            "date_created": "2014-09-19 16:13:01.980174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~treinish"
+        }, 
+        {
+            "content": "Yeah I was just looking at this coincidentally.", 
+            "date_created": "2014-09-19 16:17:41.655866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "message:\"get_volume_size\" AND message:\"No such device or address\" AND tags:\"screen-n-cpu.txt\"\n\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiZ2V0X3ZvbHVtZV9zaXplXCIgQU5EIG1lc3NhZ2U6XCJObyBzdWNoIGRldmljZSBvciBhZGRyZXNzXCIgQU5EIHRhZ3M6XCJzY3JlZW4tbi1jcHUudHh0XCIiLCJmaWVsZHMiOltdLCJvZmZzZXQiOjAsInRpbWVmcmFtZSI6IjYwNDgwMCIsImdyYXBobW9kZSI6ImNvdW50IiwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjE0MTExNDM3NDY0MjIsIm1vZGUiOiIiLCJhbmFseXplX2ZpZWxkIjoiIn0=\n\nThat shows up in 88% success runs too though.", 
+            "date_created": "2014-09-19 16:23:34.396215+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is better:\n\nmessage:\"_confirm_resize_on_deleting\" AND message:\"MessagingTimeout\" AND tags:\"screen-n-api.txt\"\n\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiX2NvbmZpcm1fcmVzaXplX29uX2RlbGV0aW5nXCIgQU5EIG1lc3NhZ2U6XCJNZXNzYWdpbmdUaW1lb3V0XCIgQU5EIHRhZ3M6XCJzY3JlZW4tbi1hcGkudHh0XCIiLCJmaWVsZHMiOltdLCJvZmZzZXQiOjAsInRpbWVmcmFtZSI6IjYwNDgwMCIsImdyYXBobW9kZSI6ImNvdW50IiwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjE0MTExNTAxNTU5MzAsIm1vZGUiOiIiLCJhbmFseXplX2ZpZWxkIjoiIn0=\n\n32 hits in 7 days, check and gate, all failures.", 
+            "date_created": "2014-09-19 18:10:13.462012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "e-r query: https://review.openstack.org/#/c/122811/", 
+            "date_created": "2014-09-19 18:14:17.403837+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Looking for recent suspect changes:\n\nhttps://github.com/openstack/nova/commit/baabab45e0ae0e9e35872cae77eb04bdb5ee0545\n\nhttps://github.com/openstack/nova/commit/4c4dc3a6d331426e472e2dd1e9b0513da7cb7450", 
+            "date_created": "2014-09-19 18:20:40.938694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "From the same job run as above, the volume is deleted here:\n\nhttp://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81/logs/screen-c-vol.txt.gz#_2014-09-19_10_24_31_914", 
+            "date_created": "2014-09-19 18:41:46.504193+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "So the volume is deleted within milliseconds of when the update_available_resource periodic task runs.  We run that task every minute.  We hit the failure and dump a stack trace in the logs.\n\nAs a partial bug fix we could catch the ProcessExecutionError and check the stderr for \"No such device or address\" and just log that as an info message.  That would reduce the thousands of traces in the normal gate runs for an expected teardown issue.", 
+            "date_created": "2014-09-19 18:48:30.952124+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Some investigation in IRC:\n\n(2:26:59 PM) mriedem: here is when update_available_resource starts:\n(2:26:59 PM) mriedem: 2014-09-19 10:23:00.539 21095 DEBUG nova.openstack.common.periodic_task [-] Running periodic task ComputeManager.update_available_resource run_periodic_tasks /opt/stack/new/nova/nova/openstack/common/periodic_task.py:193\n(2:27:05 PM) mriedem: 2014-09-19 10:23:00.540 21095 DEBUG nova.openstack.common.lockutils [-] Acquired semaphore \"compute_resources\" lock /opt/stack/new/nova/nova/openstack/common/lockutils.py:229\n(2:27:05 PM) alaski: I'm looking about three lines up\n(2:27:26 PM) mriedem: then we fail and release that lock\n(2:27:26 PM) alaski: 2014-09-19 10:23:07.991 DEBUG nova.openstack.common.lockutils [req-5a467708-5da4-446b-b729-c44d005f84c3 DeleteServersTestJSON-14297441 DeleteServersTestJSON-1574463718] Using existing semaphore \"compute_resources\" internal_lock /opt/stack/new/nova/nova/openstack/common/lockutils.py:202\n(2:27:26 PM) mriedem: 2014-09-19 10:24:31.404 21095 DEBUG nova.openstack.common.lockutils [-] Semaphore / lock released \"update_available_resource\" inner /opt/stack/new/nova/nova/openstack/common/lockutils.py:275\n(2:27:56 PM) mriedem: 10:23:00 to 10:24:31\n(2:27:56 PM) alaski: 2014-09-19 10:24:31.623 DEBUG nova.openstack.common.lockutils [req-5a467708-5da4-446b-b729-c44d005f84c3 DeleteServersTestJSON-14297441 DeleteServersTestJSON-1574463718] Acquired semaphore \"compute_resources\" lock /opt/stack/new/nova/nova/openstack/common/lockutils.py:229\n(2:27:56 PM) alaski: req-5a467708-5da4-446b-b729-c44d005f84c3 is what's timing out\n(2:28:07 PM) mriedem: yeah so that's your 90 seconds\n(2:28:13 PM) mriedem: where we have a 60 second messaging timeout in between\n(2:29:16 PM) alaski: yep\n(2:30:40 PM) alaski: it seems that update_available_resources needs to be reworked so that it doesn't hold the lock too long\n(2:30:49 PM) mriedem: yeah", 
+            "date_created": "2014-09-19 19:31:32.198348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/122873", 
+            "date_created": "2014-09-19 21:48:45.580995+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/122874", 
+            "date_created": "2014-09-19 21:48:54.111639+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Moving up to critical, as this is bouncing us quite a bit in the gate now", 
+            "date_created": "2014-09-22 11:58:09.974533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/122873\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9a570111d953f7b2a5bd2b4f47dda353f2aba78c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9a570111d953f7b2a5bd2b4f47dda353f2aba78c\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Sep 19 12:49:31 2014 -0700\n\n    Handle volume bdm not found in lvm.get_volume_size\n    \n    We're stack tracing in successful gate runs because of a race when\n    deleting an instance and when the update_available_resource periodic\n    task is running.\n    \n    When we hit the race, the volume that's backing the instance is deleted\n    and the periodic task (virt driver) is trying to get the current\n    information about the volume, which no longer exists and we fail and\n    short-circuit the update_available_resource task.\n    \n    This change adds a decorator which checks if a ProcessExecutionError is\n    due to the device no longer existing and if so, raises\n    VolumeBDMPathNotFound, and applies that decorator to the get_volume_size\n    method.\n    \n    Related-Bug: #1371677\n    \n    Change-Id: Ic452df82c61087efda8d742e030076421c0c813b\n", 
+            "date_created": "2014-09-22 19:05:18.938941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/122874\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=76bc4ac549b2c8b70b67458717e793defb048d2c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 76bc4ac549b2c8b70b67458717e793defb048d2c\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Sep 19 13:47:42 2014 -0700\n\n    Handle VolumeBDMPathNotFound in _get_disk_over_committed_size_total\n    \n    This handles the VolumeBDMPathNotFound error bubbling up from\n    _get_instance_disk_info during the update_available_resource periodic\n    task.\n    \n    Related-Bug: #1371677\n    \n    Change-Id: I10c20f3f5f96003fe69fcdc9133c661e6dc009b4\n", 
+            "date_created": "2014-09-22 19:17:33.681358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I added some time testing for the update_available_resources periodic task:\n\nhttp://logs.openstack.org/38/123438/1/check/check-tempest-dsvm-neutron-full/95c1ef2/logs/screen-n-cpu.txt.gz?\n\nJust filter on error, can see that sometimes it takes a very long time to run:\n\n2014-09-23 16:51:51.494 32200 ERROR nova.compute.manager [-] update_available_resource took 0.296182155609 secs\n2014-09-23 16:52:40.761 32200 ERROR nova.compute.manager [-] update_available_resource took 0.17028093338 secs\n2014-09-23 16:53:40.887 32200 ERROR nova.compute.manager [-] update_available_resource took 0.109967947006 secs\n2014-09-23 16:54:41.639 32200 ERROR nova.compute.manager [-] update_available_resource took 0.105166912079 secs\n2014-09-23 16:55:43.663 32200 ERROR nova.compute.manager [-] update_available_resource took 0.128235816956 secs\n2014-09-23 16:56:45.131 32200 ERROR nova.compute.manager [-] update_available_resource took 1.59690380096 secs\n2014-09-23 16:57:46.012 32200 ERROR nova.compute.manager [-] update_available_resource took 1.47475099564 secs\n2014-09-23 16:58:46.088 32200 ERROR nova.compute.manager [-] update_available_resource took 1.55297207832 secs\n2014-09-23 16:59:47.132 32200 ERROR nova.compute.manager [-] update_available_resource took 2.59809398651 secs\n2014-09-23 17:00:46.144 32200 ERROR nova.compute.manager [-] update_available_resource took 0.605221986771 secs\n2014-09-23 17:00:52.047 32200 ERROR nova.compute.manager [-] [instance: 56a02698-d951-436c-82f4-c0ec4dafa199] An error occurred while refreshing the network cache.\n2014-09-23 17:01:47.637 32200 ERROR nova.compute.manager [-] update_available_resource took 1.10360908508 secs\n2014-09-23 17:02:50.673 32200 ERROR nova.compute.manager [-] update_available_resource took 2.13903999329 secs\n2014-09-23 17:03:50.816 32200 ERROR nova.compute.manager [-] update_available_resource took 1.28159403801 secs\n2014-09-23 17:04:51.604 32200 ERROR nova.compute.manager [-] update_available_resource took 1.06992197037 secs\n2014-09-23 17:05:51.215 32200 ERROR nova.compute.manager [-] update_available_resource took 0.680285930634 secs\n2014-09-23 17:08:04.722 32200 ERROR nova.compute.manager [-] update_available_resource took 73.1881198883 secs\n2014-09-23 17:08:08.014 32200 ERROR nova.compute.manager [-] update_available_resource took 0.926635026932 secs\n2014-09-23 17:08:54.234 32200 ERROR nova.compute.manager [-] update_available_resource took 0.698902130127 secs\n2014-09-23 17:09:54.044 32200 ERROR nova.compute.manager [-] update_available_resource took 0.510345935822 secs\n2014-09-23 17:10:56.615 32200 ERROR nova.compute.manager [-] update_available_resource took 1.00940585136 secs\n2014-09-23 17:11:56.171 32200 ERROR nova.compute.manager [-] update_available_resource took 0.573462963104 secs\n2014-09-23 17:12:59.232 32200 ERROR nova.compute.manager [-] update_available_resource took 1.69808387756 secs\n2014-09-23 17:13:59.958 32200 ERROR nova.compute.manager [-] update_available_resource took 0.424647808075 secs\n2014-09-23 17:15:01.642 32200 ERROR nova.compute.manager [-] update_available_resource took 1.10785794258 secs\n2014-09-23 17:16:03.711 32200 ERROR nova.compute.manager [-] update_available_resource took 0.878036975861 secs\n2014-09-23 17:17:05.015 32200 ERROR nova.compute.manager [-] update_available_resource took 1.43100094795 secs\n2014-09-23 17:18:06.709 32200 ERROR nova.compute.manager [-] update_available_resource took 1.17440009117 secs\n2014-09-23 17:19:08.492 32200 ERROR nova.compute.manager [-] update_available_resource took 0.958671092987 secs\n2014-09-23 17:20:08.931 32200 ERROR nova.compute.manager [-] update_available_resource took 1.20312309265 secs\n2014-09-23 17:23:05.525 32200 ERROR nova.compute.manager [-] update_available_resource took 116.665913105 secs\n2014-09-23 17:24:05.693 32200 ERROR nova.compute.manager [-] update_available_resource took 0.773860931396 secs\n2014-09-23 17:25:06.691 32200 ERROR nova.compute.manager [-] update_available_resource took 0.866034984589 secs\n\nWhen its slow it seems to be associated with this warning:\n\n2014-09-23 17:23:04.983 32200 WARNING nova.virt.libvirt.driver [-] Periodic task is updating the host stats, it is trying to get disk info for instance-0000009d, but the backing volume block device was removed by concurrent operations such as resize. Error: No volume Block Device Mapping at path: /dev/disk/by-path/ip-127.0.0.1:3260-iscsi-iqn.2010-10.org.openstack:volume-e6d9fe98-151d-47ba-ae07-ffe6742671c6-lun-1\n\nthe periodic task is not slow without this warning being present.", 
+            "date_created": "2014-09-24 02:08:26.467528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "Looks like when the periodic task is slow all the time is consumed in  _get_disk_over_committed_size_total\n\nhttp://logs.openstack.org/38/123438/2/check/check-tempest-dsvm-neutron-full/bb1dbb6/logs/screen-n-cpu.txt.gz?#_2014-09-24_03_09_56_913\n", 
+            "date_created": "2014-09-24 04:52:55.501633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "yeh, this seems to be command timing out:\n\n2014-09-24 03:07:59.449 32123 DEBUG nova.openstack.common.processutils [-] Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf blockdev --getsize64 /dev/disk/by-path/ip-127.0.0.1:3260-iscsi-iqn.2010-10.org.openstack:volume-16ab2d39-59d6-4110-88fa-ab60332adf19-lun-1 execute /opt/stack/new/nova/nova/openstack/common/processutils.py:161\n2014-09-24 03:09:56.856 32123 DEBUG nova.openstack.common.processutils [-] Result was 1 execute /opt/stack/new/nova/nova/openstack/common/processutils.py:195\n\ngrep processutils screen-n-cpu.txt.gz | grep 32123\n\nTo get only the periodic job executions", 
+            "date_created": "2014-09-24 15:20:42.767019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "From IRC, danpb pointed out that blockdev is blocking on purpose, and when the volume is gone that will take awhile, so that's what's causing the lock to be held so long:\n\nhttp://logs.openstack.org/38/123438/2/check/check-tempest-dsvm-neutron-full/bb1dbb6/logs/screen-n-cpu.txt.gz?#_2014-09-24_03_09_56_913\n\n2014-09-24 03:09:56.913 32123 ERROR nova.virt.libvirt.driver [-] _get_disk_over_committed_size_total took 117.755759954 secs\n\nThat's taking nearly 2 minutes.\n\nFrom danpb:\n\n(10:48:04 AM) danpb: sdague: blockdev taking a long time is a sign that the underlying storage is dead\n(10:48:20 AM) danpb: eg, could be an iSCSI lun for which the iscsi server is no longer running\n(10:48:20 AM) dansmith: and this is blockdev on an iscsi target, right?\n(10:48:36 AM) sdague: yep\ndanieru danpb dansmith \n(10:48:56 AM) sdague: so is there a non blocking way to poke that?\n(10:48:56 AM) danpb: so good to check to see that cinder still has the corresponding iscsi server active when this happens\n(10:49:00 AM) mriedem: danpb: is there a quicker way to find out up front if the bdm is gone?\n(10:49:17 AM) sdague: because the issue is this goes off into a blocking call for 2 minutes\n(10:49:17 AM) danpb: not that i know of, off hand\n(10:49:21 AM) sdague: which is holding locks\n(10:49:27 AM) danpb: generally this turns into an uninterruptable sleep in the kernel\n(10:49:31 AM) sdague: and .... other stuff times out\n(10:49:42 AM) dansmith: yeah, it's blocking by design\n(10:49:50 AM) sdague: dansmith: yep\n(10:49:52 AM) mriedem: ok, could we call off to cinder to find out of the volume is deleted?\n(10:49:53 AM) dansmith: because you can't really tell that it's gone until it times out\n(10:49:56 AM) mriedem: *if\n(10:49:57 AM) danpb: being non-blocking on I/O errors is a good way to get data corruption\n(10:50:08 AM) danpb: so the kernel generally avoids that\n\n\nSo we need a patch that checks if the volume is gone (non-blocking) before we call blockdev to get the size of the volume, that should free us up here.  When I looked at this on Friday, the cinder logs were showing that the volume was deleted right around the time that we had the blockdev failure and stacktrace, so we can probably go back to cinder and see if the volume has been deleted just by it's state and then short circuit our work in _get_instance_disk_info.", 
+            "date_created": "2014-09-24 15:58:34.300940+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Pulling this together, the update_available_resource periodic task is using the resource tracker to update host stats, and that rt method is locking on the 'compute_resource' lock, which is also what the resize_claim and drop_resize_claim methods in the resource tracker are locked on, and that's where we hit the timeout in the resize test - it's waiting to make a resize claim but the blockdev blocking call in the update_available_resource periodic task is taking too long, causing the 60 second RPC messaging timeout for the resize claim in the test run.", 
+            "date_created": "2014-09-24 16:00:07.292115+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/123774", 
+            "date_created": "2014-09-24 16:05:25.816162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/123774\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=84ff466c8338cc44ca92a0f1673e204dd720c7d9\nSubmitter: Jenkins\nBranch:    master\n\ncommit 84ff466c8338cc44ca92a0f1673e204dd720c7d9\nAuthor: Dan Smith <email address hidden>\nDate:   Wed Sep 24 09:05:26 2014 -0700\n\n    Reduce the scope of RT work while holding the big lock\n    \n    This makes the RT.update_available_resource() method do what it\n    can in the way of prep work before grabbing the lock to update\n    the database stats.\n    \n    Change-Id: I1132e2ab99427688529566c1a1fffb33eab07f3f\n    Related-Bug: #1371677\n", 
+            "date_created": "2014-09-25 00:17:01.080293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Since https://review.openstack.org/#/c/123774/ merged there is a significant drop off in the race, so looks like that stemmed the bleeding.  This is probably not a critical rc1 issue now.  We should still put something in the libvirt driver to check if the volume bdm exists before calling the blocking blockdev command to get the volume size, but that could be a follow on improvement.", 
+            "date_created": "2014-09-25 02:02:18.265005+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "We've landed a related fix to this. It's going to take 24hrs to figure out if this is under control. If not, will reopen.\n\nI think this is still an rc1 bug, it's something we've been focussing a ton of time on of late.", 
+            "date_created": "2014-09-25 18:06:52.332717+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I've looking at the following logfile\n\nhttp://logs.openstack.org/23/119523/9/check/check-tempest-dsvm-neutron-full/41505f7/logs/screen-n-cpu.txt.gz?level=TRACE#_2014-09-22_19_34_39_385\n\nWe can see a hot-unplug operation start for a cinder volume 6f88ab3e-9edd-4fbf-857e-2d6d87f98e39  at 19:32:32\n\n2014-09-22 19:32:32.963 AUDIT nova.compute.manager [req-840df9bc-aee9-48d9-baa3-d58392954b0d ServerRescueNegativeTestJSON-161189933 ServerRescueNegativeTestJSON-667937194] [instance: 7b20e76a-48a0-4dd4-b2b6-bb3b1056b711] Detach volume 6f88ab3e-9edd-4fbf-857e-2d6d87f98e39 from mountpoint /dev/vdb\n\nAt 19:32:52 the periodic task starts to update resources\n\n2014-09-22 19:32:52.747 31561 DEBUG nova.openstack.common.periodic_task [-] Running periodic task ComputeManager.update_available_resource run_periodic_tasks /opt/stack/new/nova/nova/openstack/common/periodic_task.py:193\n\nThe libvirt get_available_resource method calls _get_instance_disk_info on each running VM.\n\nThis method queries the libvirt guest XML to get a list of disks present on the VM. It queries the database to get a list of attached cinder volumes. It then filters the list of disks from the XML removing the list of cinder volumes\n\nNone the less at 19:32:53 we see the code try to run blockdev on iSCSI LUN with serial number 6f88ab3e-9edd-4fbf-857e-2d6d87f98e39:\n\n2014-09-22 19:32:53.025 31561 DEBUG nova.openstack.common.processutils [-] Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf blockdev --getsize64 /dev/disk/by-path/ip-127.0.0.1:3260-iscsi-iqn.2010-10.org.openstack:volume-6f88ab3e-9edd-4fbf-857e-2d6d87f98e39-lun-1 execute /opt/stack/new/nova/nova/openstack/common/processutils.py:161\n\nthis path is the Cinder volume we just started to hotunplug at 19:32:32 (eg 20 seconds  earlier). \n\nWhat this says is that from Nova's POV the block device is no longer attached, but from libvirt's XML point the block device is still attached.\n\nAt 19:34:39 the blockdev command times out\n\n2014-09-22 19:34:39.385 31561 ERROR nova.openstack.common.periodic_task [-] Error during ComputeManager.update_available_resource: Unexpected error while running command.\nCommand: sudo nova-rootwrap /etc/nova/rootwrap.conf blockdev --getsize64 /dev/disk/by-path/ip-127.0.0.1:3260-iscsi-iqn.2010-10.org.openstack:volume-6f88ab3e-9edd-4fbf-857e-2d6d87f98e39-lun-1\nExit code: 1\nStdout: u''\nStderr: u'blockdev: cannot open /dev/disk/by-path/ip-127.0.0.1:3260-iscsi-iqn.2010-10.org.openstack:volume-6f88ab3e-9edd-4fbf-857e-2d6d87f98e39-lun-1: No such device or address\\n'\n\nThis indicates that the iscsi volume has now been removed, presumably because the earlier cinder detach operation has succeeded.\n\nIt is conceivable that if the 'blockdev' command tries to access the iSCSI lun at precisely the wrong moment it might hang as the iSCSI connection is torn down, rather than getting the 'No such device or address' error.\n\n\nSo to me the root cause problem here is the _get_instance_disk_info method. The way it is written to query the libvirt XML and filter from known cinder volumes is clearly racy. If we can re-write the method to avoid that race, then we'd in turn avoid runing blockdev command on cinder volumes & thus avoid the error and the hangs/delays.\n", 
+            "date_created": "2014-09-26 15:27:00.258758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "The race appears fixed with Dan Smith's locking change, since logstash results are back this hasn't shown up since his change merged.", 
+            "date_created": "2014-09-27 13:59:06.009517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I doubt that Dan's locking change fixed it, probably just made it less likely to occur. From code inspection alone I can see the potential for race is there in libvirt driver code.", 
+            "date_created": "2014-09-30 15:08:09.029650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "One more thing:\n\nlooking at the orriginal patch (http://logs.openstack.org/10/110110/40/check/check-tempest-dsvm-postgres-full/4cd8a81/logs/screen-n-cpu.txt.gz#_2014-09-19_10_24_31_404) and matts fix here https://review.openstack.org/122874 - we should never be hitting that exception in the gate because: this exception should never happen in _get_instance_disk_info UNLESS we are running LVM backed instances - which afaiu never happens in the gate.\n\nSo there seems to be another bug here which we should report.", 
+            "date_created": "2014-09-30 15:21:14.643151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Don't be misled by the fact that \"get_volume_size\" is in the lvm.py module. This method is actually called for *any* block device, not only LVM. So the call is explained by the race wrt cinder iSCSI volumes I mentioned in comment #23. LVM is a red herring", 
+            "date_created": "2014-09-30 15:25:26.011863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "As Dan nicely points out in comment #23 - this is due to the race described. The real bug is using the libvirt XML to find out about local discs (or anything for that matter) and especially not mix Nova db information. I will report a bug for this.", 
+            "date_created": "2014-09-30 15:37:36.378542+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Related fix https://review.openstack.org/#/c/174836/.", 
+            "date_created": "2015-04-17 19:43:30.648888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/174836\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=833357301bc80a27422f7bf081fae2d3da730a24\nSubmitter: Jenkins\nBranch:    master\n\ncommit 833357301bc80a27422f7bf081fae2d3da730a24\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Fri Apr 17 12:49:13 2015 +0100\n\n    libvirt: make _get_instance_disk_info conservative\n    \n    We want to make sure we never try to get the size of an attached volume\n    when doing _get_instance_disk_info (as this can cause issues when\n    gathering available resources).\n    \n    libvirt's get_available_resources will call upon it to determine the\n    available disk size on the compute node, but do so without providing\n    information about block devices. This makes _get_instance_disk_info make\n    incorrect guesses as to which device is a volume\n    \n    This patch makes the _get_instance_disk_info be more conservative about\n    it's guesses when it can not reasonably determine if a device is a\n    volume or not.\n    \n    Change-Id: Ifb20655c32896b640672917e3840add81b136780\n    Partial-bug: #1445021\n    Partial-Bug: #1371677\n", 
+            "date_created": "2015-04-18 01:51:38.086265+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/179500", 
+            "date_created": "2015-05-01 20:34:04.643184+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Jay Bryant (<email address hidden>) on branch: stable/kilo\nReview: https://review.openstack.org/179500\nReason: No one has been begging for this.  Abandoning.", 
+            "date_created": "2015-07-17 21:01:03.352668+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

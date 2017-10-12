@@ -1,0 +1,68 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-06 01:37:49.136250+00:00", 
+    "description": "Description\n===========\nThere are 15 instances. I excute the command: nova --debug list --all-tenants,\nBut it took more than 40 seconds. I read the nova api code, it sends a Get request\nand read the instance_faults table for detail information. The instance_faults table has\n\u00a0more than tens of thousands of records. Each instance has many records.\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0GET /v2/433288e1244046a9bd306658b732dded/servers/detail\n\nI think instance_faults table needs to be optimized. A large number of records in the instance_faults\ntable are useless, only leaving the last three records should be on it, others can be deleted.\n\nThere are any other optimization program?\n\nSteps to reproduce\n==================\nA chronological list of steps which will bring off the\nissue you noticed:\n* I excute the command: nova --debug list --all-tenants\n\nA list of openstack client commands (with correct argument value)\n\u00a0\u00a0\u00a0\u00a0$ nova --debug list --all-tenants\n\nExpected result\n===============\nI expect to be back soon within 10 seconds\n\nActual result\n=============\nBut the query took more than 40 seconds.\n\nEnvironment\n===========\n1. version\n\u00a0\u00a0\u00a0\u00a0Mitaka\n\n2. Which hypervisor did you use?\n\u00a0\u00a0\u00a0 Libvirt + KVM", 
+    "tags": [
+        "db"
+    ], 
+    "importance": "Medium", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1632247", 
+    "owner": "https://api.launchpad.net/1.0/~rpodolyaka", 
+    "id": 1632247, 
+    "index": 4642, 
+    "created": "2016-10-11 09:05:42.941299+00:00", 
+    "title": "nova list --all-tenants fetches all instance faults but uses only latest", 
+    "comments": [
+        {
+            "content": "Description\n===========\nThere are 15 instances. I excute the command: nova --debug list --all-tenants,\nBut it took more than 40 seconds. I read the nova api code, it sends a Get request\nand read the instance_faults table for detail information. The instance_faults table has\n more than tens of thousands of records. Each instance has many records.\n\n       GET /v2/433288e1244046a9bd306658b732dded/servers/detail\n\nI think instance_faults table needs to be optimized. A large number of records in the instance_faults\ntable are useless, only leaving the last three records should be on it, others can be deleted.\n\nThere are any other optimization program?\n\nSteps to reproduce\n==================\nA chronological list of steps which will bring off the\nissue you noticed:\n* I excute the command: nova --debug list --all-tenants\n\nA list of openstack client commands (with correct argument value)\n\u00a0\u00a0\u00a0\u00a0$ nova --debug list --all-tenants\n\n\nExpected result\n===============\nI expect to be back soon within 10 seconds\n\nActual result\n=============\nBut the query took more than 40 seconds.\n\nEnvironment\n===========\n1. version \n    Mitaka\n\n2. Which hypervisor did you use?\n\u00a0\u00a0\u00a0 Libvirt + KVM", 
+            "date_created": "2016-10-11 09:05:42.941299+00:00", 
+            "author": "https://api.launchpad.net/1.0/~song-ruixia"
+        }, 
+        {
+            "content": "Hi Tina Kevin!\nI tried reproducing the issue but I wasn't able to do so. I just dug into this issue in more detail and below are my findings.\n\n(a) In instance_faults table we are soft deleting the records by setting the column to numeric value which can be later archived.\n\n(b) Even if you have thousand of records in the table, the query selects the records based only deleted flag set\n\n(c) instance_faults has column 'detail' which is of mediumtext format which can possibly slown down the query. Since we just put stack trace in detail column  so I assume innodb wouldn't use external blob storage page to store it.\n\nCan you please let me know how did you confirm if this method was the reason for the query being too slow ?\n\nThanks,\nSiva\n\n \n", 
+            "date_created": "2016-11-08 22:55:24.124108+00:00", 
+            "author": "https://api.launchpad.net/1.0/~siva-radhakrishnan"
+        }, 
+        {
+            "content": "@siva\nMy steps:\nI add logs in code, and then gradually narrowing the scope of the code, \nthe final positioning to the follow function. \n\n    /nova/api/openstack/compute/servers.py\n    def _get_servers(self, req, is_detail):\n        \"\"\"Returns a list of servers, based on any search options specified.\"\"\"\n        \u2026\u2026\n\n        if is_detail:\n             instance_list.fill_faults()    #the function\n             response = self._view_builder.detail(req, instance_list)\n\n\n    /nova/objects/instance.py\n    def fill_faults(self):\n        \"\"\"Batch query the database for our instances' faults.\n\n        :returns: A list of instance uuids for which faults were found.\n        \"\"\"\n        uuids = [inst.uuid for inst in self]\n        LOG.info(_(\"before\"))\n        faults = objects.InstanceFaultList.get_by_instance_uuids(\n            self._context, uuids)   #the function\n        LOG.info(_(\"end\"))\n\nI compare the printing time of the two logs, they differ by about 30 seconds.\nI also test the other case,  I remove this line of code and then query, \nthe total time is much less obvious than before. So I think it is caused by the \ninstance_faults table records  \n\n   def _get_servers(self, req, is_detail):\n        \"\"\"Returns a list of servers, based on any search options specified.\"\"\"\n        \u2026\u2026\n\n        if is_detail:\n             #instance_list.fill_faults()    #remove\n             response = self._view_builder.detail(req, instance_list)", 
+            "date_created": "2016-11-10 02:07:13.900275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~song-ruixia"
+        }, 
+        {
+            "content": "Hi Tina!\nI was not able to reproduce the bug. Tried spinning up 15 instances as suggested by you. Need to wait for someone to confirm it.\n\nRegards,\nSiva. ", 
+            "date_created": "2016-11-21 16:12:58.358547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~siva-radhakrishnan"
+        }, 
+        {
+            "content": "In looking at the code, we definitely pull over *all faults* sorted, then pretty much throw out all but the last ones in almost every situation.\n\nI expect what we need to do is create an optimized query that only returns the latest faults for each uuid. That would dramatically eliminate content on the wire for long lived instances that might have seen issues over time. That needs more clever SQL than my brain can muster right now. Will engage Jay Pipes in that.", 
+            "date_created": "2016-12-09 12:08:10.095548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/409943", 
+            "date_created": "2016-12-12 21:46:18.772828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/415736", 
+            "date_created": "2016-12-29 17:20:45.085087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/415736\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=dc911b8026a5cf949ca5a697bb802c495dc9ada2\nSubmitter: Jenkins\nBranch:    master\n\ncommit dc911b8026a5cf949ca5a697bb802c495dc9ada2\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Dec 29 12:17:10 2016 -0500\n\n    Fix assertion in test_instance_fault_get_by_instance\n    \n    The instance_fault_get_by_instance_uuids DB API method returns\n    results sorted by created_at in descending order, so the newest\n    fault should be at the front of the list for a given instance\n    uuid in the resulting dict.\n    \n    However, the way the test for this was written the 'expected'\n    list actually had the faults in order from oldest to newest. The\n    reason this didn't fail the test was because it was using\n    _assertEqualListsOfObjects to compare the results, which sorts\n    the lists before comparing them, which is exactly NOT what we want\n    when we care about the sort order of the results.\n    \n    The test is fixed by using _assertEqualOrderedListOfObjects which\n    leaves the original sort order of the lists to compare and fixes\n    the 'expected' list by inserting the newest faults at the front\n    of the list.\n    \n    Change-Id: I58990194016447b05b42df76141a193595cdcb9c\n    Related-Bug: #1632247\n", 
+            "date_created": "2017-01-02 12:11:25.748531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/409943\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=176c5c8a65efbde01020bc69a97bb7d05720589e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 176c5c8a65efbde01020bc69a97bb7d05720589e\nAuthor: Jay Pipes <email address hidden>\nDate:   Mon Dec 12 16:39:23 2016 -0500\n\n    Only return latest instance fault for instances\n    \n    This patch addresses slowness that can occur when doing a list servers\n    API operation when there are many thousands of records in the\n    instance_faults table.\n    \n    Previously, in the Instance.fill_faults() method, we were getting all\n    instance fault records for a set of instances having one of a set of\n    supplied instance UUIDs and then iterating over those faults and\n    returning a dict of instance UUID to the first fault returned (which\n    happened to be the latest fault because of ordering the SQL query by\n    created_at).\n    \n    This patch adds a new InstanceFaultList.get_latest_by_instance_uuids()\n    method that does some SQL-fu to only return the latest fault records for\n    each instance being inspected.\n    \n    Closes-Bug: #1632247\n    \n    Co-Authored-By: Roman Podoliaka <email address hidden>\n    Change-Id: I8f2227b3969791ebb2d04d74a316b9d97a4b1571\n", 
+            "date_created": "2017-01-04 21:37:22.430560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b3 development milestone.", 
+            "date_created": "2017-01-27 00:52:33.952050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

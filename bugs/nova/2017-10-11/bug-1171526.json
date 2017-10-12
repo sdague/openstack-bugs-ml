@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 12:57:16.983557+00:00", 
+    "description": "In grizzly release, when an instance live-migration failed due to target hot doesn't  have enough resource such as memory,  the nova scheduler driver will throw  MigrationError exception to caller, the instance status will be changed from 'Active' to 'MIGRATING',  this status for the instance will keep 'MIGRATING' status for a  long time,  and record trace this in table 'instance_faults' .  So as an admin,  he don't know what happened for the 'MIGRATING' instance, only if he checks the log file. At this time, the instance run happily on source host with status 'MIGRATING'\n\nI think for for above case should with following behavior: \n\n1. The instance should keep 'Active' status\n2.  A record is created in table of instance_faults with the error message and details\n\nsee following code fragment in nova/scheduler/driver.py \n\n\n    def _assert_compute_node_has_enough_memory(self, context,\n                                              instance_ref, dest):\n        \"\"\"Checks if destination host has enough memory for live migration.\n\n\n        :param context: security context\n        :param instance_ref: nova.db.sqlalchemy.models.Instance object\n        :param dest: destination host\n\n        \"\"\"\n        # Getting total available memory of host\n        avail = self._get_compute_info(context, dest)['free_ram_mb']\n\n        mem_inst = instance_ref['memory_mb']\n        if not mem_inst or avail <= mem_inst:\n            instance_uuid = instance_ref['uuid']\n            reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n                       \"Lack of memory(host:%(avail)s <= \"\n                       \"instance:%(mem_inst)s)\")\n            raise exception.MigrationError(reason=reason % locals())  >>> >> throw exception\n\nsee following code fragment in nova/scheduler/manager.py \n\n    def live_migration(self, context, instance, dest,\n                       block_migration, disk_over_commit):\n        try:\n            return self.driver.schedule_live_migration(\n                context, instance, dest,\n                block_migration, disk_over_commit)\n        except (exception.ComputeServiceUnavailable,         >>>>> doesn't catch 'MigrationError' exception here \n                exception.InvalidHypervisorType,\n                exception.UnableToMigrateToSelf,\n                exception.DestinationHypervisorTooOld,\n                exception.InvalidLocalStorage,\n                exception.InvalidSharedStorage) as ex:\n            request_spec = {'instance_properties': {\n                'uuid': instance['uuid'], },\n            }\n            with excutils.save_and_reraise_exception():\n                self._set_vm_state_and_notify('live_migration',\n                            dict(vm_state=instance['vm_state'],\n                                 task_state=None,\n                                 expected_task_state=task_states.MIGRATING,),\n                                              context, ex, request_spec)\n        except Exception as ex: \n            with excutils.save_and_reraise_exception():\n                self._set_vm_state_and_notify('live_migration',\n                                             {'vm_state': vm_states.ERROR},\n                                             context, ex, {})", 
+    "tags": [
+        "scheduler"
+    ], 
+    "importance": "Low", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1171526", 
+    "owner": "https://api.launchpad.net/1.0/~nicolas.simonds", 
+    "id": 1171526, 
+    "index": 5738, 
+    "created": "2013-04-22 16:11:31.667531+00:00", 
+    "title": "nova live-migration failed due to exception.MigrationError", 
+    "comments": [
+        {
+            "content": "In grizzly release, when an instance live-migration failed due to target hot doesn't  have enough resource such as memory,  the nova scheduler driver will throw  MigrationError exception to caller, the instance status will be changed from 'Active' to 'MIGRATING',  this status for the instance will keep 'MIGRATING' status for a  long time,  and record trace this in table 'instance_faults' .  So as an admin,  he don't know what happened for the 'MIGRATING' instance, only if he checks the log file. At this time, the instance run happily on source host with status 'MIGRATING'\n\nI think for for above case should with following behavior: \n\n1. The instance should keep 'Active' status\n2.  A record is created in table of instance_faults with the error message and details\n\nsee following code fragment in nova/scheduler/driver.py \n\n\n    def _assert_compute_node_has_enough_memory(self, context,\n                                              instance_ref, dest):\n        \"\"\"Checks if destination host has enough memory for live migration.\n\n\n        :param context: security context\n        :param instance_ref: nova.db.sqlalchemy.models.Instance object\n        :param dest: destination host\n\n        \"\"\"\n        # Getting total available memory of host\n        avail = self._get_compute_info(context, dest)['free_ram_mb']\n\n        mem_inst = instance_ref['memory_mb']\n        if not mem_inst or avail <= mem_inst:\n            instance_uuid = instance_ref['uuid']\n            reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n                       \"Lack of memory(host:%(avail)s <= \"\n                       \"instance:%(mem_inst)s)\")\n            raise exception.MigrationError(reason=reason % locals())  >>> >> throw exception\n\nsee following code fragment in nova/scheduler/manager.py \n\n    def live_migration(self, context, instance, dest,\n                       block_migration, disk_over_commit):\n        try:\n            return self.driver.schedule_live_migration(\n                context, instance, dest,\n                block_migration, disk_over_commit)\n        except (exception.ComputeServiceUnavailable,         >>>>> doesn't catch 'MigrationError' exception here \n                exception.InvalidHypervisorType,\n                exception.UnableToMigrateToSelf,\n                exception.DestinationHypervisorTooOld,\n                exception.InvalidLocalStorage,\n                exception.InvalidSharedStorage) as ex:\n            request_spec = {'instance_properties': {\n                'uuid': instance['uuid'], },\n            }\n            with excutils.save_and_reraise_exception():\n                self._set_vm_state_and_notify('live_migration',\n                            dict(vm_state=instance['vm_state'],\n                                 task_state=None,\n                                 expected_task_state=task_states.MIGRATING,),\n                                              context, ex, request_spec)\n        except Exception as ex: \n            with excutils.save_and_reraise_exception():\n                self._set_vm_state_and_notify('live_migration',\n                                             {'vm_state': vm_states.ERROR},\n                                             context, ex, {})", 
+            "date_created": "2013-04-22 16:11:31.667531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xlhuxa"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/27761", 
+            "date_created": "2013-04-29 21:49:56.894734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/27761\nCommitted: http://github.com/openstack/nova/commit/9eb3dc7ed44d99652a17238724842e3067d46120\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9eb3dc7ed44d99652a17238724842e3067d46120\nAuthor: Hans Lindgren <email address hidden>\nDate:   Mon Apr 29 23:17:41 2013 +0200\n\n    Reset migrating task state for MigrationError exceptions\n    \n    Create an exception type for pre-check errors and add it to the list\n    of exceptions for which instance task state is reset to ACTIVE to\n    avoid cases where an instance get stuck in MIGRATING state.\n    \n    Convert existing instances of raise MigrationError in scheduler and\n    driver pre-checks to have them raise the new MigrationPreCheckError\n    exception instead.\n    \n    In addition, also make sure that expected exceptions are passed over\n    RPC silently.\n    \n    Resolves bug 1171526.\n    \n    Change-Id: I00fa0962e555f895dd98861684ec7767fed3b37b\n", 
+            "date_created": "2013-05-01 18:31:28.345332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/27956", 
+            "date_created": "2013-05-01 20:23:16.130813+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There still exists a problem, even with this fix applied.\n\nTo reproduce:\n\n1. Bring up an OpenStack cluster with two compute nodes, no shared storage.\n\n2. Launch an instance\n\n3. Issue a live migration that assumes shared storage, e.g., \"nova live-migration ed7c55b8-897d-4cc2-b406-2667f4377af0\"\n\nThe live migration will fail, and the instance will remain permanently stuck in a \"Migrating\" state, and needs to be terminated.\n\nThe same holds true for the converse, i.e., assume block migrations on compute nodes with shared storage.", 
+            "date_created": "2013-06-26 01:18:43.891402+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/34485", 
+            "date_created": "2013-06-26 01:22:26.841214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\n\nI am out of the office until 2013/10/28.\n\nI am out of the office until 2013/10/28. I can not access email during this\ntime. So, please ask help from GuangYa and Yong instead or call 13310982926\nfor any emergency needs, thanks.\n\n\nNote: This is an automated response to your message  \"[Bug 1171526] Re:\nnova live-migration failed due to\texception.MigrationError\" sent on\n10/17/2013 19:37:47.\n\nThis is the only notification you will receive while this person is away.", 
+            "date_created": "2013-10-17 12:53:06+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xlhuxa"
+        }
+    ]
+}

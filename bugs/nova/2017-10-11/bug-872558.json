@@ -1,0 +1,86 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:26:52.183816+00:00", 
+    "description": "As noted by soren, troubles with utils.synchronized :\n\nScenario:\nT1, T2, T3 ; 3 greenthreads executing a function with utils.synchronized(\"oof\") as decorator\n\nT1 associates a semaphore S to \"oof\" in _semaphores, \nT1 acquires S\nT2 get the same semaphore S, wait for S \nT1 releases S and remove \"oof\"/S from _semaphores\nT2 acquires S which is no more in _semaphores\n\nscenario first possible ending (not really annoying):\nT2 releases S and crash when removing \"oof\" from semaphores\n\nscenario second possible ending (more annoying):\nT3 associates a new semaphore S' to \"oof\" in _semaphores\nT3 acquires S' ...  T2 and T3 are doing \"oof things at the same time\n\nThe attachment contains a test to highlight the first scenario and a proposed implementation solving the trouble.\nThe proposed implementation of synchronized is based around the class LockByKey.\nThis class is inspired from the implementation of threading.Semaphore (which i hope is quite robust !).\n\nAs far as i test, the proposed implementation supports green threads and native ones.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/872558", 
+    "owner": "https://api.launchpad.net/1.0/~stanislaw-pitucha", 
+    "id": 872558, 
+    "index": 2591, 
+    "created": "2011-10-11 22:08:40.497289+00:00", 
+    "title": "Robustify locking system (utils.synchronized )", 
+    "comments": [
+        {
+            "content": "As noted by soren, troubles with utils.synchronized :\n\nScenario:\nT1, T2, T3 ; 3 greenthreads executing a function with utils.synchronized(\"oof\") as decorator\n\nT1 associates a semaphore S to \"oof\" in _semaphores, \nT1 acquires S\nT2 get the same semaphore S, wait for S \nT1 releases S and remove \"oof\"/S from _semaphores\nT2 acquires S which is no more in _semaphores\n\nscenario first possible ending (not really annoying):\nT2 releases S and crash when removing \"oof\" from semaphores\n\nscenario second possible ending (more annoying):\nT3 associates a new semaphore S' to \"oof\" in _semaphores\nT3 acquires S' ...  T2 and T3 are doing \"oof things at the same time\n\nThe attachment contains a test to highlight the first scenario and a proposed implementation solving the trouble.\nThe proposed implementation of synchronized is based around the class LockByKey.\nThis class is inspired from the implementation of threading.Semaphore (which i hope is quite robust !).\n\nAs far as i test, the proposed implementation supports green threads and native ones.", 
+            "date_created": "2011-10-11 22:08:40.497289+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbrandily"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2011-10-11 22:08:40.497289+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbrandily"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4832", 
+            "date_created": "2012-03-02 21:20:47.779484+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "My feedback (with a better understanding of greenthread/coroutines (like eventlet)) :\n\n- utils.synchronized is working well  if we only use it with coroutines (greenthread) because eventlet implies constraints on where switch between greenthreads append \n- utils.synchronized is not working for real Threads ...\n==> so impose to never use Threads or change utils.synchronized\n\nI got trouble with the condition in my proposal (coroutine liveness trouble) so i use weak references instead in LockByKey ( ... cleaning embedded :)). The code is more simple\n\n\nclass LockByKey(object):\n    '''\n    usage:\n    locks = LockByKey()\n    with locks('using __call__ + with'):\n        pass\n    with locks['using __getitem__ + with']:\n        pass\n    '''\n    def __init__(self, lock_factory=None):\n        self._lock_factory = lock_factory or threading.Lock\n        self._lock = self._lock_factory()\n        self._weaklocks = weakref.WeakValueDictionary()\n\n    def _get_lock(self, lock_key):\n        with self._lock:\n            lock = self._weaklocks.get(lock_key)\n            if lock is None:\n                self._weaklocks[lock_key] = lock = self._lock_factory()\n        return lock\n   \n    @contextlib.contextmanager\n    def __call__(self, lock_key):\n        with self._get_lock(lock_key):\n            yield\n    __getitem__ = __call__\n\n", 
+            "date_created": "2012-03-02 21:26:49.779361+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbrandily"
+        }, 
+        {
+            "content": "           with _semaphores_lock:   #part1\n               if name not in _semaphores: # part1\n                    _semaphores[name] = semaphore.Semaphore() # part1\n            sem = _semaphores[name] # part3\n            ....\n            with _semaphores_lock: # part2\n                if not sem.balance < 1:# part2\n                    del _semaphores[name]# part2\n\nThe solution you propose does not work in the following scenario:\none thread (T1) does part1\nan other one does  part2\nT1 use a lock no more in _semaphores\n\n\n\n\n", 
+            "date_created": "2012-03-02 21:38:25.515758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbrandily"
+        }, 
+        {
+            "content": "Is the implementation really a problem? Nova doesn't use real threads except for a couple of well defined areas that don't use utils.synchronized().\n\nI'm not sure I understand when the existing implementation can run into a problem.", 
+            "date_created": "2012-03-02 22:00:50.161738+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": " The original bug report introduces a greenthread.sleep() to reproduce the problem, but since the logging calls involve I/O, I still think there's a potential problem if we're debug logging.\n\nThere's no unit test for this code - I'll add one, and see what that finds.  Another test wont hurt.\n\nAlso, is there any good reason to delete the semaphores anyway ?  We have less than a dozen in the code, and they're not very expensive in terms of resources. \n\n\n\n", 
+            "date_created": "2012-03-02 22:51:08.501875+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikeyp-3"
+        }, 
+        {
+            "content": "I never thought about I/O in logging but you're right.\n\nIf i remember well some synchronized are called with \"variable\" lock names (see nova.virt.libvirt.connection module).\nAnd perhaps there are (will be) synchronized which use a name based on the project/vm ...\nSo without cleaning, semaphores size will increase over time.\n\nOne solution is to transform semaphores into a weakref.WeakValueDictionary (beware it's not sufficient), you no more need to do the cleaning because gc will be able to do it for you.\nMainly that's what LockByKey is doing.\n", 
+            "date_created": "2012-03-02 23:24:32.857037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbrandily"
+        }, 
+        {
+            "content": "The units tests already exist in test_misc.py (I originally looked in test_utils.py.) Those tests are robust, and I repeatedly ran those without reproducing an error.  I also tried some variations on the original test case, and can't reproduce a problem unless I add artificial sleeps.\n\nI don't think this is an Essex issue - propose revisiting in Folsom.\n\n\n\n\n", 
+            "date_created": "2012-03-03 02:02:12.668013+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikeyp-3"
+        }, 
+        {
+            "content": "Revisiting this in Folsom.\nThere seem to be only 3 cases of using synchronized with a random name, so there may be a high number of arbitrary-name locks on a busy host:\n\n- images (nova/virt/libvirt/imagebackend.py, nova/virt/baremetal/driver.py)\n- instance_uuid (nova/compute/manager.py)\n\nLast comment from ZZ mentioned that weakref.WeakValueDictionary is not sufficient, but without an example. I think the corner case there is that the semaphore would have to be checked+inserted in an \"atomic\" way to make sure it doesn't disappear in between creation and using it due to GC.\n\nIt seems like the code would have to look like this (with no \"del _semaphores[name]\" at the end of the function):\n\n    _semaphores = weakref.WeakValueDictionary()\n\n    semaphore = _semaphores.get(name, Semaphore())\n    # we have either a new semaphore, or the old one has a reference now\n    # if we've got a new one, name is not in the dict anymore, insert it\n    if name not in _semaphores:\n        _semaphores[name] = semaphore\n\nThis will create a new semaphore on every invocation. But that shouldn't be bad - hopefully we have no lock contention, so we'd need to create one anyway using old solution.\n\nIs there anything missing from this approach?", 
+            "date_created": "2012-08-06 14:18:58.170171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/10924", 
+            "date_created": "2012-08-06 22:26:19.596209+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/10924\nCommitted: http://github.com/openstack/nova/commit/9206ee5a63a65e076342896e3b41bbcbf819af56\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9206ee5a63a65e076342896e3b41bbcbf819af56\nAuthor: Stanislaw Pitucha <email address hidden>\nDate:   Mon Aug 6 23:16:07 2012 +0100\n\n    Solve possible race in semaphor creation\n    \n    Solve the race condition described in the bug 872558 report which can\n    result in:\n    \n    - thread crashing trying to remove semaphore from dict\n    - two threads getting different semaphores for the same name\n    \n    First case is solved automatically by weakref dictionary. No explicit\n    deletion takes place.\n    The second case is solved by getting existing or new semaphore in one\n    step. Once a local reference to the semaphore is obtained, it can be\n    safely assigned to the dictionary if it's missing. If it's present, it\n    will not be removed anymore because there's at least one strong\n    reference present (local variable 'sem').\n    \n    This solution is only valid for greenthreads.\n    \n    Change-Id: I6bddc3e7abb39fd75e1f03abb2ea0f911b761957\n", 
+            "date_created": "2012-08-07 06:06:18.396448+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Sorry, i forget to share the weakref example/adaptation which is quite similar to your solution:\n\n    semaphore = _semaphores.get(name, Semaphore())\n    # we have either a new semaphore, or the old one has a reference now\n    # if we've got a new one, name is not in the dict anymore, insert it\n    if name not in _semaphores:\n        _semaphores[name] = semaphore\n\nI would just propose the following improvement:\n    semaphore = _semaphores.get(name)\n    # we have either a reference to a \"old\" semaphore or None\n    # if we've got None, we need to create a semaphore and add it to the dict\n    if semaphore is None:\n        semaphore = _semaphores[name] = Semaphore()\n\nIt avoids to create every time a semaphore even if you got already one in the weakref dict ! And i feel it more clean and clear to understand.", 
+            "date_created": "2012-08-13 19:46:35.544899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbrandily"
+        }, 
+        {
+            "content": "You're right - I guess I was trying to be too secure with atomic semaphore insertion. Since context switches cannot happen between the .get() and assignment, this should affect neither GC nor atomic update of the dict. Also .get(name, default) is not guaranteed to be atomic anyway, so this could be simplified.\n\nDo you want to submit it? It's your modification after all.", 
+            "date_created": "2012-08-14 12:19:08.643409+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }
+    ]
+}

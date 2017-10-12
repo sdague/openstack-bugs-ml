@@ -1,0 +1,108 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 17:19:46.070787+00:00", 
+    "description": "When the compute resource tracker checks nodes, the ironic driver checks the node against a list of states that it should return resources for. This is to prevent nodes in various ironic states, like our cleaning process, that are not available from being scheduled to by nova.\n\nThe logic around this check ( https://github.com/openstack/nova/blob/master/nova/virt/ironic/driver.py#L334-L351 ) looks for existing instances on the node, and if they aren't found it then looks at the conditions for returning the node as unavailable.\n\nThe problem is when you have an orphaned instance on your node, one which ironic sees as present but nova does not (usually nova lists it as having been deleted).\n\nThe instance detection will return true, causing the memory_mb_used and memory_mb values to be set to the retrieved value from instance_info['memory_mb'].\n\nThe check for _node_resources_unavailable will not run as it is an elif. This means that even if this node is in maintenance state, we won't notice and return all zeros for resources as we normally would.\n\nOnce the resource tracker calls _update_usage_from_instance, it will not find an instance associated with the node from nova's point of view and will return all of the memory as available instead, causing builds to be scheduled to this node.\n\nIronic will then fail the build attempt due to it showing an instance already associated with the node.", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1503453", 
+    "owner": "https://api.launchpad.net/1.0/~jesse-j-cook", 
+    "id": 1503453, 
+    "index": 4364, 
+    "created": "2015-10-06 22:11:23.525108+00:00", 
+    "title": "unavailable ironic nodes being scheduled to", 
+    "comments": [
+        {
+            "content": "When the compute resource tracker checks nodes, the ironic driver checks the node against a list of states that it should return resources for. This is to prevent nodes in various ironic states, like our cleaning process, that are not available from being scheduled to by nova.\n\nThe logic around this check ( https://github.com/openstack/nova/blob/master/nova/virt/ironic/driver.py#L334-L351 ) looks for existing instances on the node, and if they aren't found it then looks at the conditions for returning the node as unavailable.\n\nThe problem is when you have an orphaned instance on your node, one which ironic sees as present but nova does not (usually nova lists it as having been deleted).\n\nThe instance detection will return true, causing the memory_mb_used and memory_mb values to be set to the retrieved value from instance_info['memory_mb'].\n\nThe check for _node_resources_unavailable will not run as it is an elif. This means that even if this node is in maintenance state, we won't notice and return all zeros for resources as we normally would.\n\nOnce the resource tracker calls _update_usage_from_instance, it will not find an instance associated with the node from nova's point of view and will return all of the memory as available instead, causing builds to be scheduled to this node.\n\nIronic will then fail the build attempt due to it showing an instance already associated with the node.", 
+            "date_created": "2015-10-06 22:11:23.525108+00:00", 
+            "author": "https://api.launchpad.net/1.0/~madasi"
+        }, 
+        {
+            "content": "My initial thought was to swap the logical order of the _node_resources_used and the _node_resources_unavailable checks so that the check for instances only happens after we check for unavailable conditions, however I think that would cause the same situation as bug #1502177 where if you have a maintenance node with an active instance that nova does know about, it would set the usage itself from the instance record, subtract it from the 0 total resources we sent due to maintenance state, and would report negative free space.\n\nIt looks like if the ironic driver implements the get_per_instance_usage() call, then the compute's resource tracker would properly account for orphaned instances and stop reporting them as available capacity. However, I think we would need to pass an ironic node identifier since this probably addresses a compute under nova's one compute == one host assumption. This would mean changing the function signature and thus the driver API, which is not a trivial change.\n\nTrying to see what the best way to do this is.", 
+            "date_created": "2015-10-08 16:39:06.311202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~madasi"
+        }, 
+        {
+            "content": "Discussed in IRC with jroll and madasi.  Solution still up for discussion.  \n\nOne comment though \"should we add nodename to get_per_instance_usage() is super contentious\".\n\nIf anyone has the bandwidth to pick this up, feel free.", 
+            "date_created": "2015-10-13 21:51:48.193975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mrda"
+        }, 
+        {
+            "content": "I've been told that adding nodename as an argument to get_per_instance_usage() won't be happening, as folks are trying to get away from instance.node. Anyone else have ideas on fixing this?", 
+            "date_created": "2016-02-18 01:31:58.067784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jim-rollenhagen"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/306670", 
+            "date_created": "2016-04-16 00:58:43.804860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/306670\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=016b810f675b20e8ce78f4c82dc9c679c0162b7a\nSubmitter: Jenkins\nBranch:    master\n\ncommit 016b810f675b20e8ce78f4c82dc9c679c0162b7a\nAuthor: Jesse J. Cook <email address hidden>\nDate:   Sat Apr 16 00:35:34 2016 +0000\n\n    Unavailable hosts have no resources for use\n    \n    If a host's:\n    \n      * resources are unavailable\n      * in a unusable state\n    \n    the system should:\n    \n      * report 0 resources\n      * show 0 resources\n      * not be scheduled to\n    \n    Change-Id: Ia1c2f6f161dde1e23acce85a54566d07805d13df\n    Closes-Bug: 1503453\n", 
+            "date_created": "2016-05-09 13:21:02.003194+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There's still another case of this bug not handled:\n\nIf the Ironic node is in a state that'd typically be considered usable (such as AVAILABLE), but has an instance uuid (an invalid state, but possible nonetheless), nova will still schedule to it. I will push a patch that should resolve this case as well.", 
+            "date_created": "2016-05-27 00:16:08.185353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jason-oldos"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/321907", 
+            "date_created": "2016-05-27 00:33:41.551280+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Certainly appropriate for Mitaka bit it isn't a critical/security bug so dropping liberty", 
+            "date_created": "2016-05-29 22:40:21.990332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/321907\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ffe3093786b137f46646c4cf5fb3ba6b597418a9\nSubmitter: Jenkins\nBranch:    master\n\ncommit ffe3093786b137f46646c4cf5fb3ba6b597418a9\nAuthor: Jay Faulkner <email address hidden>\nDate:   Thu May 26 17:31:24 2016 -0700\n\n    Ironic nodes with instance_uuid are not available\n    \n    Currently, if a node is in AVAILABLE or NOSTATE (legacy), regardless of\n    if it has an instance_uuid it is considered able to be scheduled to.\n    However, it's impossible for a deployment to succeed to an ironic node\n    with instance_uuid populated. We should not schedule to nodes in this\n    state.\n    \n    Change-Id: I41e0c8f1f8a91e11180a6edd72907cf76fe4b235\n    Closes-bug: 1503453\n", 
+            "date_created": "2016-05-31 02:20:31.022706+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/323196", 
+            "date_created": "2016-05-31 08:17:51.168367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/323477", 
+            "date_created": "2016-05-31 16:16:45.769781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:31:50.918824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:33:32.704752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/323477\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=154aaace9f4cf26b24ccf2edbfbbf1d9dc404f13\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 154aaace9f4cf26b24ccf2edbfbbf1d9dc404f13\nAuthor: Jesse J. Cook <email address hidden>\nDate:   Sat Apr 16 00:35:34 2016 +0000\n\n    Unavailable hosts have no resources for use\n    \n    If a host's:\n    \n      * resources are unavailable\n      * in a unusable state\n    \n    the system should:\n    \n      * report 0 resources\n      * show 0 resources\n      * not be scheduled to\n    \n    Change-Id: Ia1c2f6f161dde1e23acce85a54566d07805d13df\n    Closes-Bug: 1503453\n    (cherry picked from commit 016b810f675b20e8ce78f4c82dc9c679c0162b7a)\n", 
+            "date_created": "2016-06-09 01:05:42.128126+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/323196\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8ed1c2da1d5aa3e645afac6fdbb64c11cb151664\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 8ed1c2da1d5aa3e645afac6fdbb64c11cb151664\nAuthor: Jay Faulkner <email address hidden>\nDate:   Thu May 26 17:31:24 2016 -0700\n\n    Ironic nodes with instance_uuid are not available\n    \n    Currently, if a node is in AVAILABLE or NOSTATE (legacy), regardless of\n    if it has an instance_uuid it is considered able to be scheduled to.\n    However, it's impossible for a deployment to succeed to an ironic node\n    with instance_uuid populated. We should not schedule to nodes in this\n    state.\n    \n    Change-Id: I41e0c8f1f8a91e11180a6edd72907cf76fe4b235\n    Closes-bug: 1503453\n    (cherry picked from commit ffe3093786b137f46646c4cf5fb3ba6b597418a9)\n", 
+            "date_created": "2016-06-09 01:06:19.364532+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.0 release.", 
+            "date_created": "2016-06-14 15:41:36.933719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.0 release.", 
+            "date_created": "2016-06-14 15:41:38.631427+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ]
+}

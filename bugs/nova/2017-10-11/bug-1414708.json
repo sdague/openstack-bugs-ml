@@ -1,0 +1,54 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:19:27.953490+00:00", 
+    "description": "Something changed since 1/20 where the nova.tests.unit.virt.libvirt.test_driver tests would pass if you didn't have a real libvirt installed but now they fail if you don't have libvirt installed, e.g.:\n\n    Traceback (most recent call last):\n      File \"nova/tests/unit/virt/libvirt/test_driver.py\", line 4062, in test_xml_and_uri_rescue_no_kernel\n        expect_ramdisk=True, rescue=instance_data)\n      File \"/home/mriedem/git/nova/.tox/py27/local/lib/python2.7/site-packages/mock.py\", line 1201, in patched\n        return func(*args, **keywargs)\n      File \"nova/tests/unit/virt/libvirt/test_driver.py\", line 5601, in _check_xml_and_uri\n        rescue=rescue)\n      File \"nova/virt/libvirt/driver.py\", line 4006, in _get_guest_xml\n        context, flavor=flavor)\n      File \"nova/virt/libvirt/driver.py\", line 3819, in _get_guest_config\n        instance.numa_topology, flavor, allowed_cpus)\n      File \"nova/virt/libvirt/driver.py\", line 3384, in _get_guest_numa_config\n        topology = self._get_host_numa_topology()\n      File \"nova/virt/libvirt/driver.py\", line 4580, in _get_host_numa_topology\n        if not self._host.has_min_version(MIN_LIBVIRT_NUMA_TOPOLOGY_VERSION):\n      File \"nova/virt/libvirt/host.py\", line 433, in has_min_version\n        conn = self.get_connection()\n      File \"nova/virt/libvirt/host.py\", line 415, in get_connection\n        raise exception.HypervisorUnavailable(host=CONF.host)\n    HypervisorUnavailable: Connection to the hypervisor is broken on host: fake-mini\n\nI suspect something was missed in this change:\n\nhttps://github.com/openstack/nova/commit/4b9bec3a1c819e7006af6bfa1de6928bde91b2c7", 
+    "tags": [
+        "libvirt", 
+        "testing"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1414708", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1414708, 
+    "index": 240, 
+    "created": "2015-01-26 16:31:59.489173+00:00", 
+    "title": "libvirt unit tests are failing if no real libvirt installed", 
+    "comments": [
+        {
+            "content": "Something changed since 1/20 where the nova.tests.unit.virt.libvirt.test_driver tests would pass if you didn't have a real libvirt installed but now they fail if you don't have libvirt installed, e.g.:\n\n    Traceback (most recent call last):\n      File \"nova/tests/unit/virt/libvirt/test_driver.py\", line 4062, in test_xml_and_uri_rescue_no_kernel\n        expect_ramdisk=True, rescue=instance_data)\n      File \"/home/mriedem/git/nova/.tox/py27/local/lib/python2.7/site-packages/mock.py\", line 1201, in patched\n        return func(*args, **keywargs)\n      File \"nova/tests/unit/virt/libvirt/test_driver.py\", line 5601, in _check_xml_and_uri\n        rescue=rescue)\n      File \"nova/virt/libvirt/driver.py\", line 4006, in _get_guest_xml\n        context, flavor=flavor)\n      File \"nova/virt/libvirt/driver.py\", line 3819, in _get_guest_config\n        instance.numa_topology, flavor, allowed_cpus)\n      File \"nova/virt/libvirt/driver.py\", line 3384, in _get_guest_numa_config\n        topology = self._get_host_numa_topology()\n      File \"nova/virt/libvirt/driver.py\", line 4580, in _get_host_numa_topology\n        if not self._host.has_min_version(MIN_LIBVIRT_NUMA_TOPOLOGY_VERSION):\n      File \"nova/virt/libvirt/host.py\", line 433, in has_min_version\n        conn = self.get_connection()\n      File \"nova/virt/libvirt/host.py\", line 415, in get_connection\n        raise exception.HypervisorUnavailable(host=CONF.host)\n    HypervisorUnavailable: Connection to the hypervisor is broken on host: fake-mini\n\nI suspect something was missed in this change:\n\nhttps://github.com/openstack/nova/commit/4b9bec3a1c819e7006af6bfa1de6928bde91b2c7", 
+            "date_created": "2015-01-26 16:31:59.489173+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Actually this is probably invalid, I don't have libvirt-python in my test-requirements.txt and that's what should satisfy the requirement - even though we *should* be able to resolve this with something in the fakelibvirt fixture.", 
+            "date_created": "2015-01-26 16:56:30.755287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "To recreate with the master branch, simply comment out or remove the libvirt-python entry from test-requirements.txt and then:\n\ntox -r -e py27 -- nova.tests.unit.virt.libvirt.test_driver\n\nI think we should just mock out host.Host.has_min_version to always return True for the LibvirtConnTestCase since we should assume any code we're unit testing should be available on the latest libvirt available from a/the distro we're running integration tests against.", 
+            "date_created": "2015-01-26 18:28:32.031797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Mocking out has_min_version doesn't fix it all, there is code trying to get capabilities that blows up and I'm also hitting some weird issues in the init method of the fakelibvirt Connection class where it's getting xen:/// as the uri (no system or session string in the uri).", 
+            "date_created": "2015-01-26 20:03:35.189328+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Oh I see, the uri is coming from the LibvirtDriver.uri() static method:\n\n    @staticmethod\n    def uri():\n        if CONF.libvirt.virt_type == 'uml':\n            uri = CONF.libvirt.connection_uri or 'uml:///system'\n        elif CONF.libvirt.virt_type == 'xen':\n            uri = CONF.libvirt.connection_uri or 'xen:///'\n        elif CONF.libvirt.virt_type == 'lxc':\n            uri = CONF.libvirt.connection_uri or 'lxc:///'\n        else:\n            uri = CONF.libvirt.connection_uri or 'qemu:///system'\n        return uri", 
+            "date_created": "2015-01-26 20:13:18.317677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/150148", 
+            "date_created": "2015-01-26 21:15:54.891381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/150148\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=50861d3221f625a5cc589d903054bb2c440b4026\nSubmitter: Jenkins\nBranch:    master\n\ncommit 50861d3221f625a5cc589d903054bb2c440b4026\nAuthor: Matt Riedemann <email address hidden>\nDate:   Mon Jan 26 13:12:52 2015 -0800\n\n    libvirt: update uri_whitelist in fakelibvirt.Connection\n    \n    Commit 4b9bec3a1c819e7006af6bfa1de6928bde91b2c7 removed the mocking of\n    nova.virt.libvirt.host.Host.get_connection to use fakelibvirt instead,\n    but if you don't have libvirt-python in your venv the tests fail, so\n    fakelibvirt in it's current form wasn't actually working for all tests.\n    \n    This change updates the uri_whitelist in the init method of the\n    fakelibvirt Connection class to add some other URIs found in other parts\n    of the libvirt code (the LibvirtDriver.uri static method).\n    \n    Removes the unnecessary 'xen:///system' whitelisted URI.\n    \n    Since libvirt-python is no longer needed to run the libvirt driver\n    unit tests, it's removed from test-requirements.txt.\n    \n    Closes-Bug: #1414708\n    \n    Change-Id: Id7aefe9bf21dc3d0e2db42e668faf28e926aea43\n", 
+            "date_created": "2015-01-29 00:21:38.044097+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

@@ -1,0 +1,58 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-10-03 20:40:59.638280+00:00", 
+    "description": "Description\n===========\n\nInstances without pci passthrough requests can overfill host NUMA nodes with dedicated for pci passthrough PCI devices. Instances placed on such NUMA nodes despite that there are plenty free resources in other host NUMA nodes. Such scheduling can lead to situation that further deployment of an instance with pci passthrough request will fail because of unavailable capacity in required NUMA node.\n\nSteps to reproduce\n==================\nTest host with 2 NUMA nodes and PCI device attached to NUMA node 0.\n\nCreate a flavor with hw:cpu_policy=dedicated\n\nSpawn several instances without pci passthrough with overall memory allocation equal memory capacity for NUMA node 0.\n\nThen deploy instance with sr-iov port. Scheduling fails with following error:\n\n2016-08-18 11:17:15.470 55110 DEBUG nova.compute.manager [req-c6d96425-e98b-4a63-8289-e56c40ac46d9 bb8e586fd1264034885fef3aae39e777 b770743f66c44840a999cc8cf60916cd - - -] [instance: b4470025-2a59-4772-9990-a96b55966214] Build of instance b4470025-2a59-4772-9990-a96b55966214 was re-scheduled: Insufficient compute resources: Requested instance NUMA topology together with requested PCI devices cannot fit the given host NUMA topology. _do_build_and_run_instance /usr/lib/python2.7/site-packages/nova/compute/manager.py:1945\n\nEnvironment\n===========\nMitaka release\nNova: 13.0.0", 
+    "tags": [
+        "numa"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1614882", 
+    "owner": "None", 
+    "id": 1614882, 
+    "index": 1817, 
+    "created": "2016-08-19 09:20:48.035600+00:00", 
+    "title": "Put VMs without PCI-passthrough device to non-affinitized NUMA node", 
+    "comments": [
+        {
+            "content": "Description\n===========\n\nInstances with no pci passthrough requirement can overfill host NUMA nodes which have attached PCI devices dedicated for pci passthrough. Instances placed on such NUMA nodes despite that there are plenty free resources in other host NUMA nodes. Such scheduling can lead to situation when further deployment of an instance with pci passthrough will fail because of unavailable capacity in required NUMA node.\n\nSteps to reproduce\n==================\nTest host with 2 NUMA nodes and PCI device attached to NUMA node 0.\n\nCreate a flavor with hw:cpu_policy=dedicated\n\nSpawn several instances without pci passthrough with overall memory allocation equal memory capacity for NUMA node 0.\n\nThen deploy instance with sr-iov port. Deployment fails with following error:\n\n2016-08-18 11:17:15.470 55110 DEBUG nova.compute.manager [req-c6d96425-e98b-4a63-8289-e56c40ac46d9 bb8e586fd1264034885fef3aae39e777 b770743f66c44840a999cc8cf60916cd - - -] [instance: b4470025-2a59-4772-9990-a96b55966214] Build of instance b4470025-2a59-4772-9990-a96b55966214 was re-scheduled: Insufficient compute resources: Requested instance NUMA topology together with requested PCI devices cannot fit the given host NUMA topology. _do_build_and_run_instance /usr/lib/python2.7/site-packages/nova/compute/manager.py:1945 \n\nEnvironment\n===========\nMitaka release\nNova: 13.0.0", 
+            "date_created": "2016-08-19 09:20:48.035600+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ustinov16"
+        }, 
+        {
+            "content": "This is not a bug, but rather by design. Refer to the second warning note in the below document:\n\n    http://docs.openstack.org/admin-guide/compute-cpu-topologies.html#customizing-instance-numa-placement-policies\n\nYou will need to define a two-node NUMA topology for the guest if you wish to balance guests across host nodes.", 
+            "date_created": "2016-08-19 13:59:23.061777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stephenfinucane"
+        }, 
+        {
+            "content": "In our case we have specific Virtual Network Function images which require deployment with 1 NUMA node topology. Some of them require sr-iov ports and some not. \n\nAs from my point of view, NUMA scheduling could be more advanced and instance without pci device request should be placed on NUMA node with no PCI device attached. As example it could be an extra_spec for flavor to specify that guest NUMA nodes should be bind to host NUMA nodes with no associated with them PCI devices in pci_passthrough_whitelist ", 
+            "date_created": "2016-08-19 14:37:54.670547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ustinov16"
+        }, 
+        {
+            "content": "First thing I will note is that while you can work around this using hw:numa_nodes=2 (or more) to allow the guest to split over more than one node this is not ideal as the splitting of the guest in this fashion impacts not just device allocation but also vCPU and RAM allocation. It also doesn't address that this may still result in failure if as in the description all nodes with PCI devices available have been filled already with guests that aren't using them, while space exists on nodes that don't have PCI devices.\n\nThere are really I think a couple of aspects to resolving this ask which comes up in a couple of different ways (this bug report is certainly not the first time I have seen it raised):\n\n1) Weighting scheduling requests such that if a given request does *not* require and SR-IOV/PCI device it is weighted towards landing on NUMA nodes that do not have them exposed.\n\n2) Allowing users requesting a VM with an SR-IOV/PCI device a mechanism for specifying whether they have a \"hard\" requirement for it to be co-located on the same NUMA node(s) as the guest or a \"soft\" requirement. In the latter case the scheduler would still attempt to place the guest on the same NUMA node(s) as the available devices but if this is not possible, just place them on the same host and still attach the device.\n\nWe need to be mindful of the fact that for some workloads the current behaviour is the expectation, and that for others the behaviour requested here - where just having the device is good enough even if it's across NUMA bounds, particularly common when the guest is using multiple devices - is the expectation and that both may even manifest in the same cloud.", 
+            "date_created": "2016-08-19 15:07:06.366902+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sgordon"
+        }, 
+        {
+            "content": "As far as I read description, they want to place VM, that does not use SR-IOV, to non-affinitized NUMA node.\nSo I suppose that summary could be \"Put VMs without PCI-passthrough device to non-affinitized NUMA node\" et al. ", 
+            "date_created": "2016-08-24 10:10:37.868260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~s1061123"
+        }, 
+        {
+            "content": "The following specs, currently under review, should resolve this issue. Worth reviewing:\n\n* https://review.openstack.org/#/c/361140/\n* https://review.openstack.org/#/c/364468/", 
+            "date_created": "2016-09-01 17:14:23.932732+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stephenfinucane"
+        }, 
+        {
+            "content": "Stephen, is right. Implementation of these specs will solve the problem. But I this is a feature request rather than bug.", 
+            "date_created": "2016-09-27 14:23:30.763807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~snikitin"
+        }, 
+        {
+            "content": "Marking this bug as invalid because it was determined to be a feature request and would be resolved by current specs under review.", 
+            "date_created": "2016-10-03 20:40:58.190026+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }
+    ]
+}

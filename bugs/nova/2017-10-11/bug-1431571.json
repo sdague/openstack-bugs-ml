@@ -1,0 +1,101 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:21:12.524491+00:00", 
+    "description": "Running subsets of Nova tests or individual tests within test_db_api reveals a simple error in several of the tests within ArchiveTestCase.\n\nA test such as test_archive_deleted_rows_2_tables attempts the following:\n\n1. places six rows into instance_id_mappings\n2. places six rows into instances\n3. runs the archive_deleted_rows_ routine with a max of 7 rows to archive\n4. runs a SELECT of instances and instance_id_mappings, and confirms that only 5 remain.\n\nRunning this test directly with PYTHONHASHSEED=random will very easily encounter failures such as:\n\nTraceback (most recent call last):\n  File \"/Users/classic/dev/redhat/openstack/nova/nova/tests/unit/db/test_db_api.py\", line 7869, in test_archive_deleted_rows_2_tables\n    self.assertEqual(len(iim_rows) + len(i_rows), 5)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 350, in assertEqual\n    self.assertThat(observed, matcher, message)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 435, in assertThat\n    raise mismatch_error\ntesttools.matchers._impl.MismatchError: 8 != 5\n\n\nor \n\nTraceback (most recent call last):\n  File \"/Users/classic/dev/redhat/openstack/nova/nova/tests/unit/db/test_db_api.py\", line 7872, in test_archive_deleted_rows_2_tables\n    self.assertEqual(len(iim_rows) + len(i_rows), 5)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 350, in assertEqual\n    self.assertThat(observed, matcher, message)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 435, in assertThat\n    raise mismatch_error\ntesttools.matchers._impl.MismatchError: 10 != 5\n\n\nThe reason is that the archive_deleted_rows() routine looks for rows in *all* tables, in *non-deterministic order*, e.g. by searching through \"models.__dict__.itervalues()\".   In the \"8 != 5\" case, there are rows present also in the instance_types table.  By PDBing into archive_deleted_rows during the test, we can see here:\n\nARCHIVED 4 ROWS FROM TABLE instances\nARCHIVED 3 ROWS FROM TABLE instance_types\nTraceback (most recent call last):\n...\ntesttools.matchers._impl.MismatchError: 8 != 5\n\nthat is, the archiver locates seven rows just between instances and instance_types, then stops.  It never even gets to the instance_id_mappings table.\n\nThe serious problem with the way this test is designed, is that if we were to make it ignore only certain tables, or make the ordering fixed, or anything else, that will never keep the test from breaking again, any time a new table is added which contains rows when the test fixtures start. \n\nThe only solution to making these tests runnable in their current form is to limit the listing of tables that are searched in archive_deleted_rows; that is, the test needs to inject a fixture into it.  The most straightforward way to achieve this would look like this:\n\n @require_admin_context\n-def archive_deleted_rows(context, max_rows=None):\n+def archive_deleted_rows(context, max_rows=None, _limit_tablenames_fixture=None):\n     \"\"\"Move up to max_rows rows from production tables to the corresponding\n     shadow tables.\n \n@@ -5870,6 +5870,9 @@ def archive_deleted_rows(context, max_rows=None):\n         if hasattr(model_class, \"__tablename__\"):\n             tablenames.append(model_class.__tablename__)\n     rows_archived = 0\n+    if _limit_tablenames_fixture:\n+        tablenames = set(tablenames).intersection(_limit_tablenames_fixture)\n+\n     for tablename in tablenames:\n         rows_archived += archive_deleted_rows_for_table(context, tablename,\n                                          max_rows=max_rows - rows_archived)", 
+    "tags": [], 
+    "importance": "Critical", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1431571", 
+    "owner": "https://api.launchpad.net/1.0/~tdurakov", 
+    "id": 1431571, 
+    "index": 240, 
+    "created": "2015-03-12 21:38:46.993114+00:00", 
+    "title": "archive_deleted_rows_for_table relies on reflection to access the 'default' for soft-delete columns, but this is not a server default", 
+    "comments": [
+        {
+            "content": "Running subsets of Nova tests or individual tests within test_db_api reveals a simple error in several of the tests within ArchiveTestCase.\n\nA test such as test_archive_deleted_rows_2_tables attempts the following:\n\n1. places six rows into instance_id_mappings\n2. places six rows into instances\n3. runs the archive_deleted_rows_ routine with a max of 7 rows to archive\n4. runs a SELECT of instances and instance_id_mappings, and confirms that only 5 remain.\n\nRunning this test directly with PYTHONHASHSEED=random will very easily encounter failures such as:\n\nTraceback (most recent call last):\n  File \"/Users/classic/dev/redhat/openstack/nova/nova/tests/unit/db/test_db_api.py\", line 7869, in test_archive_deleted_rows_2_tables\n    self.assertEqual(len(iim_rows) + len(i_rows), 5)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 350, in assertEqual\n    self.assertThat(observed, matcher, message)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 435, in assertThat\n    raise mismatch_error\ntesttools.matchers._impl.MismatchError: 8 != 5\n\n\nor \n\nTraceback (most recent call last):\n  File \"/Users/classic/dev/redhat/openstack/nova/nova/tests/unit/db/test_db_api.py\", line 7872, in test_archive_deleted_rows_2_tables\n    self.assertEqual(len(iim_rows) + len(i_rows), 5)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 350, in assertEqual\n    self.assertThat(observed, matcher, message)\n  File \"/Users/classic/dev/redhat/openstack/nova/.tox/py27/lib/python2.7/site-packages/testtools/testcase.py\", line 435, in assertThat\n    raise mismatch_error\ntesttools.matchers._impl.MismatchError: 10 != 5\n\n\nThe reason is that the archive_deleted_rows() routine looks for rows in *all* tables, in *non-deterministic order*, e.g. by searching through \"models.__dict__.itervalues()\".   In the \"8 != 5\" case, there are rows present also in the instance_types table.  By PDBing into archive_deleted_rows during the test, we can see here:\n\nARCHIVED 4 ROWS FROM TABLE instances\nARCHIVED 3 ROWS FROM TABLE instance_types\nTraceback (most recent call last):\n...\ntesttools.matchers._impl.MismatchError: 8 != 5\n\nthat is, the archiver locates seven rows just between instances and instance_types, then stops.  It never even gets to the instance_id_mappings table.\n\nThe serious problem with the way this test is designed, is that if we were to make it ignore only certain tables, or make the ordering fixed, or anything else, that will never keep the test from breaking again, any time a new table is added which contains rows when the test fixtures start. \n\nThe only solution to making these tests runnable in their current form is to limit the listing of tables that are searched in archive_deleted_rows; that is, the test needs to inject a fixture into it.  The most straightforward way to achieve this would look like this:\n\n @require_admin_context\n-def archive_deleted_rows(context, max_rows=None):\n+def archive_deleted_rows(context, max_rows=None, _limit_tablenames_fixture=None):\n     \"\"\"Move up to max_rows rows from production tables to the corresponding\n     shadow tables.\n \n@@ -5870,6 +5870,9 @@ def archive_deleted_rows(context, max_rows=None):\n         if hasattr(model_class, \"__tablename__\"):\n             tablenames.append(model_class.__tablename__)\n     rows_archived = 0\n+    if _limit_tablenames_fixture:\n+        tablenames = set(tablenames).intersection(_limit_tablenames_fixture)\n+\n     for tablename in tablenames:\n         rows_archived += archive_deleted_rows_for_table(context, tablename,\n                                          max_rows=max_rows - rows_archived)", 
+            "date_created": "2015-03-12 21:38:46.993114+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "console output illustrating a series of test runs of just the archive tests where non-deterministic failures are demonstrated.", 
+            "date_created": "2015-03-12 21:45:09.360474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "with fix in place, passes consistently:\n\nclassics-MacBook-Pro:nova classic$ .tox/py27/bin/py.test nova/tests/unit/db/test_db_api.py -k \"ArchiveTestCase\" -v\n====================================================================================== test session starts =======================================================================================\nplatform darwin -- Python 2.7.5 -- py-1.4.26 -- pytest-2.6.4 -- /Users/classic/dev/redhat/openstack/nova/.tox/py27/bin/python\ncollected 629 items \n\nnova/tests/unit/db/test_db_api.py::ArchiveTestCase::test_archive_deleted_rows PASSED\nnova/tests/unit/db/test_db_api.py::ArchiveTestCase::test_archive_deleted_rows_2_tables PASSED\nnova/tests/unit/db/test_db_api.py::ArchiveTestCase::test_archive_deleted_rows_fk_constraint PASSED\nnova/tests/unit/db/test_db_api.py::ArchiveTestCase::test_archive_deleted_rows_for_every_uuid_table PASSED\nnova/tests/unit/db/test_db_api.py::ArchiveTestCase::test_archive_deleted_rows_no_id_column PASSED\nnova/tests/unit/db/test_db_api.py::ArchiveTestCase::test_shadow_tables PASSED\n\n========================================================================== 623 tests deselected by '-kArchiveTestCase' ===========================================================================\n============================================================================ 6 passed, 623 deselected in 6.03 seconds ============================================================================\nclassics-MacBook-Pro:nova classic$ \n", 
+            "date_created": "2015-03-12 21:46:05.622543+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/163990", 
+            "date_created": "2015-03-12 21:52:10.707365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "proposed fix: https://review.openstack.org/163990", 
+            "date_created": "2015-03-12 21:52:26.813868+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "looking more closely, maybe the problem is that we shouldn't be deleting from instance_types.  It seems that \"archive_deleted_rows_for_table\" is checking the \"deleted\" column for NULL, but when the fixtures run and we run 216_havana.py, this table has zeros for the \"deleted\" column - _populate_instance_types() explicitly sets it to zero:\n\n(Pdb) conn.connection.execute(\"select id, name, deleted from instance_types where deleted is not null\").fetchall()\n[(1, u'm1.large', 0), (2, u'm1.medium', 0), (3, u'm1.small', 0), (4, u'm1.tiny', 0), (5, u'm1.xlarge', 0)]\n\n\nbut archive_deleted_rows_for_table is doing this very shaky system of looking at \"deleted_column.default\", assuming its set to something:\n\n    query_insert = sql.select([table],\n                          deleted_column != deleted_column.default).\\\n                          order_by(column).limit(max_rows)\n    query_delete = sql.select([column],\n                          deleted_column != deleted_column.default).\\\n                          order_by(column).limit(max_rows)\n\n\nbut the SELECT comes out with an \"IS NOT NULL\":\n\nDELETE FROM instance_types WHERE instance_types.id in (SELECT T1.id FROM (SELECT instance_types.id\nFROM instance_types\nWHERE instance_types.deleted IS NOT NULL ORDER BY instance_types.id\n LIMIT ? OFFSET ?) as T1)\n\nwhich....is why it's deleting those rows.   that \"default\" looks like it is a zero however, so trying to see what that's about.\n\n\n\n", 
+            "date_created": "2015-03-12 22:20:05.136617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "oh.   der.   archival works on reflection and assumes that SQLite reflection gives us a zero for that default.   nay:\n\n(Pdb) from sqlalchemy import inspect\n(Pdb) inspect(conn).get_columns('instance_types')\n[.... {'name': u'deleted', 'nullable': True, 'autoincrement': True, 'primary_key': 0, 'type': INTEGER(), 'default': None}]\n\n(Pdb) conn.execute('pragma table_info(\"instance_types\")').fetchall()\n[ ... (15, u'deleted', u'INTEGER', 0, None, 0)]\n\ncolumn 4 (zero based) is \"dflt_value\": \n(Pdb) cursor.description\n(('cid', None, None, None, None, None, None), ('name', None, None, None, None, None, None), ('type', None, None, None, None, None, None), ('notnull', None, None, None, None, None, None), ('dflt_value', None, None, None, None, None, None), ('pk', None, None, None, None, None, None))\n\nso this assumption is broken in Nova and has to be changed.  I'd suggest we don't use reflection for the primary table since it's already set up.", 
+            "date_created": "2015-03-12 22:31:54.256132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "the column is a Python-side default, so I've no idea how people's MySQL databases aren't getting blown away by this archival routine?   here's the column in oslo.db:\n\nclass SoftDeleteMixin(object):\n    deleted_at = Column(DateTime)\n    deleted = Column(Integer, default=0)\n\n\nthat's a client-side default.", 
+            "date_created": "2015-03-12 22:49:14.489776+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/164009", 
+            "date_created": "2015-03-12 22:54:49.966020+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Bayer (<email address hidden>) on branch: master\nReview: https://review.openstack.org/163990\nReason: looking into a more direct failure in the archive routine.", 
+            "date_created": "2015-03-12 22:55:06.732412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "nova-manage db archive_deleted_rows 1000 is not working at all right now:\n\nOutput: http://paste.ubuntu.com/10588278/", 
+            "date_created": "2015-03-12 23:49:40.611519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "I confirmed that running nova-manage db archive_deleted_rows can break your system. I just did it to my devstack box.", 
+            "date_created": "2015-03-12 23:55:43.782662+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/164178", 
+            "date_created": "2015-03-13 13:46:28.692699+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Bayer (<email address hidden>) on branch: master\nReview: https://review.openstack.org/164009\nReason: ah I see that there are some \"deleted\" columns that aren't ints, OK", 
+            "date_created": "2015-03-13 15:47:56.487075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/164263", 
+            "date_created": "2015-03-13 17:04:38.752697+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/164178\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2c1784f150026c7b903fc920d480898ff51c424d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2c1784f150026c7b903fc920d480898ff51c424d\nAuthor: Sean Dague <email address hidden>\nDate:   Fri Mar 13 07:52:27 2015 -0400\n\n    Add shadow table empty verification\n    \n    The ArchiveDatabase tests only test that expected content is moved\n    into shadow tables. They don't check that unexpected content in\n    unrelated tables *is not moved*. Like... instance_types. The lack of\n    this test allowed a regression to get in that could corrupt your\n    entire database.\n    \n    This adds an _assert_shadow_tables_empty_except function that should\n    be called at the end of archiving db tests that asserts that there is\n    not content in any of the shadow_tables except the ones we expect.\n    \n    Closes-Bug: #1431571\n    \n    Change-Id: I49431c5413cc700c46d28ee47a9ed678987f17ff\n", 
+            "date_created": "2015-03-13 20:55:49.498486+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/164263\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=fa2a6afe7639726fad201a51832b8fcb06c95a75\nSubmitter: Jenkins\nBranch:    master\n\ncommit fa2a6afe7639726fad201a51832b8fcb06c95a75\nAuthor: Timofey Durakov <email address hidden>\nDate:   Fri Mar 6 17:09:38 2015 +0300\n\n    Fixed archiving of deleted records\n    \n    Added specific column order for insert clause\n    in insert from select query, used in archivation.\n    Changed source for tables metadata from db to models.\n    \n    Change-Id: Idff93ab4fa3397746999a836de54354235919471\n    Closes-Bug: #1431571\n", 
+            "date_created": "2015-03-17 05:44:15.262355+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

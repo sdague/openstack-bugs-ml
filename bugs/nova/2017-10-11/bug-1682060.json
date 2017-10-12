@@ -1,0 +1,94 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-22 11:21:03.107894+00:00", 
+    "description": "In current master, openstack compute service list and openstack hypervisor list (same issue with nova cli) result in an empty list.\nIf I check the database, services are registered in the database.\n\n[root@controller tools]# docker exec -ti kolla_toolbox mysql -unova -pYVDa3l8vA57Smnbu9Q5qdgSKJckNxP3Q3rYvVxsD  -h 192.168.100.10 nova -e \"SELECT * from services WHERE topic = 'compute'\";\n+---------------------+---------------------+------------+----+------------+--------------+---------+--------------+----------+---------+-----------------+---------------------+-------------+---------+\n| created_at          | updated_at          | deleted_at | id | host       | binary       | topic   | report_count | disabled | deleted | disabled_reason | last_seen_up        | forced_down | version |\n+---------------------+---------------------+------------+----+------------+--------------+---------+--------------+----------+---------+-----------------+---------------------+-------------+---------+\n| 2017-04-12 09:12:10 | 2017-04-12 09:14:33 | NULL       |  9 | controller | nova-compute | compute |           13 |        0 |       0 | NULL            | 2017-04-12 09:14:33 |           0 |      17 |\n+---------------------+---------------------+------------+----+------------+--------------+---------+--------------+----------+---------+-----------------+---------------------+-------------+---------+\n[root@controller tools]# openstack compute service list --long\n\n[root@controller tools]# \n[root@controller tools]# openstack hypervisor list --long\n\n[root@controller tools]# \n\nLogs from kolla deploy gates http://logs.openstack.org/08/456108/1/check/gate-kolla-dsvm-deploy-centos-source-centos-7-nv/9cf1e73/\n\nEnvironment:\n- source code\n- OS: centos/ubuntu/oraclelinux\n- Deployment type: kolla-ansible\n\nPlease let me know if more info is needed or if there is a workaround.\nRegards", 
+    "tags": [
+        "cells", 
+        "doc"
+    ], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1682060", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1682060, 
+    "index": 4795, 
+    "created": "2017-04-12 09:20:08.545038+00:00", 
+    "title": "empty nova service and hypervisor list", 
+    "comments": [
+        {
+            "content": "In current master, openstack compute service list and openstack hypervisor list (same issue with nova cli) result in an empty list.\nIf I check the database, services are registered in the database.\n\n[root@controller tools]# docker exec -ti kolla_toolbox mysql -unova -pYVDa3l8vA57Smnbu9Q5qdgSKJckNxP3Q3rYvVxsD  -h 192.168.100.10 nova -e \"SELECT * from services WHERE topic = 'compute'\";\n+---------------------+---------------------+------------+----+------------+--------------+---------+--------------+----------+---------+-----------------+---------------------+-------------+---------+\n| created_at          | updated_at          | deleted_at | id | host       | binary       | topic   | report_count | disabled | deleted | disabled_reason | last_seen_up        | forced_down | version |\n+---------------------+---------------------+------------+----+------------+--------------+---------+--------------+----------+---------+-----------------+---------------------+-------------+---------+\n| 2017-04-12 09:12:10 | 2017-04-12 09:14:33 | NULL       |  9 | controller | nova-compute | compute |           13 |        0 |       0 | NULL            | 2017-04-12 09:14:33 |           0 |      17 |\n+---------------------+---------------------+------------+----+------------+--------------+---------+--------------+----------+---------+-----------------+---------------------+-------------+---------+\n[root@controller tools]# openstack compute service list --long\n\n[root@controller tools]# \n[root@controller tools]# openstack hypervisor list --long\n\n[root@controller tools]# \n\nLogs from kolla deploy gates http://logs.openstack.org/08/456108/1/check/gate-kolla-dsvm-deploy-centos-source-centos-7-nv/9cf1e73/\n\nEnvironment:\n- source code\n- OS: centos/ubuntu/oraclelinux\n- Deployment type: kolla-ansible\n\nPlease let me know if more info is needed or if there is a workaround.\nRegards", 
+            "date_created": "2017-04-12 09:20:08.545038+00:00", 
+            "author": "https://api.launchpad.net/1.0/~egonzalez90"
+        }, 
+        {
+            "content": "Do you have the compute_nodes (hosts) mapped to a cell? Have you run the nova-manage cell_v2 discover_hosts command? Could be related to bug 1682001.", 
+            "date_created": "2017-04-14 13:17:50.148624+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It's likely a result of https://review.openstack.org/#/c/442162/ which requires that the hosts are mapped to the cell before you can list them out of the API.\n\nSee the setup sections in this doc for more details on discover_hosts:\n\nhttps://docs.openstack.org/developer/nova/cells.html\n\nAnd:\n\nhttps://docs.openstack.org/developer/nova/man/nova-manage.html#nova-cells-v2", 
+            "date_created": "2017-04-14 13:20:09.815930+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The problem described to me in the kolla IRC channel was kolla polls 'nova service-list' until the computes show up, otherwise if the computes aren't there when simple_cell_setup runs it will stop before it creates the first (main) cell.\n\nWith this change in the API: https://review.openstack.org/#/c/442162/21\n\nWe iterate the cells to list services, so if you don't have the cell created yet, you'll get nothing back.\n\nThe simple_cell_setup command is not great for a fresh install, since it's not so simple it turns out. It works a bit easier for upgrades from non-cells to cells but for a fresh install I wouldn't use it. I'd change tooling for a fresh install to follow the steps in this document:\n\nhttps://docs.openstack.org/developer/nova/cells.html#fresh-install", 
+            "date_created": "2017-04-14 13:42:11.695784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hmm, I see that https://review.openstack.org/#/c/442162/ also breaks step 6 in our cells v2 install guide which tells you to start your nova-compute services and then poll for them using the 'nova hypervisor-list' command, but that relies on the hosts being mapped in the cell first, and you need to run discover_hosts for that (which is step 7 in the install guide). So we have a bit of a catch-22 here. I'm going to re-open this bug for nova simply because we have a documentation issue that needs to be fixed.\n\nWe might also need to raise that as a DocImpact bug for the install guide in openstack-manuals.", 
+            "date_created": "2017-04-14 15:00:15.204483+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/456920", 
+            "date_created": "2017-04-14 15:17:28.986754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I've added openstack-manuals to this because it also tells you to use \"nova hypervisor-list\" to tell when a compute host is up and running but before running discover_hosts on it.\n\nhttps://docs.openstack.org/ocata/install-guide-ubuntu/nova-compute-install.html#add-the-compute-node-to-the-cell-database\n\nSo we need to update that as well.", 
+            "date_created": "2017-04-14 15:25:47.395895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/456923", 
+            "date_created": "2017-04-14 15:34:12.925953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/456944", 
+            "date_created": "2017-04-14 18:22:30.787801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/456944\nCommitted: https://git.openstack.org/cgit/openstack/openstack-manuals/commit/?id=b14a671f2259b5e053796a3318c7d9872d6b784d\nSubmitter: Jenkins\nBranch:    master\n\ncommit b14a671f2259b5e053796a3318c7d9872d6b784d\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Apr 14 14:18:48 2017 -0400\n\n    Update nova-compute-install steps for multi-cell support\n    \n    Similar to the nova change with the same change ID, we\n    need to update the install guide for Pike due to some\n    limitations in the compute API when supporting multiple\n    cells. The hypervisor list command will not work before the\n    hosts are discovered, and with the steps as they are now in the\n    guide, you wait to discover the hosts until the hypervisors\n    show up, which is a chicken-and-egg problem.\n    \n    The solution proposed is to use the openstack compute service\n    list command instead, which does not have the same host\n    discovery pre-requisite limitation. The nova cells install guide\n    docs are also being updated in the nova tree for the same issue.\n    \n    Kolla is also making a similar change for their Pike deployment\n    scripts:\n    \n    Id061e8039e72de77a04c51657705457193da2d0f\n    \n    Change-Id: If2baab40c2e2a3de20e561bba50688d615b002ef\n    Closes-Bug: #1682060\n", 
+            "date_created": "2017-04-15 12:30:53.457405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/456923\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9a5c3cd7da76a7340861d552718e7e46640f15be\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9a5c3cd7da76a7340861d552718e7e46640f15be\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Apr 14 11:21:17 2017 -0400\n\n    Add release note and update cell install guide for multi-cell limitations\n    \n    As of change If1e03c9343b8cc9c34bd51c2b4d25acdb21131ff, using\n    \"nova hypervisor-list\" before compute hosts are mapped to a cell\n    will result in an empty list.\n    \n    Our cells v2 install steps mention using 'nova hypervisor-list' after\n    creating a cell and starting compute services to tell when to run\n    the discover_hosts command, but now hypervisor-list won't work until\n    you've run discover_hosts, so it's a catch-22.\n    \n    This change adds a release note to let people writing deployment tools\n    to know about the change in behavior and also updates the install steps\n    to use service-list instead of hypervisor-list, since service-list does\n    not require the compute host to be mapped to the cell first.\n    \n    We are going to need to make a similar change in the OpenStack install\n    guide since that also mentions using 'nova hypervisor-list' before\n    discover_hosts.\n    \n    Change-Id: If2baab40c2e2a3de20e561bba50688d615b002ef\n    Closes-Bug: #1682060\n", 
+            "date_created": "2017-04-21 17:57:13.895131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/456920\nCommitted: https://git.openstack.org/cgit/openstack/kolla-ansible/commit/?id=5dfb81efc8975d68ed9b343ab85f6f937bdbec5d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5dfb81efc8975d68ed9b343ab85f6f937bdbec5d\nAuthor: Eduardo Gonzalez <email address hidden>\nDate:   Fri Apr 14 16:02:40 2017 +0100\n\n    Update simple_cell_setup to manual creation\n    \n    Simple_cell_setup is not recomended to use.\n    Is better create map_cell0 manually, create base\n    cell for non cell deployments and run discover_hosts.\n    \n    This PS migrate actual config to make use of described\n    workflow at [1]. We our actual workflow we're running\n    into the issue that services are not mapped until cells\n    are present, breaking deployment waiting for compute\n    services to appear.\n    \n    [1] https://docs.openstack.org/developer/nova/cells.html#fresh-install\n    \n    Change-Id: Id061e8039e72de77a04c51657705457193da2d0f\n    Closes-Bug: #1682060\n", 
+            "date_created": "2017-04-27 11:33:46.385473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b2 development milestone.", 
+            "date_created": "2017-06-08 21:53:02.958064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/kolla-ansible 5.0.0.0b2 development milestone.", 
+            "date_created": "2017-06-09 15:30:42.019997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/482513\nCommitted: https://git.openstack.org/cgit/openstack/kolla-ansible/commit/?id=045ce3ebb8f13b6efa6a1b9d33575e507d214d7f\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 045ce3ebb8f13b6efa6a1b9d33575e507d214d7f\nAuthor: Eduardo Gonzalez <email address hidden>\nDate:   Fri Apr 14 16:02:40 2017 +0100\n\n    Update simple_cell_setup to manual creation\n    \n    Simple_cell_setup is not recomended to use.\n    Is better create map_cell0 manually, create base\n    cell for non cell deployments and run discover_hosts.\n    \n    This PS migrate actual config to make use of described\n    workflow at [1]. We our actual workflow we're running\n    into the issue that services are not mapped until cells\n    are present, breaking deployment waiting for compute\n    services to appear.\n    \n    [1] https://docs.openstack.org/developer/nova/cells.html#fresh-install\n    \n    Change-Id: Id061e8039e72de77a04c51657705457193da2d0f\n    Closes-Bug: #1682060\n    (cherry picked from commit 5dfb81efc8975d68ed9b343ab85f6f937bdbec5d)\n", 
+            "date_created": "2017-09-22 11:21:02.463173+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

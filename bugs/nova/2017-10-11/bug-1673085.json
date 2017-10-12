@@ -1,0 +1,89 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-06-28 12:10:54.167402+00:00", 
+    "description": "I'm initially reporting this as a potential security issue but it might not be, I'm just looking for feedback from the VMT.\n\nThe scheduler_hints in the compute API are stored in the request_specs.spec column in the nova_api database:\n\nhttps://github.com/openstack/nova/blob/15.0.1/nova/db/sqlalchemy/api_models.py#L171\n\nThere is no limit on the size of the keys or values, or number of hints, in the API:\n\nhttps://github.com/openstack/nova/blob/15.0.1/nova/api/openstack/compute/schemas/scheduler_hints.py#L18\n\nThere are some pre-defined hints, but additionalProperties=True in the json schema means that one can provide any hints they want.\n\nSo I could boot a server with a scheduler_hints dict that has a million keys which are a million characters long. At best that just results in a 500 because the column size limit in the database rejects the json blob size. According to the mysql 5.7 docs:\n\nhttps://dev.mysql.com/doc/refman/5.7/en/string-type-overview.html\n\n\"TEXT[(M)] [CHARACTER SET charset_name] [COLLATE collation_name]\n\nA TEXT column with a maximum length of 65,535 (216 \u2212 1) characters. The effective maximum length is less if the value contains multibyte characters. Each TEXT value is stored using a 2-byte length prefix that indicates the number of bytes in the value.\"\n\nAt worst, I'm able to work backward from a million until I found out the limit at which I can fill the request_specs.spec column and then just hammer the compute API, filling up the nova_api database.\n\nSo there are two issues:\n\n1. No key/value size limit in the API json schema for scheduler hints.\n\n2. No quota limit on the number of hints one can provide (unlike quota limits on user-provided metadata key/value pairs which are limited to 255 for the key/value and 128 for the quota).\n\nAdd to this the fact that we never delete request_specs entries from the nova_api database automatically (that's being worked on here: https://review.openstack.org/#/c/391060/ ).\n\nThis might not be a security issue, it might just be poor API design and we can tighten things up to avoid a 500 error with quota limits and json schema validation on the key/value size on each hint, and also delete request specs when we delete an instance.", 
+    "tags": [
+        "api", 
+        "security"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1673085", 
+    "owner": "None", 
+    "id": 1673085, 
+    "index": 6731, 
+    "created": "2017-03-15 14:19:37.414634+00:00", 
+    "title": "scheduler hints are unbounded and never deleted", 
+    "comments": [
+        {
+            "content": "I'm initially reporting this as a potential security issue but it might not be, I'm just looking for feedback from the VMT.\n\nThe scheduler_hints in the compute API are stored in the request_specs.spec column in the nova_api database:\n\nhttps://github.com/openstack/nova/blob/15.0.1/nova/db/sqlalchemy/api_models.py#L171\n\nThere is no limit on the size of the keys or values, or number of hints, in the API:\n\nhttps://github.com/openstack/nova/blob/15.0.1/nova/api/openstack/compute/schemas/scheduler_hints.py#L18\n\nThere are some pre-defined hints, but additionalProperties=True in the json schema means that one can provide any hints they want.\n\nSo I could boot a server with a scheduler_hints dict that has a million keys which are a million characters long. At best that just results in a 500 because the column size limit in the database rejects the json blob size. According to the mysql 5.7 docs:\n\nhttps://dev.mysql.com/doc/refman/5.7/en/string-type-overview.html\n\n\"TEXT[(M)] [CHARACTER SET charset_name] [COLLATE collation_name]\n\nA TEXT column with a maximum length of 65,535 (216 \u2212 1) characters. The effective maximum length is less if the value contains multibyte characters. Each TEXT value is stored using a 2-byte length prefix that indicates the number of bytes in the value.\"\n\nAt worst, I'm able to work backward from a million until I found out the limit at which I can fill the request_specs.spec column and then just hammer the compute API, filling up the nova_api database.\n\nSo there are two issues:\n\n1. No key/value size limit in the API json schema for scheduler hints.\n\n2. No quota limit on the number of hints one can provide (unlike quota limits on user-provided metadata key/value pairs which are limited to 255 for the key/value and 128 for the quota).\n\nAdd to this the fact that we never delete request_specs entries from the nova_api database automatically (that's being worked on here: https://review.openstack.org/#/c/391060/ ).\n\nThis might not be a security issue, it might just be poor API design and we can tighten things up to avoid a 500 error with quota limits and json schema validation on the key/value size on each hint, and also delete request specs when we delete an instance.", 
+            "date_created": "2017-03-15 14:19:37.414634+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "For reference, here is the nova API subteam meeting log where this came up:\n\nhttp://eavesdrop.openstack.org/meetings/nova_api/2017/nova_api.2017-03-15-13.00.log.html", 
+            "date_created": "2017-03-15 14:22:18.579103+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "If I know that scheduler hints are stored in the request_specs.specs table and the size on that column is 65,535, then I could reasonably do something like:\n\nhints = {}\nfor x in xrange(64000):\n    hints[str(x)] = str(x)\n\nAnd then use those hints for the os:scheduler_hints field in the server create request body.", 
+            "date_created": "2017-03-15 14:32:44.789452+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "To start, we can almost certainly switch this report to Public Security and skip the embargo since the potential risk is already mentioned in the meeting log (and even called out as a possible security vulnerability). There doesn't seem to be much novel in this report which an interested attacker couldn't easily work out from the public discussion and a quick skim through the source code.\n\nAs for whether we issue an advisory, I think this will mostly boil down to whether there's a safe way to \"fix\" it in supported stable branches, or if this will need to be paired with some configuration to actually tune and enable the mitigation.", 
+            "date_created": "2017-03-15 15:41:49.630121+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "The fixes would be:\n\n1. Change the scheduler_hints json schema request validation to limit the length on key/value pairs. Changing the API like that is backward incompatible and generally requires a microversion, which we wouldn't backport to stable branches.\n\n2. To limit the number of hints per server create request, we could introduce a new qouta limit configuration option. This would implicitly change the behavior of the API, so might be in the same boat as #1 for backports.\n\n--\n\nSo given we can't really backport at least a microversion bump, then there is probably no reason to issue an advisory for this.", 
+            "date_created": "2017-03-15 18:08:43.884368+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Given comment #4 and the public nature of the issue, I'm going to go ahead and triage this report as Class B1 (A vulnerability that can only be fixed in master, security note for stable branches, e.g., default config value is insecure): https://security.openstack.org/vmt-process.html#incident-report-taxonomy", 
+            "date_created": "2017-03-15 20:09:00.694920+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I've added an OSSN task so the security note editors can decide if this is one they want to cover with some sort of warning for stable branches.", 
+            "date_created": "2017-03-15 20:13:53.764932+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "So if a backport is not possible, what would the full mitigation steps be for ocata and previous?\n\nadditionalProperties=False", 
+            "date_created": "2017-03-15 22:12:36.566514+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "@lhinds, no you can't set additionalProperties=False in the jsonschema because that changes the API in a backward incompatible way without a microversion, so it could break deployments/users.", 
+            "date_created": "2017-03-15 22:32:08.166604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Thanks Matt, so would I be right in saying there is no mitigation / recommended actions? For an OSSN we need to outline the problem, and more importantly provide recommended actions to take? \n\nFrom what I can see, this is an issue that can only be addressed with code changes?", 
+            "date_created": "2017-03-16 16:57:44.270672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "Its looking like this cannot be resolved with an OSSN. I will give this another week, and unless shown otherwise will mark it as wont' fix only under OpenStack Security Notes. ", 
+            "date_created": "2017-03-23 16:55:50.201410+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "Looks to me like like B1 + OSSA (public) is the most appropriate path?", 
+            "date_created": "2017-03-23 17:17:06.952759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "OSSA are specific to issues fixed in supported stable branches. If they can only be fixed in master (and so future major releases), we don't issue advisories because there is no fix for operators to apply.", 
+            "date_created": "2017-03-23 18:25:13.178253+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Older related ML thread:\n\nhttp://lists.openstack.org/pipermail/openstack-dev/2015-June/067996.html", 
+            "date_created": "2017-05-08 18:32:42.120356+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

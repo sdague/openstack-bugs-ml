@@ -1,0 +1,68 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 12:07:15.986066+00:00", 
+    "description": "When an instance was deleted Grizzly, a compute.instance.update event was sent when the instance's task state was changed to DELETING (per notify_on_state_change = vm_and_task_state setting in nova.conf).  This is no longer occurring in the Havana (see build level below). \n\nIt appears that the instance's task state is actually set to DELETING so this issue likely only affects event notifications.\n\nAfter looking at event notifications more closely, there appears to be other operations that aren't generating compute.instance.update events like they use to.  Note that, some compute.instance.update events are still being generated.\n\nHere's our nova.conf setup for notifications:\nnotification_driver = nova.openstack.common.notifier.rpc_notifier\nmonkey_patch_modules = nova.api.ec2.cloud:nova.notifier.api.notify_decorator,nova.compute.api:nova.notifier.api.notify_decorator\nnotify_on_state_change = vm_and_task_state\nnotification_topics = notifications\ndefault_notification_level = INFO\ndefault_publisher_id = $host", 
+    "tags": [
+        "unified-objects"
+    ], 
+    "importance": "High", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1220186", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1220186, 
+    "index": 1204, 
+    "created": "2013-09-03 11:08:26.799348+00:00", 
+    "title": "Missing compute.instance.update events for various instance operations.", 
+    "comments": [
+        {
+            "content": "When an instance was deleted in OSEE Grizzly, a compute.instance.update event was sent when the instance's task state was changed to DELETING (per notify_on_state_change = vm_and_task_state setting in nova.conf).  This is no longer occurring in the latest OSEE Havana build (see build level below).  SCE relies on update and other compute.instance.* events to function properly in its push mode of operation.  Without a compute.instance.update event for a DELETING task state change, OSEE may not generate any events for an instance that is deleted.  This can occur if the instance exists only in the database.\n\nIt appears that the instance's task state is actually set to DELETING so this issue likely only affects event notifications.\n\nAfter looking at event notifications more closely, there appears to be other operations that aren't generating compute.instance.update events like they use to.  Note that, some compute.instance.update events are still being generated. \n\nHere's our nova.conf setup for notifications:\nnotification_driver = nova.openstack.common.notifier.rpc_notifier\nmonkey_patch_modules = nova.api.ec2.cloud:nova.notifier.api.notify_decorator,nova.compute.api:nova.notifier.api.notify_decorator\nnotify_on_state_change = vm_and_task_state\nnotification_topics = notifications\ndefault_notification_level = INFO\ndefault_publisher_id = $host", 
+            "date_created": "2013-09-03 11:08:26.799348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gekun"
+        }, 
+        {
+            "content": "As to the original issue, the deleting nofication is never received, I found the root cause like this:\r\n\r\nIn the method of nova.objects.instance.Instance.save:\r\n1) it gets the changed fields by changes = self.obj_what_changed()\r\nhttps://github.com/openstack/nova/blob/master/nova/objects/instance.py#L416\r\n\r\n2) then It will notify the changes:\r\nhttps://github.com/openstack/nova/blob/master/nova/objects/instance.py#L455\r\n\r\n3) But right before step 2), the changes gets cleared in the method of self._from_db_object(context, self, inst_ref, expected_attrs)\r\nhttps://github.com/openstack/nova/blob/master/nova/objects/instance.py#L279\r\nSince the 'changes' variable in step 1) is just a reference to the set named '_changed_fileds' which the Instance object maintains, so it is affected or gets empty when the clearing happens in step3).\r\nSo no notification of deleting is received.\r\n", 
+            "date_created": "2013-09-03 11:09:46.867237+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gekun"
+        }, 
+        {
+            "content": "I guess a possible fix should like:\r\n\r\nwhen the nova.objects.base.NovaObject.obj_what_changed gets called, return a reference to a copy of \r\nself._changed_fields instead.\r\n\r\ndef obj_what_changed(self):        \r\n      \"\"\"Returns a set of fields that have been modified.\"\"\"        \r\n      return self._changed_fields\r\n\r\ndef obj_what_changed(self):        \r\n      \"\"\"Returns a set of fields that have been modified.\"\"\"        \r\n      return self._changed_fields.copy()\r\n\r\nDan, do you have any suggestions?\r\n\r\n\r\n", 
+            "date_created": "2013-09-03 11:21:35.790536+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gekun"
+        }, 
+        {
+            "content": "we need return a copy  of  self._changed_fields , not a reference .", 
+            "date_created": "2013-09-04 01:45:28.430446+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "I will take a look today.", 
+            "date_created": "2013-09-05 13:39:39.497978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/45235", 
+            "date_created": "2013-09-05 14:08:42.338293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/45235\nCommitted: http://github.com/openstack/nova/commit/6f89212498831724b1be7319676ea8ea506c93ae\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6f89212498831724b1be7319676ea8ea506c93ae\nAuthor: Dan Smith <email address hidden>\nDate:   Thu Sep 5 07:06:31 2013 -0700\n\n    Fix failure to emit notification on Instance.save()\n    \n    The ordering of things in Instance.save() meant that we were\n    consulting an emptied list of changes to determine if we should\n    send a notification. This fixes that by maintaining the\n    calculated list of fields being updated for that decision.\n    \n    Change-Id: I35ef56963713089e566815f37ed0ee4038694d91\n    Closes-bug: 1220186\n", 
+            "date_created": "2013-09-09 18:00:52.685144+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There is another issue here.  When doing a rename in grizzly, the notifications code would check if the 'display_name' changed, but the instance.save() method isn't checking for display_name:\n\nhttps://github.com/openstack/nova/blob/master/nova/notifications.py#L142\n\nThis might be because of the misleading comment in the nova.compute.api._update method:\n\nhttps://github.com/openstack/nova/blob/stable/grizzly/nova/compute/api.py#L1005\n\n    def _update(self, context, instance, **kwargs):\n        # Update the instance record and send a state update notification\n        # if task or vm state changed", 
+            "date_created": "2013-09-18 21:27:03.071374+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/47262", 
+            "date_created": "2013-09-18 21:47:14.349248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/47262\nCommitted: http://github.com/openstack/nova/commit/919eced81f041d3a91871a50e1b3bf3f9c6eb989\nSubmitter: Jenkins\nBranch:    master\n\ncommit 919eced81f041d3a91871a50e1b3bf3f9c6eb989\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Sep 18 14:33:27 2013 -0700\n\n    Send notification for any updates to instance objects\n    \n    Before objects, a notification would be sent for any change to an\n    instance and the notifications.send_update method would handle any\n    filtering that needed to be done prior to sending the event.\n    \n    Currently, the instance objects code is pre-filtering the notification\n    by only checking if vm_state or task_state changed which is a\n    regression.\n    \n    This patch removes the filter in the instance objects code so that\n    notifications are again sent for any changes to the instance and lets\n    the notifications.send_update method handle the event as it did before.\n    \n    Closes-Bug: #1220186\n    \n    Change-Id: Ib6ceedfe55b021be0fe7fa910e97d46c0cd8f0cd\n", 
+            "date_created": "2013-09-19 18:30:59.267776+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

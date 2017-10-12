@@ -1,0 +1,60 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-09-16 00:18:07.117132+00:00", 
+    "description": "I see this error in the nova-api.log (the one from the compute node) when running a stress test that starts/kills vms rapidly. This is from a diablo-stable cluster with one controller and two compute nodes, using multi-host with nova-network and nova-api running on each compute node. It happens maybe 20% of the runs. Is is possible there is a race condition involving tearing down a vm and removing its fixed ip from this database?\nI am working on getting the stress tests checked into Tempest as soon as possible.\n\n2012-01-25 17:10:56,282 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'fixed_ip': '10.\\\n0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n2012-01-25 17:10:56,400 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'project_id': 't\\\nestproject'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n2012-01-25 17:10:56,553 INFO nova.api [-] 0.271808s 10.0.0.6 GET /2009-04-04/meta-data/local-hostname None:None 200 [Python-url\\\nlib/2.7] text/plain text/html\n2012-01-25 17:10:56,556 DEBUG nova.compute.api [0fef399b-6d27-4e20-a745-badad830ac9c None None] Searching by: {'fixed_ip': '10.\\\n0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n2012-01-25 17:10:56,634 ERROR nova.api.ec2.metadata [-] Failed to get metadata for ip: 10.0.0.6\n2012-01-25 17:10:56,634 INFO nova.api [-] 0.78120s 10.0.0.6 GET /2009-04-04/meta-data/placement/ None:None 404 [Python-urllib/2\\\n.7] text/plain text/plain", 
+    "tags": [
+        "api", 
+        "icehouse-backport-potential", 
+        "network"
+    ], 
+    "importance": "Medium", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/921858", 
+    "owner": "None", 
+    "id": 921858, 
+    "index": 2730, 
+    "created": "2012-01-25 22:26:57.851663+00:00", 
+    "title": "Sporadic 'Failed to get metadata for ip:'", 
+    "comments": [
+        {
+            "content": "I see this error in the nova-api.log (the one from the compute node) when running a stress test that starts/kills vms rapidly. This is from a diablo-stable cluster with one controller and two compute nodes, using multi-host with nova-network and nova-api running on each compute node. It happens maybe 20% of the runs. Is is possible there is a race condition involving tearing down a vm and removing its fixed ip from this database?\nI am working on getting the stress tests checked into Tempest as soon as possible.\n\n2012-01-25 17:10:56,282 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'fixed_ip': '10.\\\n0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n2012-01-25 17:10:56,400 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'project_id': 't\\\nestproject'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n2012-01-25 17:10:56,553 INFO nova.api [-] 0.271808s 10.0.0.6 GET /2009-04-04/meta-data/local-hostname None:None 200 [Python-url\\\nlib/2.7] text/plain text/html\n2012-01-25 17:10:56,556 DEBUG nova.compute.api [0fef399b-6d27-4e20-a745-badad830ac9c None None] Searching by: {'fixed_ip': '10.\\\n0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n2012-01-25 17:10:56,634 ERROR nova.api.ec2.metadata [-] Failed to get metadata for ip: 10.0.0.6\n2012-01-25 17:10:56,634 INFO nova.api [-] 0.78120s 10.0.0.6 GET /2009-04-04/meta-data/placement/ None:None 404 [Python-urllib/2\\\n.7] text/plain text/plain", 
+            "date_created": "2012-01-25 22:26:57.851663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Yep, we call deallocate_for_instance before calling driver.destroy (see below)\n\nPerhaps this needs to be reversed, although we will have to do some testing to verify that doesn't break anything.\n\n\n 586     def _shutdown_instance(self, context, instance, action_str):\n 587         \"\"\"Shutdown an instance on this host.\"\"\"\n 588         context = context.elevated()\n 589         instance_id = instance['id']\n 590         instance_uuid = instance['uuid']\n 591         LOG.audit(_(\"%(action_str)s instance %(instance_uuid)s\") %\n 592                   {'action_str': action_str, 'instance_uuid': instance_uuid},\n 593                   context=context)\n 594 \n 595         network_info = self._get_instance_nw_info(context, instance)\n 596         if not FLAGS.stub_network:\n 597             self.network_api.deallocate_for_instance(context, instance)\n 598 \n 599         if instance['power_state'] == power_state.SHUTOFF:\n 600             self.db.instance_destroy(context, instance_id)\n 601             raise exception.Error(_('trying to destroy already destroyed'\n 602                                     ' instance: %s') % instance_uuid)\n 603         # NOTE(vish) get bdms before destroying the instance\n 604         bdms = self._get_instance_volume_bdms(context, instance_id)\n 605         block_device_info = self._get_instance_volume_block_device_info(\n 606             context, instance_id)\n 607         self.driver.destroy(instance, network_info, block_device_info)\n\n\nVish\n\nOn Jan 25, 2012, at 2:26 PM, David Kranz wrote:\n\n> Public bug reported:\n> \n> I see this error in the nova-api.log (the one from the compute node) when running a stress test that starts/kills vms rapidly. This is from a diablo-stable cluster with one controller and two compute nodes, using multi-host with nova-network and nova-api running on each compute node. It happens maybe 20% of the runs. Is is possible there is a race condition involving tearing down a vm and removing its fixed ip from this database?\n> I am working on getting the stress tests checked into Tempest as soon as possible.\n> \n> 2012-01-25 17:10:56,282 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'fixed_ip': '10.\\\n> 0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n> 2012-01-25 17:10:56,400 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'project_id': 't\\\n> estproject'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n> 2012-01-25 17:10:56,553 INFO nova.api [-] 0.271808s 10.0.0.6 GET /2009-04-04/meta-data/local-hostname None:None 200 [Python-url\\\n> lib/2.7] text/plain text/html\n> 2012-01-25 17:10:56,556 DEBUG nova.compute.api [0fef399b-6d27-4e20-a745-badad830ac9c None None] Searching by: {'fixed_ip': '10.\\\n> 0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n> 2012-01-25 17:10:56,634 ERROR nova.api.ec2.metadata [-] Failed to get metadata for ip: 10.0.0.6\n> 2012-01-25 17:10:56,634 INFO nova.api [-] 0.78120s 10.0.0.6 GET /2009-04-04/meta-data/placement/ None:None 404 [Python-urllib/2\\\n> .7] text/plain text/plain\n> \n> ** Affects: nova\n>     Importance: Undecided\n>         Status: New\n> \n> -- \n> You received this bug notification because you are subscribed to\n> OpenStack Compute (nova).\n> https://bugs.launchpad.net/bugs/921858\n> \n> Title:\n>  Sporadic 'Failed to get metadata for ip:'\n> \n> Status in OpenStack Compute (Nova):\n>  New\n> \n> Bug description:\n>  I see this error in the nova-api.log (the one from the compute node) when running a stress test that starts/kills vms rapidly. This is from a diablo-stable cluster with one controller and two compute nodes, using multi-host with nova-network and nova-api running on each compute node. It happens maybe 20% of the runs. Is is possible there is a race condition involving tearing down a vm and removing its fixed ip from this database?\n>  I am working on getting the stress tests checked into Tempest as soon as possible.\n> \n>  2012-01-25 17:10:56,282 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'fixed_ip': '10.\\\n>  0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n>  2012-01-25 17:10:56,400 DEBUG nova.compute.api [58fba9aa-f844-4edb-84f4-4d5877450762 None None] Searching by: {'project_id': 't\\\n>  estproject'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n>  2012-01-25 17:10:56,553 INFO nova.api [-] 0.271808s 10.0.0.6 GET /2009-04-04/meta-data/local-hostname None:None 200 [Python-url\\\n>  lib/2.7] text/plain text/html\n>  2012-01-25 17:10:56,556 DEBUG nova.compute.api [0fef399b-6d27-4e20-a745-badad830ac9c None None] Searching by: {'fixed_ip': '10.\\\n>  0.0.6'} from (pid=1093) get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:863\n>  2012-01-25 17:10:56,634 ERROR nova.api.ec2.metadata [-] Failed to get metadata for ip: 10.0.0.6\n>  2012-01-25 17:10:56,634 INFO nova.api [-] 0.78120s 10.0.0.6 GET /2009-04-04/meta-data/placement/ None:None 404 [Python-urllib/2\\\n>  .7] text/plain text/plain\n> \n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/921858/+subscriptions\n\n", 
+            "date_created": "2012-01-25 23:27:51+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "This could be the cause of the other '404 on list after instance delete' bug (that I can't find right now).", 
+            "date_created": "2012-01-27 17:25:29.269499+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "This bug looks super old but I am seeing this in the check queue right now in the nova metadata api service:\n\nhttp://logs.openstack.org/63/84363/2/check/check-tempest-dsvm-postgres-full/eb1d11d/logs/screen-n-api-meta.txt.gz\n\nhttp://goo.gl/eBmE7Z", 
+            "date_created": "2014-04-21 20:16:18.148489+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Note that when this shows up in the check queue, it's still 95% success rate in the job, the tests are passing, it's just dirty logs.  So I guess we should clean the log in Juno:\n\nhttps://github.com/openstack/nova-specs/blob/master/specs/juno/clean-logs.rst", 
+            "date_created": "2014-04-21 20:18:24.388884+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "elastic-recheck query: https://review.openstack.org/#/c/89572/", 
+            "date_created": "2014-04-22 13:42:01.835920+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Searching 143 hits for the query above, all failures seem to be in postgres jobs. stable/icehouse also appears to be affected.\n\nbuild_name\n  81% check-tempest-dsvm-postgres-full\n  17% gate-tempest-dsvm-postgres-full\n  0% check-tempest-dsvm-postgres-full-icehouse", 
+            "date_created": "2014-06-19 16:04:29.749061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "No hits in elastic-recheck any more, looks like this was resolved", 
+            "date_created": "2014-08-29 23:59:04.192121+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }
+    ]
+}

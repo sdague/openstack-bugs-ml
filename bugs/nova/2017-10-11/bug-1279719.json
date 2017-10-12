@@ -1,0 +1,108 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:51:52.549032+00:00", 
+    "description": "Fails to createVM with extra_spec using ComputeCapabilitiesFilter, the scheduler will always fail to find a suitable host.\n\n------------\n\nHere's the test steps:\n\n1. Create an aggregate, and set its metadata, like ssd=True.\n\n2. Add one host to this aggregate.\n\n3. Create a new flavor, set extra_spcs like ssd=True.\n\n4. Create a new VM using this flavor.\n\n5. Creation failed due to no valid hosts.\n\n-------------\nLet's look at the codes:\nIn ComputeCapabilitiesFilter, it'll match hosts' capacities with extra_spec.\n\nBefore in Grizzly, there's a periodic_task named '_report_driver_status()' to report hosts' capacities.\nBut in Havana, the task is canceled. So the capacities won't be updated, the value is always 'None'.\n\nSo, if you boot a VM with extra_spec, those hosts will be filtered out.\nAnd the exception will be raised.\n\n-----------------\n\nSome observations with this filter:\n1- only first level properties can be used without 'capabilities' scope\nThis will be correct:\n\u00a0\u00a0\u00a0\u00a0hypervisor_type = QEMU\nThis will fail:\n\u00a0\u00a0\u00a0\u00a0cpu_info:features <in> aes\n\u00a0\u00a0\u00a0\u00a0cpu_info:vendor = Intel\n\nFrom the docs:\n\nComputeCapabilitiesFilter\n\nMatches properties defined in an instance type's extra specs against compute capabilities.\n\nIf an extra specs key contains a colon \":\", anything before the colon is treated as a namespace, and anything after the colon is treated as the key to be matched. If a namespace is present and is not 'capabilities', it is ignored by this filter.\n\n2- If you use both filters, ComputeCapabilitiesFilter and AggregateInstanceExtraSpecFilter, you can't use non-scoped extra_specs. That decisions were made here:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0https://bugs.launchpad.net/nova/+bug/1037503\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0https://bugs.launchpad.net/nova/+bug/1039386\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0http://www.gossamer-threads.com/lists/openstack/dev/18355\n\n3- cpu_info data is loaded as unicode in HostState. ComputeCapabilitiesFilter fails to get attributes from this property.\nThis will fail:\n\u00a0\u00a0\u00a0\u00a0capabilities:cpu_info:features <in> aes\n\nThis last one is addressed here:\n     https://bugs.launchpad.net/nova/+bug/1331176", 
+    "tags": [
+        "scheduler"
+    ], 
+    "importance": "Low", 
+    "heat": 36, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1279719", 
+    "owner": "https://api.launchpad.net/1.0/~sorantis", 
+    "id": 1279719, 
+    "index": 6055, 
+    "created": "2014-02-13 09:52:52.624944+00:00", 
+    "title": "Fail to createVM with extra_spec using ComputeCapabilitiesFilter", 
+    "comments": [
+        {
+            "content": "Fails to createVM with extra_spec using ComputeCapabilitiesFilter, the scheduler will always fail to find a suitable host.\n\n------------\n\nHere's the test steps:\n\n1. Create an aggregate, and set its metadata, like ssd=True.\n\n2. Add one host to this aggregate.\n\n3. Create a new flavor, set extra_spcs like ssd=True.\n\n4. Create a new VM using this flavor.\n\n5. Creation failed due to no valid hosts.\n\n-------------\nLet's look at the codes:\nIn ComputeCapabilitiesFilter, it'll match hosts' capacities with extra_spec.\n\nBefore in Grizzly, there's a periodic_task named '_report_driver_status()' to report hosts' capacities.\nBut in Havana, the task is canceled. So the capacities won't be updated, the value is always 'None'.\n\nSo, if you boot a VM with extra_spec, those hosts will be filtered out.\nAnd the exception will be raised.", 
+            "date_created": "2014-02-13 09:52:52.624944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "I can reproduce this too.\nBut using AggregateInstanceExtraSpecFilters seems to work ok.\n\n", 
+            "date_created": "2014-02-13 14:47:38.013519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~leandro-i-costantino"
+        }, 
+        {
+            "content": "So, should we need to add some notes for ComputeCapabilitiesFilter in Nova codes?\n\nLike this in compute_capabilities_filter.py:\n---------\nclass ComputeCapabilitiesFilter(filters.BaseHostFilter):\n    \"\"\"HostFilter hard-coded to work with InstanceType records.\n         Note: This filter will not work with aggregate/extra_spec in flavor yet.\"\"\"", 
+            "date_created": "2014-02-15 08:16:25.129614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/74071", 
+            "date_created": "2014-02-17 15:11:01.730049+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "According to this Bug, if the needs is to filter on aggregates extra_spec the AggregateInstanceExtraSpecFilters is available for use.\n\nAfter a blue print, the _report_driver_status() was removed.\n\nIs it Correct to add host capability with the aggregate capability only because that host is added to that aggregate?\nIf that behaviour is the expected, the host capabilities could be updated in the \"Add one host to aggregate\"\n\nThe other approach is to duplicate the AggregateInstanceExtraSpecFilters to extract the capabilities from the aggregate that the host belong but I don't think this is a good idea.", 
+            "date_created": "2014-03-10 14:27:08.926128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~juan-m-olle"
+        }, 
+        {
+            "content": "There are two problems here. One, is the fact that the capabilities are not updated because the periodic task has been removed. That is not a problem if the capabilities needed are those explosed by the hypervisor. But if there is something that has to be added manually, that will never be updated in nova. \nIn the other hand, there is a problem with the host state when it is updated from compute_node. The cpu_info is loaded as unicode string and that breaks the filter because it expect a dict.\n\nFixing that this types of extra_specs are working:\n- (capabilities:cpu_info:vendor, Intel)\n- (capabilities:cpu_info:topology:cores, 2)\n- (capabilities:cpu_info:features, <in> rdtscp)\n", 
+            "date_created": "2014-04-22 18:43:25.340556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~facundo-n-maldonado"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/89844", 
+            "date_created": "2014-04-23 13:51:51.597802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "I also meet this bug, I think this should be merged as soon as possible.", 
+            "date_created": "2014-06-13 05:22:49.884189+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shuangtai-tian"
+        }, 
+        {
+            "content": "Separate the encoding issue into another bug based on reviews feedback.\nhttps://bugs.launchpad.net/nova/+bug/1331176\n", 
+            "date_created": "2014-06-17 20:31:14.060799+00:00", 
+            "author": "https://api.launchpad.net/1.0/~facundo-n-maldonado"
+        }, 
+        {
+            "content": "There is a documentation bug at https://bugs.launchpad.net/openstack-manuals/+bug/1330962 and a patch submitted for the doc:  https://review.openstack.org/101640\n\nAlso, I think for the unscoped namespace, we should enhance the API so that if user try to create a unscoped extra_spec, we should fail (of course, only w/ an extension).\n\nThanks\n--jyh", 
+            "date_created": "2014-06-20 21:04:44.607181+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "No longer in progress. Unclear if the other patches that landed have fixed this. Please confirm that this is still something we need to address.", 
+            "date_created": "2014-09-17 19:37:25.165941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I can confirm this issue still exists in '2014.1.3'\n\nI created a custom flavor with no extra_specs set and builds progressed with the --availability-zone <zone> flag without issue. After adding extra_specs, immediate error on nova boot with ComputeCapabilities filter narrowing down to 0 hosts.", 
+            "date_created": "2014-11-21 23:32:00.399829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wdarrenc"
+        }, 
+        {
+            "content": "I reproduced this bug in Juno.\nAnd I tried to make specs specific to the filter, like:\naggregate_instance_extra_specs:ssd\naggregate_instance_extra_specs:ceph\n\nBut it is not clear for me, why it is still fails with the same error\n\"Filter ComputeCapabilitiesFilter returned 0 hosts \"\n\nDid I understand right that compute_capabilities_filter.py (https://github.com/openstack/nova/blob/stable/juno/nova/scheduler/filters/compute_capabilities_filter.py) should ignore all specs not in \"capabilites\" scope, and return all hosts, like if specs are empty?", 
+            "date_created": "2015-01-22 17:46:03.912845+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexbozhenko"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2015-04-02 04:17:50.980690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "This bug is still valid, please reopen.", 
+            "date_created": "2015-04-02 04:31:52.492437+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexbozhenko"
+        }, 
+        {
+            "content": "I've been looking at this issue and perhaps I'll repeat the obvious, but still, here it is:\n\nBoth ComputeCapabilitiesFilter and AggregateInstanceExtraSpecsFilter equally handle the case when there's no scope format defined in extra_specs. That's why if both filters are enabled then scheduler will fail to pick a host because what's right for an aggregate can be wrong for a compute host.\n\nOne proposal could be to leave it as it is and then update the docs stating that the two filters must not be used together.\nAnother approach would be to force a certain scope format on one of the filters, for example apply ComputeCapabilitiesFilter only in case extra_specs has been written like capabilities:key:value. This will result in a small change in the compute_capabilities_filter.py file. \nSince there was no update on this bug for almost a month I can start working on it.", 
+            "date_created": "2015-04-27 14:50:40.452312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorantis"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/177824", 
+            "date_created": "2015-04-27 15:35:51.529572+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/177824\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=193ca209e79383942858a30aed704370375951fe\nSubmitter: Jenkins\nBranch:    master\n\ncommit 193ca209e79383942858a30aed704370375951fe\nAuthor: Dimitri Mazmanov <email address hidden>\nDate:   Mon Apr 27 17:32:12 2015 +0200\n\n    Fix documentation for scheduling filters\n    \n    ComputeCapabilitiesFilter will fail to pick a host if used\n    along with AggregateInstanceExtraSpecsFilter. This fix will at least\n    warn the users that they shouldn't use the two filters together.\n    \n    Change-Id: I98b1eef6484bffc4305ff84e8badbde7992132ed\n    Fixes-Bug: #1279719\n", 
+            "date_created": "2015-05-06 02:24:25.386064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

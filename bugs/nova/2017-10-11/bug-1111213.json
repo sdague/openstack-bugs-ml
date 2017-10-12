@@ -1,0 +1,51 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-05 15:08:02.725406+00:00", 
+    "description": "Reproduce steps in devstack:\n1. create an instance(a instance doesn't support acpi is better)\n2. soft reboot it\n3. wait a minute and delete it\nthis is a race condition issue, so it is probabilistic to reproduce it, but you can add a time.sleep(10) to nova/virt/libvirt/driver.py:_destroy(), just like this:\n        LOG.info(_(\"Instance destroyed successfully.\"),\n                         instance=instance)\n                raise utils.LoopingCallDone()\n\n        LOG.debug(_(\"-----------------------sleep 10 start-------------------------\"))\n        time.sleep(10)\n        timer = utils.FixedIntervalLoopingCall(_wait_for_destroy)\nthen the instance can not be deleted even when we delete it several times.\n\nThe reason may be that:\n1. soft reboot will wait for instance become to 'shutdown', and then start it\n2. delete operation also wait for this, and then clean up the instance\n3. if soft reboot found the instance become to 'shutdown' firstly, it will start it immediately\n4. then the delete operation will go to the _wait_for_destroy loop, and the loop may be endless\n5. when we delete the instance again, because the lock was hold by the delete operation before, this one will wait the lock and don't implement actually.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1111213", 
+    "owner": "https://api.launchpad.net/1.0/~hzwangpan", 
+    "id": 1111213, 
+    "index": 949, 
+    "created": "2013-01-31 08:04:07.423781+00:00", 
+    "title": "Instance can not be deleted after soft reboot", 
+    "comments": [
+        {
+            "content": "Reproduce steps in devstack:\n1. create an instance(a instance doesn't support acpi is better)\n2. soft reboot it\n3. wait a minute and delete it\nthis is a race condition issue, so it is probabilistic to reproduce it, but you can add a time.sleep(10) to nova/virt/libvirt/driver.py:_destroy(), just like this:\n        LOG.info(_(\"Instance destroyed successfully.\"),\n                         instance=instance)\n                raise utils.LoopingCallDone()\n\n        LOG.debug(_(\"-----------------------sleep 10 start-------------------------\"))\n        time.sleep(10)\n        timer = utils.FixedIntervalLoopingCall(_wait_for_destroy)\nthen the instance can not be deleted even when we delete it several times.\n\nThe reason may be that:\n1. soft reboot will wait for instance become to 'shutdown', and then start it\n2. delete operation also wait for this, and then clean up the instance\n3. if soft reboot found the instance become to 'shutdown' firstly, it will start it immediately\n4. then the delete operation will go to the _wait_for_destroy loop, and the loop may be endless\n5. when we delete the instance again, because the lock was hold by the delete operation before, this one will wait the lock and don't implement actually.", 
+            "date_created": "2013-01-31 08:04:07.423781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "Hi Matthew, I have already post a commit to fix this bug,\nhttps://review.openstack.org/#/c/20883/2", 
+            "date_created": "2013-02-01 03:42:50.258351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/22130", 
+            "date_created": "2013-02-17 02:00:05.648312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22130\nCommitted: http://github.com/openstack/nova/commit/27330ac85c4353d9124b8788c727e1ce40f55ea8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 27330ac85c4353d9124b8788c727e1ce40f55ea8\nAuthor: Wangpan <email address hidden>\nDate:   Sun Feb 17 09:57:23 2013 +0800\n\n    Fix instance can not be deleted after soft reboot\n    \n    The reason is that:\n    1. soft reboot will wait for instance become to 'shutdown', and then start it\n    2. delete operation also wait for this, and then clean up the instance\n    3. if soft reboot found the instance become to 'shutdown' firstly, it will\n    start it immediately\n    4. then the delete operation will go to the _wait_for_destroy loop, and the\n    loop may be endless\n    5. when we delete the instance again, because the lock was hold by the delete\n    operation before, this one will wait the lock and don't implement actually.\n    So the domain id is checked during _wait_for_destroy loop, if it changed and\n    the instance is still running, we need to destroy it again.\n    If the domain is booted after _wait_for_destroy, it may result in\n    unfilter_instance failed because the nwfilter is in use, so doing the same\n    thing as above.\n    \n    Fixes Bug #1111213\n    \n    Change-Id: I98dc902dd86fa828f5821465c611953e08f9f637\n", 
+            "date_created": "2013-02-21 08:21:59.509503+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/23053", 
+            "date_created": "2013-02-27 00:49:18.480999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/23069\nCommitted: http://github.com/openstack/nova/commit/5eed26fec4185dfcd8e9c1877a5a47068b0f3cc6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5eed26fec4185dfcd8e9c1877a5a47068b0f3cc6\nAuthor: Wangpan <email address hidden>\nDate:   Wed Feb 27 14:41:41 2013 +0800\n\n    Catching InstanceNotFound exception during reboot instance\n    \n    If the instance is deleted during reboot(most of soft reboot), an\n    InstanceNotFound exception may be raised when update instance info to DB,\n    and the instance may become running deleted, so catching the exception and\n    logging it.\n    This commit is a supplement of bug #1111213, which may result in the instance\n    becomes running deleted, when deleting an instance after soft reboot.\n    \n    Change-Id: I3e8df109d431040c64e87f16ca84ff5b62dde898\n", 
+            "date_created": "2013-03-05 04:08:15.392601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "stable/folsom review was abandoned", 
+            "date_created": "2013-04-05 14:31:21.907611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }
+    ]
+}

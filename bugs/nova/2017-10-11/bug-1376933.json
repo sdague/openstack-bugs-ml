@@ -1,0 +1,44 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:16:51.046959+00:00", 
+    "description": "If the _poll_unconfirmed_resizes periodic task runs in nova/compute/manager.py:ComputeManager._finish_resize() after the migration record has been updated in the database but before the instances has been updated.\n\n2014-09-30 16:15:00.897 112868 INFO nova.compute.manager [-] Automatically confirming migration 207 for instance 799f9246-bc05-4ae8-8737-4f358240f586\n2014-09-30 16:15:01.109 112868 WARNING nova.compute.manager [-] [instance: 799f9246-bc05-4ae8-8737-4f358240f586] Setting migration 207 to error: In states stopped/resize_finish, not RESIZED/None\n\nThis causes _poll_unconfirmed_resizes to see that the VM task_state is still 'resize_finish' instead of None, and set the migration record to error state. Which in turn causes the VM to be stuck in resizing forever. \n\nTwo fixes have been proposed for this issue so far but were reverted because they caused other race conditions. See the following two bugs for more details.\n\nhttps://bugs.launchpad.net/nova/+bug/1321298\nhttps://bugs.launchpad.net/nova/+bug/1326778\n\nThis timing issue still exists in Juno today in an environment with periodic tasks set to run once every 60 seconds and with a resize_confirm_window of 1 second.\n\nWould a possible solution for this be to change the code in _poll_unconfirmed_resizes() to ignore any VMs with a task state of 'resize_finish' instead of setting the corresponding migration record to error? This is the task_state it should have right before changed to None in finish_resize(). Then next time _poll_unconfirmed_resizes() is called, the migration record will still be fetched and the VM will be checked again and in the updated vm_state/task_state.\n\nadd the following in _poll_unconfirmed_resizes():\n\n             # This removes a race condition\n            if task_state == 'resize_finish':\n                continue\n\nprior to: \n            elif vm_state != vm_states.RESIZED or task_state is not None:\n                reason = (_(\"In states %(vm_state)s/%(task_state)s, not \"\n                           \"RESIZED/None\") %\n                          {'vm_state': vm_state,\n                           'task_state': task_state})\n                _set_migration_to_error(migration, reason,\n                                        instance=instance)\n                continue", 
+    "tags": [
+        "in-stable-juno", 
+        "juno-backport-potential"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1376933", 
+    "owner": "https://api.launchpad.net/1.0/~jmulsow", 
+    "id": 1376933, 
+    "index": 5194, 
+    "created": "2014-10-02 21:23:53.417929+00:00", 
+    "title": "_poll_unconfirmed_resize timing window causes instance to stay in verify_resize state forever", 
+    "comments": [
+        {
+            "content": "If the _poll_unconfirmed_resizes periodic task runs in nova/compute/manager.py:ComputeManager._finish_resize() after the migration record has been updated in the database but before the instances has been updated.\n\n2014-09-30 16:15:00.897 112868 INFO nova.compute.manager [-] Automatically confirming migration 207 for instance 799f9246-bc05-4ae8-8737-4f358240f586\n2014-09-30 16:15:01.109 112868 WARNING nova.compute.manager [-] [instance: 799f9246-bc05-4ae8-8737-4f358240f586] Setting migration 207 to error: In states stopped/resize_finish, not RESIZED/None\n\nThis causes _poll_unconfirmed_resizes to see that the VM task_state is still 'resize_finish' instead of None, and set the migration record to error state. Which in turn causes the VM to be stuck in resizing forever. \n\nTwo fixes have been proposed for this issue so far but were reverted because they caused other race conditions. See the following two bugs for more details.\n\nhttps://bugs.launchpad.net/nova/+bug/1321298\nhttps://bugs.launchpad.net/nova/+bug/1326778\n\nThis timing issue still exists in Juno today in an environment with periodic tasks set to run once every 60 seconds and with a resize_confirm_window of 1 second.\n\nWould a possible solution for this be to change the code in _poll_unconfirmed_resizes() to ignore any VMs with a task state of 'resize_finish' instead of setting the corresponding migration record to error? This is the task_state it should have right before changed to None in finish_resize(). Then next time _poll_unconfirmed_resizes() is called, the migration record will still be fetched and the VM will be checked again and in the updated vm_state/task_state.\n\nadd the following in _poll_unconfirmed_resizes():\n\n             # This removes a race condition\n            if task_state == 'resize_finish':\n                continue\n\nprior to: \n            elif vm_state != vm_states.RESIZED or task_state is not None:\n                reason = (_(\"In states %(vm_state)s/%(task_state)s, not \"\n                           \"RESIZED/None\") %\n                          {'vm_state': vm_state,\n                           'task_state': task_state})\n                _set_migration_to_error(migration, reason,\n                                        instance=instance)\n                continue", 
+            "date_created": "2014-10-02 21:23:53.417929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jmulsow"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/127640", 
+            "date_created": "2014-10-10 19:46:18.088760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/127640\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0a84bb80c2ea66a806395964684e07d7bc6accbd\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0a84bb80c2ea66a806395964684e07d7bc6accbd\nAuthor: Jennifer Mulsow <email address hidden>\nDate:   Fri Oct 10 14:17:29 2014 -0500\n\n    Keep migration status if instance still resizing\n    \n    There is a race condition during finish_resize() where\n    poll_unconfirmed_resizes() can get called between the database save\n    of the migration record and instance record. The migration record\n    will be marked 'finished', enabling poll_unconfirmed_resizes() to pick\n    it up. But the instance will not have been saved yet to have the\n    vm_state of RESIZED, and task_state of None. The task_state will\n    still be RESIZE_FINISH. This will cause poll_unconfirmed_resizes() to\n    put the migration record in error state.\n    \n    Instead, poll_unconfirmed_resizes() should ignore instances with\n    a task state of RESIZE_FINISH and not put the migration record\n    into error state.\n    \n    Change-Id: I825234de5e4a4f0cc906ac05b715ed85cd953aa1\n    Closes-Bug: #1376933\n", 
+            "date_created": "2014-10-22 22:21:34.170977+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/130610", 
+            "date_created": "2014-10-23 17:55:47.997250+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/130610\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9bb36c3685a460f3725b8b704039697649eee384\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 9bb36c3685a460f3725b8b704039697649eee384\nAuthor: Jennifer Mulsow <email address hidden>\nDate:   Fri Oct 10 14:17:29 2014 -0500\n\n    Keep migration status if instance still resizing\n    \n    There is a race condition during finish_resize() where\n    poll_unconfirmed_resizes() can get called between the database save\n    of the migration record and instance record. The migration record\n    will be marked 'finished', enabling poll_unconfirmed_resizes() to pick\n    it up. But the instance will not have been saved yet to have the\n    vm_state of RESIZED, and task_state of None. The task_state will\n    still be RESIZE_FINISH. This will cause poll_unconfirmed_resizes() to\n    put the migration record in error state.\n    \n    Instead, poll_unconfirmed_resizes() should ignore instances with\n    a task state of RESIZE_FINISH and not put the migration record\n    into error state.\n    \n    Change-Id: I825234de5e4a4f0cc906ac05b715ed85cd953aa1\n    Closes-Bug: #1376933\n    (cherry picked from commit 0a84bb80c2ea66a806395964684e07d7bc6accbd)\n", 
+            "date_created": "2014-11-01 16:04:20.899416+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

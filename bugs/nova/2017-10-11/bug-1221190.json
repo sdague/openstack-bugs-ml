@@ -1,0 +1,449 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:12:54.827009+00:00", 
+    "description": "Rescuing an instance seems to guess the image format at some point. This allows reading files from the compute host via the qcow2 backing file.\n\nRequirements:\n- instances spawned using libvirt\n- use_cow_images = False in the config\n\nTo reproduce:\n1. Create a qcow2 file backed by the path you want to read from the compute host. (qemu-img create -f qcow2 -b /path/to/the/file $((1024*1024)) evil.qcow2)\n2. Spawn an instance, scp the file into it.\n3. Overwrite the disk inside the instance (dd if=evil.qcow2 of=/dev/vda)\n4. Shutdown the instance.\n5. Rescue the instance\n6. While in rescue mode, login and read /dev/vdb - beginning should be read from the qcow backing file\n\nLibvirt description of the rescued instance will contain the entry for the second disk with attribute type=\"qcow2\", even though it should be \"raw\" - same as the original instance.\n\nMitigating factors:\n- files have to be readable by libvirt/kvm\n- apparmor/selinux will limit the number of accessible files\n- only full blocks of the file are visible in the rescued instance, so short files will not be available at all and long files are going to be truncated\n\nPossible targets:\n- private snapshots with known uuids, or instances of other tenants are a good target for this attack", 
+    "tags": [
+        "havana-backport-potential", 
+        "libvirt"
+    ], 
+    "importance": "High", 
+    "heat": 280, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1221190", 
+    "owner": "https://api.launchpad.net/1.0/~dripton", 
+    "id": 1221190, 
+    "index": 1209, 
+    "created": "2013-09-05 12:16:45.527598+00:00", 
+    "title": "[0SSA 2014-009] Image format not enforced when using rescue (CVE-2014-0134)", 
+    "comments": [
+        {
+            "content": "Rescuing an instance seems to guess the image format at some point. This allows reading files from the compute host via the qcow2 backing file.\n\nRequirements:\n- instances spawned using libvirt\n- use_cow_images = False in the config\n\nTo reproduce:\n1. Create a qcow2 file backed by the path you want to read from the compute host. (qemu-img create -f qcow2 -b /path/to/the/file $((1024*1024)) evil.qcow2)\n2. Spawn an instance, scp the file into it.\n3. Overwrite the disk inside the instance (dd if=evil.qcow2 of=/dev/vda)\n4. Shutdown the instance.\n5. Rescue the instance\n6. While in rescue mode, login and read /dev/vdb - beginning should be read from the qcow backing file\n\nLibvirt description of the rescued instance will contain the entry for the second disk with attribute type=\"qcow2\", even though it should be \"raw\" - same as the original instance.\n\nMitigating factors:\n- files have to be readable by libvirt/kvm\n- apparmor/selinux will limit the number of accessible files\n- only full blocks of the file are visible in the rescued instance, so short files will not be available at all and long files are going to be truncated\n\nPossible targets:\n- private snapshots with known uuids, or instances of other tenants are a good target for this attack", 
+            "date_created": "2013-09-05 12:16:45.527598+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Added a new OSSA task, since this looks like it will probably require an advisory once addressed.", 
+            "date_created": "2013-09-05 19:09:14.714948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Adding Russell and Padraig for a quick sanity-check", 
+            "date_created": "2013-09-06 11:49:19.798371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": ">  - files have to be readable by libvirt/kvm\n>  - apparmor/selinux will limit the number of accessible files\n\nI don't believe those points help much, if at all.\n\nRemember while guests are running as a KVM user, libvirtd which launches them is root. If the XML config tells libvirtd to give access to a particular file, libvirtd will do that and setup the selinux/apparmour policy to allow it too.\n", 
+            "date_created": "2013-09-06 16:08:45.816861+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Added Daniel Berrange as well, since this is related to the libvirt driver.", 
+            "date_created": "2013-09-06 16:10:03.849532+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Russell, Daniel: so if I read this correctly this a a genuine flaw which can result in limited host data leakage. Likely targets would be ACL-protected files like /etc/shadow ?", 
+            "date_created": "2013-09-10 08:57:13.875418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Yes, at the very least, this is a serious information leakage flaw. This same issue has been given a CVE many times before in various virt projects.  QEMU has the ability to merge a snapshot back into the base file - if there was a way to trigger this in openstack, the flaw would be even more serious - host data overwriting.", 
+            "date_created": "2013-09-10 09:08:07.095377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Anyone working on a patch for this ? Does this also affect Grizzly/Folsom ?", 
+            "date_created": "2013-09-13 12:45:43.394492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "It goes all the way back to Diablo as far as I can tell. I'm not actively working on a patch, but will be happy to help with details / reproducing if needed.", 
+            "date_created": "2013-09-13 13:04:37.182797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Actually, I have not tried on the releases in between, so just to be sure, you can retest on Grizzly / Folsom. I don't have an environment to do that unfortunately.\n\nTested only Diablo and trunk.", 
+            "date_created": "2013-09-13 13:14:13.898195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "I just tested trunk and didn't see the behaviour described in this report.\n\nI have nova setup to use raw files\n\n$ grep cow /etc/nova/nova.conf \nuse_cow_images = False\n\nI then booted, stopped & rescued an instance\n\n$ nova boot --flavor m1.small --image f16-x86_64-openstack-sda f16demo\n$ nova stop f16demo\n$ nova rescue f16demo\n\nWhen I look at the config libvirt generated, it is correctly setting 'raw' as the disk type\n# virsh dumpxml instance-00000003\n\n    <disk type='file' device='disk'>\n      <driver name='qemu' type='raw' cache='none'/>\n      <source file='/home/berrange/src/cloud/data/nova/instances/cd627e5e-928d-47c2-a24c-e1ccfb01ab6d/disk.rescue'/>\n      <target dev='vda' bus='virtio'/>\n      <alias name='virtio-disk0'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>\n    </disk>\n    <disk type='file' device='disk'>\n      <driver name='qemu' type='raw' cache='none'/>\n      <source file='/home/berrange/src/cloud/data/nova/instances/cd627e5e-928d-47c2-a24c-e1ccfb01ab6d/disk'/>\n      <target dev='vdb' bus='virtio'/>\n      <alias name='virtio-disk1'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x05' function='0x0'/>\n    </disk>\n\n\n> Libvirt description of the rescued instance will contain the entry for the second disk with attribute type=\"qcow2\", even though it should be \"raw\" - same as the original instance.\n\n@stanislaw What version of Nova do you see this behaviour with ? Today's GIT master doesn't show it", 
+            "date_created": "2013-09-17 16:41:52.537893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I started from scratch right now and I'm still seeing the same, broken behaviour. Attached, is my whole test (well - I edited out devstack installation) captured via `script`.\n\nCurrent nova's commit is 82a598318f5d045a2d422f257f9a770ae1f92dc8", 
+            "date_created": "2013-09-18 15:28:50.138769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Setting to incomplete while we confirm that current trunk is affected", 
+            "date_created": "2013-09-23 15:28:32.128634+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I don't see this behavior either, although I see different things from Daniel.\n\nI don't see the contents of the evil backing file in /dev/vdb from inside the rescuing guest, but I do see the path I set as the first string, which means the dd worked:\n\n$ sudo strings /dev/vdb | head -1\n/etc/libvirt/libvirt.conf\n\nMy libvirt config does show qcow2 as the disk format though:\n\n<disk type='file' device='disk'>\n      <driver name='qemu' type='qcow2' cache='none'/>\n      <source file='/opt/stack/data/nova/instances/77304a99-9453-4e21-8d5b-ccf61dfa5c23/disk'/>\n      <target dev='vdb' bus='virtio'/>\n      <alias name='virtio-disk1'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x05' function='0x0'/>\n</disk>\n\nHowever, if I look at the image itself:\n\n# qemu-img info /opt/stack/data/nova/instances/77304a99-9453-4e21-8dbb-ccf61dfa5c23/disk\nimage: /opt/stack/data/nova/instances/77304a99-9453-4e21-8d5b-ccf61dfa5c23/disk\nfile format: qcow2\nvirtual size: 1.0G (1073741824 bytes)\ndisk size: 12M\ncluster_size: 65536\nbacking file: /opt/stack/data/nova/instances/_base/c193393ae54e6028da799b4afdd8ccd8db6)\n\nand if I follow the backing file reference:\n\n# qemu-img info /opt/stack/data/nova/instances/_base/c193393ae54e6028da799b4afdd8ccd8db6efc07\nimage: /opt/stack/data/nova/instances/_base/c193393ae54e6028da799b4afdd8ccd8db6efc07\nfile format: raw\nvirtual size: 24M (25165824 bytes)\ndisk size: 24M\n\nit backs up to a raw file. This was on a precise machine:\n\nii  libvirt-bin     0.9.8-2ubuntu17 programs for the libvirt library\n\nOn a very recent commit from master:\n\ncommit 78810135d851a4db60a2cb2e2fbdb11d032a8b97\nMerge: 5429048 2d13161\nAuthor: Jenkins <email address hidden>\nDate:   Wed Sep 25 19:56:34 2013 +0000\n", 
+            "date_created": "2013-09-25 21:31:51.875083+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Dan, I'll double-check on my machine, but I don't think what you see looks right for this scenario.\u00a0In case of use_cow_images=false, I wouldn't expect the backing file to point at the _base directory at any time. That looks like the instance was created with a qcow2 disk from the start.", 
+            "date_created": "2013-09-26 01:55:36.511496+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "FYI, I have managed to reproduce the problem now & confirm it is flawed.", 
+            "date_created": "2013-09-26 10:27:45.793062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Looks like the flaw was introduced in this patch - it causes the libvirt imagebackend.py code to run qemu-img info to probe the disk format which is unsafe :-(\n\ncommit 494a3cb5749d52aa90daeacd980362df5f971c0d\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Mon Apr 1 14:19:49 2013 -0700\n\n    libvirt: Get driver type from base image type.\n    \n    If we are using the raw backend (no cow), we should set the driver\n    type based on the type of the source image instead of always\n    using raw.\n    \n    Calls to to_xml were moved after _create_image so that the image\n    type could be determined when creating the xml for libvirt.\n    \n    Fixes bug 1163009\n    \n    Change-Id: Ic8d5f0ab83d868a42f834d39c0afb64818d7e027\n", 
+            "date_created": "2013-09-26 10:53:57.051597+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I think we need to just revert that patch entirely, as the approach it takes is not safe. It injects the probing into the imagebackend.py code, which means it is run in every single code path that uses the image backends.\n\nTo address the bug 1163009 safely, we would need something that only does the probing when the image is first downloaded from glance. The detected format should then be recorded (in the database?) and used for all subsequent boots of that image, whether normal start, or rescue start, or something else.", 
+            "date_created": "2013-09-26 11:30:20.704143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "This was introduced in stable/grizzly, which complicates things a bit. Purely reverting (and introducing a small regression) might not be an option there. That said, changing db format is not an option there either... Is there a plan C ?", 
+            "date_created": "2013-09-26 12:08:10.994450+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The key issue is that we must only ever probe the image format once and persist that data in some manner. If using the database is not possible, then perhaps we can change the naming convention used for image files, eg instead of\n\n  $INSTANCE_DIR/disk\n\nuse\n\n\n  $INSTANCE_DIR/disk.qcow2\n\nor\n\n  $INSTANCE_DIR/disk.raw\n\nI'd be somewhat scared about making such a change in grizzly stable though, since hunting down all the places which assume a plain name of 'disk' may be hard.", 
+            "date_created": "2013-09-26 12:20:21.321160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Another option for grizzly stable would be to have something run on VM shutdown that probed the disk image and compard it to the XML nova saved in the instance directory. If it detected that the format had changed, it could do something to prevent the VM being started again - eg renamed the image from 'disk' to 'disk.compromised'", 
+            "date_created": "2013-09-26 13:18:25.078221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Ah, sorry, I mis-correlated the default of use_cow_images with what you said it needed to be, my bad.", 
+            "date_created": "2013-09-26 13:30:48.650118+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "I really like the file renaming, but even if we changed all of the places in openstack itself, there's bound to be a number of custom modules or supporting scripts people use that assume this name. I know we have a number of those.\n\nTo further complicate the shutdown check, you can probably find some situations where proper shutdown doesn't happen. Host reboots (crashes or forced by dos) would not run shutdown. Live migration be another edge case to check, I guess.\n\nJust to brainstorm more ideas: what about renaming the files and leaving a symlink in place? This will require lots of renaming in libvirt driver, but hopefully it will fix the problem itself. For anything that gets accidentally left over or things that exist outside of openstack's control, the symlink from disk -> disk.{format} should be enough to keep it working.\nOr maybe even better -> create disk.{format} itself as a symlink to disk and verify the format based on that file?", 
+            "date_created": "2013-09-26 13:37:51.341061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Is there a related case with force_raw_images=False, use_cow_images=False\nwhere a qcow is copied directly from glance to the instance/disk ?\n\nI.E. the disk is validly qcow2 format but not backed by an image in base_/\n\nEven if that case isn't susceptible to the dd if=evil.qcow attach,\nit could impact on the format detection.", 
+            "date_created": "2013-09-26 13:52:56.799305+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Yet another idea for a easy hack for stable... rather than renaming disk images, we could save a little 'disks.info' file in the instance directory listing the expected formats when first booting. On subsequent boots/rescues we can consult that file instead of probing\n\n> I.E. the disk is validly qcow2 format but not backed by an image in base_/\n\nGlance itself validates that users don't have a nasty backing file listed when they upload qcow2 files, so that's safe enough I believe. So the issue is only with raw files being turned into qcow2 files by a malicious guest action", 
+            "date_created": "2013-09-26 15:57:32.165682+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "@Daniel: personally I like the disks.info approach, it appears to be the most foolproof (that file is only used by the verification code so all the other code paths should not be affected).\n\nAt this point in the cycle, we might apply this workaround to both grizzly and havana, and fix it \"properly\" in icehouse ?", 
+            "date_created": "2013-09-27 08:36:29.621388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Yes, I like the disk info metadata file, as well.  It seems a lot less risky than renaming the files for grizzly and havana.", 
+            "date_created": "2013-09-30 21:26:55.391916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "@Daniel: would you be up for a patch on this one ? Attach to this bug if you do.", 
+            "date_created": "2013-10-02 13:30:25.791006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Daniel should look at it next week.", 
+            "date_created": "2013-10-24 14:36:46.021246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Looks like Dan doesn't have time for this in the immediate future. Anyone else wanting to work on a patch ?", 
+            "date_created": "2013-11-20 16:05:30.695161+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'm actively working on finding an assignee for this.  If I'm not able to, I'll take it on.", 
+            "date_created": "2014-01-17 14:56:52.132916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "David Ripton has now been assigned to work on the fix for this.", 
+            "date_created": "2014-01-20 14:34:37.774423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "I agree that Dan's disks.info file seems to be the most backward-compatible way.\n\nHere's my thinking:\n\nIn imagebackend.Raw.correct_format(), we check for the existence of disks.info.  And for an entry for 'path' in it.  (like path~format, where format is 'raw' or 'qcow2').  If the disks.info does not exist, or does not have an entry for 'path', we probe for the image type and create the file (if needed) and entry.  If it does have an entry, we use that entry, and let the instance fail to load if the image type is wrong.\n\nIn imagebackend.Qcow2, we add a parallel correct_format() that does the same thing, with the format always being 'qcow2'.  (If the entry already exists and is 'raw' we raise an exception.)\n\nThe purpose of keeping this code in imagebackend rather than doing it when we download the file using glance is to simplify the timing in the upgrade case.  New code plus existing data keeps working.  Granted, it means there's a chance of an attack, once, right after the code is upgraded, but the chance for the attack was already there before the code was upgraded, so in practice I don't think it makes a difference.\n\nFinally, I'm leaning toward using disks.info in Icehouse as well, to have less code and simplify upgrades from stable/havana to Icehouse.  Another database column would work, but then we need a database migration script (and more chance of collision with another patch in progress), and (possibly) logic to upgrade a stable/havana box with a disks.info file.", 
+            "date_created": "2014-01-22 16:50:49.116545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Draft impact description #1 -\n\nTitle: Host data leak to vm instance in rescue mode through image backing file.\nReporter: Stanislaw Pitucha (HP)\nProducts: Nova\nAffects: All supported versions\n\nDescription:\nStanislaw Pitucha from Hewlett Packard reported a vulnerability in the Nova instance rescue mode. An instance administrator can overwrite the disk from inside the instance using a malicious qcow2 image crafted to be backed by an arbitary file path. By switching the instance to rescue mode, libvirt driver will guess the new image format to be a qcow2 resulting in the compute host backing file path (controlled by the user) to be exposed to the vm as the backing device. Only setups using libvirt to spawn instance, and having \"use_cow_images = False\" in Nova configuration are affected.\n", 
+            "date_created": "2014-01-30 12:46:59.804082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@Tristan: nice work, but the \"By... a... will... resulting in... \" construct should rather be used to describe the attack vector and the impact. The goal is not to use it to get into details over what technically happens in this bug.\n\nBy doing this THING, a type of attacker can trigger THAT, resulting in THIS IMPACT for the system/normal user etc.\n\nYour description is, I think, a bit too detailed on the defect and not detailed enough on the attack vector. We don't know what type of attacker would abuse this (local user ? unauthenticated cloud user ? authenticated cloud user ?), the complexity of the attack, and most importantly the end result impact for the rest of the world.\n\nI would say something like...\n\nBy overwiting the disk inside an instance with a malicious image and switching the instance to rescue mode, an authenticated user would..., resulting in... (data exposure ? denial of service ?)", 
+            "date_created": "2014-01-31 13:15:54.992307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Many thanks for your review Thierry, I removed the technical details.\n\nDraft impact description #2 -\n\nTitle: Host data leak to instance in rescue mode\nReporter: Stanislaw Pitucha (HP)\nProducts: Nova\nAffects: All supported versions\n\nDescription:\nStanislaw Pitucha from Hewlett Packard reported a vulnerability in the Nova instance rescue mode. By overwriting the disk inside an instance with a malicious image and switching the instance to rescue mode an authenticated user would be able to leak an arbitrary file from the compute host to the virtual instance. Note that the host file must be readable by the libvirt/kvm context to be exposed. Only setups using libvirt to spawn instance, and having \"use_cow_images = False\" in Nova configuration are affected.\n", 
+            "date_created": "2014-02-05 14:41:18.656550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Attaching a patch for review.  This is against current (icehouse) master.", 
+            "date_created": "2014-02-05 16:58:29.421635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Impact looks good. You should add a comma between \"rescue mode\" and  \"an authenticated user\" for readability though.", 
+            "date_created": "2014-02-05 17:20:20.871852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "It looks good. Just some comments about edge cases:\n\nIs the path always guaranteed to not contain \"~\"? Wouldn't it be safer to do the serialisation properly? It shouldn't be a big change between:\n\n    parts = line.strip().split('~')\n\nand\n\n    parts = json.loads(line)\n\nIs there any chance for race conditions here? Maybe just os.makedirs() except OSError would be enough?\n\n+        if not os.path.exists(CONF.instances_path):\n+            os.makedirs(CONF.instances_path, 0750)\n\nDo we need to do the mode detection in get_set_driver_format()? It looks like it could be always \"a\".\n\nSince the file is created under instances_path, should it also use an external lock? (in case of shared storage)", 
+            "date_created": "2014-02-05 17:54:31.266498+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Thanks for the review Stanislaw.\n\n'~' characters are extremely rare in paths, but I concede that extremely rare is not the same as impossible.  I'll change the serialization to json.\n\nI will add the try/except around makedirs in case of a directory creation race.\n\nI believe the mode detection is needed; I saw errors in testing without it.\n\nIt's probably a good idea to use the existing lock directory to serialize accesses to get_set_driver_format.  I believe it's safe to read the file without the lock, but we should use the lock when we write the file.\n\nI will make these changes (and some other improvements to the tests) and submit an updated patch.", 
+            "date_created": "2014-02-05 18:43:09.797102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Several more comments from my side in order of importance, and I agree with all the stuff Stanislaw said.\n\n* We really should not be creating the instance_path dir like you are doing in get_set_driver_format. We use libvirt_utils.get_instance_path, and ensure_tree - for inspiration, check the libvirt driver's _create_image method. Also - we really should not be creating the instance directory in imagebackend classes ever, this is really not it's responsibility but this is just IMHO.\n\n* Why not have a disks.info file per instance? The code here creates one for all the instances. Currently we can have only one image really per instance but that might change in the future (see https://blueprints.launchpad.net/nova/+spec/libvirt-image-to-local-bdm), and this seems like a more natural place to keep it, plus we need only per instance locking. There may be something I'm missing here so feel free to let me know :)\n\n* get_set_driver_format is not a good name IMHO.", 
+            "date_created": "2014-02-06 14:46:55.955494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Thanks for the review Nikola.\n\nI agree with your first point and will fix it in the next patch.\n\nIt's easy enough to add disks.info.instance_name or disks.info.instance_uuid, but I think it's premature to add it now, since we don't support multiple images per instance yet.  And we definitely didn't support them in grizzly or havana, to which this security fix needs to be backported.  I'd rather keep it simpler for now, but I'll be happy to add the multiple image support to disks.info later, after that blueprint goes in.\n\nI agree that get_set_driver_format is an ugly name, but could not think of a better one.  Do you have a suggestion?  I thought of just calling it get_driver_format, but didn't because I wanted to make the side effect clear, as well as the reason to call it rather than  just looking at self.driver_format.\n", 
+            "date_created": "2014-02-06 15:10:50.784185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Also, please consider using git format-patch next time just for the ease of applying it for review.", 
+            "date_created": "2014-02-06 15:17:21.871576+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "> It's easy enough to add disks.info.instance_name or disks.info.instance_uuid, but I think it's premature to add it now\n\nOk - but we do get the added benefit of not global locking needed with no real additional cost, plus if we put the file in instance dir. we get it cleaned automatically, and code wise - it's just changing how you get the path of the file all else can stay.\n\n> I agree that get_set_driver_format is an ugly name, but could not think of a better one. Do you have a suggestion?\n\nMaybe safe_get... that way we emphasize what was the reason for introducing it and make it less confusing?", 
+            "date_created": "2014-02-06 15:37:53.005632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "resolve_driver_format() - doesn't imply a simple getter, but I'd expect it to cache things if possible. Or even a more explicit -\ncached_driver_format() - but it would require an explanation that it's security-related permament record, rather than a pure performance improving cache.", 
+            "date_created": "2014-02-06 15:57:01.319363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "I think either safe_get_driver_format or resolve_driver_format is reasonable.  I'll use one of those.\n\nNikola, if we do per-instance disks.info files, is disk.info.{instance_uuid} okay?", 
+            "date_created": "2014-02-06 16:13:08.578006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "I have the same thoughts as Nikola on this - when I proposed this idea, I was certainly thinking of disks.info being a per instance file, not global to the entire host. As Nikola says it gives us saner cleanup on VM delete if we can just rm the entire file and not worry about doing string manipulation of lines inside a shared file. It also avoids having to acquire any global lock to protect the file. If an instances disk.info file gets corrupted that's fairly harmless, but if we have a single global disks.info file and that's corrupted the impact is pretty bad.  So I'd rather prefer a per-instance file\n", 
+            "date_created": "2014-02-06 16:36:51.644184+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Oh one final think - I'm unclear whether things like RBD have any implications on this. eg if we're using RBD for images, do we still have a local directory where we can store this info file ? I guess all RBD volumes are assumed to be raw by nova and we don't (currently) do anything stupid like storing a qcow2 file inside an RBD volume. Nice to have confirmation that this at least doesn't cause any problems for RBD and similar drivers.", 
+            "date_created": "2014-02-06 16:38:40.714153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "David, so like Dan said - just stick it in the instance directory (where we keep disk overlays and libvirt.xml file etc) and call it disk.info, since each instance has it's own directiry anyway. Are there some permission issues with that?", 
+            "date_created": "2014-02-06 16:48:01.946363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Just make sure that the disk.info file is owned by  root:root, or nova:nova - we explicitly don't want QEMU to be able to write to that file", 
+            "date_created": "2014-02-06 17:35:34.267759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "@Daniel: planning to propose a new version of that patch addressing the last comments ?", 
+            "date_created": "2014-02-10 15:29:13.177689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "err... I mean @David: ^", 
+            "date_created": "2014-02-10 15:29:30.147348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Thierry, yes, new patch should be ready later today.", 
+            "date_created": "2014-02-10 15:39:17.194211+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Added Nova in title and the new affected version field.\n\nDraft impact description #3 -\n\nTitle: Nova host data leak to vm instance in rescue mode.\nReporter: Stanislaw Pitucha (HP)\nProducts: Nova\nVersions: 2013.1.1 to 2013.1.4 and 2013.2 versions up to 2013.2.1\n\nDescription:\nStanislaw Pitucha from Hewlett Packard reported a vulnerability in the Nova instance rescue mode. By overwriting the disk inside an instance with a malicious image and switching the instance to rescue mode, an authenticated user would be able to leak an arbitrary file from the compute host to the virtual instance. Note that the host file must be readable by the libvirt/kvm context to be exposed. Only setups using libvirt to spawn instance, and having \"use_cow_images = False\" in Nova configuration are affected.\n", 
+            "date_created": "2014-02-11 10:22:51.109536+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "+1 for version 3 of impact description", 
+            "date_created": "2014-02-11 10:49:58.603981+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "New patch attached, incorporating all the review comments so far.", 
+            "date_created": "2014-02-25 16:04:01.367477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "@nova-coresec, please review on bug", 
+            "date_created": "2014-02-26 13:03:57.147786+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The fix seems sound and incorporates the feedback from Nikola and Daniel.  I have a minor issue with one part but overall the fix is good.\n\nThe resolve_driver_format method works as if there could be multiple lines within a disk.info file.  Since the file is now per instance I don't see why it would need to be opened in append mode, or need to iterate over multiple lines in the file.  But this is cleanup and not relevant to the security fix aspect of the patch.", 
+            "date_created": "2014-02-26 21:12:58.234529+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Good point Andrew.  I didn't change that code when we switched from a one-file multiple-lines model to a one-file-per-instance model.  I will change it and submit another patch.  (It's a small change.)", 
+            "date_created": "2014-02-26 21:37:41.227461+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Here's a patch, with resolve_driver_format updated to only read one line (and catch the exception if json is invalid).  Also some small test tweaks.", 
+            "date_created": "2014-02-26 22:35:21.774214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Looks awesome - one nit tho.\n\nWe are currently relying on umask being set properly since the permissions will be set by open() builtin, and then we are just chowning it, meaning that if umask allows for world writable files, chowning will make no difference. Not a huge deal but also really easy to fix (not realy on umask when creating see python's os.open). What do you think?", 
+            "date_created": "2014-02-27 11:04:31.870506+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Nikola, thanks for the review.  Attached is a revised patch that does os.open for mode 644, when writing a disk.info file.", 
+            "date_created": "2014-02-27 14:48:04.834077+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "thanks for addressing the comment David.\n\nI am +2 on the patch. Will also try it later and report back.", 
+            "date_created": "2014-02-28 12:10:49.704016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "nova-core, another +2 on that patch would be nice.\nAlso it will be applied as-is to havana, so let us know if the change of behavior looks acceptable to you there.", 
+            "date_created": "2014-03-03 15:48:10.384377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Adding Alan and Adam for the stable maint check on the proposed patch", 
+            "date_created": "2014-03-03 15:48:57.901402+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'm +2 on the patch as well.  Looks good, thanks!", 
+            "date_created": "2014-03-04 18:48:36.794906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Seems this no longer cleanly applies to master :(\n\nWould be awesome to have an updated version and the stable/havana fix (I can do the backport too). Would love to see us agree on ago public that so that this is in Icehouse rc1 if at all possible.\n\n", 
+            "date_created": "2014-03-10 15:57:05.055040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Here's an rebased patch.  (git was able to resolve the merge conflicts without manual intervention.)\n\nI got Russell's approval before adding this to the icehouse-rc1 milestone earlier today.", 
+            "date_created": "2014-03-10 18:02:19.332623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Thank you David,\n\nDo you know if this will also be the backport for Havana ?", 
+            "date_created": "2014-03-10 18:16:55.960005+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Tristan, that patch does not apply cleanly to stable/havana.  I'm happy to backport it though.  (Preferably after it has final approval for Icehouse, so I don't have to do the backport multiple times.)", 
+            "date_created": "2014-03-10 19:33:30.097582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "The rebased patch applies cleanly to master.  I'm still +2 for it.", 
+            "date_created": "2014-03-11 13:47:00.764287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "+2 as well!", 
+            "date_created": "2014-03-11 17:24:45.559030+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Thank you guys, this is an updated Affect line for impact description of comment #53:\n\nVersions: 2013.2 versions up to 2013.2.2\n\nSending CVE requests now", 
+            "date_created": "2014-03-12 16:47:34.925656+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@dripton Could you attach an havana backport of your patch please ? Once the backport is reviewed, we will then schedule publication.\n\nThanks you in advance!", 
+            "date_created": "2014-03-17 16:53:54.789939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@Tristan, attached is a version of the patch against stable/havana.  It required a manual conflict resolution because the snapshot_delete method was removed in icehouse but is still there in havana.  Other than that, the code is identical.", 
+            "date_created": "2014-03-18 02:23:07.732695+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "I confirmed that the stable/havana patch and master patch from https://bugs.launchpad.net/nova/+bug/1221190/comments/67 both apply cleanly and look ready to go.", 
+            "date_created": "2014-03-18 14:48:55.326896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Thank you very much guys, the pre-OSSA have been sent.\n\nProposed public disclosure date/time: \n2014-03-25 15:00 UTC", 
+            "date_created": "2014-03-18 17:02:38.007271+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "This date seems reasonable for me - I will be sure to +A the patch once it hits the gerrit.", 
+            "date_created": "2014-03-19 09:28:21.098517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "@ndipanov, That is very much appreciated. Thanks!\n\n@dripton would you be available to actually push the patch to gerrit at disclosure date ? Else I can take care of that.", 
+            "date_created": "2014-03-19 09:42:42.635273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Tristan, I'll be available to put to Gerrit on disclosure date.", 
+            "date_created": "2014-03-19 13:09:54.088564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Setting task to FixCommitted since we are in pre-OSSA stage", 
+            "date_created": "2014-03-19 13:31:11.839604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Master patch @ https://review.openstack.org/#/c/82840\nStable/Havana patch @ https://review.openstack.org/#/c/82841", 
+            "date_created": "2014-03-27 10:23:20.874327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/82840\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=dc8de426066969a3f0624fdc2a7b29371a2d55bf\nSubmitter: Jenkins\nBranch:    master\n\ncommit dc8de426066969a3f0624fdc2a7b29371a2d55bf\nAuthor: David Ripton <email address hidden>\nDate:   Tue Jan 28 16:38:51 2014 -0500\n\n    Persist image format to a file, to prevent attacks based on changing it\n    \n    The attack is based on creating a raw image that looks like a qcow2\n    image, and taking advantage of the code that used 'qemu-img info' to\n    autodetect the image format.\n    \n    Now we store the image format to a 'disk.info' file, for Qcow2 and Raw\n    images, and only autodetect for images that have never been written to\n    that file.\n    \n    SecurityImpact\n    \n    Co-authored-by: Nikola Dipanov <email address hidden>\n    Closes-bug: #1221190\n    Change-Id: I2016efdb3f49a44ec4d677ac596eacc97871f30a\n", 
+            "date_created": "2014-03-27 17:30:15.010410+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/82841\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=25e761acd56d4c820273fc0245ada06c500c1637\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 25e761acd56d4c820273fc0245ada06c500c1637\nAuthor: David Ripton <email address hidden>\nDate:   Tue Jan 28 16:38:51 2014 -0500\n\n    Persist image format to a file, to prevent attacks based on changing it\n    \n    The attack is based on creating a raw image that looks like a qcow2\n    image, and taking advantage of the code that used 'qemu-img info' to\n    autodetect the image format.\n    \n    Now we store the image format to a 'disk.info' file, for Qcow2 and Raw\n    images, and only autodetect for images that have never been written to\n    that file.\n    \n    SecurityImpact\n    \n    Conflicts:\n    \tnova/virt/libvirt/imagebackend.py\n    \n    Manual tweaks to some mocking in test_imagebackend.py\n    \n    Change-Id: I2016efdb3f49a44ec4d677ac596eacc97871f30a\n    Co-authored-by: Nikola Dipanov <email address hidden>\n    Closes-bug: #1221190\n", 
+            "date_created": "2014-03-27 19:19:10.530341+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/86353\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d416f4310bb946b4b127201ec3c37e530d988714\nSubmitter: Jenkins\nBranch:    master\n\ncommit d416f4310bb946b4b127201ec3c37e530d988714\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Wed Apr 9 15:50:20 2014 +0200\n\n    Avoid the possibility of truncating disk info file\n    \n    Commit dc8de42 makes nova persist image format to a file to avoid\n    attacks based on changing it later. However the way it was implemented\n    leaves a small window of opportunity for the file to be truncated before\n    it gets written back to effectively making it possible for data to get\n    lost leaving us with a potential problem next time it is attempted to be\n    read.\n    \n    This patch changes the way file is updated to be atomic, thus closing\n    the race window (and also removes the chown that we did not really\n    need).\n    \n    It is worth noting that a better solution to this would be\n    to allow the code calling the imagebackend to write the file (once!)\n    and make it impossible to update after the boot process is done. This\n    approach would require more refactoring of the libvirt driver code, and\n    may be done in the future.\n    \n    Partial-bug: #1221190\n    Change-Id: Ia1b073f38e096989f34d1774a12a1b4151773fc7\n", 
+            "date_created": "2014-04-11 06:58:49.610846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/86895", 
+            "date_created": "2014-04-11 13:21:12.078957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

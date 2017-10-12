@@ -1,0 +1,44 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-08-07 21:30:28.565008+00:00", 
+    "description": "I'm trying to make the following change as a DB migration\n\n+    # Table instances, modify field 'vcpus_used' to Float\n+    compute_nodes = Table('compute_nodes', meta, autoload=True)\n+    vcpus_used = getattr(compute_nodes.c, 'vcpus_used')\n+    vcpus_used.alter(type=Float)\n\nThis works at runtime (using PostgreSQL) but when running the unit tests (using sqlite) I get the following:\n\nnova.tests.unit.db.test_migrations.TestNovaMigrationsSQLite.test_models_sync\n----------------------------------------------------------------------------\n\nCaptured traceback:\n~~~~~~~~~~~~~~~~~~~\n\u00a0\u00a0\u00a0\u00a0Traceback (most recent call last):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/home/cfriesen/devel/wrlinux-x/addons/wr-cgcs/layers/cgcs/git/nova/.tox/py27/lib/python2.7/site-packages/oslo_db/sqlalchemy/test_migrations.py\", line 588, in test_models_sync\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"Models and migration scripts aren't in sync:\\n%s\" % msg)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0File \"/home/cfriesen/devel/wrlinux-x/addons/wr-cgcs/layers/cgcs/git/nova/.tox/py27/lib/python2.7/site-packages/unittest2/case.py\", line 690, in fail\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0raise self.failureException(msg)\n\u00a0\u00a0\u00a0\u00a0AssertionError: Models and migration scripts aren't in sync:\n\u00a0\u00a0\u00a0\u00a0[ ( 'add_constraint',\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0UniqueConstraint(Column('host', String(length=255), table=<compute_nodes>), Column('hypervisor_hostname', String(length=255), table=<compute_nodes>), Column('deleted', Integer(), table=<compute_nodes>, default=ColumnDefault(0))))]\n\nThis appears to be an interaction between two things, the change I made to alter the vcpus_used column, and a previous change (commit 2db4a1ac, migration version 279) to add the uniq_compute_nodes0host0hypervisor_hostname constraint.  sqlite doesn't support altering columns, so there's a workaround to fake it, and this workaround seems to be running into problems with the constraint.\n\nI suspect that this means that anyone wanting to change the type of a column in the \"compute_nodes\" table (or possibly any table with a similar constraint) will run into a similar problem.", 
+    "tags": [
+        "compute", 
+        "db"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1482416", 
+    "owner": "None", 
+    "id": 1482416, 
+    "index": 5692, 
+    "created": "2015-08-06 22:50:49.504942+00:00", 
+    "title": "bug blocks DB migration that changes column type", 
+    "comments": [
+        {
+            "content": "I'm trying to make the following change as a DB migration\n\n+    # Table instances, modify field 'vcpus_used' to Float\n+    compute_nodes = Table('compute_nodes', meta, autoload=True)\n+    vcpus_used = getattr(compute_nodes.c, 'vcpus_used')\n+    vcpus_used.alter(type=Float)\n\n\nThis works at runtime (using PostgreSQL) but when running the unit tests (using sqlite) I get the following:\n\n\nnova.tests.unit.db.test_migrations.TestNovaMigrationsSQLite.test_models_sync\n----------------------------------------------------------------------------\n\nCaptured traceback:\n~~~~~~~~~~~~~~~~~~~\n    Traceback (most recent call last):\n      File \"/home/cfriesen/devel/wrlinux-x/addons/wr-cgcs/layers/cgcs/git/nova/.tox/py27/lib/python2.7/site-packages/oslo_db/sqlalchemy/test_migrations.py\", line 588, in test_models_sync\n        \"Models and migration scripts aren't in sync:\\n%s\" % msg)\n      File \"/home/cfriesen/devel/wrlinux-x/addons/wr-cgcs/layers/cgcs/git/nova/.tox/py27/lib/python2.7/site-packages/unittest2/case.py\", line 690, in fail\n        raise self.failureException(msg)\n    AssertionError: Models and migration scripts aren't in sync:\n    [ ( 'add_constraint',\n        UniqueConstraint(Column('host', String(length=255), table=<compute_nodes>), Column('hypervisor_hostname', String(length=255), table=<compute_nodes>), Column('deleted', Integer(), table=<compute_nodes>, default=ColumnDefault(0))))]\n    \n\n\nThis appears to be an interaction between two things, the change I made to alter the vcpus_used column, and a previous change (commit 2db4a1ac, migration version 279) to add the uniq_compute_nodes0host0hypervisor_hostname constraint.  sqlite doesn't support altering columns, so there's a workaround that makes a new column, copies the contents over, and deletes the old one...this seems to be running into problems with the modified constraint.\n\nI suspect that this means that anyone wanting to change the type of a column in the \"compute_nodes\" table will run into a similar problem.", 
+            "date_created": "2015-08-06 22:50:49.504942+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "alaski pointed out that the constraint doesn't even touch the column that I'm trying to alter, so there must be something else going on.  One possibility is that we're actually recreating the entire table, not just the column being altered.", 
+            "date_created": "2015-08-07 17:08:34.432415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "column alters aren't supported in Nova going forward due to non-scripted online schema migrations in any case.    Consult nova devs here but I think you'd need to add a new column to store the new data and ensure the database models synchronize values between the two columns.", 
+            "date_created": "2015-08-07 18:03:27.258303+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "also yes, sqlalchemy-migrate recreates the whole table in order to do a migration.   nova should not be testing migrations on SQlite at all IMO it's pointless.", 
+            "date_created": "2015-08-07 18:04:31.193018+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "To clarify, nova is not supporting drops on tables or columns:\n\nhttps://review.openstack.org/#/c/197349/\n\nsqlite doesn't support alter:\n\nhttp://www.sqlite.org/lang_altertable.html\n\nSo you have to drop and recreate things with sqlite to fake it out, that's what sqlalchemy-migrate does with foreign key constraints and unique constraints, e.g. https://review.openstack.org/#/c/157878/.\n\nSo if you needed to support a column alter in nova and the failure is with sqlite, then fix sqlalchemy-migrate.", 
+            "date_created": "2015-08-07 18:18:49.238805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

@@ -1,0 +1,68 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2016-08-04 16:22:31.956968+00:00", 
+    "description": "This blueprint added support to nova for having multiple ports attached to an instance on the same network:\n\nhttps://blueprints.launchpad.net/nova/+spec/multiple-if-1-net\n\nHowever, with the \"Multinic\" API extension in nova, if you're adding a fixed_ip to an instance, the neutronv2 API will only copy the fixed_ips from the first subnet on the network to the first port associated with the instance:\n\nhttps://github.com/openstack/nova/blob/2015.1.0b2/nova/network/neutronv2/api.py#L745\n\nOnce that's done, the code returns and the other subnets/ports aren't handled.", 
+    "tags": [
+        "neutron"
+    ], 
+    "importance": "Low", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1430512", 
+    "owner": "https://api.launchpad.net/1.0/~garyk", 
+    "id": 1430512, 
+    "index": 329, 
+    "created": "2015-03-10 20:03:28.186554+00:00", 
+    "title": "Adding a fixed_ip to an instance with neutron only updates the first port using the first subnet", 
+    "comments": [
+        {
+            "content": "This blueprint added support to nova for having multiple ports attached to an instance on the same network:\n\nhttps://blueprints.launchpad.net/nova/+spec/multiple-if-1-net\n\nHowever, with the \"Multinic\" API extension in nova, if you're adding a fixed_ip to an instance, the neutronv2 API will only copy the fixed_ips from the first subnet on the network to the first port associated with the instance:\n\nhttps://github.com/openstack/nova/blob/2015.1.0b2/nova/network/neutronv2/api.py#L745\n\nOnce that's done, the code returns and the other subnets/ports aren't handled.", 
+            "date_created": "2015-03-10 20:03:28.186554+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "OK, so up front that multinic plugin is horrible - it's really intended for nova-network with multiple networks and an explicit interface for every network in the system.  It's also short on documentation: I can't find mention on http://developer.openstack.org/api-ref-compute-v2-ext.html and http://docs.openstack.org/developer/nova/devref/multinic.html is one of a number of examples of documentation with a complete emphasis on nova-network configurations and no mention of fixed IPs.  I didn't find any documentation that it worked with Neutron at all, though the code is present and it clearly does make the attempt (though in reality it's a wrapper around neutron port-update, and, I suspect, not a very good one if you happen to be using multiple subnets).\n\nI think we have two options:\n\n1. rewrite add-fixed-ip to add a new address to every port (question: what happens when we run out of addresses?  Hard to unwind the partial work done...)\n2. rewrite add-fixed-ip it to not work when multiple interfaces share a subnet (noting that (a) it's not intended for this use case and (b) neutron port-update is available as a much more flexible and precise alternative)\n\nI don't think doing (2) is unfair.  It's never worked in this case before, because multiple NICs on one network was never previously possible.  It doesn't exclude behaviour because other APIs are available.  And it doesn't change nova-network behaviour where multiple NICs on one network still aren't possible.\n\nAlso, I'm not sure that adding additional fixed IPs to multiple NICs makes any more sense in the context of the API call (seems unlikely this is what the tenant would want or expect).", 
+            "date_created": "2015-03-11 02:54:25.187031+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "\nI somehow agree with both API calls for expecting not very different results at the end: I guess it is probably more flexible and precise to have the choice of what level of detailed API wrapper to choose from for different types of apps tenants:\n\n1. \u201dneutron port-update <port_id> \u2014fixed_ips type=dict list=true subnet_id=<subnet_id>,ip_address=<fixed_ip>\" \n\u2014> Dealing with the precise details of what exact subnet_id (as well as port_id) you want to add the fixed_ip to;\n\n2. \u201cnova remove-fixed-ip <server_name> <fixed_ip>\u201d and \u201dnova add-fixed-ip <server_name> <network_name>\u201d\n\u2014> Not dealing with these details and still removing/adding fixed-ip to (a) the same interface as what neutron ports allow you to do or to (b) a different interface in different subnet in same neutron network as with what multiple-if-1-net BP provided.\n\nRegarding choice (2): it seems that even if the requested network still have some fixed IPs available in one of its other subnets, if the first subnet ran out of fixed IPs, you cannot add a new fixed IP to the instance. \nnova add-fixed-ip API call returns HTTP 202 Accepted with empty body and nova-compute logs displays a thing similar to this:\n\"Unable to update port f6cffe78-c183-4a72-8831-f19235117a6b on subnet 5c190dbd-7753-44e6-8aae-48811b5bce99 with failure: No more IP addresses available on network 95f6fb2d-10cc-4b77-8db6-652600e35d43.\"\n\nSo I guess it is not impossible to do (a) to rewrite add-fixed-ip to handle the case of IP exhaustion in \"first\" subnet.  Also it seems that API call \"add-fixed-ip\" list_subnets() uses a different order of subnets in same requested network different from the API call \"nova boot --nic net-id\", ... i.e. order of \"first\" subnet is relative to what API call is used.\n\nBesides, it is not impossible to do (b) to rewrite to remove/add fixed-ip from different interface in different subnets in same neutron network... Among other things, if the network backend implementation (using overlays for instance) doesn't broadcast one subnet to another one in same network, then it should be less inefficient to have multiple NICs on different subnets on same network for the same instance.\n", 
+            "date_created": "2015-03-11 16:16:54.413641+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racha-ben-ali"
+        }, 
+        {
+            "content": "Note that the add/remove fixed_ips stuff was added to the neutronv2 (then quantum) API in Nova back in Grizzly via a simple bug report saying it wasn't implemented:\n\nhttps://review.openstack.org/#/c/19627/\n\nThere aren't really any details in there, and the code is busted for the same reasons pointed out here, it's just that no one has ever seemed to care about it (or use it I guess).  We can't just raise NotImplemented now though since that would be a backwards incompatible change to the multinic API extension.", 
+            "date_created": "2015-03-11 20:12:32.150102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/163864", 
+            "date_created": "2015-03-12 15:13:50.113574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I have a number of things to add here:\n1. Not sure if anyone actually uses the multi nic. I have added support that enables more than one fixed IP - https://review.openstack.org/163864\n2. do we still want to support these extensions ", 
+            "date_created": "2015-03-12 15:57:01.861527+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "I don't know about everyone else but we definitely appreciate the existing functionality of nova add-fixed-ip.\n\nTake for instance the following example (port / subnet / ips changed for demonstration):\n\n+----------------------------------------------------------------+---------+---------------------------+----------------------------------------------------------------------------------------+\n| id                                                                                | name | mac_address         | fixed_ips                                                                                                 |\n+----------------------------------------------------------------+---------+--------------------------+-----------------------------------------------------------------------------------------+\n| 9e1bcee0-beca-4723-9e68-fa88912cc291   |             | fa:16:3e:08:c2:b9 | {\"subnet_id\": \"23ae97b5-f213-4287-a2eb-48753f50a40a\", \\                                                                                                                                           \"ip_address\": \"192.160.251.113\"}                                                 |\n|                                                                                    |              |                                   | {\"subnet_id\": \"490dbebc-0674-4326-b20e-209940024d86\", \\                                                                                                                                          \"ip_address\": \"195.152.250.88\"}                                                    |\n+---------------------------------------------------------------+-----------+--------------------------+----------------------------------------------------------------------------------------+\n\nWe have a use case where we are running CentOS cPanel instances in which we just need to append a fixed ip to a port as needed. The existing neutron port-update removes the ip's and adds a new ip or in the case you wanted to re add all your existing ips you must specify them as well. The existing nova add-fixed-ip is perfect for this appending use case. \n\nOne feature that lacks however with nova add-fixed-ip is the ability to specify a port_id, ip,  and subnet_id. We have modified novaclient and nova api to allow this to work, but it would be nice if it was up streamed to the community. The end result would look something like this from the novaclient perspective:\n\nusage: nova add-fixed-ip [--network_id <network-id>] [--port_id <port-id>]\n                         [--ip_address <ip-address>] [--subnet_id <subnet-id>]\n                         <server-id>\n\nAdd new IP address to network.\n\nPositional arguments:\n  <server-id>           Name or ID of server.\n\nOptional arguments:\n  --network_id <network-id>\n                        Network ID.\n  --port_id <port-id>   Port ID.\n  --ip_address <ip-address>\n                        IP Address.\n  --subnet_id <subnet-id>\n                        Subnet ID.\n\nWhat do you all think?", 
+            "date_created": "2015-03-17 18:57:59.378310+00:00", 
+            "author": "https://api.launchpad.net/1.0/~c-hendrickson09"
+        }, 
+        {
+            "content": "it doesn't feel like this should block the kilo release, removing from kilo-rc1 for now.", 
+            "date_created": "2015-04-02 13:20:34.500590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/163864\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-05-13 17:21:31.375069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by garyk (<email address hidden>) on branch: master\nReview: https://review.openstack.org/163864\nReason: Not sure that these flows are even invoked any more. If you guys feel that this is relevant then please ping me and I'll rebase. Just feels futile at the moment", 
+            "date_created": "2016-08-04 06:16:57.745797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

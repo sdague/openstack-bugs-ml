@@ -1,0 +1,68 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2013-05-08 11:05:11.530733+00:00", 
+    "description": "I'm not sure whether this is actually a bug in the code or a misconfiguration in my setup, however I noticed that instances spawned on XenServer are unable to communicate, even if their VIFs are puggled into the appropriate XenServer's networks.\n\nIn my setup I'm running XenServer 6 with Open vSwitch as the networking stack. \nThe nova-network node is running with the Flat network manager.\nInstances are being created with a single VIF on a network labelled 'private' with CIDR 10.0.0.0/24, associated with the xenbr0 bridge.\n\nThe output from ovs-ofctl for xenbr0 is reported here: http://paste.openstack.org/show/3755/\n\nThe basic 'drop' action, and the 'normal' action for the traffic on the physical interface port are correctly configured. \nHowever, there is no trace of the rules for allowing traffic onto VIF ports, which should be entered by the ovs_confiurre_vif_flows.py script.\n\nFrom a closer look at this script it seems that there are several issues: \nA) Parent bridge is not resolved for VLAN networks (vlans are fake bridges, and flows should be added to the corresponding 'real' OVS instance). This mean per-VIF rules cannot be enforced on VLAN bridges.\nB) It seems that the script attempts to read the MAC from a xenstore location different from the one where the MAC is actually storead\nC) It seems the script attempts to apply the rules to the first VIF only if the network is labelled 'public', otherwise it attempts to apply the rules to the second VIF\nD) Among IPv4 rules, a rule for allowing IP broadcasts as well as ARP broadcasts is currently missing; this will prevent Flat DHCP and VLAN modes to work properly when these isolation rules are applied.\n\nAfter trying to fix the above issues in the script, I managed to get the following entries in the flow table for xenbr0: http://paste.openstack.org/show/3756/\nThe VIFs on the instances where deactivated and re-activated to trigger the modified script. With this modified script the instances were able to communicate.\n\nI honestly don't know whether there's actually a bug in this script or is just me negleting something about network configuration. \nI'm however attaching a patch file hoping to get some feedback from the community.", 
+    "tags": [
+        "xenserver"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/903282", 
+    "owner": "None", 
+    "id": 903282, 
+    "index": 5280, 
+    "created": "2011-12-12 16:48:35.752299+00:00", 
+    "title": "Instances spawned on XenServer cannot communicate", 
+    "comments": [
+        {
+            "content": "I'm not sure whether this is actually a bug in the code or a misconfiguration in my setup, however I noticed that instances spawned on XenServer are unable to communicate, even if their VIFs are puggled into the appropriate XenServer's networks.\n\nIn my setup I'm running XenServer 6 with Open vSwitch as the networking stack. \nThe nova-network node is running with the Flat network manager.\nInstances are being created with a single VIF on a network labelled 'private' with CIDR 10.0.0.0/24, associated with the xenbr0 bridge.\n\nThe output from ovs-ofctl for xenbr0 is reported here: http://paste.openstack.org/show/3755/\n\nThe basic 'drop' action, and the 'normal' action for the traffic on the physical interface port are correctly configured. \nHowever, there is no trace of the rules for allowing traffic onto VIF ports, which should be entered by the ovs_confiurre_vif_flows.py script.\n\nFrom a closer look at this script it seems that there are several issues: \nA) Parent bridge is not resolved for VLAN networks (vlans are fake bridges, and flows should be added to the corresponding 'real' OVS instance). This mean per-VIF rules cannot be enforced on VLAN bridges.\nB) It seems that the script attempts to read the MAC from a xenstore location different from the one where the MAC is actually storead\nC) It seems the script attempts to apply the rules to the first VIF only if the network is labelled 'public', otherwise it attempts to apply the rules to the second VIF\nD) Among IPv4 rules, a rule for allowing IP broadcasts as well as ARP broadcasts is currently missing; this will prevent Flat DHCP and VLAN modes to work properly when these isolation rules are applied.\n\nAfter trying to fix the above issues in the script, I managed to get the following entries in the flow table for xenbr0: http://paste.openstack.org/show/3756/\nThe VIFs on the instances where deactivated and re-activated to trigger the modified script. With this modified script the instances were able to communicate.\n\nI honestly don't know whether there's actually a bug in this script or is just me negleting something about network configuration. \nI'm however attaching a patch file hoping to get some feedback from the community.", 
+            "date_created": "2011-12-12 16:48:35.752299+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2011-12-12 16:48:35.752299+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "Please keep in mind that the purpose of the provided patch provided is just to highlight potential issues in ovs_configure_vif_flows.py.\n\nI am aware that it contains 'hacks' which would not work in many cases.", 
+            "date_created": "2011-12-14 09:17:42.111193+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "Attaching a better patch with (hopefully) no hacks", 
+            "date_created": "2011-12-21 14:47:11.848053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "I've taken Salvatore's patch, figured out which commit it applies to (16e3f2e) and removed any changes which don't look like part of the bug fix\n\nHopefully will help someone understand what's going on here a bit better", 
+            "date_created": "2012-06-07 08:58:18.781771+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I can't say I fully understand what's going on here, but it looks like https://review.openstack.org/2306 might help here and Salvatore's patch applies to a commit before that\n\nSalvatore - could you confirm this is still an issue?", 
+            "date_created": "2012-06-07 09:02:20.048958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Apologies for the delay in replying.\nIf the script the patch relates to is installed in dom0 it will still prevent instances from communicating. \n\nI reckon we can either fix the script, or remove it altogether from the Openstack source tree; after all the reason why this bug has been ignored for 6 months might probably be that the script is not used anywhere. In this case it might be better to remove it - one less source code file to maintain.", 
+            "date_created": "2012-06-12 22:25:39.705631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "@Salvatore: your plan sounds good to me :)", 
+            "date_created": "2012-07-12 14:26:16.978602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "We should investigate who uses that script, and probably just pull it.\n\nThere is functionality in XenServer 6.1 and later in implement this in a more controlled way.", 
+            "date_created": "2013-03-14 10:47:39.878774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Removing this, it will be revisited with the move from nova-network to quantum.", 
+            "date_created": "2013-05-08 11:05:01.267887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }
+    ]
+}

@@ -1,0 +1,114 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2017-03-24 11:07:14.983650+00:00", 
+    "description": "Suspending instance will not update resource usage.\n\nInstance suspending should move all contents in the ram to hard disk.\nThen vcpu and used memory should be decreased and hard disk useage should be increased.\nHowever it didn't happen.\n\nThis will lead to trouble in the following scenario:\nWhen the memory of all compute nodes are exhaust, to create a new instance, it's useless to suspend some alive instances, but have to delete them.", 
+    "tags": [
+        "compute", 
+        "scheduler"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1402502", 
+    "owner": "https://api.launchpad.net/1.0/~ming-jin", 
+    "id": 1402502, 
+    "index": 1646, 
+    "created": "2014-12-15 05:30:41.561349+00:00", 
+    "title": "Resource usage will not be updated when suspending instance", 
+    "comments": [
+        {
+            "content": "Suspending instance will not update resource usage.\n\nInstance suspending should move all contents in the ram to hard disk.\nThen vcpu and used memory should be decreased and hard disk useage should be increased.\nHowever it didn't happen.\n\nThis will lead to trouble in the following scenario:\nWhen the memory of all compute nodes are exhaust, to create a new instance, it's useless to suspend some alive instances, but have to delete them.", 
+            "date_created": "2014-12-15 05:30:41.561349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ming-jin"
+        }, 
+        {
+            "content": "Hi eminjin,\r\n\r\nThe behavior you describe is not a bug -- resources are not freed when you suspend an instance.\r\n\r\nThe feature in nova that most resembles what you're looking for is 'nova shelve', please see doc:\r\n\r\nhttp://docs.openstack.org/user-guide/content/shelve_server.html\r\n\r\nDoes this address your concern? Or would you like this launchpad report to be a feature request for freeing resources on suspend?", 
+            "date_created": "2014-12-15 19:21:42.291418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Hi, Melanie,\n\nFrom the description of \"suspend\", I think the occupied resource should be released:\n\"\"\"When you suspend an instance, its VM state is stored on disk, all memory is written to disk, and the virtual machine is stopped. Suspending an instance is similar to placing a device in hibernation; memory and vCPUs become available to create other instances.\"\"\"\n\nhttp://docs.openstack.org/user-guide/content/suspend_resume.html\n\nImaging that there is only one compute node with 1 vcpu, and the \"cpu_allocation_ratio\" was set to \"1.0\".\nFirstly you started one VM with 1 vcpu used. After a while you suspended it.\nSince the resource usage are not updated, it will be failed to create a new VM.\n\nObviously, it violates the descriptioin \"memory and vCPUs become available to create other instances\".\n\nBest Regards!\nJin Ming", 
+            "date_created": "2014-12-16 03:40:22.932228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ming-jin"
+        }, 
+        {
+            "content": "Hi Jin,\r\n\r\nI researched into this based on your comment and found some interesting things. From a technical, virt-level standpoint, you are right that resources on the hypervisor can be freed after suspending an instance. I think it's hypervisor dependent, but in the case of libvirt, I did observe that the hypervisor nova-compute.log showed vcpus decrease by 1 when I suspended a tiny instance.\r\n\r\nHowever, I still could not schedule an extra instance on the hypervisor with cpu_allocation_ratio = 1.0 like you said. I found this is because the nova scheduler (which uses the resource tracker) computes resource usage based on data like, how many instances are on the hypervisor, what size are they, etc and does *not* use the values reported by the hypervisor. There are likely many reasons for this, some of which I think are if you scheduled the extra instance while one was suspended, and you resume the suspended one, you can immediately get into an overcommit situation you didn't intend, unless you migrate the extra instance, etc. Another reason might be race conditions between what the nova db knows and what the hypervisor sees. \r\n\r\nSo, it appears the bug here is in the user documentation, unfortunately. I will update this bug report as a Wishlist item for desired change in behavior, and add the documentation project so that can be fixed.", 
+            "date_created": "2014-12-16 07:44:27.612133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Triage Note: To fix this, find where http://docs.openstack.org/user-guide/content/suspend_resume.html lives and update the paragraph highlighted above.", 
+            "date_created": "2014-12-17 01:09:00.005912+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/142302", 
+            "date_created": "2014-12-17 01:59:58.665472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi, Melanie,\n\n\"\"\"There are likely many reasons for this, some of which I think are if you scheduled the extra instance while one was suspended, and you resume the suspended one, you can immediately get into an overcommit situation you didn't intend\"\"\"\n\nI agree with you. I think, besides refreshing resource usage after \"suspending\", resource tracker should also be invoked before \"resuming\". In case \"resume\" action will lead to an overcommit situation, either an error code should be given, or an automatically migration should be performed.\n\nI noticed that you set \"Importance\" field of \"OpenStack Compute (nova) \" as \"Wishlist\", does it mean that this will be improved in future?\n\n\"suspend\" function is very important for us, as suspended instance can be resumed very quickly, as well as saving resources.\nDifferent from \"shelve\", suspended instance will not be shutdown.\nBut if the resource usage didn't refresh after \"suspend\", why not leave it running? Since the released resource can't be used by other new instances.\n\nBest Regards!\nJin Ming", 
+            "date_created": "2014-12-18 09:49:36.488517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ming-jin"
+        }, 
+        {
+            "content": "Hi Jin,\n\nI agree, there are many options for how to handle situations that will arise if we add more update points to the resource tracker such as raising errors and doing automatic migrations.\n\nThe Wishlist field is for us to track items that are desired changes to the existing behavior of nova. It means an item might be improved in the future, or it might not. It depends on the outcome of discussions between users, operators, and devs as the work on nova is a community effort.\n\nYour use case makes sense, and I'm sure many others have the same need. I suggest that you join in the community discussion by posting to the mailing lists [1] and chatting in the IRC channels [2]. It's the best way to learn why the design is the way it is, and how it can be changed in the future. I hope it helps.\n\n[1] https://wiki.openstack.org/wiki/Mailing_Lists\n[2] https://wiki.openstack.org/wiki/IRC", 
+            "date_created": "2014-12-18 20:46:30.704843+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/142302\nCommitted: https://git.openstack.org/cgit/openstack/openstack-manuals/commit/?id=ea465673461d99f44491afb7f29852acd2a637e1\nSubmitter: Jenkins\nBranch:    master\n\ncommit ea465673461d99f44491afb7f29852acd2a637e1\nAuthor: liyingjun <email address hidden>\nDate:   Wed Dec 17 09:52:22 2014 +0800\n\n    Suspending instance will not update resource usage\n    \n    As reported in the bug, \"memory and vCPUs NOT become available to\n    create other instances when suspending instance\". So update the\n    description for ' Suspend and resume an instance'.\n    \n    Change-Id: I4c11c73fe9ba42e77c86cefe4360ce2496e810e1\n    Closes-bug: #1402502\n", 
+            "date_created": "2014-12-18 22:19:04.839731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/148226", 
+            "date_created": "2015-01-19 11:40:31.500085+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Ming Jin (<email address hidden>) on branch: master\nReview: https://review.openstack.org/146741\nReason: Branch problem.\nMove to https://review.openstack.org/148226", 
+            "date_created": "2015-01-19 11:58:56.221335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Patch was abandoned..", 
+            "date_created": "2015-01-27 19:36:05.936905+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Jin, I didn't see that you had opened a new review and abandoned the original. In the future, please update your existing review instead of creating new reviews.\r\n\r\nAnother note, as you have probably seen in the code, it appears that memory and disk are returned for scheduling periodically when an instance is suspended, however vcpus are not.", 
+            "date_created": "2015-01-27 19:41:53.716156+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Hi,\n\nNew review request https://review.openstack.org/148226 due to branch problem.\n\n\"vcpus\" update related code is in the file nova/compute/stats.py.\nIt follows the logic in the design base.\n\nBest Regards!\nJin Ming", 
+            "date_created": "2015-01-28 08:42:11.072694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ming-jin"
+        }, 
+        {
+            "content": "Jin, I understand. I'm just saying that if you use the same Change-Id in your commit message, after you fixed the branch issue, you can keep the same review you had (with a new patch set) instead of creating a new review. The reason we want to avoid new reviews is because it's confusing with duplicates and makes it harder for people to find your active review.", 
+            "date_created": "2015-01-28 18:21:29.104138+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Fix proposed is in progress - https://review.openstack.org/#/c/148226/", 
+            "date_created": "2015-02-12 16:32:38.781225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Change abandoned by John Garbutt (<email address hidden>) on branch: master\nReview: https://review.openstack.org/148226\nReason: this seems to have been abandoned, pressing the button so its not stuck in the queue still. Please do restore this if thats not the case.", 
+            "date_created": "2015-08-20 16:50:38.386857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Proposed change is very old, abandoned and has a -1, there hasn't been subsequent feedback so abandoning the bug.", 
+            "date_created": "2016-03-15 15:10:24.813886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/openstack-manuals 15.0.0 release.", 
+            "date_created": "2017-03-24 11:07:13.611785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

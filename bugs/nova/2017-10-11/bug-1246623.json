@@ -1,0 +1,48 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2015-03-23 11:01:00.549201+00:00", 
+    "description": "Hi there.\n\nWe are running all the nova apis (osapi, ec2, metadata) under mod_wsgi on Apache. With the Havana upgrade, the metadata server (that started using nova-conductor) stopped working (it works perfectly outside apache though). After further debugging, I've found that it is blocking in the get from the dataqueue of the RPC client: https://github.com/openstack/nova/blob/stable/havana/nova/openstack/common/rpc/amqp.py#L526\n\nA workaround was a call to eventlet.monkey_patch() in our WSGI script. Shouldn't we call the monkey patch on the amqp.py module directly?", 
+    "tags": [
+        "api"
+    ], 
+    "importance": "Medium", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1246623", 
+    "owner": "None", 
+    "id": 1246623, 
+    "index": 3683, 
+    "created": "2013-10-31 08:29:02.554956+00:00", 
+    "title": "metadata server running on mod_wsgi blocks on rpc.call to nova-conductor", 
+    "comments": [
+        {
+            "content": "Hi there.\n\nWe are running all the nova apis (osapi, ec2, metadata) under mod_wsgi on Apache. With the Havana upgrade, the metadata server (that started using nova-conductor) stopped working (it works perfectly outside apache though). After further debugging, I've found that it is blocking in the get from the dataqueue of the RPC client: https://github.com/openstack/nova/blob/stable/havana/nova/openstack/common/rpc/amqp.py#L526\n\nA workaround was a call to eventlet.monkey_patch() in our WSGI script. Shouldn't we call the monkey patch on the amqp.py module directly?", 
+            "date_created": "2013-10-31 08:29:02.554956+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aloga"
+        }, 
+        {
+            "content": "I think the app needs to set up the monkey patch call before anything else tries to use any files or network connections. Doing it inside amqp.py is too low level.", 
+            "date_created": "2014-01-06 23:45:29.385919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "It seems like this would affect the regular API service, too.  We are only running eventlet.monkey_patch() if you're running the API via one of the nova commands (nova-api, nova-api-metadata, nova-api-os-compute, nova-api-ec2).", 
+            "date_created": "2014-02-07 18:20:47.668045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Russell, I can confirm this affects both the nova osapi and metadata when trying to run them in a webserver.  I can recreate the problem on both Apache httpd with mod_wsgi and Nginx with uwsgi.  This is running stable/havana.  Interestingly it doesn't affect the entire nova API.  I can perform most API commands, however 'nova console-log' seems to consistently hang with this issue. The get_console_output rpc.call will go out, hit the nova-compute node, return back to the API caller with the console log result but hang on the API side until the rpc_response_timeout hits and then return an error to the client.  \n\nI've had some success with throwing an eventlet.monkey_patch(os=False) in the wsgi file that the web server uses.  However whereas without the monkey_patch, get_console_output always hangs and times out in the same place, with the monkey_patch it only sometimes works.  Usually the first few requests will succeed and then all follow-on ones will hang in different places within the RPC code (seems like a side affect of the monkey_patch).  I haven't tried testing this against icehouse yet, but I would suspect the same behavior.", 
+            "date_created": "2014-03-30 18:11:22.402465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mathrock"
+        }, 
+        {
+            "content": "Just tested Apache + mod_wsgi for the current master(icehouse) in devstack and both the nova osapi and metadata apis seem to be working as expected.  ", 
+            "date_created": "2014-03-30 19:24:06.500955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mathrock"
+        }, 
+        {
+            "content": "Removed the conductor tag since this is eventlet-related, it just fails on any RPC (which happens to be conductor in the metadata case)", 
+            "date_created": "2014-06-04 15:59:23.020387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }
+    ]
+}

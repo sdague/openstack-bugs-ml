@@ -1,0 +1,130 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 12:17:05.005926+00:00", 
+    "description": "Scenario:\n\na sparse vmdk whose file size is 800MB and whose capacity is 4GB is uploaded to glance without specifying the size property.\n(glance uses the file's size for the size property in this case)\n\nnova boot with flavor tiny (root disk size of 1GB) said image.\n\nResult:\nThe vmwareapi driver fails to spawn the VM because the ESX server throws a fault when asked to 'grow' the disk from 4GB to 1GB (driver thinks it is attempt to grow from 800MB to 1GB)\n\nRelevant hostd.log on ESX host:\n2013-10-15T17:02:24.509Z [35BDDB90 verbose 'Default'\nopID=HB-host-22@3170-d82e35d0-80] ha-license-manager:Validate -> Valid\nevaluation detected for \"VMware ESX Server 5.0\" (lastError=2,\ndesc.IsValid:Yes)\n2013-10-15T17:02:25.129Z [FFBE3D20 info 'Vimsvc.TaskManager'\nopID=a3057d82-8e] Task Created :\nhaTask--vim.VirtualDiskManager.extendVirtualDisk-526626761                                                        \n\n2013-10-15T17:02:25.158Z [35740B90 warning 'Vdisksvc' opID=a3057d82-8e]\nNew capacity (2097152) is not greater than original capacity (8388608).\n\nI am still not exactly sure if this is consider user error on glance import, a glance shortcoming of not introspecting the vmdk, or a bug in the compute driver. Regardless, this bug is to track any potential defensive code we can add to the driver to better handle this scenario.", 
+    "tags": [
+        "in-stable-kilo", 
+        "in-stable-liberty", 
+        "vmware"
+    ], 
+    "importance": "Medium", 
+    "heat": 32, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1240373", 
+    "owner": "https://api.launchpad.net/1.0/~rgerganov", 
+    "id": 1240373, 
+    "index": 3651, 
+    "created": "2013-10-16 06:55:12.354119+00:00", 
+    "title": "VMware: Sparse glance vmdk's size property is mistaken for capacity", 
+    "comments": [
+        {
+            "content": "Scenario:\n\na sparse vmdk whose file size is 800MB and whose capacity is 4GB is uploaded to glance without specifying the size property.\n(glance uses the file's size for the size property in this case)\n\nnova boot with flavor tiny (root disk size of 1GB) said image.\n\nResult:\nThe vmwareapi driver fails to spawn the VM because the ESX server throws a fault when asked to 'grow' the disk from 4GB to 1GB (driver thinks it is attempt to grow from 800MB to 1GB)\n\nRelevant hostd.log on ESX host:\n2013-10-15T17:02:24.509Z [35BDDB90 verbose 'Default'\nopID=HB-host-22@3170-d82e35d0-80] ha-license-manager:Validate -> Valid\nevaluation detected for \"VMware ESX Server 5.0\" (lastError=2,\ndesc.IsValid:Yes)\n2013-10-15T17:02:25.129Z [FFBE3D20 info 'Vimsvc.TaskManager'\nopID=a3057d82-8e] Task Created :\nhaTask--vim.VirtualDiskManager.extendVirtualDisk-526626761                                                        \n\n2013-10-15T17:02:25.158Z [35740B90 warning 'Vdisksvc' opID=a3057d82-8e]\nNew capacity (2097152) is not greater than original capacity (8388608).\n\nI am still not exactly sure if this is consider user error on glance import, a glance shortcoming of not introspecting the vmdk, or a bug in the compute driver. Regardless, this bug is to track any potential defensive code we can add to the driver to better handle this scenario.", 
+            "date_created": "2013-10-16 06:55:12.354119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "For now, sparse image can be used if one of the following is true:\n\n\n1. the selected flavor to boot with has a configured root disk capacity of 0 or >= capacity of the sparse image.\n2. the capacity of the vmdk is what is set as the the size of the image.\n(Note: size of sparse vmdk != capacity of vmdk). The capacity of the vmdk should be known a priori, or \ninferrable by examining the embedded header of the sparse vmdk.\n\ne.g.\n\n> head -20 precise.vmdk | grep SPARSE\n\"RW 8388608\" SPARSE \"precise.vmdk\"' in the header of the precise.vmdk,\ndisk header is reporting 8388608 sectors (of 512 bytes each), for a total of 4GB.\n\nThe glance image's size property can therefore be updated like so:\nglance image-update --size 4294967296 _image_id_\n\n\n\n\n3. correct the glance image's size to be the capacity of the disk, which is 4294967296.\n(glance image-update --size 4294967296 image_id)", 
+            "date_created": "2013-10-16 17:50:56.601498+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "when i try to convert the size I get the following error\n\n[~/devstack/files/images (master)\u26a1] \u2794 glance image-update --size 2147483648 85d4e127-8dc3-4cc7-8ce0-4c4a7a2bed84\nRequest returned failure status.\n403 Forbidden\nForbidden to modify 'size' of active image.\n    (HTTP 403)\n", 
+            "date_created": "2013-10-30 20:53:08.724148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "just asked this question on irc and the answer is \n\ntjones: we cannot resize images\ntjones: you have to boot a server and then resize it", 
+            "date_created": "2013-10-30 21:22:33.484805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "Recent change to make size immutable (except for administrators) is the reason.\n\ncommit 9ae9c09e03d68338ac7ec342982489db3f5f54ab\nAuthor: Stuart McLaren <email address hidden>\nDate:   Wed Aug 7 06:22:12 2013\n\n    Make size/checksum immutable for active images\n\n    Once an image becomes 'active' it should only be possible for an\n    administrator (and not a regular user) to change the size and checksum\n    values.\n\n    Addresses bug 1209148.\n\n    Change-Id: Ic65afbca4a4161dfa77ce0a296a1bd72d96902ca", 
+            "date_created": "2013-10-30 21:31:32.359782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "vui - what is the issue that needs to be solved here?", 
+            "date_created": "2014-02-25 21:35:41.835556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/81676", 
+            "date_created": "2014-03-20 00:37:42.701446+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "this bug cannot be fixed without the glance v2 API.", 
+            "date_created": "2014-06-06 07:01:48.312036+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "and adding glance v2 API is a blueprint", 
+            "date_created": "2014-06-06 07:02:05.842849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "We can workaround the problem in the Nova driver by updating the image size after fetching the VMDK on the datastore.  This problem is affecting also streamOptimized and OVA images and we need to have workaround until this is fixed in Glance.", 
+            "date_created": "2014-11-19 13:04:46.281552+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rgerganov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/168013", 
+            "date_created": "2015-03-26 14:26:03.331384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/168013\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2f15d304f01a94a788db4175de3905bdd3a3cc62\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2f15d304f01a94a788db4175de3905bdd3a3cc62\nAuthor: Radoslav Gerganov <email address hidden>\nDate:   Thu Mar 26 16:22:30 2015 +0200\n\n    VMware: Use virtual disk size instead of image size\n    \n    The image size is different from the virtual disk size when the image is\n    sparse. For sparse images we get the size of the virtual disk by quering\n    the -flat file after converting the disk to preallocated.\n    \n    Co-Authored-By: Qin Zhao <email address hidden>\n    \n    Change-Id: I18628fe3a180f722936c680c6be30d5ed4d50bd9\n    Closes-Bug: #1240373\n    Closes-Bug: #1472955\n", 
+            "date_created": "2015-08-10 11:05:09.284578+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/252010", 
+            "date_created": "2015-12-01 18:30:12.063349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/258020", 
+            "date_created": "2015-12-15 17:18:23.901979+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/168024\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bfc5edc405138e3412ae1af01abbf098c319c77c\nSubmitter: Jenkins\nBranch:    master\n\ncommit bfc5edc405138e3412ae1af01abbf098c319c77c\nAuthor: Radoslav Gerganov <email address hidden>\nDate:   Thu Mar 26 16:54:05 2015 +0200\n\n    VMware: Handle image size correctly for OVA and streamOptimized images\n    \n    The image size is different from the virtual disk size when the image is\n    streamOptimized or OVA. In this case we need to use the size of the\n    virtual disk which belongs to the temporary VM created by ImportVApp.\n    This works for both vSAN and VMFS datastores.\n    \n    Related-Bug: #1240373\n    Related-Bug: #1472955\n    \n    Change-Id: Ie7df9a78632ff01453b07ee9fed3dffdd8b4a0c7\n", 
+            "date_created": "2016-01-26 18:47:20.745058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/277990", 
+            "date_created": "2016-02-09 17:53:17.517587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/277990\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2c6c67422e0e9dac5e4bd0b61085d3ca1b32e789\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 2c6c67422e0e9dac5e4bd0b61085d3ca1b32e789\nAuthor: Radoslav Gerganov <email address hidden>\nDate:   Thu Mar 26 16:54:05 2015 +0200\n\n    VMware: Handle image size correctly for OVA and streamOptimized images\n    \n    The image size is different from the virtual disk size when the image is\n    streamOptimized or OVA. In this case we need to use the size of the\n    virtual disk which belongs to the temporary VM created by ImportVApp.\n    This works for both vSAN and VMFS datastores.\n    \n    (cherry picked from commit bfc5edc405138e3412ae1af01abbf098c319c77c)\n    \n    Related-Bug: #1240373\n    Related-Bug: #1472955\n    Change-Id: Ie7df9a78632ff01453b07ee9fed3dffdd8b4a0c7\n", 
+            "date_created": "2016-03-04 22:06:19.801686+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@Vui Lam : Im getting the same error when booting an \"ova\" image, in stable-liberty branch. So I have the above mentioned fixes.\n\n\n39:54.602Z [332C2B70 warning 'Vdisksvc' opID=412bdb89-70 user=vpxuser] New capacity (83886080) is not greater than original capacity (125829120).\n-->\n2014-08-18T06:39:54.602Z [332C2B70 warning 'Vdisksvc' opID=412bdb89-70 user=vpxuser] Got Methodfault exception: vmodl.fault.InvalidArgument\n2014-08-18T06:39:54.602Z [332C2B70 info 'Vimsvc.TaskManager' opID=412bdb89-70 user=vpxuser] Task Completed : haTask--vim.VirtualDiskManager.extendVirtualDisk-351559722 Status error\n2014-08-18T06:40:02.012Z [35A80B70 verbose 'SoapAdapter'] Responded to service state request\n2014-08-18T06:40:07.619Z [34CC1B70 info 'Hostsvc.VmkVprobSource'] VmkVprobSource::Post event: (vim.event.EventEx) {\n\nAfter the stream optimized image is copied ,  image_info.file_size is giving the below value.\n > 1286250496 (1.19 gb) which is the size of the ova.\n\nbecause in my case the image is already existing in _base directory ? \n\n\n\n", 
+            "date_created": "2016-03-16 14:59:52.774553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~acbharadwaj"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/252010\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8a9f711c082e564fb5ac2f983a4616652f5b4d3d\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 8a9f711c082e564fb5ac2f983a4616652f5b4d3d\nAuthor: Radoslav Gerganov <email address hidden>\nDate:   Thu Mar 26 16:22:30 2015 +0200\n\n    VMware: Use virtual disk size instead of image size\n    \n    The image size is different from the virtual disk size when the image is\n    sparse. For sparse images we get the size of the virtual disk by quering\n    the -flat file after converting the disk to preallocated.\n    \n    Co-Authored-By: Qin Zhao <email address hidden>\n    \n    Change-Id: I18628fe3a180f722936c680c6be30d5ed4d50bd9\n    Closes-Bug: #1240373\n    Closes-Bug: #1472955\n    (cherry picked from commit 2f15d304f01a94a788db4175de3905bdd3a3cc62)\n", 
+            "date_created": "2016-05-04 02:47:53.341010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 2015.1.4 release.", 
+            "date_created": "2016-05-10 13:37:49.648225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/258020\nReason: This code hasn't been updated in a long time, and is in merge conflict. I am going to abandon this review, but feel free to restore it if you're still working on this.", 
+            "date_created": "2016-07-19 20:16:40.987279+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 2015.1.4 release.", 
+            "date_created": "2016-11-10 00:55:55.556570+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

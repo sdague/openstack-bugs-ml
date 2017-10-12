@@ -1,0 +1,184 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:37:32.284045+00:00", 
+    "description": "Here:\n\nhttps://github.com/openstack/nova/blob/HEAD/nova/api/metadata/handler.py#L173\n\na constant time comparison should be used, more information on this type of attack here: http://codahale.com/a-lesson-in-timing-attacks/\n\nAn example constant time comparison in Python can be found here: https://github.com/django/django/blob/master/django/utils/crypto.py#L80 or via the PyCA cryptography library: https://cryptography.io/en/latest/hazmat/primitives/constant-time/", 
+    "tags": [
+        "in-stable-havana", 
+        "in-stable-icehouse"
+    ], 
+    "importance": "High", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1325128", 
+    "owner": "https://api.launchpad.net/1.0/~gmurphy", 
+    "id": 1325128, 
+    "index": 1502, 
+    "created": "2014-05-30 23:36:17.318794+00:00", 
+    "title": "[OSSA 2014-024] nova metadata does not use a constant time compare for validating an HMAC token (CVE-2014-3517)", 
+    "comments": [
+        {
+            "content": "Here:\n\nhttps://github.com/openstack/nova/blob/HEAD/nova/api/metadata/handler.py#L173\n\na constant time comparison should be used, more information on this type of attack here: http://codahale.com/a-lesson-in-timing-attacks/\n\nAn example constant time comparison in Python can be found here: https://github.com/django/django/blob/master/django/utils/crypto.py#L80 or via the PyCA cryptography library: https://cryptography.io/en/latest/hazmat/primitives/constant-time/", 
+            "date_created": "2014-05-30 23:36:17.318794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alex-gaynor"
+        }, 
+        {
+            "content": "Thank you for the report.\n\nThe OSSA task is incomplete pending additional details from security reviewers, nova-coresec are now subscribed to the bug.", 
+            "date_created": "2014-05-31 00:32:19.114781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Since the nova security reviewers have been too busy to weigh in on this yet, I've added a few reviewers from the OSSG to help evaluate risk and exploitability.\n\nIf this demonstrably makes it possible to guess an HMAC token gaining unintended access/privileges in a supported release of nova and can be fixed in a stable backport, then we likely need to keep it embargoed while patches are assembled. Otherwise, I suspect this is a security hardening improvement we can discuss and develop far more efficiently in the open.", 
+            "date_created": "2014-06-09 15:19:50.633460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "This particularly one hasn't been demonstrated to be exploitable, however this precise pattern has: http://rdist.root.org/2009/05/28/timing-attack-in-google-keyczar-library/\n\nIf someone more familiar with this bit of code and the implications can weigh in and says it's fine, I'm happy to just send up a CR for this.", 
+            "date_created": "2014-06-09 15:29:38.585960+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alex-gaynor"
+        }, 
+        {
+            "content": "I'm basing the following comments on just having gone through the code paths before this comparison takes place so confirmation from someone more familiar with this flow would be nice.\n\nBut from what I'm seeing there is no user input that makes it into the token generation, depending on how networking access is structured for the nova metadata service.  This token comparison is based on CONF.service_neutron_metadata_proxy being set which means the deployer is expecting the Neutron namespace proxy to be setup.  The namespace proxy does a lookup based on the ip address of the instance making a query to it, and populates the X-Instance-ID header based on that result and then forwards to the Nova metadata service.  I would hope that the metadata service would not be directly accessible from instances.\n\nIf the metadata service is accessible from instances and CONF.service_neutron_metadata_proxy is set to True then this would be theoretically vulnerable to a timing attack.  The result of which would be gaining access to information about another instance.  It should be noted that this bug includes Neutron as well since it performs the signing so any change would have to be coordinated across both services.", 
+            "date_created": "2014-06-10 13:48:21.166998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "The fix should be something like this ... though not tested", 
+            "date_created": "2014-06-10 14:29:52.223228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Looks reasonable to me, we should probably add a constant time comparison to oslo so it can be shared across multiple projects.", 
+            "date_created": "2014-06-10 14:37:26.975374+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alex-gaynor"
+        }, 
+        {
+            "content": "So it seems there's some consensus that this is not generally exploitable and can instead be fixed in public as a hardening measure?\n\nAs for adding a constant time comparison to oslo, are there not already existing Python modules which can provide that so we don't reinvent the wheel (the age old adage of not rolling one's own crypto primitives seems applicable here, even if this isn't strictly a cryptographic matter)?", 
+            "date_created": "2014-06-10 18:08:16.996319+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "PyCA cryptography (cryptography.io) has one, as does Django, and the stdlib has one in 2.7.8+/3.4+ IIRC, probably a bunch of other projects have them too (I know for a fact both keystoneclient and swift do).", 
+            "date_created": "2014-06-10 18:17:06.972589+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alex-gaynor"
+        }, 
+        {
+            "content": "I would be ok with opening this up to be a public bug.  The exploit is theoretical at this point, and even the included links contain theoretical attacks with no proof of concept code.  And in general this token compare should not be receiving user input, though that is dependent on the deployment setup.", 
+            "date_created": "2014-06-10 20:09:14.861933+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Yes, I think we can open this one and fix it as a hardening measure. Scream soon if you disagree... otherwise we'll open it in a couple of days.", 
+            "date_created": "2014-06-12 13:18:42.224965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "History is littered with attack vectors that were only theoretical - until they weren't.\n\nAre there reasonable configuration steps that can be taken to lessen the risk?\n", 
+            "date_created": "2014-06-12 13:45:00.183225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Also, is the proposed patch something we would consider backporting to stable release branches? It does look trivial, introducing no new dependencies nor config options, so I'm assuming yes.", 
+            "date_created": "2014-06-12 14:19:49.320542+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Agreed it's easy to backport, let's do an OSSA then.", 
+            "date_created": "2014-06-16 14:28:01.757077+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Ceilometer also appears to get this wrong here.\n\nhttps://github.com/openstack/ceilometer/blob/master/ceilometer/publisher/utils.py#L71\n\nAnd swift? (Or is this test code?)\n\nhttps://github.com/openstack/swift/blob/master/swift/common/middleware/tempauth.py#L285 \n\n", 
+            "date_created": "2014-06-18 06:23:55.084574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "So if we are going to issue an advisory for this maybe we could do something like this for the impact description: \n\nTitle: Use of non-constant time comparison operation\nReporter: Alex Gaynor (Rackspace)\nProducts: Nova\nVersions: Up to 2013.2.3, and 2014.1 to 2014.1.1\n\nAlex Gaynor of Rackspace reported a timing attack vulnerability in Nova.\nBy analyzing response times to requests for instance metadata, an attacker \nmay be able to guess a valid instance ID signature. This could allow access \nto important configuration details of another instance. Only setups \nconfigured to proxy metadata requests via Neturon are affected. \n\n\n--\n\n", 
+            "date_created": "2014-06-20 03:18:20.674466+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Created bug #1332390 for ceilometer issue. ", 
+            "date_created": "2014-06-20 03:27:45.245372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "nova coresec: please review proposed patch", 
+            "date_created": "2014-06-23 14:23:47.718936+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "CVE assigned using the following impact description: \n\nTitle: Use of non-constant time comparison operation\nReporter: Alex Gaynor (Rackspace)\nProducts: Nova\nVersions: Up to 2013.2.3, and 2014.1 to 2014.1.1\n\nAlex Gaynor from Rackspace reported a timing attack vulnerability in Nova.\nBy analyzing response times to requests for instance metadata, an attacker\nmay be able to guess a valid instance ID signature. This could allow access\nto important configuration details of another instance. Only setups\nconfigured to proxy metadata requests via Neutron are affected.\n\n\nDisclosure day/date schedule TBD.  In preparation can we please get a definitive +1 / +2 on the patch from nova-coresec ? ", 
+            "date_created": "2014-06-24 05:04:08.282561+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "I am +2 on russell's patch (assuming it passes gate tests, etc), as it seems to do the right thing, as far as I can tell from that article.\n\nI would love to get someone to have time to do a manual test of that patch, but I think it makes sense.\n\n", 
+            "date_created": "2014-07-01 09:24:07.786651+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "FWIW Keystone uses a slightly more comprehensive approach than the proposed patch - \n\nhttps://github.com/openstack/python-keystoneclient/blob/master/keystoneclient/middleware/memcache_crypt.py#L88\n\nWe should probably at least fall back to hmac.compare_digest if it is available.", 
+            "date_created": "2014-07-02 12:07:30.101437+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-07-08 06:52:28.507588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-07-08 06:53:06.571953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-07-08 06:53:26.080593+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "The original patch supplied  no longer applies cleanly to master. I've tweaked it to the keystone version and back-ported to supported security levels. \n\nCan we get these patches reviewed and approved? I would like to send the pre-OSSA out soon with a view to have a disclosure date of mid next week. ", 
+            "date_created": "2014-07-08 06:54:01.732246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "./run_tests.sh reported no errors, all tests passed with all three patches on local Ubuntu (12.04) based devstacks.\n\n@nova-coresec: please have a look at those too!", 
+            "date_created": "2014-07-08 13:26:44.756102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Proposed public disclosure date/time:\n2014-07-16, 1500UTC\n", 
+            "date_created": "2014-07-10 02:41:26.348200+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Reviews - \n\nhttps://review.openstack.org/107396\nhttps://review.openstack.org/107397\nhttps://review.openstack.org/107398", 
+            "date_created": "2014-07-16 14:26:02.527412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/107396\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4a60c6a655006b2882331844664fac5cf67c5f34\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4a60c6a655006b2882331844664fac5cf67c5f34\nAuthor: Grant Murphy <email address hidden>\nDate:   Tue Jul 8 03:35:40 2014 +0000\n\n    Avoid possible timing attack in metadata api\n    \n    Introduce a constant time comparison function to\n    nova utils for comparing authentication tokens.\n    \n    Change-Id: I7374f2edc6f03c7da59cf73ae91a87147e53d0de\n    Closes-bug: #1325128\n", 
+            "date_created": "2014-07-17 09:13:24.079718+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/107398\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1dd97d1335f6ec028d0e4440250f80802a2f1d18\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 1dd97d1335f6ec028d0e4440250f80802a2f1d18\nAuthor: Grant Murphy <email address hidden>\nDate:   Tue Jul 8 03:35:40 2014 +0000\n\n    Avoid possible timing attack in metadata api\n    \n    Introduce a constant time comparison function to\n    nova utils for comparing authentication tokens.\n    \n    Conflicts:\n    \tnova/tests/test_utils.py\n    \tnova/utils.py\n    \n    Closes-bug: #1325128\n    Change-Id: I7374f2edc6f03c7da59cf73ae91a87147e53d0de\n    (cherry picked from commit 9f59ca751f1a392ef24d8ab73a7bf5ce9655017e)\n", 
+            "date_created": "2014-07-23 23:37:04.285360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/107397\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9f59ca751f1a392ef24d8ab73a7bf5ce9655017e\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 9f59ca751f1a392ef24d8ab73a7bf5ce9655017e\nAuthor: Grant Murphy <email address hidden>\nDate:   Tue Jul 8 03:35:40 2014 +0000\n\n    Avoid possible timing attack in metadata api\n    \n    Introduce a constant time comparison function to\n    nova utils for comparing authentication tokens.\n    \n    Conflicts:\n    \tnova/utils.py\n    \n    Closes-bug: #1325128\n    Change-Id: I7374f2edc6f03c7da59cf73ae91a87147e53d0de\n    (cherry picked from commit 4a60c6a655006b2882331844664fac5cf67c5f34)\n", 
+            "date_created": "2014-07-24 00:09:30.284365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I've opened bug 1361357 to address the very significant performance regression caused by this fix.\n", 
+            "date_created": "2014-08-25 20:59:16.799694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Please ignore the above comment.  bug 1361357's performance change is not a result of this bug.", 
+            "date_created": "2014-09-02 13:48:52.416400+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }
+    ]
+}

@@ -1,0 +1,364 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-06-28 08:47:16.672597+00:00", 
+    "description": "This issue is being treated as a potential security risk under embargo. Please do not make any public mention of embargoed (private) security vulnerabilities before their coordinated publication by the OpenStack Vulnerability Management Team in the form of an official OpenStack Security Advisory. This includes discussion of the bug or associated fixes in public forums such as mailing lists, code review systems and bug trackers. Please also avoid private disclosure to other individuals not already approved for access to this information, and provide this same reminder to those who are made aware of the issue prior to publication. All discussion should remain confined to this private bug report, and any proposed fixes should be added to the bug as attachments.\n\nThere is a qcow2 format vulnerability in LibvirtDriver.snapshot. The impact is that on an affected system, an unprivileged api user can retrieve any file on the host readable by the nova user. This includes guest data of other instances on the same host, and credentials used by nova to access other services externally.\n\nLibvirtDriver.snapshot does:\n\n\u00a0\u00a0\u00a0\u00a0source_format = libvirt_utils.get_disk_type(disk_path)\n\u00a0\u00a0\u00a0\u00a0...\n\u00a0\u00a0\u00a0\u00a0snapshot_backend = self.image_backend.snapshot(instance,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0disk_path,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0image_type=source_format)\n\u00a0\u00a0\u00a0\u00a0...\n\u00a0\u00a0\u00a0\u00a0snapshot_backend.snapshot_extract(out_path, image_format)\n\nlibvirt_utils.get_disk_type falls back to image inspection for disks which are not lvm, rbd or ploop, which means raw and qcow2 images.\n\nThe vulnerability only exists when a user can write to a raw volume which is later erroneously detected as qcow2. This means that the vulnerability is only present on systems using the libvirt driver which have defined use_cow_images=False in nova.conf. This is not the default, so by default nova is not vulnerable.\n\nlibvirt.utils.extract_snapshot() expects to be reading from an instance disk and writing to a temporary directory created by nova for storing snapshots before transferring them to glance. As nova directly creates this directory and its contents, the 'qemu-img convert' process does not need to run privileged. This means that the exposure is limited to files directly readable by the nova user.\n\nUnfortunately, as is clear from the context this includes all instance data which, despite being owned by the qemu user, is world readable. Additionally, because the qemu-img process is executed by nova directly, it does not benefit from any confinement by libvirt. Specifically, SELinux is not likely to be a defence on a typical deployment.\n\nI have tested this exploit on a Fedora 23 system running devstack as of 8th Dec 2015:\n\nEnsure nova.conf contains use_cow_images = False in the DEFAULT section.\n\nAs an unprivileged api user, do:\n$ nova boot --image cirros --flavor m1.tiny foo\n\nSomewhere, run:\n$ qemu-img create -f qcow2 -o backing_file=/etc/passwd bad.qcow2\nEnsure bad.qcow2 is available in the foo instance.\n\nLog into foo, and execute as root:\n# dd if=bad.qcow2 of=/dev/vda conv=fsync\n\nAs an unprivileged api user, do:\n$ nova image-create foo passwd\n$ glance image-download <newly created image id> --file passwd\n\nThe unprivileged api now has the contents of /etc/passwd from the host locally.\n\nMitigations:\n\nNova is not vulnerable by default. The user must have configured use_cow_images=False.\nNova configurations using ceph or lvm for instance storage are not vulnerable.\nAn attacker must know the uuid of another user's instance in order to be able to access its data.", 
+    "tags": [
+        "in-stable-kilo", 
+        "in-stable-liberty"
+    ], 
+    "importance": "High", 
+    "heat": 266, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1524274", 
+    "owner": "https://api.launchpad.net/1.0/~mbooth-9", 
+    "id": 1524274, 
+    "index": 1853, 
+    "created": "2015-12-09 10:33:15.785546+00:00", 
+    "title": "[OSSA 2016-001] Unprivileged api user can access host data using instance snapshot (CVE-2015-7548)", 
+    "comments": [
+        {
+            "content": "There is a qcow2 format vulnerability in LibvirtDriver.snapshot. The impact is that on an affected system, an unprivileged api user can retrieve any file on the host readable by the nova user. This includes guest data of other instances on the same host, and credentials used by nova to access other services externally.\n\nLibvirtDriver.snapshot does:\n\n    source_format = libvirt_utils.get_disk_type(disk_path)\n    ...\n    snapshot_backend = self.image_backend.snapshot(instance,\n        disk_path,\n        image_type=source_format)\n    ...\n    snapshot_backend.snapshot_extract(out_path, image_format)\n\nlibvirt_utils.get_disk_type falls back to image inspection for disks which are not lvm, rbd or ploop, which means raw and qcow2 images.\n\nThe vulnerability only exists when a user can write to a raw volume which is later erroneously detected as qcow2. This means that the vulnerability is only present on systems using the libvirt driver which have defined use_cow_images=False in nova.conf. This is not the default, so by default nova is not vulnerable.\n\nlibvirt.utils.extract_snapshot() expects to be reading from a temporary directory created by nova for storing snapshots before transferring them to glance. As nova directly creates this directory and its contents, the 'qemu-img convert' process does not need to run privileged. This means that the exposure is limited to files directly readable by the nova user.\n\nUnfortunately, while instance disk data is owned by the qemu user not the nova user, on the deployments I have looked at disks are world readable, all their parent directories are world accessable. Additionally, because the qemu-img process is executed by nova directly, it does not benefit from any confinement by libvirt. Specifically, SELinux is not likely to be a defence on a typical deployment.\n\nI have tested this exploit on a Fedora 23 system running devstack as of 8th Dec 2015:\n\nEnsure nova.conf contains use_cow_images = False in the DEFAULT section.\n\nAs an unprivileged api user, do:\n$ nova boot --image cirros --flavor m1.tiny foo\n\nSomewhere, run:\n$ qemu-img create -f qcow2 -o backing_file=/etc/passwd bad.qcow2\nEnsure bad.qcow2 is available in the foo instance.\n\nLog into foo, and execute as root:\n# dd if=bad.qcow2 of=/dev/vda conv=fsync\n\nAs an unprivileged api user, do:\n$ nova image-create foo passwd\n$ glance image-download <newly created image id> --file passwd\n\nThe unprivileged api now has the contents of /etc/passwd from the host locally.\n\nMitigations:\n\nNova is not vulnerable by default. The user must have configured use_cow_images=False.\nNova configurations using ceph or lvm for instance storage are not vulnerable.\nAn attacker must know the uuid of another user's instance in order to be able to access its data.", 
+            "date_created": "2015-12-09 10:33:15.785546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Added ndipanov to help with this one", 
+            "date_created": "2015-12-09 10:37:39.379994+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.\n\nIn the past, we've considered bugs requiring UUID guessing to be security hardening opportunities rather than reasonably exploitable vulnerabilities. If it's confirmed that you need to guess or otherwise obtain the UUID of another tenant's instance to take advantage of this, then the VMT likely won't issue a security advisory nor request a CVE assignment. Also, the reduced risk implies that we'd be better off working this bug through our normal public process rather than incurring the expense of a private embargo.", 
+            "date_created": "2015-12-09 15:45:27.481924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "This seems like a similar issue of https://security.openstack.org/ossa/OSSA-2014-009.html\n\nWe did issue an advisory because nova user is able to read /etc/nova/nova.conf which usually contains sensitive information like services token.\n\n\nAnyway, is this a regression or snapshot never used the disk info file to inspect file format ? ", 
+            "date_created": "2015-12-09 16:05:39.691617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "This is very similar to https://bugs.launchpad.net/nova/+bug/1221190\n\nThe problematic line\n\nhttps://github.com/openstack/nova/blob/b5890b3c36613919338f83c4f59225f424c99cb1/nova/virt/libvirt/driver.py#L1357\n\nwas introduced by this commit: https://review.openstack.org/#/c/13684/ which was merged more than 3 years ago, but looking at the surrounding code at the time, the problem was there even before the patch, since we'd just grab the image format from glance which is completely user controlled as well.\n\nSo this does not seem like a regression.", 
+            "date_created": "2015-12-09 17:04:20.627352+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "The bug is worse that I originally realised, as it also affects installations running on ceph, lvm and ploop. The only setup which is not affected is qcow2 on filesystem.\n\nThe issue with ceph, lvm and ploop is that their snapshot_extract does convert_image, which calls qemu-img convert. It specifies an output format but not an input format, which means that the input format is implictly auto-detected. It is worse still on lvm, because in that case qemu-img convert runs as root, so it can read any file or device on the host without restriction.\n\nI have successfully exploited this on rbd.", 
+            "date_created": "2015-12-09 17:15:31.575498+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Here's a patch which addresses the originally reported issue with raw on filesystem. However, it does not fix the problem. With this patch, the disk is correctly handled as raw, but then it calls Raw.snapshot_extract, which is also vulnerable as described above, as it doesn't explicitly specify input format.\n\nSo, I believe this patch is required, but another patch is also required. I will work on this second patch tomorrow.", 
+            "date_created": "2015-12-09 17:27:32.200669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Just for clarity the problematic line for RBD is \n\nhttps://github.com/openstack/nova/blob/b5890b3c36613919338f83c4f59225f424c99cb1/nova/virt/libvirt/imagebackend.py#L818\n\nif you look at convert_image method it calls:\n\nhttps://github.com/openstack/nova/blob/b5890b3c36613919338f83c4f59225f424c99cb1/nova/virt/images.py#L71\n\nthe call to qemu-image convert never gets passed an input file format (-f) which means it tries to guess it from the image.\n\nOther formats Matt mentions call the same method and are exploitable for the same reason.", 
+            "date_created": "2015-12-09 17:30:56.381640+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Thanks for the clarification, I've confirmed the OSSA task. Matthew, about ceph, lvm, ... does it also triggers even with use_cow_images = True ?\n\nHere is a first draft for the impact description:\n\nTitle: Nova host data leak through snapshot\nReporter: Matthew Booth (Red Hat)\nProducts: Nova\nVersions: <=2015.1.2, ==12.0.0\n\nDescription:\nMatthew Booth from Red Hat reported a vulnerability in Nova instance snapshot. By overwriting the disk inside an instance with a malicious image and requesting a snapshot, an authenticated user would be able to read an arbitrary file from the compute host. Note that the host file needs to be readable by the libvirt/kvm context to be exposed, lvm image backend run as root user, other backends run as nova user. Only setups using libvirt to spawn instance, and having \"use_cow_images = False\" in Nova configuration are affected.", 
+            "date_created": "2015-12-09 20:05:59.537434+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "use_cow_images = True is only used by filesystem storage. Systems which set use_cow_images = True and use filesystem storage are not vulnerable. Everything else is vulnerable. For clarity:\n\nnfs or local files, use_cow_images = True: not vulnerable\nnfs or local files, use_cow_images = False: vulnerable\nceph, lvm, ploop: vulnerable\n\nEssentially, anything which stores raw data is vulnerable.", 
+            "date_created": "2015-12-10 10:03:51.752022+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "The impact description isn't quite right, yet. The process which reads host data is executed directly by nova. It runs as the nova user, except for the lvm backend, which runs as root. libvirt/kvm is not involved, which means libvirt confinement isn't a protection here. As discussed above, use_cow_images = False is only relevant to filesystem storage (local/nfs).\n\nHow about:\n\nMatthew Booth from Red Hat reported a vulnerability in Nova instance snapshot. By overwriting the disk inside an instance with a malicious image and requesting a snapshot, an authenticated user would be able to read an arbitrary file from the compute host. Note that the host file needs to be readable by the nova user to be exposed except when using lvm for instance storage, when all files readable by root are exposed. Only setups using libvirt to spawn instances are vulnerable. Of these, setups which use filesystem storage, and do not set \"use_cow_images = False\" in Nova configuration are not affected. Setups which use ceph, lvm, or ploop for instance storage, and setups which use filesystem storage with \"use_cow_images = False\" are all affected.", 
+            "date_created": "2015-12-10 10:22:16.694652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I've looked at the patch from comment #6 and I agree with the way Matt has fixed the find_disk/get_disk_type methods to be safe.", 
+            "date_created": "2015-12-10 11:03:11.803486+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Some comments on the patch from comment #6\n\n\n@@ -1356,10 +1357,23 @@ class LibvirtDriver(driver.ComputeDriver):\n \n         snapshot = self._image_api.get(context, image_id)\n \n-        disk_path = libvirt_utils.find_disk(virt_dom)\n-        source_format = libvirt_utils.get_disk_type(disk_path)\n+        # source_format is an on-disk format\n+        # source_type is a backend type\n+        disk_path, source_format = libvirt_utils.find_disk(virt_dom)\n+        source_type = libvirt_utils.get_disk_type_from_path(disk_path)\n\nSo the problem with using source_type derived from the file we find in disk_path is actually that we use it to instantiate the image backend class further down\n\nhttps://github.com/openstack/nova/blob/b5890b3c36613919338f83c4f59225f424c99cb1/nova/virt/libvirt/driver.py#L1421-L1422\n\nBut we really do not need this information at all here, we should really just be calling\n\n  snapshot_backend = self.image_backend.snapshot(instance, disk_path) \n\nas the format will be taken care of by the resolve_driver_format() method of the backend which then looks at the stored format in the disk_info_path file.\n\nI agree that this patch probably fixes the issue, but does it in a way that is slightly different from the mechanism for doing this that we already have in place - the resolve_driver_format method (and seems to require more code). We should go for the simplest/most confined solution if possible.", 
+            "date_created": "2015-12-10 11:17:23.567864+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "As a side note: I wonder if we should have a separate bug and CVE for the convert_image issue. It seems that under the circumstances and considering the severity - it requires a proper analysis, which it may not get if we keep it all under an umbrella of a single bug. ", 
+            "date_created": "2015-12-10 11:20:41.597661+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "IMHO it is only appropriate to use the resolve_drive_format() method in cases where we don't have access to the information from libvirt guest config. ie it if the guest does not already exist.  If there is a libvirt guest XML present, we should consider that the canonical source of information about the disk format, because that reflects what format QEMU is actually running with. The Nova look-aside cache is just a backup data source IMHO, not the canonical source, so should be used as a last resort", 
+            "date_created": "2015-12-10 11:37:23.797387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Nikola,\n\nI figured that while the 2 issues are technically separate, though, the exploit and impact is essentially identical. i.e. from a user and patching pov, they're the same thing. In particular, I'd worry about producing 2 very similar CVEs with the same impact and exploit, but with different sets of affected users. The potential outcome of that is that somebody might mix them up and not patch, whereas in practice almost everybody has to patch.\n\nHowever, I'm not sufficiently familiar with the process to know whether 2 bugs or 1 handles this better. I'm happy to create a second bug for the convert_image issue if that's more useful. I'll continue treating them as 1 issue until somebody better informed tells me otherwise.", 
+            "date_created": "2015-12-10 11:39:27.325747+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "-    return disk_path\n+    if driver is not None:\n+        format = driver.get('type')\n+        # This is a legacy quirk of libvirt/xen. Everything else should\n+        # report the on-disk format in type.\n+        if format == 'aio':\n+            format = 'raw'\n+    else:\n+        format = None\n+    return (disk_path, format)\n\nQEMU is running guest so I'm not sure we can be on case where format is None or if we are we should to stop process.\n\nWhat about:\n\n-    return disk_path\n+    if driver is None:\n+        raise RuntimeError(\"Can't retrieve disk driver from guest's domain XML\")\n+    format = driver.get('type')\n+    if format == 'aio':\n+        # This is a legacy quirk of libvirt/xen. Everything else should\n+        # report the on-disk format in type.\n+        format = 'raw'\n+    return (disk_path, format)", 
+            "date_created": "2015-12-10 14:11:29.668018+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Sahid,\n\nI wrote it the way I did because I don't know what's going on with lxc guests, and I wanted to minimise the chances of breaking them (I'm not going to test them). We're passing a mounted filesystem to libvirt for lxc guests, so libvirt doesn't know what the file format is of the underlying storage. That's not ideal, but it's a separate issue.", 
+            "date_created": "2015-12-10 15:24:14.566821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "So I think we have one more path that allows for a problem but affects only raw backend (as qcow is not affected and _live_snapshot is enabled only for file backed instances):\n\nhttps://github.com/openstack/nova/blob/240df4285964d341239376d8ea355c1b3763007a/nova/virt/libvirt/driver.py#L1567-L1571\n\nthis creates an overlay on top of whatever is read from the image by calling libvirt_utils.get_disk_backing_file, and then image_create (in case of raw it could have been tampered with). The code then proceeds to call blockRebase and finally qemu-image convert to whatever was detected.\n\nIt would be good to try to reproduce this path as well as we'll want to fix the issue with the ", 
+            "date_created": "2015-12-10 16:36:14.276757+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "So the live snapshot thing is definitely a bug. However, it *doesn't* result in leaking data from the host. I'm not 100% sure why, but the resulting file is still a qcow2 with a backing file. As we don't have this backing file, there's no data leak.\n\nAs I don't understand why it's not broken, I'd still be inclined to fix it, tbh. It's definitely not safe.", 
+            "date_created": "2015-12-10 18:46:28.354683+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Apologies for the lack of commit messages. I have to run again and I don't have time to do them justice right now. The second patch addresses the convert_image bug. I have tested it against both filesystem/raw and ceph. The exploit no longer works on either setup with both patches in place.", 
+            "date_created": "2015-12-10 18:51:09.179149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "The migration case is also worrisome, the exploit may be prevented by another bug or something... We should fix it in another patch (and maybe another bug-report) only if we are confident this is not exploitable. Otherwise I would suggest we fix all qemu-img convert trickery in a single advisory.\n\nHere is another draft that only covers the snapshot case with the description proposed by Matthew:\n\nTitle: Nova host data leak through snapshot\nReporter: Matthew Booth (Red Hat)\nProducts: Nova\nVersions: <=2015.1.2, ==12.0.0\n\nDescription:\nMatthew Booth from Red Hat reported a vulnerability in Nova instance snapshot. By overwriting the disk inside an instance with a malicious image and requesting a snapshot, an authenticated user would be able to read an arbitrary file from the compute host. Note that the host file needs to be readable by the nova user to be exposed except when using lvm for instance storage, when all files readable by root are exposed. Only setups using libvirt to spawn instances are vulnerable. Of these, setups which use filesystem storage, and do not set \"use_cow_images = False\" in Nova configuration are not affected. Setups which use ceph, lvm, or ploop for instance storage, and setups which use filesystem storage with \"use_cow_images = False\" are all affected.", 
+            "date_created": "2015-12-10 21:33:25.086809+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-12-11 14:45:07.851562+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-12-11 14:45:33.127386+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-12-11 14:45:51.517975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I meant live-snapshot, not migration. my bad!", 
+            "date_created": "2015-12-11 14:46:34.609150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I've uploaded 3 patches to address the 3 issues discussed in this bug, including the live-snapshot issue mentioned by nikola which we aren't 100% sure is usefully exploitable. They all now have proper commit messages. I have tested them against filesystem/raw and rbd locally, but I would be very grateful for review.", 
+            "date_created": "2015-12-11 14:49:00.023482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Thanks Matthew, nova-coresec, please review proposed patch.\n\nI'd like to request a CVE now with the proposed impact description in #21 since it's good enough for both issues (snapshot and live-snapshot).\n\nIf patches are approved by Monday morning (before 1500UTC), this could be disclosed the following Thursday:\n2015-12-17, 1500 UTC\n\nIf patches are approved by Thursday, this would need to wait another week and could be disclosed the following Tuesday:\n2015-12-22, 1500 UTC\n\nThis second date is not really ideal since it's dangerously close to Christmas holidays...", 
+            "date_created": "2015-12-11 16:16:24.131310+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "The 3 new patches get my +2.", 
+            "date_created": "2015-12-11 16:21:22.691312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "The only improvement I'd make in patche #2 would be to make sure that we never call an unsafe convert_image outside of that one case where we have to do it, by making that a separate method we name _unsafe\n\nOtherwise lgtm - I think sahid was working on some backports. How do the tests look?", 
+            "date_created": "2015-12-11 16:24:10.628207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Tristan's impact description in comment #21 looks good to me.\n\nThe rules to determine whether your deployment is impacted are somewhat convoluted and it took me a few times reading through to grok. Nevertheless I can't think of any easier way to state that, and hopefully downstream consumers will just apply the patch regardless.", 
+            "date_created": "2015-12-11 16:24:15.015764+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I would make 1 change to the impact statement: I no longer believe ploop is affected, although I still haven't tested it and I'm not going to. So affected setups are:\n\n* filesystem + use_cow_images = False\n* LVM\n* RBD\n\nI would remove mention of ploop from the impact statement.", 
+            "date_created": "2015-12-11 16:32:57.315707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "> I think sahid was working on some backports. How do the tests look?\nAll patches are passing tests.\n\nIf patches are acked by monday morning I could to propose them backported for liberty, kilo, juno, icehouse by end of day.", 
+            "date_created": "2015-12-11 16:40:32.270321+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Actually come to think of it we could use the same trick for patch #3 qemu-img info call - but seeing that there are more call sites, and it's not as critical, we can do that in a separate patch(es)", 
+            "date_created": "2015-12-11 16:41:06.403371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "This is an updated patch #2, as per nikola's comments.", 
+            "date_created": "2015-12-11 16:46:07.846960+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-12-14 10:22:40.763366+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-12-14 10:23:09.723487+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "stable/liberty (1, 2, 3) are backports, please take time to review them. Thanks.", 
+            "date_created": "2015-12-14 10:24:25.729729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-12-14 10:25:35.186729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-12-14 10:25:56.123262+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "stable/kilo (1, 2, 3) are backports please take time to review them. Thanks", 
+            "date_created": "2015-12-14 10:26:52.859711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Backports look good to me. I've inspected them, and run pep8 and unit tests against all of them individually (kilo and liberty). I haven't tested them in a complete working system, though, or run tempest against them.\n\nThe only comment I would make is that ideally the cherry-pick line would either refer to an actual upstream commit, or be omitted. Right now it refers to something in your local tree. It might be simpler just to omit it, or to frig the commit messages after it actually lands on upstream master. However, this is a minor point, and shouldn't hold anything up.", 
+            "date_created": "2015-12-14 13:56:09.991592+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Taking into account the upcoming holiday period, we would like to propose an embargoed disclosure date of Monday 4th January, with a public disclosure date of Thursday 7th January. Does that suit?", 
+            "date_created": "2015-12-14 16:52:38.329857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I'm okay with the bug reporter requesting a delay in disclosure. Under the current calendar circumstances, this seems like a reasonable timeline.", 
+            "date_created": "2015-12-14 18:18:05.886504+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/264812", 
+            "date_created": "2016-01-07 15:00:35.388585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/264813", 
+            "date_created": "2016-01-07 15:00:45.853381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/264814", 
+            "date_created": "2016-01-07 15:00:56.643655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/264815", 
+            "date_created": "2016-01-07 15:01:09.145329+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/264816", 
+            "date_created": "2016-01-07 15:01:20.317533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/264817", 
+            "date_created": "2016-01-07 15:01:34.395225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/264819", 
+            "date_created": "2016-01-07 15:01:53.006673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/264820", 
+            "date_created": "2016-01-07 15:02:05.304484+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/264821", 
+            "date_created": "2016-01-07 15:02:15.660162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264812\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2bb6635a21e4f7abe386c01ec7d3af5480498f14\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2bb6635a21e4f7abe386c01ec7d3af5480498f14\nAuthor: Matthew Booth <email address hidden>\nDate:   Wed Dec 9 15:36:32 2015 +0000\n\n    Fix format detection in libvirt snapshot\n    \n    The libvirt driver was using automatic format detection during\n    snapshot for disks stored on the local filesystem. This opened an\n    exploit if nova was configured to use local file storage, and\n    additionally to store those files in raw format by specifying\n    use_cow_images = False in nova.conf. An authenticated user could write\n    a qcow2 header to their guest image with a backing file on the host.\n    libvirt.utils.get_disk_type() would then misdetect the type of this\n    image as qcow2 and pass this to the Qcow2 image backend, whose\n    snapshot_extract method interprets the image as qcow2 and writes the\n    backing file to glance. The authenticated user can then download the\n    host file from glance.\n    \n    This patch makes 2 principal changes. libvirt.utils.get_disk_type,\n    which ought to be removed entirely as soon as possible, is updated to\n    no longer do format detection if the format can't be determined from\n    the path. Its name is changed to get_disk_type_from_path to reflect\n    its actual function.\n    \n    libvirt.utils.find_disk is updated to return both the path and format\n    of the root disk, rather than just the path. This is the most reliable\n    source of this information, as it reflects the actual format in use.\n    The previous format detection function of get_disk_type is replaced by\n    the format taken from libvirt.\n    \n    We replace a call to get_disk_type in _rebase_with_qemu_img with an\n    explicit call to qemu_img_info, as the other behaviour of\n    get_disk_type was not relevant in this context. qemu_img_info is safe\n    from the backing file exploit when called on a file known to be a\n    qcow2 image. As the file in this context is a volume snapshot, this is\n    a safe use.\n    \n    Partial-Bug: #1524274\n    \n    Change-Id: I94c1c0d26215c061f71c3f95e1a6bf3a58fa19ea\n", 
+            "date_created": "2016-01-08 15:57:08.583854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264813\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=820430b62aa5e87a8f7750f1b9873f56c4822452\nSubmitter: Jenkins\nBranch:    master\n\ncommit 820430b62aa5e87a8f7750f1b9873f56c4822452\nAuthor: Matthew Booth <email address hidden>\nDate:   Thu Dec 10 16:34:19 2015 +0000\n\n    Fix format conversion in libvirt snapshot\n    \n    The libvirt driver was calling images.convert_image during snapshot to\n    convert snapshots to the intended output format. However, this\n    function does not take the input format as an argument, meaning it\n    implicitly does format detection. This opened an exploit for setups\n    using raw storage on the backend, including raw on filesystem, LVM,\n    and RBD (Ceph). An authenticated user could write a qcow2 header to\n    their instance's disk which specified an arbitrary backing file on the\n    host. When convert_image ran during snapshot, this would then write\n    the contents of the backing file to glance, which is then available to\n    the user. If the setup uses an LVM backend this conversion runs as\n    root, meaning the user can exfiltrate any file on the host, including\n    raw disks.\n    \n    This change adds an input format to convert_image.\n    \n    Partial-Bug: #1524274\n    \n    Change-Id: If73e73718ecd5db262ed9904091024238f98dbc0\n", 
+            "date_created": "2016-01-08 16:00:56.983427+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/267178", 
+            "date_created": "2016-01-13 21:14:45.502546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264815\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cd4eeead3d70719f04d940af7da608eec81ab4e8\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit cd4eeead3d70719f04d940af7da608eec81ab4e8\nAuthor: Matthew Booth <email address hidden>\nDate:   Wed Dec 9 15:36:32 2015 +0000\n\n    Fix format detection in libvirt snapshot\n    \n    The libvirt driver was using automatic format detection during\n    snapshot for disks stored on the local filesystem. This opened an\n    exploit if nova was configured to use local file storage, and\n    additionally to store those files in raw format by specifying\n    use_cow_images = False in nova.conf. An authenticated user could write\n    a qcow2 header to their guest image with a backing file on the host.\n    libvirt.utils.get_disk_type() would then misdetect the type of this\n    image as qcow2 and pass this to the Qcow2 image backend, whose\n    snapshot_extract method interprets the image as qcow2 and writes the\n    backing file to glance. The authenticated user can then download the\n    host file from glance.\n    \n    This patch makes 2 principal changes. libvirt.utils.get_disk_type,\n    which ought to be removed entirely as soon as possible, is updated to\n    no longer do format detection if the format can't be determined from\n    the path. Its name is changed to get_disk_type_from_path to reflect\n    its actual function.\n    \n    libvirt.utils.find_disk is updated to return both the path and format\n    of the root disk, rather than just the path. This is the most reliable\n    source of this information, as it reflects the actual format in use.\n    The previous format detection function of get_disk_type is replaced by\n    the format taken from libvirt.\n    \n    We replace a call to get_disk_type in _rebase_with_qemu_img with an\n    explicit call to qemu_img_info, as the other behaviour of\n    get_disk_type was not relevant in this context. qemu_img_info is safe\n    from the backing file exploit when called on a file known to be a\n    qcow2 image. As the file in this context is a volume snapshot, this is\n    a safe use.\n    \n    Partial-Bug: #1524274\n    \n    (cherry picked from commit 2bb6635a21e4f7abe386c01ec7d3af5480498f14)\n    \n    Conflicts:\n        nova/tests/unit/virt/libvirt/test_utils.py\n        nova/virt/libvirt/utils.py\n    \n    Minor conflicts as ploop was added in Mitaka.\n    \n    Change-Id: I94c1c0d26215c061f71c3f95e1a6bf3a58fa19ea\n", 
+            "date_created": "2016-01-14 05:50:44.603836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264816\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a9c8dee7ec81d6331c3699a2dda3a57b48ecfe5c\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit a9c8dee7ec81d6331c3699a2dda3a57b48ecfe5c\nAuthor: Matthew Booth <email address hidden>\nDate:   Thu Dec 10 16:34:19 2015 +0000\n\n    Fix format conversion in libvirt snapshot\n    \n    The libvirt driver was calling images.convert_image during snapshot to\n    convert snapshots to the intended output format. However, this\n    function does not take the input format as an argument, meaning it\n    implicitly does format detection. This opened an exploit for setups\n    using raw storage on the backend, including raw on filesystem, LVM,\n    and RBD (Ceph). An authenticated user could write a qcow2 header to\n    their instance's disk which specified an arbitrary backing file on the\n    host. When convert_image ran during snapshot, this would then write\n    the contents of the backing file to glance, which is then available to\n    the user. If the setup uses an LVM backend this conversion runs as\n    root, meaning the user can exfiltrate any file on the host, including\n    raw disks.\n    \n    This change adds an input format to convert_image.\n    \n    Partial-Bug: #1524274\n    \n    (cherry picked from commit 820430b62aa5e87a8f7750f1b9873f56c4822452)\n    \n    Change-Id: If73e73718ecd5db262ed9904091024238f98dbc0\n", 
+            "date_created": "2016-01-14 05:51:26.123555+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264814\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=915fdbbfb82272b87cd80210943372b09351cf88\nSubmitter: Jenkins\nBranch:    master\n\ncommit 915fdbbfb82272b87cd80210943372b09351cf88\nAuthor: Matthew Booth <email address hidden>\nDate:   Fri Dec 11 13:40:54 2015 +0000\n\n    Fix backing file detection in libvirt live snapshot\n    \n    When doing a live snapshot, the libvirt driver creates an intermediate\n    qcow2 file with the same backing file as the original disk. However,\n    it calls qemu-img info without specifying the input format explicitly.\n    An authenticated user can write data to a raw disk which will cause\n    this code to misinterpret the disk as a qcow2 file with a\n    user-specified backing file on the host, and return an arbitrary host\n    file as the backing file.\n    \n    This bug does not appear to result in a data leak in this case, but\n    this is hard to verify. It certainly results in corrupt output.\n    \n    Closes-Bug: #1524274\n    \n    Change-Id: I11485f077d28f4e97529a691e55e3e3c0bea8872\n", 
+            "date_created": "2016-01-14 17:37:13.937428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264817\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c9c0b1b4b5acc1ea3c2bbb694aa79d7e4a7087e3\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit c9c0b1b4b5acc1ea3c2bbb694aa79d7e4a7087e3\nAuthor: Matthew Booth <email address hidden>\nDate:   Fri Dec 11 13:40:54 2015 +0000\n\n    Fix backing file detection in libvirt live snapshot\n    \n    When doing a live snapshot, the libvirt driver creates an intermediate\n    qcow2 file with the same backing file as the original disk. However,\n    it calls qemu-img info without specifying the input format explicitly.\n    An authenticated user can write data to a raw disk which will cause\n    this code to misinterpret the disk as a qcow2 file with a\n    user-specified backing file on the host, and return an arbitrary host\n    file as the backing file.\n    \n    This bug does not appear to result in a data leak in this case, but\n    this is hard to verify. It certainly results in corrupt output.\n    \n    Closes-Bug: #1524274\n    \n    (cherry picked from commit 915fdbbfb82272b87cd80210943372b09351cf88)\n    \n    Conflicts:\n        nova/virt/images.py\n    \n    Liberty does not catch processutils.ProcessExecutionError in\n    qemu_img_info.\n    \n    Change-Id: I11485f077d28f4e97529a691e55e3e3c0bea8872\n", 
+            "date_created": "2016-01-15 08:21:28.731836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/267178\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b2acc9fa864b6fe10bc0c5f3786b976b472b1b27\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit b2acc9fa864b6fe10bc0c5f3786b976b472b1b27\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Jan 13 09:41:57 2016 -0800\n\n    Add security fixes to the release notes for 12.0.1\n    \n    There are two security fixes in the upcoming stable/liberty\n    point release (12.0.1) so we should document those in the\n    release notes.\n    \n    This shouldn't be merged until I11485f077d28f4e97529a691e55e3e3c0bea8872\n    is merged. We don't use Depends-On here since we don't want to hold this\n    up on the stable/kilo backport of that change.\n    \n    Change-Id: Ib2235d6aee540d9010dc86c73aff71179d46e921\n    Related-Bug: #1516765\n    Related-Bug: #1524274\n", 
+            "date_created": "2016-01-15 10:56:41.875001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264819\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7534182e7f1ae466f96fdb13d3715a458f300604\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 7534182e7f1ae466f96fdb13d3715a458f300604\nAuthor: Matthew Booth <email address hidden>\nDate:   Wed Dec 9 15:36:32 2015 +0000\n\n    Fix format detection in libvirt snapshot\n    \n    The libvirt driver was using automatic format detection during\n    snapshot for disks stored on the local filesystem. This opened an\n    exploit if nova was configured to use local file storage, and\n    additionally to store those files in raw format by specifying\n    use_cow_images = False in nova.conf. An authenticated user could write\n    a qcow2 header to their guest image with a backing file on the host.\n    libvirt.utils.get_disk_type() would then misdetect the type of this\n    image as qcow2 and pass this to the Qcow2 image backend, whose\n    snapshot_extract method interprets the image as qcow2 and writes the\n    backing file to glance. The authenticated user can then download the\n    host file from glance.\n    \n    This patch makes 2 principal changes. libvirt.utils.get_disk_type,\n    which ought to be removed entirely as soon as possible, is updated to\n    no longer do format detection if the format can't be determined from\n    the path. Its name is changed to get_disk_type_from_path to reflect\n    its actual function.\n    \n    libvirt.utils.find_disk is updated to return both the path and format\n    of the root disk, rather than just the path. This is the most reliable\n    source of this information, as it reflects the actual format in use.\n    The previous format detection function of get_disk_type is replaced by\n    the format taken from libvirt.\n    \n    We replace a call to get_disk_type in _rebase_with_qemu_img with an\n    explicit call to qemu_img_info, as the other behaviour of\n    get_disk_type was not relevant in this context. qemu_img_info is safe\n    from the backing file exploit when called on a file known to be a\n    qcow2 image. As the file in this context is a volume snapshot, this is\n    a safe use.\n    \n    Partial-Bug: #1524274\n    \n    Conflicts:\n        nova/tests/unit/virt/libvirt/test_driver.py\n        nova/tests/unit/virt/libvirt/test_utils.py\n        nova/virt/libvirt/driver.py\n        nova/virt/libvirt/utils.py\n    \n    Change-Id: I94c1c0d26215c061f71c3f95e1a6bf3a58fa19ea\n", 
+            "date_created": "2016-01-16 01:08:37.011927+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264820\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=3bc1295e2d5fb1376e3a5c708efe9fbf9435e6a4\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 3bc1295e2d5fb1376e3a5c708efe9fbf9435e6a4\nAuthor: Matthew Booth <email address hidden>\nDate:   Thu Dec 10 16:34:19 2015 +0000\n\n    Fix format conversion in libvirt snapshot\n    \n    The libvirt driver was calling images.convert_image during snapshot to\n    convert snapshots to the intended output format. However, this\n    function does not take the input format as an argument, meaning it\n    implicitly does format detection. This opened an exploit for setups\n    using raw storage on the backend, including raw on filesystem, LVM,\n    and RBD (Ceph). An authenticated user could write a qcow2 header to\n    their instance's disk which specified an arbitrary backing file on the\n    host. When convert_image ran during snapshot, this would then write\n    the contents of the backing file to glance, which is then available to\n    the user. If the setup uses an LVM backend this conversion runs as\n    root, meaning the user can exfiltrate any file on the host, including\n    raw disks.\n    \n    This change adds an input format to convert_image.\n    \n    Partial-Bug: #1524274\n    \n    Change-Id: If73e73718ecd5db262ed9904091024238f98dbc0\n", 
+            "date_created": "2016-01-16 01:09:42.201609+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/264821\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b974c6d1d5753f333d1d71f8190ddf3b4f8fbbf1\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit b974c6d1d5753f333d1d71f8190ddf3b4f8fbbf1\nAuthor: Matthew Booth <email address hidden>\nDate:   Fri Dec 11 13:40:54 2015 +0000\n\n    Fix backing file detection in libvirt live snapshot\n    \n    When doing a live snapshot, the libvirt driver creates an intermediate\n    qcow2 file with the same backing file as the original disk. However,\n    it calls qemu-img info without specifying the input format explicitly.\n    An authenticated user can write data to a raw disk which will cause\n    this code to misinterpret the disk as a qcow2 file with a\n    user-specified backing file on the host, and return an arbitrary host\n    file as the backing file.\n    \n    This bug does not appear to result in a data leak in this case, but\n    this is hard to verify. It certainly results in corrupt output.\n    \n    Closes-Bug: #1524274\n    \n    Change-Id: I11485f077d28f4e97529a691e55e3e3c0bea8872\n", 
+            "date_created": "2016-01-16 01:10:40.973322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.1 release.", 
+            "date_created": "2016-01-19 15:33:54.364917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b2 development milestone.", 
+            "date_created": "2016-01-21 13:42:45.195117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/291208", 
+            "date_created": "2016-03-10 14:37:36.063572+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/291208\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9c0bbda07fdcf134308371644d09becbb18c62b1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9c0bbda07fdcf134308371644d09becbb18c62b1\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Mar 10 09:35:00 2016 -0500\n\n    Add release notes for security fixes in 13.0.0 mitaka GA\n    \n    There are three security issues fixed in mitaka.\n    \n    The first two were documented for liberty 12.0.1 but we\n    apparently forgot to doc them for mitaka.\n    \n    Related-Bug: #1524274\n    Related-Bug: #1516765\n    Related-Bug: #1548450\n    \n    Change-Id: I3eba75f1fc86c4c9abd258042dfafc6df1f2405c\n", 
+            "date_created": "2016-03-10 21:52:24.144618+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I am sorry that I am not clear reproducing process. Anyone can help me? Thanks.\n\nI have set use_cow_images = False in nova.conf and restarted services.\nThen I executed the steps in the description and file \"passwd\" generated.\n\nAs the description says, the contents of /etc/passwd should be in the passwd file. Since the passwd file is a binary file, I tried to use \"grep\" to search the contents of /etc/passwd in passwd file. But I found nothing. And I also tried \"grep\" command on bad.qcow2. Also nothing was found. In the instance, I executed \"sudo strings /dev/vda | head -1\" and it shows \"/etc/passwd\". So the \"dd\" operation should have worked. But I don't know how can I show the contents of \"/etc/passwd\" in downloaded passwd file.\n\nAnyone has some advice? Thanks very much.", 
+            "date_created": "2016-06-28 08:47:15.722306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shhjwang"
+        }
+    ]
+}

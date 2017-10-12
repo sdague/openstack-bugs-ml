@@ -1,0 +1,158 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-01-19 04:33:10.843824+00:00", 
+    "description": "OS version: RHEL 6.5\nlibvirt version:  libvirt-0.10.2-29.el6_5.9.x86_64\n\nWhen I attempt to live migrate my KVM instance using latest Juno code on RHEL 6.5, I notice nova-compute error on source compute node:\n\n2014-08-27 09:24:41.836 26638 ERROR nova.virt.libvirt.driver [-] [instance: 1b1618fa-ddbd-4fce-aa04-720a72ec7dfe] Live Migration failure: unsupported configuration: Target CPU model SandyBridge does not match source (null)\n\nAnd this libvirt error on source compute node:\n\n2014-08-27 09:32:24.955+0000: 17721: error : virCPUDefIsEqual:753 : unsupported configuration: Target CPU model SandyBridge does not match source (null)\n\nAfter looking into the code, I notice that https://review.openstack.org/#/c/73428/ adds VIR_DOMAIN_XML_MIGRATABLE flag to dump instance xml. With this flag, the KVM instance xml will include full CPU information like this:\n  <cpu mode='host-model' match='exact'>\n    <model fallback='allow'>SandyBridge</model>\n    <vendor>Intel</vendor>\n\nWithout this flag, the xml will not have those CPU information:\n  <cpu mode='host-model'>\n    <model fallback='allow'/>\n    <topology sockets='1' cores='1' threads='1'/>\n  </cpu>\n\nThe CPU model of my source and destination server are exactly identical. So I suspect it is a side effect of https://review.openstack.org/#/c/73428/. When libvirtd doing virDomainDefCheckABIStability(), its src domain xml does not include CPU model info, so that the checking fails.\n\nAfter I remove the code change of https://review.openstack.org/#/c/73428/ from my compute node, this libvirt checking error does not occur anymore.", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1362929", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1362929, 
+    "index": 1589, 
+    "created": "2014-08-29 05:20:24.689587+00:00", 
+    "title": "libvirt: KVM live migration failed due to VIR_DOMAIN_XML_MIGRATABLE flag", 
+    "comments": [
+        {
+            "content": "OS version: RHEL 6.5\nlibvirt version:  libvirt-0.10.2-29.el6_5.9.x86_64\n\nWhen I attempt to live migrate my KVM instance using latest Juno code on RHEL 6.5, I notice nova-compute error on source compute node:\n\n2014-08-27 09:24:41.836 26638 ERROR nova.virt.libvirt.driver [-] [instance: 1b1618fa-ddbd-4fce-aa04-720a72ec7dfe] Live Migration failure: unsupported configuration: Target CPU model SandyBridge does not match source (null)\n\nAnd this libvirt error on source compute node:\n\n2014-08-27 09:32:24.955+0000: 17721: error : virCPUDefIsEqual:753 : unsupported configuration: Target CPU model SandyBridge does not match source (null)\n\nAfter looking into the code, I notice that https://review.openstack.org/#/c/73428/ adds VIR_DOMAIN_XML_MIGRATABLE flag to dump instance xml. With this flag, the KVM instance xml will include full CPU information like this:\n  <cpu mode='host-model' match='exact'>\n    <model fallback='allow'>SandyBridge</model>\n    <vendor>Intel</vendor>\n\nWithout this flag, the xml will not have those CPU information:\n  <cpu mode='host-model'>\n    <model fallback='allow'/>\n    <topology sockets='1' cores='1' threads='1'/>\n  </cpu>\n\nThe CPU model of my source and destination server are exactly identical. So I suspect it is a side effect of https://review.openstack.org/#/c/73428/. When libvirtd doing virDomainDefCheckABIStability(), its src domain xml does not include CPU model info, so that the checking fails.\n\nAfter I remove the code change of https://review.openstack.org/#/c/73428/ from my compute node, this libvirt checking error does not occur anymore.", 
+            "date_created": "2014-08-29 05:20:24.689587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "I believe qemu instance live migration will not have this problem, because the domain xml of qemu does not include this CPU information.", 
+            "date_created": "2014-08-29 05:24:47.166848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "Also encounter the same issue on PowerKVM compute node.", 
+            "date_created": "2014-09-04 03:07:53.757137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "@Qin, I tested this also. it works on my machine.\n\nMy env is:\n\nOS: ubuntu 14.04\nlibvirt version: 1.2.2-0ubuntu13.1.2", 
+            "date_created": "2014-09-10 11:42:14.165045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "Seems like legit bug, though it might be the really old version of libvirt is the issue.", 
+            "date_created": "2014-09-10 11:53:45.908593+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "@Alex, Please keep your test environment. I hope to compare it with mine tomorrow. Thanks!", 
+            "date_created": "2014-09-10 15:25:16.871962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "I compare the source code of libvirt 1.2.2 and libvirt 0.10.2.  Now I think we hit this bug: https://bugzilla.redhat.com/show_bug.cgi?id=994364\n\nThe new code of libvirt will insert cpu information into source domain xml, before calling virDomainDefCheckABIStability() to compare the source domain xml with the xml input by migrateToURI2(), so that the checking will not fail.\n", 
+            "date_created": "2014-09-11 06:56:24.958375+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "I guess this problem also exists on RHEL 7.0 which ships libvirt 1.1.1-29.\n\nIs there any way to workaround this problem in Nova driver code?", 
+            "date_created": "2014-09-11 07:18:09.002643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "RHEL 7.0 should already include this libvirt patch.\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1076503\n", 
+            "date_created": "2014-09-16 03:43:00.714493+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "Report a bug to Redhat in order to backport the libvirt patch to RHEL 6.5/6.6/6.7\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1141838\n", 
+            "date_created": "2014-09-16 03:43:28.281863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "Looks like this introduced the change: https://review.openstack.org/#/c/73428/\n\nIf live migration is broken on RHEL 6.5 because we don't have a new enough version of libvirt or qemu on RHEL 6.5, we should put some conditional logic in the libvirt driver code probably.", 
+            "date_created": "2014-09-24 13:49:59.413419+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm a little confused, reading https://bugzilla.redhat.com/show_bug.cgi?id=994364 it sounds like the fix is in qemu, but the comments above make it sound like something has to be patched into libvirt.\n\nApparently I don't have access to see https://bugzilla.redhat.com/show_bug.cgi?id=1141838.", 
+            "date_created": "2014-09-24 13:52:46.933320+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm a little more confused now, looking at the patch here:\n\nhttps://review.openstack.org/#/c/73428/\n\nThere is checking in place based on whether or not the version of libvirt being used has the VIR_DOMAIN_XML_MIGRATABLE flag available and if not, it calls _check_graphics_addresses_can_live_migrate which checks to see if your console addresses are set to acceptable values:\n\nLOCAL_ADDRS = ('0.0.0.0', '127.0.0.1', '::', '::1')\n\nAnd if not, you get a migration error.\n\nSo from reading that it sounds like you should be able to do a live migration with older libvirt as long as you have your console addresses set correctly.", 
+            "date_created": "2014-09-24 16:11:15.606723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Oh I think I get it now, we're going down the path that we have a new enough libvirt so the VIR_DOMAIN_XML_MIGRATABLE flag is set but it still fails, which is https://bugzilla.redhat.com/show_bug.cgi?id=1076503.  That's fixed in RHEL 7 but not RHEL 6.5 so we're still exposed.", 
+            "date_created": "2014-09-24 16:25:24.052556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Thinking out loud, could we handle the error and then try the case where VIR_DOMAIN_XML_MIGRATABLE wouldn't be set (which will fail if the console addresses aren't set correctly, i.e. bug 1279563), but at least we'd have the check here in that case:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/virt/libvirt/driver.py?id=2014.2.b3#n4933", 
+            "date_created": "2014-09-24 16:37:46.611278+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "That's not a bad idea, although for actual errors this might make debugging a bit more confusing.", 
+            "date_created": "2014-09-24 16:41:29.642420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sross-7"
+        }, 
+        {
+            "content": "If we can add a condition which detects libvirt and prevent from setting VIR_DOMAIN_XML_MIGRATABLE flag, we will be able to work around this issue in Nova driver code. But I do not have a very good idea. Checking version number will be too ugly. I am still hoping to get some input from danpb and sross.", 
+            "date_created": "2014-09-24 16:47:16.409672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "@sross, if your code change can take effect on RHEL 6.5 and make vnc listen to the right ip address, that should be the best result. Since RDO also need to support RHEL 6.5, I feel it make sense to request backporting the libvirt patch.  Do you think so?  Will you share your position in BZ 1141838 ?", 
+            "date_created": "2014-09-24 17:00:36.326049+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "@Solly, yeah, checking for just VIR_ERR_CONFIG_UNSUPPORTED in the libvirtError is super duper generic, since that's used for pretty much all failures in virDomainDefCheckABIStability which calls virCPUDefIsEqual and that raises the 'Target CPU model x does not match source y'.  I guess we could narrow the scope of the hack in the libvirt driver by just checking on that string in the error.", 
+            "date_created": "2014-09-24 18:11:19.065229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/123811", 
+            "date_created": "2014-09-24 18:27:52.007749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/123811\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=867bdedf81533f283aae4de4488d54c254bb7f07\nSubmitter: Jenkins\nBranch:    master\n\ncommit 867bdedf81533f283aae4de4488d54c254bb7f07\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Sep 24 11:21:59 2014 -0700\n\n    Fallback to legacy live migration if config error\n    \n    Commit ea7da5152cdca7ba674e2137c3899909995e2287 added a path to using\n    migrateToURI2 for live migration if the version of libvirt used has the\n    VIR_DOMAIN_XML_MIGRATABLE flag set.\n    \n    However, a bug in older versions of libvirt causes the live migration to\n    fail because it's incorrectly validating the old and new domain xml's\n    for ABI stability.\n    \n    Not all distros are running with the patched version of libvirt so add a\n    check in place such that if we fail live migration on the new path with\n    VIR_ERR_CONFIG_UNSUPPORTED, assume it's due to this issue and attempt\n    the legacy migrateToURI call.\n    \n    Closes-Bug: #1362929\n    Related-Bug: #1279563\n    \n    Change-Id: Ie82566121c2ed3a6d55919bc111358f4129cb404\n", 
+            "date_created": "2014-09-29 16:59:08.598580+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "libvirt patch is backported to libvirt-0.10.2-46.el6_6.2.x86_64 for RHEL 6.6\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1155564", 
+            "date_created": "2014-11-19 02:03:46.844219+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "libvirt patch is shipped by libvirt-0.10.2-47.el6\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1141838", 
+            "date_created": "2014-12-29 02:46:51.378380+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "I believe this is actually fixed in RHEL 6.5 here: https://rhn.redhat.com/errata/RHSA-2014-1873.html", 
+            "date_created": "2015-01-15 22:36:30.753105+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "@Matt, this bug is NOT fixed by libvirt-0.10.2-46.el6. The patch is included in libvirt-0.10.2-47.el6, which has not been published.", 
+            "date_created": "2015-01-16 06:51:52.028176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "So there's confusion due to the two different release streams here.\n\nThe current RHEL6 release is RHEL-6.6, and the next planned release willbe RHEL-6.7\n\nThe libvirt-0.10.2-47.el6 package is scheduled for RHEL-6.7, hence is not available yet as 6.7 isn't released\n\nThe very same fix though is included in a bugfix update for the 6.6.z channel, as libvirt-0.10.2-46.el6_6.2\n\nSo currently users should make sure they use libvirt-0.10.2-46.el6_6.2 release from the 6.6.z channels.", 
+            "date_created": "2015-01-16 14:53:45.916240+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Actually this is the BZ that says the fix is in RHEL 6.5:\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1155563\n\nThe package is supposed to be libvirt-0.10.2-29.el6_5.13 on RHEL 6.5.", 
+            "date_created": "2015-01-16 15:12:44.424285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I tested libvirt-0.10.2-46.el6_6.2 and libvirt-0.10.2-29.el6_5.13 on RHEL 6.5 this morning. The migration bug is fixed.\n\nThat means, even if end user create an instance on RHEL 6.5, whose vnc ip is not 0.0.0.0, he will be able to migrate this instance after updating libvirt, and instance vnc ip will be successfully changed to destination compute node ip.\n\n@danpd, @matt, thanks for your clarification!", 
+            "date_created": "2015-01-19 04:33:09.746429+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }
+    ]
+}

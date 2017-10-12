@@ -1,0 +1,330 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-01 11:34:25.859155+00:00", 
+    "description": "tempest.scenario.test_volume_boot_pattern.TestVolumeBootPattern.test_volume_boot_pattern failed at least once with the following traceback when trying to connect via SSH:\n\nTraceback (most recent call last):\n  File \"tempest/scenario/test_volume_boot_pattern.py\", line 156, in test_volume_boot_pattern\n    ssh_client = self._ssh_to_server(instance_from_snapshot, keypair)\n  File \"tempest/scenario/test_volume_boot_pattern.py\", line 100, in _ssh_to_server\n    private_key=keypair.private_key)\n  File \"tempest/scenario/manager.py\", line 466, in get_remote_client\n    return RemoteClient(ip, username, pkey=private_key)\n  File \"tempest/common/utils/linux/remote_client.py\", line 47, in __init__\n    if not self.ssh_client.test_connection_auth():\n  File \"tempest/common/ssh.py\", line 149, in test_connection_auth\n    connection = self._get_ssh_connection()\n  File \"tempest/common/ssh.py\", line 65, in _get_ssh_connection\n    timeout=self.channel_timeout, pkey=self.pkey)\n  File \"/usr/local/lib/python2.7/dist-packages/paramiko/client.py\", line 236, in connect\n    retry_on_signal(lambda: sock.connect(addr))\n  File \"/usr/local/lib/python2.7/dist-packages/paramiko/util.py\", line 279, in retry_on_signal\n    return function()\n  File \"/usr/local/lib/python2.7/dist-packages/paramiko/client.py\", line 236, in <lambda>\n    retry_on_signal(lambda: sock.connect(addr))\n  File \"/usr/lib/python2.7/socket.py\", line 224, in meth\n    return getattr(self._sock,name)(*args)\n  File \"/usr/local/lib/python2.7/dist-packages/fixtures/_fixtures/timeout.py\", line 52, in signal_handler\n    raise TimeoutException()\nTimeoutException\n\nLogs can be found at: http://logs.openstack.org/86/82786/1/gate/gate-tempest-dsvm-neutron-pg/1eaadd0/\nThe review that triggered the issue is: https://review.openstack.org/#/c/82786/", 
+    "tags": [
+        "gate-failure", 
+        "nova-network", 
+        "testing"
+    ], 
+    "importance": "Critical", 
+    "heat": 124, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1298472", 
+    "owner": "None", 
+    "id": 1298472, 
+    "index": 183, 
+    "created": "2014-03-27 15:54:18.642256+00:00", 
+    "title": "SSHTimeout in tempest trying to verify that computes are actually functioning", 
+    "comments": [
+        {
+            "content": "tempest.scenario.test_volume_boot_pattern.TestVolumeBootPattern.test_volume_boot_pattern failed at least once with the following traceback when trying to connect via SSH:\n\nTraceback (most recent call last):\n  File \"tempest/scenario/test_volume_boot_pattern.py\", line 156, in test_volume_boot_pattern\n    ssh_client = self._ssh_to_server(instance_from_snapshot, keypair)\n  File \"tempest/scenario/test_volume_boot_pattern.py\", line 100, in _ssh_to_server\n    private_key=keypair.private_key)\n  File \"tempest/scenario/manager.py\", line 466, in get_remote_client\n    return RemoteClient(ip, username, pkey=private_key)\n  File \"tempest/common/utils/linux/remote_client.py\", line 47, in __init__\n    if not self.ssh_client.test_connection_auth():\n  File \"tempest/common/ssh.py\", line 149, in test_connection_auth\n    connection = self._get_ssh_connection()\n  File \"tempest/common/ssh.py\", line 65, in _get_ssh_connection\n    timeout=self.channel_timeout, pkey=self.pkey)\n  File \"/usr/local/lib/python2.7/dist-packages/paramiko/client.py\", line 236, in connect\n    retry_on_signal(lambda: sock.connect(addr))\n  File \"/usr/local/lib/python2.7/dist-packages/paramiko/util.py\", line 279, in retry_on_signal\n    return function()\n  File \"/usr/local/lib/python2.7/dist-packages/paramiko/client.py\", line 236, in <lambda>\n    retry_on_signal(lambda: sock.connect(addr))\n  File \"/usr/lib/python2.7/socket.py\", line 224, in meth\n    return getattr(self._sock,name)(*args)\n  File \"/usr/local/lib/python2.7/dist-packages/fixtures/_fixtures/timeout.py\", line 52, in signal_handler\n    raise TimeoutException()\nTimeoutException\n\nLogs can be found at: http://logs.openstack.org/86/82786/1/gate/gate-tempest-dsvm-neutron-pg/1eaadd0/\nThe review that triggered the issue is: https://review.openstack.org/#/c/82786/", 
+            "date_created": "2014-03-27 15:54:18.642256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "The scenario test does the following:\n\n1. Creates a security group rule in the default security group to allow ssh and ping.\n2. Creates a volume from the configured image.\n3. Boots instance A from the volume.\n4. Writes some random text to a tmp file on instance A which is written to the backing volume.\n5. Deletes instance A.\n6. Create instance B from the volume.\n7. Uses ssh to cat out the contents of the file written in step 4 using instance B and verifies the text is the same.\n8. Makes a snapshot of the volume.\n9. Creates a volume from the snapshot image.\n10. Create instance C from the volume created from the snapshot.\n11. Uses instance C to check the content of the text file written to the original volume in step 4.\n\nWe fail in step 11 with the ssh timeout.", 
+            "date_created": "2014-06-06 14:59:46.455367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Note that TestVolumeBootPattern is for cinder v1 and there is a TestVolumeBootPatternV2 for cinder v2 to handle the different block device mapping format for cinder v2.\n\nThere is also some cleanup at the end of the test case, but that should probably be in addCleanup calls rather than at the end, otherwise they won't get called on tear down and we're potentially leaking resources:\n\n        # NOTE(gfidente): ensure resources are in clean state for\n        # deletion operations to succeed\n        self._stop_instances([instance_2nd, instance_from_snapshot])\n        self._detach_volumes([volume_origin, volume])", 
+            "date_created": "2014-06-06 15:01:25.685333+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Looks like mtreinish has an old patch to try and fix the cleanup issues in the scenario tests:\n\nhttps://review.openstack.org/#/c/62101/", 
+            "date_created": "2014-06-06 15:06:15.294193+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "http://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwic2VsZi5fY2hlY2tfY29udGVudF9vZl93cml0dGVuX2ZpbGUoc3NoX2NsaWVudCwgdGV4dClcIiBBTkQgdGFnczpcImNvbnNvbGVcIiIsImZpZWxkcyI6W10sIm9mZnNldCI6MCwidGltZWZyYW1lIjoiNjA0ODAwIiwiZ3JhcGhtb2RlIjoiY291bnQiLCJ0aW1lIjp7InVzZXJfaW50ZXJ2YWwiOjB9LCJzdGFtcCI6MTQwMjA2ODAwOTQ0MSwibW9kZSI6IiIsImFuYWx5emVfZmllbGQiOiIifQ==", 
+            "date_created": "2014-06-06 15:21:05.524422+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "79 hits in 7 days, all failures, check and gate queues, started spiking on 6/5.", 
+            "date_created": "2014-06-06 15:21:27.111473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "e-r query: https://review.openstack.org/#/c/98450/\n", 
+            "date_created": "2014-06-06 15:26:00.583545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "First hit in the gate queue: 2014-06-05T22:48:32.806+00:00\n", 
+            "date_created": "2014-06-06 17:00:54.282522+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/98497", 
+            "date_created": "2014-06-06 19:05:41.757281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Looks like the same error is hitting test_snapshot_pattern:\n\nhttp://logs.openstack.org/31/95831/4/check/check-tempest-dsvm-full/c54cc0e/console.html#_2014-06-06_19_47_25_269\n\nAnd test_minimum_basic_scenario:\n\nhttp://logs.openstack.org/31/95831/4/check/check-tempest-dsvm-full/c54cc0e/console.html#_2014-06-06_19_42_57_322", 
+            "date_created": "2014-06-07 18:53:00.257465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "New query for all scenario tests hitting this:\n\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiU1NIVGltZW91dDogQ29ubmVjdGlvbiB0byB0aGVcIiBBTkQgbWVzc2FnZTpcInZpYSBTU0ggdGltZWQgb3V0LlwiIEFORCB0YWdzOlwidGVtcGVzdC50eHRcIiIsImZpZWxkcyI6W10sIm9mZnNldCI6MCwidGltZWZyYW1lIjoiNjA0ODAwIiwiZ3JhcGhtb2RlIjoiY291bnQiLCJ0aW1lIjp7InVzZXJfaW50ZXJ2YWwiOjB9LCJzdGFtcCI6MTQwMjIzMTIyNzE2MH0=", 
+            "date_created": "2014-06-08 12:44:54.542918+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/98632", 
+            "date_created": "2014-06-08 12:46:07.077706+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The revert of this change has passed Jenkins 4 times now without hitting the ssh timeout failure:\n\nhttps://review.openstack.org/#/c/97842/", 
+            "date_created": "2014-06-09 00:34:59.997854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/98632\nCommitted: https://git.openstack.org/cgit/openstack/tempest/commit/?id=2da58590dab4bc7e56928edf08d02a96fb933ee7\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2da58590dab4bc7e56928edf08d02a96fb933ee7\nAuthor: Matt Riedemann <email address hidden>\nDate:   Sun Jun 8 12:46:02 2014 +0000\n\n    Revert \"don't reuse servers in test_server_actions\"\n    \n    This reverts commit b7f648b31c9044e3a7c25c0fb1dcc31a81e0da9f.\n    \n    Change-Id: I31672c8b131fec4a916c4d703f6819c22d605876\n    Related-Bug: #1298472\n", 
+            "date_created": "2014-06-09 15:00:09.761491+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Here http://logs.openstack.org/66/85666/5/check/check-tempest-dsvm-full-icehouse/3ea5f7f/console.html#_2014-06-09_03_31_50_179\nthe servers is booted and fip is exists.\nFailed with early socket timeout.", 
+            "date_created": "2014-06-10 16:53:06.113661+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "message: \"tempest.common.ssh timeout\\: timed out\" AND tags:\"console\"\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOiBcInRlbXBlc3QuY29tbW9uLnNzaCB0aW1lb3V0XFw6IHRpbWVkIG91dFwiIEFORCB0YWdzOlwiY29uc29sZVwiIiwiZmllbGRzIjpbXSwib2Zmc2V0IjowLCJ0aW1lZnJhbWUiOiI2MDQ4MDAiLCJncmFwaG1vZGUiOiJjb3VudCIsInRpbWUiOnsidXNlcl9pbnRlcnZhbCI6MH0sInN0YW1wIjoxNDAyNDIyNDcwNzQ3LCJtb2RlIjoiIiwiYW5hbHl6ZV9maWVsZCI6IiJ9\n\n\nMaking all type of ssh exception retry-able:\nhttps://review.openstack.org/#/c/98212/", 
+            "date_created": "2014-06-10 17:51:12.864254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "actually it was retied for 3-4 minutes, so the 98212 wouldn't help.", 
+            "date_created": "2014-06-10 18:26:54.594471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "The revert in tempest seems to have cleared this up for now.", 
+            "date_created": "2014-06-10 19:46:21.949345+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related nova change to improve nova-network logging:\n\nhttps://review.openstack.org/#/c/99002/", 
+            "date_created": "2014-06-10 20:08:04.347968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Wondering if there is something racy in the ec2 boto 3rd party tests or in the ec2 API with not doing a good job of cleaning up networks:\n\nhttp://goo.gl/6f1dfw", 
+            "date_created": "2014-06-10 20:25:44.845282+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Seem to have the same problem with check-grenade-dvsm.  It fails at step 11 because SSH times out with a no route to host:   http://logs.openstack.org/70/99470/5/check/check-grenade-dsvm/10135fa/console.html.gz", 
+            "date_created": "2014-06-16 21:04:07.464083+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyli"
+        }, 
+        {
+            "content": "query for search:  http://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiU1NIVGltZW91dDogQ29ubmVjdGlvbiB0byB0aGVcIiBBTkQgbWVzc2FnZTpcInZpYSBTU0ggdGltZWQgb3V0LlwiIEFORCB0YWdzOlwiY29uc29sZS5odG1sXCIiLCJmaWVsZHMiOltdLCJvZmZzZXQiOjAsInRpbWVmcmFtZSI6IjE3MjgwMCIsImdyYXBobW9kZSI6ImNvdW50IiwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjE0MDI5NTMxMzYyODB9", 
+            "date_created": "2014-06-16 21:13:06.175734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyli"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/99002\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=80c5c87fa24e7007b3d372a0028a5148cd06c66b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 80c5c87fa24e7007b3d372a0028a5148cd06c66b\nAuthor: Michael Still <email address hidden>\nDate:   Tue Jun 10 19:17:00 2014 +1000\n\n    Add more logging to nova-network.\n    \n    As requested to help debug gate issues.\n    \n    Related-Bug: #1298472\n    \n    Change-Id: I5640df721345fe9a878c7c6f8e1c13cfed484112\n", 
+            "date_created": "2014-06-17 05:35:40.250055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Going back to ec2 tests and comment 19, dims pointed out that the boto packages has some connection pooling, and there might be bugs there cause issues with networking.\n\nI noticed that boto 2.29.1 was released on 5/30 and that's what we're running with, and there was a connection pooling related change in there, I'm wondering if that caused any regression:\n\nhttps://github.com/boto/boto/commit/fb3a7b407488c8b2374502d10a90d431daf0aef9\n\nThe various duplicate bugs for this ssh timeout failure in tempest showed up around 6/6 which is why we reverted that tempest change which added more server load to the runs, but maybe that was just exposing a limitation in the boto connection pooling code?  I'm not really sure but it's a theory at least.", 
+            "date_created": "2014-06-18 16:18:58.409797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/102633", 
+            "date_created": "2014-06-25 20:32:16.377203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm not sure if I meet the similar issue, since according to the status,it's 'fix committed\".\n\nThe error in my side is:\n2014-07-02 00:23:17.219 | ==============================\n2014-07-02 00:23:17.219 | Failed 1 tests - output below:\n2014-07-02 00:23:17.219 | ==============================\n2014-07-02 00:23:17.219 | \n2014-07-02 00:23:17.219 | tempest.scenario.test_minimum_basic.TestMinimumBasicScenario.test_minimum_basic_scenario[compute,image,network,volume]\n2014-07-02 00:23:17.219 | ----------------------------------------------------------------------------------------------------------------------\n2014-07-02 00:23:17.220 | \n2014-07-02 00:23:17.220 | Captured traceback:\n2014-07-02 00:23:17.220 | ~~~~~~~~~~~~~~~~~~~\n2014-07-02 00:23:17.220 |     Traceback (most recent call last):\n2014-07-02 00:23:17.220 |       File \"tempest/test.py\", line 128, in wrapper\n2014-07-02 00:23:17.220 |         return f(self, *func_args, **func_kwargs)\n2014-07-02 00:23:17.220 |       File \"tempest/scenario/test_minimum_basic.py\", line 138, in test_minimum_basic_scenario\n2014-07-02 00:23:17.221 |         self.ssh_to_server()\n2014-07-02 00:23:17.221 |       File \"tempest/scenario/test_minimum_basic.py\", line 95, in ssh_to_server\n2014-07-02 00:23:17.221 |         self.linux_client = self.get_remote_client(self.floating_ip.ip)\n2014-07-02 00:23:17.221 |       File \"tempest/scenario/manager.py\", line 415, in get_remote_client\n2014-07-02 00:23:17.221 |         linux_client.validate_authentication()\n2014-07-02 00:23:17.221 |       File \"tempest/common/utils/linux/remote_client.py\", line 53, in validate_authentication\n2014-07-02 00:23:17.221 |         self.ssh_client.test_connection_auth()\n2014-07-02 00:23:17.222 |       File \"tempest/common/ssh.py\", line 150, in test_connection_auth\n2014-07-02 00:23:17.222 |         connection = self._get_ssh_connection()\n2014-07-02 00:23:17.222 |       File \"tempest/common/ssh.py\", line 87, in _get_ssh_connection\n2014-07-02 00:23:17.222 |         password=self.password)\n2014-07-02 00:23:17.222 |     SSHTimeout: Connection to the 172.24.4.1 via SSH timed out.\n2014-07-02 00:23:17.222 |     User: cirros, Password: None\n2014-07-02 00:23:17.223 |     \n2014-07-02 00:23:17.223 | \n\n\nAnd the log is at http://logs.openstack.org/55/101355/4/check/check-grenade-dsvm-partial-ncpu/53a2af3/console.html \n\n", 
+            "date_created": "2014-07-02 01:55:35.173751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "We've disabled the ec2 tests in smoke runs, and are still seeing this in grenade runes, so I think boto is probably not to blame. This is a more fundamental issue.", 
+            "date_created": "2014-07-02 11:28:14.365947+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I'm also seeing TimeoutException, looks inline with what is being observed here\n\n11:47:06 tempest.scenario.test_volume_boot_pattern.TestVolumeBootPattern.test_volume_boot_pattern[compute,image,volume]\n11:47:06 --------------------------------------------------------------------------------------------------------------\n11:47:06 \n11:47:06 Captured traceback:\n11:47:06 ~~~~~~~~~~~~~~~~~~~\n11:47:06     Traceback (most recent call last):\n11:47:06       File \"tempest/test.py\", line 128, in wrapper\n11:47:06         return f(self, *func_args, **func_kwargs)\n11:47:06       File \"tempest/scenario/test_volume_boot_pattern.py\", line 157, in test_volume_boot_pattern\n11:47:06         keypair)\n11:47:06       File \"tempest/scenario/test_volume_boot_pattern.py\", line 64, in _boot_instance_from_volume\n11:47:06         return self.create_server(image='', create_kwargs=create_kwargs)\n11:47:06       File \"tempest/scenario/manager.py\", line 348, in create_server\n11:47:06         self.status_timeout(client.servers, server.id, 'ACTIVE')\n11:47:06       File \"tempest/scenario/manager.py\", line 192, in status_timeout\n11:47:06         not_found_exception=not_found_exception)\n11:47:06       File \"tempest/scenario/manager.py\", line 252, in _status_timeout\n11:47:06         CONF.compute.build_interval):\n11:47:06       File \"tempest/test.py\", line 625, in call_until_true\n11:47:06         time.sleep(sleep_for)\n11:47:06       File \"/usr/local/lib/python2.7/dist-packages/fixtures/_fixtures/timeout.py\", line 52, in signal_handler\n11:47:06         raise TimeoutException()\n11:47:06     TimeoutException\n\nI don't think, this timeout issue is completely fixed. This happens only during the tempest run from Jenkins, if this test is run manually, it runs through with the status \"OK\".", 
+            "date_created": "2014-07-02 13:53:57.643553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hallur-p-t"
+        }, 
+        {
+            "content": "I have the same as jiang yunhong:\n\nhttp://logs.openstack.org/23/104123/2/check/check-grenade-dsvm-partial-ncpu/5e39806/console.html#_2014-07-02_10_17_43_290\n\n2014-07-02 10:17:43.291 |     SSHTimeout: Connection to the 172.24.4.1 via SSH timed out.\n2014-07-02 10:17:43.291 |     User: cirros, Password: None", 
+            "date_created": "2014-07-02 14:42:18.555065+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eyerediskin"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/104220", 
+            "date_created": "2014-07-02 15:13:48.259265+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The affecting log from 'gate-grenade-dsvm test'[1]\n\n\n  [1]  http://logs.openstack.org/90/102490/4/gate/gate-grenade-dsvm/41903e8/logs/old/screen-c-vol.txt.gz#_2014-07-02_13_19_41_174", 
+            "date_created": "2014-07-02 15:26:55.489307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Err, please disregard my above comment. It does not belong here, I was supposed to add it in a different bug. (Too many bug windows). Sorry for the noise.", 
+            "date_created": "2014-07-02 15:29:25.802693+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Sounds like bug 1182131 is probably the root issue of the race.", 
+            "date_created": "2014-07-02 18:59:48.775492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Matt,\nThe bug 1182131 is already in \"Fix committed\" state. Are you saying it may not have resolved the issue completely?", 
+            "date_created": "2014-07-03 03:46:12.936123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hallur-p-t"
+        }, 
+        {
+            "content": "I'm continuing to think that this is a firewall synchronization issue. In this log (a failured that happened after Dan's keyerror change landed) - http://logs.openstack.org/21/102721/1/check/check-grenade-dsvm/c454f85/console.html#_2014-07-03_09_18_20_351\n\nWe have the following in the iptables:\n\n2014-07-03 09:18:20.351 |     -A nova-compute-local -d 10.1.0.4/32 -c 33 3504 -j nova-compute-inst-50\n2014-07-03 09:18:20.351 |     -A nova-compute-local -d 10.1.0.2/32 -c 4 1360 -j nova-compute-inst-32\n2014-07-03 09:18:20.351 |     -A nova-compute-local -d 10.1.0.4/32 -c 0 0 -j nova-compute-inst-61\n\nI believe that nova-compute-inst-61 is the guest that is not working (directly mapping is all kinds of fun). However we see 2 jump rules for the same destination, and the once we want. The earlier failure for ssh had a similar overlap between rules 50 and 58. ", 
+            "date_created": "2014-07-03 11:07:27.757872+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Another instance here, where there is also a doubled up -d => -j rule for the ip that failed to work - http://logs.openstack.org/25/103325/1/check/check-tempest-dsvm-full/7c03d85/console.html#_2014-07-03_07_41_33_661", 
+            "date_created": "2014-07-03 11:10:12.092127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "And here - http://logs.openstack.org/98/100498/1/check/check-tempest-dsvm-full/558818b/console.html#_2014-07-03_07_04_54_527\n\n(another unrelated test run)", 
+            "date_created": "2014-07-03 11:12:00.429534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104220\nCommitted: https://git.openstack.org/cgit/openstack/tempest/commit/?id=8976c9dd664f3bab831c1add283c34fc01c034f6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8976c9dd664f3bab831c1add283c34fc01c034f6\nAuthor: Sean Dague <email address hidden>\nDate:   Wed Jul 2 11:12:26 2014 -0400\n\n    update iptables rules for more useful debugging\n    \n    As discussed with dansmith in #openstack-nova,\n    iptables --line-numbers -L -nv is a more useful representation of\n    the iptables dump for determining network issues.\n    \n    Related-Bug: #1298472\n    \n    Change-Id: Ibae97f7a0cf29105e3601eca8ce24b8271a3a13d\n", 
+            "date_created": "2014-07-03 11:42:58.112233+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/104530", 
+            "date_created": "2014-07-03 12:05:51.155583+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "As the current indicators trend towards being related to iptables rules, I think we're able to cross cinder off the list of possible causes.", 
+            "date_created": "2014-07-03 13:11:34.187769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Also, things we know, this happens both in n-net and neutron, failure rates aren't dramatically different in both. So network backend is not related. ", 
+            "date_created": "2014-07-03 13:13:20.913966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Bug 1338844  might be related, or caused by, the recent related change to nova for this bug, the trends in logstash seem to indicate that at least.", 
+            "date_created": "2014-07-08 02:27:24.798939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "We are now seeing this bug mainly on icehouse code, so it looks like this has been fixed on master and needs to be backported. Not sure which patch fixed this bug though.", 
+            "date_created": "2014-07-15 13:43:44.408139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104530\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d7ce7cccbcd98aa17515d9fd449c88807cb6f0bd\nSubmitter: Jenkins\nBranch:    master\n\ncommit d7ce7cccbcd98aa17515d9fd449c88807cb6f0bd\nAuthor: Sean Dague <email address hidden>\nDate:   Thu Jul 3 08:00:39 2014 -0400\n\n    change the firewall debugging for clarity\n    \n    When we are building rules ensure we log the instance['id'] so\n    we can actually correlate the iptables output to UUID for the\n    instance.\n    \n    Also bundle up the security group to iptables translation to a\n    final view of the world instead of the piecemeal rule at a time\n    view.\n    \n    Display what rules are being skipped in the add process, as the\n    skips seem to happen a lot. If this is completely normal we should\n    probably delete the bit entirely at some later point.\n    \n    Related-Bug: #1298472\n    \n    Change-Id: I0e90c3af9bf908b733ed895ad7c204b0a95ef786\n", 
+            "date_created": "2014-07-17 06:51:06.278750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "For posterity, here are the reviews that didn't get reported here and that seemed to help:\n\nFor master:\nhttps://review.openstack.org/104581\nhttps://review.openstack.org/104325\n\nFor icehouse:\nhttps://review.openstack.org/104335\nhttps://review.openstack.org/106792", 
+            "date_created": "2014-07-17 21:53:27.687292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "This removes the elastic-recheck query: https://review.openstack.org/#/c/107839/", 
+            "date_created": "2014-07-17 21:55:30.116390+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Found this problem in tempest.scenario.test_minimum_basic.TestMinimumBasicScenario.test_minimum_basic_scenario\n\nrouter and iptables:  http://logs.openstack.org/93/100193/9/check/check-grenade-dsvm-partial-ncpu/b3603c4/console.html#_2014-07-21_17_55_38_683", 
+            "date_created": "2014-07-22 01:54:51.810901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhikunliu"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/98497", 
+            "date_created": "2014-07-30 21:16:51.340011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm quite sure that in some cases the problem is that the VM did not boot - it was trying to boot via PXE for some reason, failed to boot from its disk. This of course caused it not to respond via SSH.\n(I'm testing Cinder block storage with IceHouse).", 
+            "date_created": "2014-08-11 11:44:58.669535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yaniv-kaul"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/117520", 
+            "date_created": "2014-08-28 14:07:03.703980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/102633", 
+            "date_created": "2014-08-28 15:10:43.347723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/123477", 
+            "date_created": "2014-09-23 15:26:57.979186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/123477\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2014-12-05 15:05:53.646838+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So it looks like I hit this or a version of this today with https://review.openstack.org/#/c/136477/4\n\nSpecifically I'm seeing the following\n\nhttp://logs.openstack.org/77/136477/4/gate/gate-grenade-dsvm-partial-ncpu/8bd3974/logs/grenade.sh.txt.gz", 
+            "date_created": "2014-12-05 22:15:34.417072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cfb-n"
+        }, 
+        {
+            "content": "met the same problem at http://logs.openstack.org/98/141698/5/check/check-tempest-dsvm-neutron-full/b229b3c/console.html", 
+            "date_created": "2014-12-19 04:51:45.362800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lianhao-lu"
+        }, 
+        {
+            "content": "I am hitting this in the volume tests of tempest, example log is here (in the lower third of the log): http://176.9.127.22:8081/refs-changes-35-155735-231/console.log.out .", 
+            "date_created": "2015-04-13 13:41:33.028266+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "What is the actionable item on tempest side ?\n\nIMHO tempest should be removed from the affected component list.", 
+            "date_created": "2015-05-19 11:12:27.218892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "I think actionable item is to investigate, what is the problem, Is it in product or in tempest? Our vzstorage CI is constantly hitting this bug. It can also be reproduced in several hours by running this testcase in a loop.\n\nI did some investigation, but haven't reached any results. There are no problems with network, boot and virtual machine becomes accessible via ssh after test.\n\nThere is only one theoretical problem with this testcase running on remotefs-based cinder drivers - snapshots are not safe, because qemu agent is missing in cirros image, but since VM log shows, that VM booted successfully, it is not the reason of fails.", 
+            "date_created": "2015-07-23 13:37:32.785210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dguryanov"
+        }, 
+        {
+            "content": "Change abandoned by Ken'ichi Ohmichi (<email address hidden>) on branch: master\nReview: https://review.openstack.org/117520\nReason: As http://lists.openstack.org/pipermail/openstack-dev/2016-May/096204.html , we start abandoning patches have gotten old without any updating after negative feedback. Please restore if necessary to restart this again.", 
+            "date_created": "2016-06-03 05:21:17.617539+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Ken'ichi Ohmichi (<email address hidden>) on branch: master\nReview: https://review.openstack.org/123477\nReason: As http://lists.openstack.org/pipermail/openstack-dev/2016-May/096204.html , we start abandoning patches have gotten old without any updating after negative feedback. Please restore if necessary to restart this again.", 
+            "date_created": "2016-06-03 05:22:56.755107+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "We hit this problem from time to time on our CI when running tests from tempest.api.compute.volumes.test_attach_volume suit. The details are in bug: https://bugs.launchpad.net/mos/+bug/1606218", 
+            "date_created": "2016-08-01 08:58:41.470694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ababich"
+        }, 
+        {
+            "content": "This is a very old bug. Anna set it back to new in Aug 2016 as it may be related to https://bugs.launchpad.net/mos/+bug/1606218, which has been fixed since.\nHence I will set this to invalid. If some hits an ssh bug in the gate again, please file a new bug.", 
+            "date_created": "2016-12-01 11:33:45.365784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-frittoli"
+        }
+    ]
+}

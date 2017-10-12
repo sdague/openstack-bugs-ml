@@ -1,0 +1,55 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-07-14 11:01:18.082433+00:00", 
+    "description": "The method _get_instance_disk_info() in libvirt driver will get volume size from lvm.py using logical volume path.When the volume path is not exist,it will raise \u201cVolumeBDMPathNotFound\u201d,while \"ProcessExecutionError\" directly with other problems.Related codes as following:\n\ntry:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0out, _err = utils.execute('blockdev', '--getsize64', path,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0run_as_root=True)\nexcept processutils.ProcessExecutionError:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if not utils.path_exists(path):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0raise exception.VolumeBDMPathNotFound(path=path)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0else:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0raise\n\nSo, in this case, if the logical volume path is exactly exists, but something wrong with the backend to get volume size, it will raise \"ProcessExecutionError\". The point is that libvirt driver would not catch the \"ProcessExecutionError\" exception, this nova-compute service down finally.Then because of guard.sevice, nova-compute will restart over and over again.\n\nCode in libvirt driver as following:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0dk_size = lvm.get_volume_size(path)\n\nWe think the error appeared in backend should not infact the nova-compute service.\nwe think we can catch  ProcessExecutionError in libvirt dirver and set dk_size = 0.\n\nThis bug appeared in Kilo as well as Liberty.", 
+    "tags": [
+        "liberty-backport-potential", 
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "Low", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1524726", 
+    "owner": "None", 
+    "id": 1524726, 
+    "index": 637, 
+    "created": "2015-12-10 10:56:12.319114+00:00", 
+    "title": "nova-compute restart over ande over again when the right volume path cannot get volume size", 
+    "comments": [
+        {
+            "content": "The method _get_instance_disk_info() in libvirt driver will get volume size from lvm.py using logical volume path.When the volume path is not exist,it will raise \u201cVolumeBDMPathNotFound\u201d,while \"ProcessExecutionError\" directly with other problems.Related codes as following:\n\ntry:\n        out, _err = utils.execute('blockdev', '--getsize64', path,\n                                  run_as_root=True)\nexcept processutils.ProcessExecutionError:\n        if not utils.path_exists(path):\n            raise exception.VolumeBDMPathNotFound(path=path)\n        else:\n            raise\n\nSo, in this case, if the logical volume path is exactly exists, but something wrong with the backend to get volume size, it will raise \"ProcessExecutionError\". The point is that libvirt driver would not catch the \"ProcessExecutionError\" exception, this nova-compute service down finally.Then because of guard.sevice nova-compute will restart over and over again.\n\nCode in libvirt driver as following:\n        dk_size = lvm.get_volume_size(path)\n\nWe think the error appeared in backend should not infact the nova-compute service.\nwe think we can catch  ProcessExecutionError in libvirt dirver and set dk_size = 0.\n\nThis bug appeared in Kilo as well as Liberty.", 
+            "date_created": "2015-12-10 10:56:12.319114+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nail-i"
+        }, 
+        {
+            "content": "Would you please paste the compute.log", 
+            "date_created": "2015-12-11 02:48:21.482805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~szhsong"
+        }, 
+        {
+            "content": "Please specify the reproduce step", 
+            "date_created": "2015-12-14 02:47:23.192659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xiaoxubeii"
+        }, 
+        {
+            "content": "Here is the compute.log:\n\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup Traceback (most recent call last):\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/openstack/common/threadgroup.py\", line 145, in wait\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     x.wait()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/openstack/common/threadgroup.py\", line 47, in wait\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     return self.thread.wait()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/eventlet/greenthread.py\", line 175, in wait\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     return self._exit_event.wait()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/eventlet/event.py\", line 121, in wait\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     return hubs.get_hub().switch()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/eventlet/hubs/hub.py\", line 294, in switch\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     return self.greenlet.switch()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/eventlet/greenthread.py\", line 214, in main\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     result = function(*args, **kwargs)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/openstack/common/service.py\", line 497, in run_service\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     service.start()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/service.py\", line 196, in start\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     self.manager.pre_start_hook()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/compute/manager.py\", line 1465, in pre_start_hook\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     self.update_available_resource(nova.context.get_admin_context())\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/compute/manager.py\", line 6888, in update_available_resource\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     rt.update_available_resource(context)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/compute/resource_tracker.py\", line 448, in update_available_resource\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     resources = self.driver.get_available_resource(self.nodename)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 5463, in get_available_resource\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     disk_over_committed = self._get_disk_over_committed_size_total()\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 6682, in _get_disk_over_committed_size_total\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     self._get_instance_disk_info(dom.name(), xml))\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 6621, in _get_instance_disk_info\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     dk_size = lvm.get_volume_size(path)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/lvm.py\", line 172, in get_volume_size\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     run_as_root=True)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/utils.py\", line 55, in execute\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     return utils.execute(*args, **kwargs)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/nova/utils.py\", line 206, in execute\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     return processutils.execute(*cmd, **kwargs)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup   File \"/usr/lib/python2.7/site-packages/oslo_concurrency/processutils.py\", line 233, in execute\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup     cmd=sanitized_cmd)\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup ProcessExecutionError: Unexpected error while running command.\n2015-12-03 16:39:18.326 1506 TRACE nova.openstack.common.threadgroup Command: sudo nova-rootwrap /etc/nova/rootwrap.conf blockdev --getsize64 /dev/disk/by-path/ip-162.161.1.208:3260-iscsi-iqn.2000-09.com.fujitsu:storage-system.eternus-dxl:002859c4-lun-0", 
+            "date_created": "2015-12-24 10:35:55.703966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nail-i"
+        }, 
+        {
+            "content": "@nail-i Are you still working on this? IMHO this is valid, a single volume being present but inaccessible shouldn't block nova-compute from starting correctly and we should at least be logging why blockdev is failing here.", 
+            "date_created": "2016-04-18 10:45:05.350393+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "There are no open reviews for this bug report since a long time. To signal that to other contributors which might provide patches for this bug, I'm removing the assignee.\n\nnail-zte: Feel free to add yourself back as assignee and push a review for it.", 
+            "date_created": "2016-06-17 22:41:50.272135+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sujitha-neti"
+        }, 
+        {
+            "content": "I am curious how we got into the state where the path was invalid. That suggests something else is going wrong here.", 
+            "date_created": "2016-07-14 11:01:17.438870+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }
+    ]
+}

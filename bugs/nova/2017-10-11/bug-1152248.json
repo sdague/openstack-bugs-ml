@@ -1,0 +1,41 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-12-03 15:36:57.850049+00:00", 
+    "description": "OS : Debian Wheezy\nNova version : 2.11.1.30.g8ac304f\nOpenStack installed with DevStack.\n\nI'm using a NetApp system for storing Volumes provided by NFS and expose volumes to VMs with NFS too.\n\n=== Scenario\n\ncinder.conf :\n(...)\n\nnfs_shares_config = /etc/cinder/shares.conf\nnfs_mount_point_base = /etc/cinder/volumes\n\nvolume_driver = cinder.volume.drivers.netapp.nfs.NetAppDirectCmodeNfsDriver\nnetapp_server_hostname = 10.X.X.X\nnetapp_server_port = 80\nnetapp_login = admin\nnetapp_password = secrete\nnetapp_transport_type = http\nnetapp_vserver = vs0\n\n1) I can start cinder-volume and see that it mounts my NFS share (hosted on NetApp) :\nmount :\n10.X.X.X:/voltest on /etc/cinder/volumes/44a3ed2e30a8aaf14a2ba926457f5666 type nfs4 (rw,relatime,vers=4,rsize=65536,wsize=65536,namlen=255,hard,proto=tcp,port=0,timeo=600,retrans=2,sec=sys,clientaddr=10.X.X.X,minorversion=0,local_lock=none,addr=10.X.X.X)\n\n2) I can create a volume :\n+--------------------------------------+-----------+--------------+------+-------------+----------+-------------+\n|                  ID                  |   Status  | Display Name | Size | Volume Type | Bootable | Attached to |\n+--------------------------------------+-----------+--------------+------+-------------+----------+-------------+\n| f2aae196-e6e4-4906-9f3f-153909c52f95 | available |     None     |  1   |     None    |  false   |             |\n+--------------------------------------+-----------+--------------+------+-------------+----------+-------------+\n\n3) Now I want to attach the volume to my VM and it fails.\n\nHere is my nova-compute.log TRACE :\n\nhttp://paste.openstack.org/show/5Xuo2ECF4O9cZt5unDOR/\n\nIt fails.\n\n4) I want to attach the volume manually with virsh tool :\nattach-volume instance-001 --source XXXX --target vdb\n\nAnd it works !  I can manage the volume from the VM and put some files.\n\n=== Investigation\n\nAfter investigation, I can see that the bug appears in Nova, here :\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L888-912\n\nMy question : is it normal that we don't have a connector for NFS ? I only see iSCSI & FC.\nHow is performed the mount ?\n\nOther interesting point, it works with standard NFS driver. I can create and attach volumes to VMs.\n\nLet me know if you need more informations, I would like to know if it's a bug or if I miss something on my configuration.", 
+    "tags": [], 
+    "importance": "Low", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1152248", 
+    "owner": "None", 
+    "id": 1152248, 
+    "index": 5696, 
+    "created": "2013-03-07 16:51:50.308114+00:00", 
+    "title": "Can't attach a Volume to a VM with NetApp NFS Direct Driver", 
+    "comments": [
+        {
+            "content": "OS : Debian Wheezy\nOpenStack installed with DevStack.\n\nI'm using a NetApp system for storing Volumes provided by NFS and expose volumes to VMs with NFS too.\n\n=== Scenario\n\ncinder.conf :\n(...)\n\nnfs_shares_config = /etc/cinder/shares.conf\nnfs_mount_point_base = /etc/cinder/volumes\n\nvolume_driver = cinder.volume.drivers.netapp.nfs.NetAppDirectCmodeNfsDriver\nnetapp_server_hostname = 10.X.X.X\nnetapp_server_port = 80\nnetapp_login = admin\nnetapp_password = secrete\nnetapp_transport_type = http\nnetapp_vserver = vs0\n\n\n1) I can start cinder-volume and see that it mounts my NFS share (hosted on NetApp) :\nmount :\n10.X.X.X:/voltest on /etc/cinder/volumes/44a3ed2e30a8aaf14a2ba926457f5666 type nfs4 (rw,relatime,vers=4,rsize=65536,wsize=65536,namlen=255,hard,proto=tcp,port=0,timeo=600,retrans=2,sec=sys,clientaddr=10.X.X.X,minorversion=0,local_lock=none,addr=10.X.X.X)\n\n2) I can create a volume :\n+--------------------------------------+-----------+--------------+------+-------------+----------+-------------+\n|                  ID                  |   Status  | Display Name | Size | Volume Type | Bootable | Attached to |\n+--------------------------------------+-----------+--------------+------+-------------+----------+-------------+\n| f2aae196-e6e4-4906-9f3f-153909c52f95 | available |     None     |  1   |     None    |  false   |             |\n+--------------------------------------+-----------+--------------+------+-------------+----------+-------------+\n\n3) Now I want to attach the volume to my VM and it fails.\n\nHere is my nova-compute.log TRACE :\n\nhttp://paste.openstack.org/show/5Xuo2ECF4O9cZt5unDOR/\n\nIt fails.\n\n4) I want to attach the volume manually with virsh tool :\nattach-volume instance-001 --source XXXX --target vdb\n\nAnd it works !  I can manage the volume from the VM and put some files.\n\n\n=== Investigation\n\nAfter investigation, I can see that the bug appears in Nova, here :\nhttp://paste.openstack.org/show/5Xuo2ECF4O9cZt5unDOR/\n\nMy question : is it normal that we don't have a connector for NFS ? I only see iSCSI & FC.\nHow is performed the mount ?\n\nOther interesting point, it works with standard NFS driver. I can create and attach volumes to VMs.\n\n\nLet me know if you need more informations, I would like to know if it's a bug or if I miss something on my configuration.", 
+            "date_created": "2013-03-07 16:51:50.308114+00:00", 
+            "author": "https://api.launchpad.net/1.0/~emilienm"
+        }, 
+        {
+            "content": "After investigation, it seems the bug is not in Ubuntu.\n\nWe have found why we have this problem : for attaching a volume to a VM, you need to have open-iscsi installed & configured, even if you use only NFS for volumes.\n\nSolution (on Debian) :\n apt-get install open-iscsi\n /etc/init.d/open-iscsi restart\n\nI think open-iscsi should not be mandatory when you use only NFS with Cinder & Nova, and that's why I was running this bug where the code is looking for iSCSI configuration :\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L888-912\n\nWhat do you think ?", 
+            "date_created": "2013-03-08 10:53:12.192663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~emilienm"
+        }, 
+        {
+            "content": "Emilien,\n\nIs the exception thrown in https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L911 what's stopping you? if you comment out the raise in line 914, does it work?\n\n-- dims", 
+            "date_created": "2013-03-14 11:31:30.355719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Is this still an issue, it's pretty old, and a lot of these parts have changed. ", 
+            "date_created": "2014-09-18 21:34:56.958967+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "no response in a while, assuming this isn't an issue anymore closing the bug.", 
+            "date_created": "2014-12-03 15:36:49.066751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }
+    ]
+}

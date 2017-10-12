@@ -1,0 +1,56 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-04-04 11:37:49.584127+00:00", 
+    "description": "This affects both nova & cinder.\n\nIn compute.api, the race between volume_api.get, check_attach, and reserve_volume, can end up with the volume physically attaching to both instances.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1096983", 
+    "owner": "None", 
+    "id": 1096983, 
+    "index": 3299, 
+    "created": "2013-01-07 18:40:14.538921+00:00", 
+    "title": "Can attach_volume to multiple instances (race)", 
+    "comments": [
+        {
+            "content": "This affects both nova & cinder.\n\nIn compute.api, the race between volume_api.get, check_attach, and reserve_volume, can end up with the volume physically attaching to both instances.", 
+            "date_created": "2013-01-07 18:40:14.538921+00:00", 
+            "author": "https://api.launchpad.net/1.0/~corystone"
+        }, 
+        {
+            "content": "I couldn't remember exactly what patch it was when we talked about this but I think this guy: https://review.openstack.org/#/c/18717/\n\n\"should\" address this.", 
+            "date_created": "2013-01-07 18:51:26.640155+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "I agree with John.", 
+            "date_created": "2013-01-09 03:55:03.844080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ivan-zhu"
+        }, 
+        {
+            "content": "Hi guys,\n\nThis patch doesn't address the issue. Nova's driver.attach_volume happens before the volume_api.attach is even called. Cinder's attach is just a notification.\n\nTo fix this issue, we may have to do something like making reserve_volume do something useful. Maybe I have to do something in my driver to handle this?\n\nIt seems really easy to duplicate:\n\nnova volume-attach <instanceid1> <volumeid> auto& nova volume-attach <instanceid2> <volumeid> auto&\n\nroot@nova:~# virsh list\n Id Name                 State\n----------------------------------\n  1 instance-00000001    running\n  2 instance-00000002    running\n\nroot@nova:~# virsh domblklist 1\nTarget     Source\n------------------------------------------------\nvda        /etc/nova/state/instances/instance-00000001/disk\nvdb        /dev/disk/by-path/ip-10.127.0.166:3260-iscsi-iqn.2010-11.com.rackspace:9cba7916-f5e4-4edb-8bb6-7582d6609e9c-lun-0\n\nroot@nova:~# virsh domblklist 2\nTarget     Source\n------------------------------------------------\nvda        /etc/nova/state/instances/instance-00000002/disk\nvdb        /dev/disk/by-path/ip-10.127.0.166:3260-iscsi-iqn.2010-11.com.rackspace:9cba7916-f5e4-4edb-8bb6-7582d6609e9c-lun-0", 
+            "date_created": "2013-01-21 16:42:21.600508+00:00", 
+            "author": "https://api.launchpad.net/1.0/~corystone"
+        }, 
+        {
+            "content": "It gets uglier if you try it again. The next bdm gets the wrong device name:\n\ncory@cfsyn25:~/devstack$ nova volume-attach 68932196-8bf2-4d7d-ba01-eb4a8a3b20cc 2e911a75-08a1-4ca8-a1c5-10fd8d30c99d auto & nova volume-attach f4f6b668-6936-49fe-9ff1-6d0751dfe681 2e911a75-08a1-4ca8-a1c5-10fd8d30c99d auto & \n[1] 28200\n[2] 28201\ncory@cfsyn25:~/devstack$ +----------+--------------------------------------+\n| Property | Value                                |\n+----------+--------------------------------------+\n| device   | /dev/vdc                             |\n| id       | 2e911a75-08a1-4ca8-a1c5-10fd8d30c99d |\n| serverId | 68932196-8bf2-4d7d-ba01-eb4a8a3b20cc |\n| volumeId | 2e911a75-08a1-4ca8-a1c5-10fd8d30c99d |\n+----------+--------------------------------------+\n+----------+--------------------------------------+\n| Property | Value                                |\n+----------+--------------------------------------+\n| device   | /dev/vdb                             |\n| id       | 2e911a75-08a1-4ca8-a1c5-10fd8d30c99d |\n| serverId | f4f6b668-6936-49fe-9ff1-6d0751dfe681 |\n| volumeId | 2e911a75-08a1-4ca8-a1c5-10fd8d30c99d |\n+----------+--------------------------------------+\n\n^^^ /dev/vdb is already in use by the first double attach, so this one doesn't actually get attached by compute.", 
+            "date_created": "2013-01-21 17:28:44.644029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~corystone"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/20301", 
+            "date_created": "2013-01-23 04:21:31.826963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/20301\nCommitted: http://github.com/openstack/cinder/commit/2c84413c74e6481abe4af716ea12d8c75b405c25\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2c84413c74e6481abe4af716ea12d8c75b405c25\nAuthor: John Griffith <email address hidden>\nDate:   Wed Jan 23 04:15:40 2013 +0000\n\n    Get updated vol status in volume.api.reserve.\n    \n    A race condtion was discovered where a nova volume attach\n    could easily be performed twice for the same volume.  Although\n    the cinder attach update would fail, this occured after the BDM\n    updates were made and in essence the attach to the compute instance\n    had already been issued.\n    \n    This change simply forces a get from the DB of the volume-ref in the\n    reserve call and checks if an attach is already in progress.\n    \n    Fixes bug: 1096983\n    \n    Change-Id: Ie0e4156d691ee92b6981078ef0ba62f8c4cdf0c8\n", 
+            "date_created": "2013-01-25 00:25:13.942441+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/20975", 
+            "date_created": "2013-02-01 05:07:13.873268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

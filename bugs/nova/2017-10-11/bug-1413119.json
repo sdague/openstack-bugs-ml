@@ -1,0 +1,56 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-03-04 03:20:40.136079+00:00", 
+    "description": "There is possible correction in the logic and error handling in the pre-migration memory check in case when the memory value is zero '0'.\nThis check is present in the source code class: nova/conductor/tasks/live_migrate.py\n\n\nBelow is the current code snippet:\n        if not mem_inst or avail <= mem_inst:\n            instance_uuid = self.instance.uuid\n            dest = self.destination\n            reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n                       \"Lack of memory(host:%(avail)s <= \"\n                       \"instance:%(mem_inst)s)\")\n            raise exception.MigrationPreCheckError(reason=reason % dict(\n                    instance_uuid=instance_uuid, dest=dest, avail=avail,\n                    mem_inst=mem_inst))\n\t\t\t\t\t\nIt can be seen that when mem_inst value is 0, the if condition is met and control enters the block resulting in 'lack of memory' error with a message 'avail memory < 0'. This is absurd.\n\nSample error message when memory is zero: \n2014-10-13 19:52:09.441 3907 INFO nova.api.openstack.wsgi [req-8430dd30-4f17-4094-bbec-ec9cf3593c79 502 eec6e74886804b79b78ac4fceed5b685] NV-4EB7C79 HTTP exception thrown: \nNV-78D5611 Migration pre-check error: NV-37B7976 Unable to migrate 352122ae-1ca1-43b3-8ba6-709d93fd580c to 9117MMB_100DBCP: Lack of memory(host:65536 <= instance:0)\n\nThe trailing end part of the error doesn't make much sense (host:65536 <= instance:0).\n\nPossible correction:\nThe check should handle the special case of zero memory value in a different way. If memory equals zero, then a different error of exception should be raised about invalid memory.\n\nSample fix:\nif mem_inst <= 0:\n   reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n              \"Invalid value for existing instance memory: %(mem_inst)s.\")\n   raise exception.MigrationPreCheckError(reason=reason % dict(\n               instance_uuid=instance_uuid, dest=dest, mem_inst=mem_inst))\nelif avail <= mem_inst: \n   reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n              \"Lack of memory available at destination.  (host:%(avail)s <= \"\n              \"instance:%(mem_inst)s.\")\n   raise exception.MigrationPreCheckError(reason=reason % dict(\n               instance_uuid=instance_uuid, dest=dest, avail=avail, mem_inst=mem_inst))", 
+    "tags": [], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1413119", 
+    "owner": "None", 
+    "id": 1413119, 
+    "index": 231, 
+    "created": "2015-01-21 09:00:16.728540+00:00", 
+    "title": "Pre-migration memory check-  Invalid error message if memory value is 0", 
+    "comments": [
+        {
+            "content": "There is possible correction in the logic and error handling in the pre-migration memory check in case when the memory value is zero '0'.\nThis check is present in the source code class: nova/conductor/tasks/live_migrate.py\n\n\nBelow is the current code snippet:\n        if not mem_inst or avail <= mem_inst:\n            instance_uuid = self.instance.uuid\n            dest = self.destination\n            reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n                       \"Lack of memory(host:%(avail)s <= \"\n                       \"instance:%(mem_inst)s)\")\n            raise exception.MigrationPreCheckError(reason=reason % dict(\n                    instance_uuid=instance_uuid, dest=dest, avail=avail,\n                    mem_inst=mem_inst))\n\t\t\t\t\t\nIt can be seen that when mem_inst value is 0, the if condition is met and control enters the block resulting in 'lack of memory' error with a message 'avail memory < 0'. This is absurd.\n\nSample error message when memory is zero: \n2014-10-13 19:52:09.441 3907 INFO nova.api.openstack.wsgi [req-8430dd30-4f17-4094-bbec-ec9cf3593c79 502 eec6e74886804b79b78ac4fceed5b685] NV-4EB7C79 HTTP exception thrown: \nNV-78D5611 Migration pre-check error: NV-37B7976 Unable to migrate 352122ae-1ca1-43b3-8ba6-709d93fd580c to 9117MMB_100DBCP: Lack of memory(host:65536 <= instance:0)\n\nThe trailing end part of the error doesn't make much sense (host:65536 <= instance:0).\n\nPossible correction:\nThe check should handle the special case of zero memory value in a different way. If memory equals zero, then a different error of exception should be raised about invalid memory.\n\nSample fix:\nif mem_inst <= 0:\n   reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n              \"Invalid value for existing instance memory: %(mem_inst)s.\")\n   raise exception.MigrationPreCheckError(reason=reason % dict(\n               instance_uuid=instance_uuid, dest=dest, mem_inst=mem_inst))\nelif avail <= mem_inst: \n   reason = _(\"Unable to migrate %(instance_uuid)s to %(dest)s: \"\n              \"Lack of memory available at destination.  (host:%(avail)s <= \"\n              \"instance:%(mem_inst)s.\")\n   raise exception.MigrationPreCheckError(reason=reason % dict(\n               instance_uuid=instance_uuid, dest=dest, avail=avail, mem_inst=mem_inst))", 
+            "date_created": "2015-01-21 09:00:16.728540+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ravispat"
+        }, 
+        {
+            "content": "Hi Ravishankar Patil,\n\nHow could we get  that Error Message? I mean what are the commands that I have to use to produce the bug. Could you please provide me a relevant information?", 
+            "date_created": "2015-01-22 05:08:57.385951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~padmakanth-chandrapati"
+        }, 
+        {
+            "content": "Hi Padmakanth,\n\nSomehow the virtual instance moved to a corrupt state with memory values zero.\nI mean the value of 'memory_mb' was zero.\nWe are not able to find out why the instance moved to that state with zero memory value.\n\n\nIn this state, when user tried a Live Partition Migration, the pre-migration check which checks whether destination has enough memory (as detailed above) fails.\n\nBut this check doesn't handle the special case of memory value zero correctly. So this bug is to correct this so that a new error message with a more apt log can be created in this case.\n\n", 
+            "date_created": "2015-01-22 05:26:57.614827+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ravispat"
+        }, 
+        {
+            "content": "Hi Ravishankar,\n\nI added the code which you suggest to do. But I didn't produce the bug error that you discussed earlier.", 
+            "date_created": "2015-01-22 05:52:27.475645+00:00", 
+            "author": "https://api.launchpad.net/1.0/~padmakanth-chandrapati"
+        }, 
+        {
+            "content": "To recreate, you may need to somehow mimic the memory stat (memory_mb property) of the virtual instance to be zero '0'. \nAnd then, try a migration of the same so that the above pre-migration check is hit.\n\nWe just want a minor change in the error handling here to be correct in rare case when memory_mb is zero (mem_inst variable in above code)\n", 
+            "date_created": "2015-01-22 06:49:20.358791+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ravispat"
+        }, 
+        {
+            "content": "> Somehow the virtual instance moved to a corrupt state with memory values zero.\n\nWhat was the instance state at that time ERROR or ACTIVE?\nIMO additionally instance state should be moved to ERROR state as well because there is normal use case where mem_inst can become <= 0.\n\n   ", 
+            "date_created": "2015-01-22 07:28:04.487896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishalcdac07"
+        }, 
+        {
+            "content": "It sounds like the deeper issue is how the memory  stat going to 0 for the instance, and if it went to ERROR state or not.  This should never happen. Marking this bug as invalid and we should instead open a separate bug on how to prevent us from getting stuck in that state. If memory goes to 0 the instance should be in ERROR state.", 
+            "date_created": "2015-01-22 19:27:29.684244+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Agreed that the instance  might have gone to ERROR state. Or it seemed to be toggling between ERROR and ACTIVE state (see log below)\nBut in any case, if this code method is being hit in case memory_mb being zero, then I reckon a minor change should be implemented to handle it.\n\nPlease move the bug back to working state.\n\nLog: \n2014-10-06 17:19:07.936 3882 WARNING NV-43FB562 Failed to compute_task_migrate_server: NV-78D5611 Migration pre-check error: NV-37B7976 Unable to migrate 352122ae-1ca1-43b3-8ba6-709d93fd580c to 9117MMB_100DBCP: Lack of memory(host:65536 <= instance:0)\n2014-10-06 17:19:07.938 3882 WARNING NV-EAF7DD6 Setting instance to ACTIVE state.\n", 
+            "date_created": "2015-01-23 06:56:02.638993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ravispat"
+        }
+    ]
+}

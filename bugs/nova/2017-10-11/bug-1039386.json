@@ -1,0 +1,96 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:31:13.208580+00:00", 
+    "description": "It appears impossible to use TrustedFilter while ComputeCapabilitiesFilter or AggregateInstanceExtraSpecsFilter is configured.\n\nThe issue is that if you set trusted_host=trusted in extra_specs then the other extra_specs based filters will reject all hosts because they do not have trusted_host set in their capabilities dict.\n\nI guess there are a few ways to fix this - (a) have the other filters ignore trusted_host explicitly or (b) always set trusted_host=trusted in the host capabilities dict or (c) have the scheduler set trusted_host in the capabilities dict directly and remove the extra filter.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1039386", 
+    "owner": "https://api.launchpad.net/1.0/~jogo", 
+    "id": 1039386, 
+    "index": 765, 
+    "created": "2012-08-21 06:36:02.098728+00:00", 
+    "title": "TrustedFilter issue with ComputeCapabilitiesFilter and AggregateInstanceExtraSpecsFilter", 
+    "comments": [
+        {
+            "content": "It appears impossible to use TrustedFilter while ComputeCapabilitiesFilter or AggregateInstanceExtraSpecsFilter is configured.\n\nThe issue is that if you set trusted_host=trusted in extra_specs then the other extra_specs based filters will reject all hosts because they do not have trusted_host set in their capabilities dict.\n\nI guess there are a few ways to fix this - (a) have the other filters ignore trusted_host explicitly or (b) always set trusted_host=trusted in the host capabilities dict or (c) have the scheduler set trusted_host in the capabilities dict directly and remove the extra filter.", 
+            "date_created": "2012-08-21 06:36:02.098728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I don't really like b or c, having the scheduler implicitly set an attribute that it doesn't know about (and will probably be an incorrect value) just doesn't seem right.\n\nI would prefer a and I'll create a patch for it but I do have a more radical idea I'd like to propose.  How about we add a new colum to the `extra_specs' table that can be used to specify the scope of the entry?  We put entries in this colum like `trust' to indicate that the row is only used by the trusted filter, `compute' for the ComputeCapabilitiesFilter, `*' to indicate the row is global and used by all.  I suggest this because I know there are other usages of the `extra_specs' that people are considering so I'm afraid there will be other conflicts that come up.", 
+            "date_created": "2012-08-21 14:10:34.643919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~n0ano"
+        }, 
+        {
+            "content": "(a) is my least favorite option - it's a special case dependency between two filters. Ugly. Especially when you think about people adding 3rd party filters which use extra_specs\n\nThis \"scope\" idea - would it be something that is exposed all the way out to the user setting extra specs?\n\nYou're basically suggesting extra specs, I guess - e.g. we could say that ':' is a namespace separator and rename trusted_host to trusted:trusted_host or something. If no namespace is specified, then it relates to the hypervisor-reported capabilities", 
+            "date_created": "2012-08-21 14:57:24.317116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Yeah, I'm not really happy with a, b or c either.  b & c leave you with a problem waiting to happen when 3rd party filters utilize `extra_specs'.\n\nI'm not wedded to a new colum, we could embed the scope into the key with a separator but I'm not sure that that buys you much.  All the filters will still have to check for scope, the trust filter to find the right row and the compute and aggregate filters will have to ignore rows that have a scope.  Putting the scope in the key would avoid changing user interface tools but there aren't that many tools that would be affected yet (and I know who's working on them and can get them to change the tools).\n\nBottom line is I think we need to put in some sort of scope, it's just a matter of how we do it.", 
+            "date_created": "2012-08-21 15:31:00.146303+00:00", 
+            "author": "https://api.launchpad.net/1.0/~n0ano"
+        }, 
+        {
+            "content": "I thought about this issue and it may not be actually a bug. For example, if I set \"ngpu == 2\" in extra_specs, any machine that does not have ngpu=2 must be rejected. Likewise, if I set \"trusted_host == trusted\" in extra_specs, any machine that does not have \"trusted_host == trusted\" must be rejected. So, simply setting \"trusted_host=trusted\" on a trusted machine would solve the problem. A problem at this time is that there is no easy way to add it to capability. But, we may add that function relatively easily if we aim a simple addition. An example is using a flag and the value from the flag is added to capability (that was implemented in early patches in https://review.openstack.org/#/c/8089/).\n\nAt the same time, Patrick raised the issue of scope, and that is a good point as Don discussed. So, having a well designed scope is a good solution, too. ", 
+            "date_created": "2012-08-25 02:30:07.794749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsuh"
+        }, 
+        {
+            "content": "Unfortunately, I think there's still a problem.  Imaging you want to only schedule trusted nodes that have `ngpu==2'.  If you specify both those constraints in the `extra_specs' the TrustedFilter plugin will correctly select all trused nodes but the ComputeCapabilitiesFilter will reject all nodes (whether or not the ngpu's is correct) as it will fail on the `trusted' specification.  I think we do need to provide a scope for the entries in the `extra_speccs' table.", 
+            "date_created": "2012-08-26 16:25:41.634154+00:00", 
+            "author": "https://api.launchpad.net/1.0/~n0ano"
+        }, 
+        {
+            "content": "Ok, since adding a scope would be an incompatible API change, I'm raising this issues importance and adding to folsom-rc1\n\nHowever, unless someone picks it up, it could well be delayed until grizzly and we'll have to support in some hacky compatible way\n\nIncluding the scope in the key name itself seems to me to be the easiest way to get this resolved in grizzly", 
+            "date_created": "2012-08-27 11:55:48.435851+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "In that case I'll get a patch done as soon as possible to implement `a.b.key' for the key name.  I can't promise anything until next week (I'm at XenSummit/Linuxcon this week) but I'll get out something soon.\r\n\r\nWe do need to work out how detailed we want the scope to be.  Do we want something like `Scheduler.ComputeCapabilities' (on the off chance that some somponent other than the scheduler might want to use `extra_specs' and specifying a componet might be useful) or is just `ComputeCapabilities' (effectively an arbitrary string) sufficient?", 
+            "date_created": "2012-08-27 15:56:59.672566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~n0ano"
+        }, 
+        {
+            "content": "As I said, I think \"trusted:\" is fine\n\nThe default scope be compute capabilities - i.e. if you're just matching against compute capabilities, you don't need to specify a scope. We need this for backwards compat.", 
+            "date_created": "2012-08-27 16:33:33.272912+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Sorry if I am catching up with this thread a little late. Either there is something big that I am not getting or there is something wrong in the filter chain design. Basically, I don't see the point of associating a scope like described above with an extra_spec because all filters should play a different role in the chain and so I would argue that if an extra_spec is unknown by filter, then it should not attempt to enforce any about it. That's none of its business sort of speak. Not doing so would result in binding the processing logic of a filter that is a priori left open to the designer of the filter with a prescriptive scope encoded in the extra_spec name that says \"you filter are expected to do something about it because the admin said it's in your scope\" or conversely \"you filter are not expected to do something about it because the admin said it's not in your scope\". That's not right in my opinion.\n\nSo, in the initial bug description I would just say that ComputeCapabilitiesFilter and AggregateInstanceExtraSpecsFilter should simply ignore trusted_host=trusted if it's not in their capabilities dict to manage.\n\nStill there is a potential issue of name space clashing for the extra_specs, but what think is missing the most a mechanism by which a filter comes in pair with a hook to dynamically populate the capabilities dict that the filter understands. The name space for the extra_specs could then just be a convention with no particular semantic associated with it.\n\n", 
+            "date_created": "2012-08-28 14:59:30.507461+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patrick-michel-petit"
+        }, 
+        {
+            "content": "> if an extra_spec is unknown by filter, then it should not attempt to enforce any about it\n\nWith regard to compute capabilities, the semantics are that if an extra spec isn't advertised by a compute node, the compute node doesn't pass the filter\n\ni.e. the filter has no way to distinguish between \"can possibly advertised as a compute capability, but isn't advertised for this hosts\" and \"not a valid compute capability\"\n\nWe're using the scope to allow the filter distinguish between the two cases - anything not in the compute capability scope falls under \"not a valid compute capability\"", 
+            "date_created": "2012-08-29 09:22:59.119446+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "> In that case I'll get a patch done as soon as possible to implement \n> `a.b.key' for the key name. I can't promise anything until next week\n> (I'm at XenSummit/Linuxcon this week) but I'll get out something soon.\n\nSetting assignee to Don", 
+            "date_created": "2012-09-04 21:37:22.115585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Commit is here: https://review.openstack.org/12383", 
+            "date_created": "2012-09-05 20:47:43.085412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/12383\nCommitted: http://github.com/openstack/nova/commit/851705db9596a418b0ea3928654e88fe84a23e52\nSubmitter: Jenkins\nBranch:    master\n\ncommit 851705db9596a418b0ea3928654e88fe84a23e52\nAuthor: Don Dugger <email address hidden>\nDate:   Tue Sep 4 15:58:57 2012 -0600\n\n    Add scope to extra_specs entries\n    \n    Do to conflicts between different scheduler filters it is necessary\n    to allow an optional scope for the different keys.  This scope is a\n    leading string followed by a ':' character, e.g.:\n    \n            foo:bar\n    \n    is the `bar' entry with scope `foo'.\n    \n    The Trusted filter will now use the scope `trust' and the\n    AggregateInstanceExtraSpecs and ComputeCapabilities filters will\n    check against any unscoped keys in the `extra_specs' table.\n    Any new filters that utilize the `extra_specs' table will need to\n    use a unique scope string for any keys they require.\n    \n    Resolves bug 1039386\n    \n    Change-Id: I2466dc3d4de8e9aeb76b294eeda1c939c0413366\n    Signed-off-by: Don Dugger <<email address hidden>\n", 
+            "date_created": "2012-09-05 21:06:25.084661+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/12480", 
+            "date_created": "2012-09-06 00:29:41.189829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/12480\nCommitted: http://github.com/openstack/nova/commit/847fb38c5b0411f9f5b9629967d0072d976b2429\nSubmitter: Jenkins\nBranch:    master\n\ncommit 847fb38c5b0411f9f5b9629967d0072d976b2429\nAuthor: Joe Gordon <email address hidden>\nDate:   Wed Sep 5 17:28:38 2012 -0700\n\n    Add documentation for scheduler filters scope\n    \n    Add documentation for bug 1039386\n    \n    Fix other devref typos\n    \n    Change-Id: Ife19ee5feb72dd75b91a03c4167d8f4e578a4a04\n", 
+            "date_created": "2012-09-10 19:46:40.956707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

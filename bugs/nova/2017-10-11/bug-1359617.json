@@ -1,0 +1,59 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:10:46.251638+00:00", 
+    "description": "Libvirt driver will attempt to connect the volume on the hipervisor twice for every volume provided to the instance when booting. If you examine the libvirt driver's  spawn() method, both _get_guest_xml (by means of get_guest_storage_config) and _create_domain_and_network will call the _connect_volume method which works out the volume driver and then dispatches the connect logic.\n\nThis is especially bad in the iscsi volume driver case, where we do 2 rootwraped calls in the best case, one of which is the target rescan, that can in theory add and remove devices in the kernel.\n\nI suspect that fixing this will make a number of races that have to do with the volume not being present when expected on the hypervisor, at least less likely to happen, in addition to making the boot process with volumes more performant.\n\nAn example of a race condition that may be caused or made worse by this is: https://bugs.launchpad.net/cinder/+bug/1357677", 
+    "tags": [
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1359617", 
+    "owner": "https://api.launchpad.net/1.0/~thang-pham", 
+    "id": 1359617, 
+    "index": 1576, 
+    "created": "2014-08-21 08:43:49.628603+00:00", 
+    "title": "libvirt: driver calls volume connect twice for every volume on boot", 
+    "comments": [
+        {
+            "content": "Libvirt driver will attempt to connect the volume on the hipervisor twice for every volume provided to the instance when booting. If you examine the libvirt driver's  spawn() method, both _get_guest_xml (by means of get_guest_storage_config) and _create_domain_and_network will call the _connect_volume method which works out the volume driver and then dispatches the connect logic.\n\nThis is especially bad in the iscsi volume driver case, where we do 2 rootwraped calls in the best case, one of which is the target rescan, that can in theory add and remove devices in the kernel.\n\nI suspect that fixing this will make a number of races that have to do with the volume not being present when expected on the hypervisor, at least less likely to happen, in addition to making the boot process with volumes more performant.\n\nAn example of a race condition that may be caused or made worse by this is: https://bugs.launchpad.net/cinder/+bug/1357677", 
+            "date_created": "2014-08-21 08:43:49.628603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "It seems the problem here is that we're overloading the 'connect' method to serve two jobs - do the host OS integration/setup tasks, and return the XML config. I wonder if this is a sign we need to change volume.py to be more like vif.py\n\nBy that I mean, when connecting VIFs we have separate  'plug' and 'get_config' methods - the former does the host OS setup and must only be called once and the latter is idempotent for getting XML config.", 
+            "date_created": "2014-08-21 16:09:24.190382+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "@Daniel Berrange: Sounds like a good plan.  I will work on fixing it up, similar to the way vifs are handled, unless there are any objections from Nikola.  Thanks.", 
+            "date_created": "2014-08-22 03:06:11.294989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thang-pham"
+        }, 
+        {
+            "content": "@Thang - I think it will be more difficult to get right than the VIF handling, but I completely agree that it is the path we should try to follow at first, so +1 on the approach from myself.", 
+            "date_created": "2014-08-22 07:45:48.669968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/116998", 
+            "date_created": "2014-08-26 19:07:28.244423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/121965", 
+            "date_created": "2014-09-16 19:50:52.315939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/116998\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1b45f4574c85288a6fd67a83ffd8c798d436875b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1b45f4574c85288a6fd67a83ffd8c798d436875b\nAuthor: Thang Pham <email address hidden>\nDate:   Fri Aug 29 14:45:20 2014 -0400\n\n    Split up libvirt volume's connect_volume method\n    \n    The connect_volume method in libvirt/volume.py does a couple of\n    things. It does the host OS integration/setup tasks, and it returns\n    the libvirt xml. In some cases, only the libvirt xml is required,\n    and the setup tasks are not necessary.\n    \n    The following patch separates the setup tasks and libvirt xml return\n    in connect_volume. A new method, called get_config, is added to just\n    return the xml config, separate from the connect_volume method.\n    The connect_volume method will continue to return the libvirt xml,\n    so that existing functionality is not broken. This way, get_config\n    can be used to get the libvirt xml without any side-effects, e.g.\n    re-running shell commands to setup the volume.\n    \n    There will be a follow up patch, where libvirt's driver.py will\n    switch over to use get_config and connect_volume will no longer\n    need to return the libvirt xml.\n    \n    Change-Id: I5d300f8fe99f714d63d51197dc89f556c3a5d43b\n    Related-Bug: #1359617\n", 
+            "date_created": "2014-09-17 16:15:39.953984+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121965\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=36cfe6dce403a7dde6c5c12c8c6486f6048c9d35\nSubmitter: Jenkins\nBranch:    master\n\ncommit 36cfe6dce403a7dde6c5c12c8c6486f6048c9d35\nAuthor: Thang Pham <email address hidden>\nDate:   Mon Sep 15 14:54:40 2014 -0400\n\n    Make separate calls to libvirt volume\n    \n    This is a follow up patch to\n    https://review.openstack.org/#/c/116998/, where libvirt\n    volume's connect_volume method were split into get_config and\n    connect_volume. The following patch changes libvirt driver\n    to call the appropriate volume method, get_config or\n    connect_volume, instead of the old monolithic call to\n    connect_volume. connect_volume will no longer need to return\n    the libvirt xml after this switch over. This will improve\n    performance and eliminate possible race conditions.\n    \n    Change-Id: I0d0d7ba98c53ad7509c28bb4866c488c0a049d2f\n    Closes-Bug: #1359617\n", 
+            "date_created": "2014-10-29 18:02:33.550202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

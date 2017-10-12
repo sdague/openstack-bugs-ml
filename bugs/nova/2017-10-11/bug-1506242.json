@@ -1,0 +1,63 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-12-03 21:35:57.787758+00:00", 
+    "description": "When nova-compute, when building and running the instance, calls spawn on virt driver, spawn can fail for several reasons.\n\ne.g. For Ironic, the spawn call can fail if deploy callback timeout happens.\n\nIf this call fails, nova-compute catches the exception, saves it for re-raising and calls shutdown_instance in a try-except block [1]. The problem is, if this shutdown_instance call also fails, a new exception 'BuildAbortException' is raised. This masks the original spawn failure.\n\nThis can cause problems for Ironic where, if deployment failed due to timeout, there is a good chance that shutdown_instance will also fail due to same reason, since it involves zapping etc. So original deployment failure will not be propagated back as instance fault.\n\n\n[1] https://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2171-L2191", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1506242", 
+    "owner": "https://api.launchpad.net/1.0/~shraddha-pandhe", 
+    "id": 1506242, 
+    "index": 606, 
+    "created": "2015-10-14 23:24:52.884729+00:00", 
+    "title": "If instance spawn fails and shutdown_instance also fails, a new exception is raised, masking original spawn failure", 
+    "comments": [
+        {
+            "content": "When nova-compute, when building and running the instance, calls spawn on virt driver, spawn can fail for several reasons.\n\ne.g. For Ironic, the spawn call can fail if deploy callback timeout happens.\n\nIf this call fails, nova-compute catches the exception, saves it for re-raising and calls shutdown_instance in a try-except block [1]. The problem is, if this shutdown_instance call also fails, a new exception 'BuildAbortException' is raised. This masks the original spawn failure.\n\nThis can cause problems for Ironic where, if deployment failed due to timeout, there is a good chance that shutdown_instance will also fail due to same reason, since it involves zapping etc. So original deployment failure will not be propagated back as instance fault.\n\n\n[1] https://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2171-L2191", 
+            "date_created": "2015-10-14 23:24:52.884729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shraddha-pandhe"
+        }, 
+        {
+            "content": "Could I get some more info about what the issues is with the exception not being re-raised properly?\n\nWhat Exception is being masked? What issues is this causing in Ironic?\n\nMy reading of the code is:\n\n_build_resources is called by _build_and_run_instance.\n\n_build_and_run_instance deals with exception handling.\n\nSome of these exceptions are then translated to a ResceduledException which will retry the instance creation. Others to a BuildAbortException.\n\nAre you saying that the creation of the BuildAbortException is masking one of the exceptions that could should have been translated to a retry?", 
+            "date_created": "2015-10-19 14:31:35.929556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjdoffma"
+        }, 
+        {
+            "content": "The linked code block:\r\n\r\n                try:\r\n                    self._shutdown_instance(context, instance,\r\n                            block_device_mapping, requested_networks,\r\n                            try_deallocate_networks=deallocate_networks)\r\n                except Exception:\r\n                    ctxt.reraise = False\r\n                    msg = _('Could not clean up failed build,'\r\n                            ' not rescheduling')\r\n                    raise exception.BuildAbortException(\r\n                            instance_uuid=instance.uuid, reason=msg)\r\n\r\nsets ctxt.reraise = False and writes a new exception message, so the original exception won't be reraised by the context manager. I think maybe what we could do here is include both exception messages inside the BuildAbortException message.", 
+            "date_created": "2015-10-28 09:00:33.449167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Hi Pushkar,\n\nSorry for assigning the bug to myself. I didn't realize that I forgot to assign it to myself before. I have already fixed this internally for Yahoo, so I am aware of the fix.", 
+            "date_created": "2015-10-29 21:07:24.839769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shraddha-pandhe"
+        }, 
+        {
+            "content": "Mark, ill give an example\n\n\nCase 1: spawn fails, shutdown_instance is successful\n\nIn this scenario, using Ironic, I simulated a boot failure by keeping deploy_callback_timeout value really really low. So the deployment failed, which triggered shutdown_instance. But shutdown_instance didn't fail. In this case, in nova show, I see\n\n| fault                                | {\"message\": \"Build of instance e2f95d21-b4fc-45e0-a122-7b44d295ad2c was re-scheduled: Failed to provision instance e2f95d21-b4fc-45e0-a122-7b44d295ad2c: Timeout reached while waiting for callback for node 96b3a7ff-df46-4211-94c3-a5570a0881aa\", \"code\": 500, \"details\": \"  File \\\"/nova/compute/manager.py\\\", line 2062, in _do_build_and_run_instance |\n\n\n\nCase 2: spawn fails, shutdown_instance also fails\n\nTo simulate spawn failure, I used the same method as before. To simulate shutdown_instance failure, I added a raise statement\n\ntry:\n            yield resources\n        except Exception as exc:\n            with excutils.save_and_reraise_exception() as ctxt:\n                if not isinstance(exc, (exception.InstanceNotFound,\n                    exception.UnexpectedDeletingTaskStateError)):\n                        LOG.exception(_LE('Instance failed to spawn'),\n                                instance=instance)\n                # Make sure the async call finishes\n                if network_info is not None:\n                    network_info.wait(do_raise=False)\n                try:\n                    raise ValueError('FAKE') <<< \n                    self._shutdown_instance(context, instance,\n                            block_device_mapping, requested_networks,\n                            try_deallocate_networks=False)\n                except Exception:\n                    ctxt.reraise = False\n                    msg = _('Could not clean up failed build,'\n                            ' not rescheduling')\n                    raise exception.BuildAbortException(\n                            instance_uuid=instance.uuid, reason=msg)\n\n\nIn this case, nova show output shows\n\n| fault                                | {\"message\": \"Build of instance 73f15dd0-3383-4fcd-bad9-90acc188806c aborted: Could not clean up failed build, not rescheduling\", \"code\": 500, \"details\": \"  File \\\"/nova/compute/manager.py\\\", line 2062, in _do_build_and_run_instance |\n|                                      |     filter_properties)                                                                                                                                      \n\n\nHence, the original timeout exception is masked.\n\n", 
+            "date_created": "2015-10-29 21:34:17.565373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shraddha-pandhe"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/240347", 
+            "date_created": "2015-10-29 22:40:04.573921+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@Melanie, @Mark,\n\nSimplest fix would be to raise BuildAbortException with the original spawn failure, and simply log \"Could not clean up failed build\" line. Please see the code snippet [1]\n\nThree reasons for doing this:\n\n1. The only reason why the call landed there was because spawn failed. So knowing that error is more important than anything else\n2. IMHO, \"Could not clean up failed build\" does not give any useful information about any failure. Its probably OK to log it, but not very useful to have that as instance fault.\n3. Combining all of the statements is not possible because of the character limit of \"message\" field\n\n\n\n[1]\n        try:\n            yield resources\n        except Exception as exc:\n            with excutils.save_and_reraise_exception() as ctxt:\n                if not isinstance(exc, (exception.InstanceNotFound,\n                    exception.UnexpectedDeletingTaskStateError)):\n                        LOG.exception(_LE('Instance failed to spawn'),\n                                instance=instance)\n                # Make sure the async call finishes\n                if network_info is not None:\n                    network_info.wait(do_raise=False)\n                # if network_info is empty we're likely here because of\n                # network allocation failure. Since nothing can be reused on\n                # rescheduling it's better to deallocate network to eliminate\n                # the chance of orphaned ports in neutron\n                deallocate_networks = False if network_info else True\n                try:\n                    self._shutdown_instance(context, instance,\n                            block_device_mapping, requested_networks,\n                            try_deallocate_networks=deallocate_networks)\n                except Exception:\n                    ctxt.reraise = False\n                    LOG.exception(_LE('Could not clean up failed build,' <<<<\n                                                          ' not rescheduling'), <<<\n                                                          instance=instance) <<<\n                    raise exception.BuildAbortException(\n                            instance_uuid=instance.uuid, reason=exc) <<< \n\n", 
+            "date_created": "2015-10-29 22:45:44.780294+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shraddha-pandhe"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/240347\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=03e513b36e8d48726a90d592917fd780f1b36a3d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 03e513b36e8d48726a90d592917fd780f1b36a3d\nAuthor: Shraddha Pandhe <email address hidden>\nDate:   Thu Oct 29 22:38:20 2015 +0000\n\n    Do not mask original spawn failure if shutdown_instance fails\n    \n    Change-Id: Id5e2bd556f00555c203c51d84784fe8db9fdcca2\n    Closes-Bug: #1506242\n", 
+            "date_created": "2015-11-11 21:09:08.798243+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b1 development milestone.", 
+            "date_created": "2015-12-02 16:17:26.870143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }
+    ]
+}

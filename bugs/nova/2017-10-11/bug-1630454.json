@@ -1,0 +1,44 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-10-05 13:57:34.600167+00:00", 
+    "description": "Currently, when an instance is shelved and offloaded, the usage quota for RAM and cores does not reduced although the resources themselves are no longer used on the hypervisor.\n\nThe IP should continue to be accounted for as it is reserved.\n\nThis fix is needed as we are looking to encourage our users to shelve less used instances when they get near their quota limits rather than asking for a quota increase.\n\n\n1) create a VM:\nopenstack server create --image 7239c5e1-7b7b-4912-8c48-ee201c211a8f --flavor m1.tiny test-001\n\n2) check quota usage:\nnova absolute-limits\n\n+--------------------+------+-------+\n| Name               | Used | Max   |\n+--------------------+------+-------+\n| Cores              | 1    | 20    |\n| ImageMeta          | -    | 128   |\n| Instances          | 1    | 10    |\n| Keypairs           | -    | 100   |\n| Personality        | -    | 5     |\n| Personality Size   | -    | 10240 |\n| RAM                | 512  | 51200 |\n| Server Meta        | -    | 128   |\n| ServerGroupMembers | -    | 10    |\n| ServerGroups       | 0    | 10    |\n+--------------------+------+-------+\n\n3) shelve the instance and wait for it to offload\nopenstack shelve test-001\n\n4) check quota usage:\nnova absolute-limits\n\n+--------------------+------+-------+\n| Name               | Used | Max   |\n+--------------------+------+-------+\n| Cores              | 1    | 20    |\n| ImageMeta          | -    | 128   |\n| Instances          | 1    | 10    |\n| Keypairs           | -    | 100   |\n| Personality        | -    | 5     |\n| Personality Size   | -    | 10240 |\n| RAM                | 512  | 51200 |\n| Server Meta        | -    | 128   |\n| ServerGroupMembers | -    | 10    |\n| ServerGroups       | 0    | 10    |\n+--------------------+------+\u2014\u2014\u2014+", 
+    "tags": [
+        "compute", 
+        "quotas"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1630454", 
+    "owner": "None", 
+    "id": 1630454, 
+    "index": 1830, 
+    "created": "2016-10-05 06:16:07.414528+00:00", 
+    "title": "shelve offload does not reduce core and RAM quota", 
+    "comments": [
+        {
+            "content": "Currently, when an instance is shelved and offloaded, the usage quota for RAM and cores does not reduced although the resources themselves are no longer used on the hypervisor.\n\nThe IP should continue to be accounted for as it is reserved.\n\nThis fix is needed as we are looking to encourage our users to shelve less used instances when they get near their quota limits rather than asking for a quota increase.\n\n\n1) create a VM:\nopenstack server create --image 7239c5e1-7b7b-4912-8c48-ee201c211a8f --flavor m1.tiny test-001\n\n2) check quota usage:\nnova absolute-limits\n\n+--------------------+------+-------+\n| Name               | Used | Max   |\n+--------------------+------+-------+\n| Cores              | 1    | 20    |\n| ImageMeta          | -    | 128   |\n| Instances          | 1    | 10    |\n| Keypairs           | -    | 100   |\n| Personality        | -    | 5     |\n| Personality Size   | -    | 10240 |\n| RAM                | 512  | 51200 |\n| Server Meta        | -    | 128   |\n| ServerGroupMembers | -    | 10    |\n| ServerGroups       | 0    | 10    |\n+--------------------+------+-------+\n\n3) shelve the instance and wait for it to offload\nopenstack shelve test-001\n\n4) check quota usage:\nnova absolute-limits\n\n+--------------------+------+-------+\n| Name               | Used | Max   |\n+--------------------+------+-------+\n| Cores              | 1    | 20    |\n| ImageMeta          | -    | 128   |\n| Instances          | 1    | 10    |\n| Keypairs           | -    | 100   |\n| Personality        | -    | 5     |\n| Personality Size   | -    | 10240 |\n| RAM                | 512  | 51200 |\n| Server Meta        | -    | 128   |\n| ServerGroupMembers | -    | 10    |\n| ServerGroups       | 0    | 10    |\n+--------------------+------+\u2014\u2014\u2014+", 
+            "date_created": "2016-10-05 06:16:07.414528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tim-bell"
+        }, 
+        {
+            "content": "Good point, we should only count those resources once they're unshelved, I guess.\nThe real question is tho, should we encourage overprovisioning of resources using the shelve API ? Like you said, we're still allocating one IP address for that, and possibly some clouds couldn't like to have their pools exhausted by people overcommitting and not recycling their VMs.\n\nI guess it's an open question, and TBH I don't think shelve is very cloud-compatible.", 
+            "date_created": "2016-10-05 09:51:48.407365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "TBC, I think there is some action to be done, hence me tagging the bug as confirmed, but I don't know if the proper solution is to basically to not count offloaded instances. I'd rather like to see a discussion about the rationale of overcommitting a set of resources that can be bounded.", 
+            "date_created": "2016-10-05 09:55:37.187135+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "There is still a set of bounded resources: IP, Glance storage for an image snapshot, and/or a volume. The ask here that CPU and RAM quota be decremented is reasonable. Decrementing DISK is reasonable as well.\n\nThe reason why things are done they way they are currently is that the choice was made to ensure that unshelve would always be possible, or at least not blocked by not having quota available to spin the instance back up. Now, this feature was implemented before the specs process existed so there was less discussion and oversight when it was added so it was mostly the choice of the lone developer of the feature. It's difficult to know how many users out there are happy with that design choice, but we do know from operator feedback that many of them wish it worked as this bug report suggests.\n\nI will say that I don't believe this is a bug. It's arguably a poor design choice but the behavior is not faulty. It is valuable feedback though so I don't think we should close this out.\n\nWe have two real choices here and a third option I'll mention but that we shouldn't use. We can continue as is. We can change shelve to decrement quota when the resources are offloaded from the compute node. Or we could add a config to let deployers toggle between the previous two choices, but we should not do this.\n\nI would support it if someone wanted to propose a spec to change the quota behavior of shelving. It is however not as simple as just changing the quota behavior. Quotas would need to be retroactively decremented for instances which are shelved at the time of upgrade. Care would need to be taken to ensure that there is no DoS potential, though I don't believe there is.", 
+            "date_created": "2016-10-05 13:23:45.583229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "So, given it seems there was a previous consensus about not quoting shelves, I think it would need a spec for discussing about that specific behaviour and see if the consensus needs to be reviewed, ie. if we accept to overprovision bounded resources given the DoS possibility (and whether it would need some config option).\n\nPutting that bug as Wishlist, but I'd rather prefer some blueprint going up so we could discuss about that correctly. ", 
+            "date_created": "2016-10-05 13:57:20.381915+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }
+    ]
+}

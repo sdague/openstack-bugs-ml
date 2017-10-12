@@ -1,0 +1,119 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 12:18:14.997214+00:00", 
+    "description": "Allocation of network interfaces for an instance can result in corruption of the instance info cache in Nova. The result is that the cache may contain duplicate entries for network interfaces. This can cause failure to boot nodes, as seen with the Libvirt driver.\n\nSeen on Ubuntu / devstack / commit b0013d93ffeaed53bc28d9558def26bdb7041ed7.\n\nThe issue can be reproduced using an instance with a large number of interfaces, for example using the heat stack in the attached YAML file heat-stack-many-interfaces.yaml. For improved reproducibility, add a short sleep in nova.network.neutronv2.api.API.allocate_for_instance, just before the call to self.get_instance_nw_info.\n\nThis issue was found by SecurityFun23 when testing the fix for bug #1467581.\n\nThe problem appears to be that in nova.network.neutronv2.api.API.allocate_for_instance, after the Neutron API calls to create/update ports, but before the instance info cache is  updated in get_instance_nw_info, it is possible for another request to refresh the instance info cache. This will cause the new/updated ports to be added to the cache as they are discovered in Neutron. Then, the original request resumes, and unconditionally adds the new interfaces to the cache. This results in duplicate entries. The most likely candidate for another request is probably Neutron network-change notifications, which are triggered by the port update/create operation. The allocation of multiple interfaces is more likely to make the problem to occur, as Neutron API requests are made serially for each of the ports, allowing time for the notifications to arrive.\n\nThe perceived problem in a more visual form:\n\nRequest:\n- Allocate interfaces for an instance (nova.network.neutronv2.api.API.allocate_for_instance)\n- n x Neutron API port create/updates\n------------------------------\nNotification:\n- External event notification from Neutron - network-changed (nova.compute.manager.ComputeManager.external_instance_event)\n- Refresh instance network cache (network_api.get_instance_nw_info)\n- Query ports for device in Neutron\n- Add new ports to instance info cache\n-------------------------------\nRequest:\n- Refresh instance network cache with new interfaces (get_instance_nw_info)\n- Unconditionally add duplicate interfaces to cache.", 
+    "tags": [
+        "in-stable-liberty", 
+        "network"
+    ], 
+    "importance": "Medium", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1501735", 
+    "owner": "https://api.launchpad.net/1.0/~sahid-ferdjaoui", 
+    "id": 1501735, 
+    "index": 4359, 
+    "created": "2015-10-01 11:58:30.550313+00:00", 
+    "title": "Network interface allocation corrupts instance info cache", 
+    "comments": [
+        {
+            "content": "Allocation of network interfaces for an instance can result in corruption of the instance info cache in Nova. The result is that the cache may contain duplicate entries for network interfaces. This can cause failure to boot nodes, as seen with the Libvirt driver.\n\nSeen on Ubuntu / devstack / commit b0013d93ffeaed53bc28d9558def26bdb7041ed7.\n\nThe issue can be reproduced using an instance with a large number of interfaces, for example using the heat stack in the attached YAML file heat-stack-many-interfaces.yaml. For improved reproducibility, add a short sleep in nova.network.neutronv2.api.API.allocate_for_instance, just before the call to self.get_instance_nw_info.\n\nThis issue was found by SecurityFun23 when testing the fix for bug #1467581.\n\nThe problem appears to be that in nova.network.neutronv2.api.API.allocate_for_instance, after the Neutron API calls to create/update ports, but before the instance info cache is  updated in get_instance_nw_info, it is possible for another request to refresh the instance info cache. This will cause the new/updated ports to be added to the cache as they are discovered in Neutron. Then, the original request resumes, and unconditionally adds the new interfaces to the cache. This results in duplicate entries. The most likely candidate for another request is probably Neutron network-change notifications, which are triggered by the port update/create operation. The allocation of multiple interfaces is more likely to make the problem to occur, as Neutron API requests are made serially for each of the ports, allowing time for the notifications to arrive.\n\nThe perceived problem in a more visual form:\n\nRequest:\n- Allocate interfaces for an instance (nova.network.neutronv2.api.API.allocate_for_instance)\n- n x Neutron API port create/updates\n------------------------------\nNotification:\n- External event notification from Neutron - network-changed (nova.compute.manager.ComputeManager.external_instance_event)\n- Refresh instance network cache (network_api.get_instance_nw_info)\n- Query ports for device in Neutron\n- Add new ports to instance info cache\n-------------------------------\nRequest:\n- Refresh instance network cache with new interfaces (get_instance_nw_info)\n- Unconditionally add duplicate interfaces to cache.", 
+            "date_created": "2015-10-01 11:58:30.550313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgoddard"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-10-01 11:58:30.550313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgoddard"
+        }, 
+        {
+            "content": "Possibly caused by the fix for bug #1407664, which allows an empty instance info cache to be updated based on Neutron ports. The unit test 'test_get_instance_nw_info_ignores_neutron_ports' seems to suggest that during a cache refresh, ports seen in Neutron with a matching instance/device ID should be ignored. However, the test only covers the case where there is already a network in the cache. Adding a similar test case for when there is no network in the cache currently fails. Without having looked into it too much, I think that the fix for bug #1467581 may also fix #1407664, in which case that fix could potentially be reverted.", 
+            "date_created": "2015-10-01 15:11:15.452503+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgoddard"
+        }, 
+        {
+            "content": "Admittedly, the fix for bug #1407664 went in before that for #1467581.", 
+            "date_created": "2015-10-01 15:12:32.861781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgoddard"
+        }, 
+        {
+            "content": "On Ubuntu 14.04 / devstack / stable/kilo:\n\nI wrote a script to boot an instance with 10 network interfaces using the heat stack attached, then check that all interfaces are present in the instance info cache without duplicates. This covers this bug and bug #1407664.\n\n#!/bin/bash\n\n(source openrc admin ; neutron quota-update --network -1 --subnet -1)\n\nsource openrc demo\n\nEMPTY=0\nFULL=0\nfor i in $(seq 1 20) ; do\n        echo \"Attempt $i\"\n        heat stack-create -f stack.yaml stack\n        if [ $? -ne 0 ] ; then\n                echo \"heat stack-create failed\"\n                exit 1\n        fi\n        while heat stack-show stack | grep 'CREATE_IN_PROGRESS' ; do\n                echo \"in progress - sleep\"\n                sleep 5\n        done\n        nova list\n        INTS=$(sudo virsh dumpxml $(sudo virsh list --name) | grep '<interface'  | wc -l)\n        if [ $INTS -ne 10 ] ; then\n                echo \"unexpected # of interfaces $INTS\"\n                exit 1\n        fi\n        if ! nova show instance | grep testnet ; then\n                echo \"empty cache\"\n                EMPTY=$((EMPTY + 1))\n        else\n                FULL=$((FULL + 1))\n        fi\n        heat stack-delete stack\n        while heat stack-show stack > /dev/null ; do\n                echo Sleeping\n                sleep 10\n        done\n        echo empty $EMPTY full $FULL\n        echo \"\"\ndone\n\nI also increased the likelihood of hitting the race condition with the following patch:\n\ndiff --git a/nova/compute/manager.py b/nova/compute/manager.py\nindex 99c5b04..907ffd7 100644\n--- a/nova/compute/manager.py\n+++ b/nova/compute/manager.py\n@@ -6540,6 +6540,7 @@ class ComputeManager(manager.Manager):\n                       {'event': event.key},\n                       instance=instance)\n             if event.name == 'network-changed':\n+                self.network_api.net_changed.wait()\n                 self.network_api.get_instance_nw_info(context, instance)\n             else:\n                 self._process_instance_event(instance, event)\ndiff --git a/nova/network/neutronv2/api.py b/nova/network/neutronv2/api.py\nindex f80a999..8c1fc06 100644\n--- a/nova/network/neutronv2/api.py\n+++ b/nova/network/neutronv2/api.py\n@@ -228,6 +228,8 @@ class API(base_api.NetworkAPI):\n         super(API, self).__init__(skip_policy_check=skip_policy_check)\n         self.last_neutron_extension_sync = None\n         self.extensions = {}\n+        import threading\n+        self.net_changed = threading.Event()\n\n     def setup_networks_on_host(self, context, instance, host=None,\n                                teardown=False):\n@@ -523,6 +525,7 @@ class API(base_api.NetworkAPI):\n         created_port_ids = []\n         ports_in_requested_order = []\n         nets_in_requested_order = []\n+        self.net_changed.clear()\n         for request in ordered_networks:\n             # Network lookup for available network_id\n             network = None\n@@ -580,6 +583,7 @@ class API(base_api.NetworkAPI):\n             port_ids=ports_in_requested_order,\n             admin_client=admin_client,\n             preexisting_port_ids=preexisting_port_ids)\n+        self.net_changed.set()\n         # NOTE(danms): Only return info about ports we created in this run.\n         # In the initial allocation case, this will be everything we created,\n         # and in later runs will only be what was created that time. Thus,\n\nI ran the test 20 times, and counted the number of times the correct instance info cache was observed.\n\nWithout either change: 4/20\nWith bug #1467581 fix: 20/20\nWith bug #1407664 fix: 20/20\n\nThis shows that both fixes will fix this issue and bug #1407664, but that the fix for bug #1467581 will also fix the original issue outlined there.\n\nNote that for sanity, the result was verified without the above nova patch.\n\nTherefore I recommend that we revert the fix for bug #1407664.", 
+            "date_created": "2015-10-02 17:44:04.140131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgoddard"
+        }, 
+        {
+            "content": "Mark,\n\n      Just to provide more info around these related issues, in our setup we applied the fix for #1407664 to fix problems that we were seeing on VM Creation.  That definitely helped,  but we still had issues (especially when many interfaces were used).  So then we looked into the fix for #1467581.  That resulted in the issue that you have documented here.   I had tried an alternate modification to fix this bug (which seemed to work better), but the removal of the code for #1407664 may be more appropriate.  I will try that in our setup soon.\n\nThanks!", 
+            "date_created": "2015-10-02 18:18:26.996968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~securityfun23"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/230919", 
+            "date_created": "2015-10-05 09:37:34.160149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/260462", 
+            "date_created": "2015-12-22 12:11:30.013593+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/265363", 
+            "date_created": "2016-01-08 17:16:51.642275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/265363", 
+            "date_created": "2016-01-12 07:48:30.917878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/260462", 
+            "date_created": "2016-01-12 07:48:41.642690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/260462", 
+            "date_created": "2016-01-13 16:44:41.190046+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/265363", 
+            "date_created": "2016-01-13 16:44:48.517337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/252565\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=3031adb857993d8196b4c9febca51ac82cf35fd6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3031adb857993d8196b4c9febca51ac82cf35fd6\nAuthor: David Edery <email address hidden>\nDate:   Wed Dec 2 19:56:54 2015 +0100\n\n    ports & networks gather should validate existance\n    \n    _gather_port_ids_and_networks assumes that the input networks variable\n    doesn't contain the networks in ifaces. This is a wrong assumption\n    ever since the introduction of the \"refresh_cache-<instance id>\" locks to\n    the process in the Liberty cycle (see related bugs) and the\n    \"Refactor network API 'get_instance_nw_info'\" patchset\n    (https://review.openstack.org/#/c/146036/).\n    \n    The fix validates that the networks stated in ifaces doen't exist in the\n    gotten networks list.\n    \n    Duplicate networks were observed at the following closed/related bugs.\n    \n    Change-Id: I8c2c9e3c89babbe5e48c5129b9854013690b38f6\n    Closes-Bug: #1522112\n    Related-Bug: #1467581\n    Related-Bug: #1501735\n", 
+            "date_created": "2016-01-18 09:22:43.304106+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/270686", 
+            "date_created": "2016-01-21 09:23:45.563768+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/270814", 
+            "date_created": "2016-01-21 13:59:08.012312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/230919\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8694c1619d774bb8a6c23ed4c0f33df2084849bc\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8694c1619d774bb8a6c23ed4c0f33df2084849bc\nAuthor: Mark Goddard <email address hidden>\nDate:   Thu Oct 1 17:37:45 2015 +0100\n\n    network: Don't repopulate instance info cache from Neutron ports\n    \n    Allocation of network interfaces for an instance can result in\n    corruption of the instance info cache. The result is that the cache\n    may contain duplicate entries for network interfaces. This can cause\n    instance boot failure. This bug appears to be attributable to the\n    combined effects of the fixes for bugs #1467581 and #1407664.\n    \n    This change reverts the fix for bug #1407664, whilst keeping a\n    modified version of the unit test that was added with it. It also\n    adds a second unit test.\n    \n    Change-Id: I53d5284907d44ae8b5546993f8fd461b385c39e6\n    Closes-bug: #1501735\n    Related-bug: #1467581\n    Related-bug: #1407664\n", 
+            "date_created": "2016-01-22 10:32:42.517893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/270686\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=adc21bb0c62db822c3d656c4721f7b7c3ad41b7a\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit adc21bb0c62db822c3d656c4721f7b7c3ad41b7a\nAuthor: David Edery <email address hidden>\nDate:   Wed Dec 2 19:56:54 2015 +0100\n\n    ports & networks gather should validate existance\n    \n    _gather_port_ids_and_networks assumes that the input networks variable\n    doesn't contain the networks in ifaces. This is a wrong assumption\n    ever since the introduction of the \"refresh_cache-<instance id>\" locks to\n    the process in the Liberty cycle (see related bugs) and the\n    \"Refactor network API 'get_instance_nw_info'\" patchset\n    (https://review.openstack.org/#/c/146036/).\n    \n    The fix validates that the networks stated in ifaces doen't exist in the\n    gotten networks list.\n    \n    Duplicate networks were observed at the following closed/related bugs.\n    \n    Change-Id: I8c2c9e3c89babbe5e48c5129b9854013690b38f6\n    Closes-Bug: #1522112\n    Related-Bug: #1467581\n    Related-Bug: #1501735\n    (cherry picked from commit 3031adb857993d8196b4c9febca51ac82cf35fd6)\n", 
+            "date_created": "2016-02-10 19:51:11.274959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/270814\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ce392292353c2b289aa3247b3c401f1cf7e1506c\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit ce392292353c2b289aa3247b3c401f1cf7e1506c\nAuthor: Mark Goddard <email address hidden>\nDate:   Thu Oct 1 17:37:45 2015 +0100\n\n    network: Don't repopulate instance info cache from Neutron ports\n    \n    Allocation of network interfaces for an instance can result in\n    corruption of the instance info cache. The result is that the cache\n    may contain duplicate entries for network interfaces. This can cause\n    instance boot failure. This bug appears to be attributable to the\n    combined effects of the fixes for bugs #1467581 and #1407664.\n    \n    This change reverts the fix for bug #1407664, whilst keeping a\n    modified version of the unit test that was added with it. It also\n    adds a second unit test.\n    \n    Conflicts:\n     nova/tests/unit/network/test_neutronv2.py\n    \n    This is because If0a1f3850d92d011aae32ae34e8c8664f2ee4313 isn't in\n    stable/liberty\n    \n    \n    Change-Id: I53d5284907d44ae8b5546993f8fd461b385c39e6\n    Closes-bug: #1501735\n    Related-bug: #1467581\n    Related-bug: #1407664\n    (cherry picked from commit 8694c1619d774bb8a6c23ed4c0f33df2084849bc)\n", 
+            "date_created": "2016-06-07 20:54:23.075492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.4 release.", 
+            "date_created": "2016-06-08 21:35:54.212160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ]
+}

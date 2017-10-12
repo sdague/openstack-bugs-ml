@@ -1,0 +1,119 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 12:19:24.858251+00:00", 
+    "description": "Once the glance image from which an instance was spawned is deleted, resizes of that image fail if they would take place across more than one compute node. Migration and live block migration both succeed.\n\nResize fails, I believe, because 'qemu-img resize' is called (https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L7218-L7221) before the backing image has been transferred from the source compute node (https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L7230-L7233).\n\nReplication requires two compute nodes. To replicate:\n\n1. Boot an instance from an image or snapshot.\n2. Delete the image from Glance.\n3. Resize the instance. It will fail with an error similar to:\n\nStderr: u\"qemu-img: Could not open '/var/lib/nova/instances/f77f1c5c-71f7-4645-afa1-dd30bacef874/disk': Could not open backing file: Could not open '/var/lib/nova/instances/_base/ca94b18d94077894f4ccbaafb1881a90225f1224': No such file or directory\\n\"", 
+    "tags": [
+        "libvirt", 
+        "resize"
+    ], 
+    "importance": "Medium", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1546778", 
+    "owner": "https://api.launchpad.net/1.0/~mbooth-9", 
+    "id": 1546778, 
+    "index": 4447, 
+    "created": "2016-02-17 22:12:03.246251+00:00", 
+    "title": "libvirt: resize with deleted backing image fails", 
+    "comments": [
+        {
+            "content": "Once the glance image from which an instance was spawned is deleted, resizes of that image fail if they would take place across more than one compute node. Migration and live block migration both succeed.\n\nResize fails, I believe, because 'qemu-img resize' is called (https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L7218-L7221) before the backing image has been transferred from the source compute node (https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L7230-L7233).\n\nReplication requires two compute nodes. To replicate:\n\n1. Boot an instance from an image or snapshot.\n2. Delete the image from Glance.\n3. Resize the instance. It will fail with an error similar to:\n\nStderr: u\"qemu-img: Could not open '/var/lib/nova/instances/f77f1c5c-71f7-4645-afa1-dd30bacef874/disk': Could not open backing file: Could not open '/var/lib/nova/instances/_base/ca94b18d94077894f4ccbaafb1881a90225f1224': No such file or directory\\n\"", 
+            "date_created": "2016-02-17 22:12:03.246251+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stpierre"
+        }, 
+        {
+            "content": "I think there is no need to delete image from glance, this bug occurs \nbecause migration is triggered during resize. But backing file is not copied in this\ncode flow, i would like to propose patch that fix this problem.\n\nSteps to reproduce:\n\n1.  Deploy openstack with 2 or more computes.\n2.  Boot one or more instances on the same compute with flavor micro or tiny.\n3. Resize one of the instances, that probably will cause migration.\n\nIf instance disk has backing file - migration will fail because in current implementation\nbacking files are not copied from one compute to another.", 
+            "date_created": "2016-02-19 10:39:42.281412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gstepanov"
+        }, 
+        {
+            "content": "Here is patch https://review.openstack.org/#/c/282275", 
+            "date_created": "2016-02-19 10:59:07.147178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gstepanov"
+        }, 
+        {
+            "content": "I can replicate and confirm that. If the destination hypervisor doesn't have the backing image in its cache, regardless of whether or not it's available in glance the resize fails.", 
+            "date_created": "2016-02-19 13:28:21.046029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stpierre"
+        }, 
+        {
+            "content": "Your replication steps are slightly incomplete; there are two ways to replicate it. Either:\n\n1. Create a new image. (This ensures that the image backing file isn't in any of your compute nodes' image cache.)\n2. Boot an instance.\n3. Resize.\n\nOr:\n\n1. Delete all instances, and then delete all backing images from the nova image cache on all compute nodes.\n2. Boot.\n3. Resize.\n\nEither way, you need to ensure that the destination hypervisor doesn't have the backing image in its cache. Deleting the image from Glance may also do this, eventually, since the Nova image cache manager purges cached images that are not in use and have been deleted from Glance, but just resizing the first instance booted from a new image is easier and more reliable.", 
+            "date_created": "2016-02-19 13:52:28.739576+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stpierre"
+        }, 
+        {
+            "content": "Resize may trigger cold migration. I think if resize failed because of backing file, migration would fail too.", 
+            "date_created": "2016-02-20 01:53:02.963579+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xiaoxubeii"
+        }, 
+        {
+            "content": "Can I just clear up some jargon here which is a bit confusing. Resize doesn't trigger a cold migration. Resize *is* a cold migration. Sometimes it migrates to the same host it started on. What you're talking about here is a regular resize where the source and destination hosts are different, which is normal. When I read about a migration happening during a resize, I think about 2 separate user-initiated actions and a whole different class of bug.\n\nSecondly, there is code already in place which should be handling this, specifically finish_migration(). The interesting question is why that isn't working.", 
+            "date_created": "2016-03-04 16:10:55.350252+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Reproducer:\n\n$ nova flavor-create test1 test2 256 1 1\n$ nova flavor-create test2 test2 256 2 1\n\n$ glance image-create --name cirros --container-format bare --disk-format qcow2 --file cirros-0.3.4-x86_64-disk.img\n$ nova boot --image cirros --flavor test1 foo\n# nova show foo indicates that foo was launched on node2\n$ nova service-disable node2.example.com nova-compute\n$ glance image-delete <cirros image-id>\n$ nova resize foo test2", 
+            "date_created": "2016-03-04 18:27:48.815673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "So, it seems that the bug is in finish_migration. The problem is that it attempts to resize the disk before checking that the backing file is available. I'll post a patch.", 
+            "date_created": "2016-03-04 18:29:00.192001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/288640", 
+            "date_created": "2016-03-04 18:47:16.087736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "That patch may require tests; I'll have a look on Monday. I've confirmed that it resolves the reproducer I posted above.", 
+            "date_created": "2016-03-04 18:53:29.763196+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/288640\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=db7fd539f261ea53f6c005478049424b9dae1543\nSubmitter: Jenkins\nBranch:    master\n\ncommit db7fd539f261ea53f6c005478049424b9dae1543\nAuthor: Matthew Booth <email address hidden>\nDate:   Fri Mar 4 18:34:21 2016 +0000\n\n    libvirt: Fix resize of instance with deleted glance image\n    \n    finish_migration() in the libvirt driver was attempting to resize an\n    image before checking that its backing file was present. This patch\n    re-orders these 2 operations. In doing so, we also have to resolve an\n    overloading of the 'disk_info' variable.\n    \n    Closes-Bug: #1546778\n    \n    Change-Id: I03e08fae97416ebe5cdedcf238a06d1b90203c5d\n", 
+            "date_created": "2016-03-08 19:18:24.428829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/290561", 
+            "date_created": "2016-03-09 15:00:22.433545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/290563", 
+            "date_created": "2016-03-09 15:06:24.942758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0rc1 release candidate.", 
+            "date_created": "2016-03-16 18:03:25.634750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/290561\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=359dd54d667d9b0a6a05497488aa48076d35991a\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 359dd54d667d9b0a6a05497488aa48076d35991a\nAuthor: Matthew Booth <email address hidden>\nDate:   Fri Mar 4 18:34:21 2016 +0000\n\n    libvirt: Fix resize of instance with deleted glance image\n    \n    finish_migration() in the libvirt driver was attempting to resize an\n    image before checking that its backing file was present. This patch\n    re-orders these 2 operations. In doing so, we also have to resolve an\n    overloading of the 'disk_info' variable.\n    \n    (cherry picked from commit db7fd539f261ea53f6c005478049424b9dae1543)\n    \n    Conflicts:\n      nova/virt/libvirt/driver.py\n    \n    Minor context difference, as liberty explicitly converted image_meta\n    to an object before use.\n    \n    Closes-Bug: #1546778\n    \n    Change-Id: I03e08fae97416ebe5cdedcf238a06d1b90203c5d\n", 
+            "date_created": "2016-03-17 04:12:54.792853+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Gleb Stepanov (<email address hidden>) on branch: master\nReview: https://review.openstack.org/282275", 
+            "date_created": "2016-03-17 15:06:42.083735+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There is a backport proposed to stable/kilo but I don't think we should take it since the original fix for this introduced a regression which we are having to fix on master, stable/mitaka and stable/liberty now. I'd rather not deal with that in stable/kilo too.", 
+            "date_created": "2016-03-22 00:44:00.467039+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Change abandoned by Matthew Booth (<email address hidden>) on branch: stable/kilo\nReview: https://review.openstack.org/290563\nReason: No problem.", 
+            "date_created": "2016-03-29 09:40:07.889373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.3 release.", 
+            "date_created": "2016-04-14 12:29:24.665453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ]
+}

@@ -1,0 +1,134 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-03-13 18:42:04.730346+00:00", 
+    "description": "We are using nova 2:12.0.0-0ubuntu2~cloud0. Instance disks are stored in qcow2 files on ext4 filesystem. When we live snapshot, 90% of the time the produced image is corrupted; specifically, the image is only a few megabytes (e.g. 30 MB) in size, while the disk size is several GB. Here is the log from a corrupted snapshot:\n\n2015-12-31 01:40:33.304 16805 INFO nova.compute.manager [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] instance snapshotting\n2015-12-31 01:40:33.410 16805 INFO nova.virt.libvirt.driver [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Beginning live snapshot process\n2015-12-31 01:40:34.964 16805 INFO nova.virt.libvirt.driver [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot extracted, beginning image upload\n2015-12-31 01:40:37.029 16805 INFO nova.virt.libvirt.driver [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot image upload complete\n\nThe entire operation completes in a couple of seconds, which is unexpected.\n\nWhile testing, I added some sleep calls to the _live_snapshot function in virt/libvirt/driver.py to debug the problem. A few live snapshot runs were successful, but I'm not confident that it fixed the problem. Anyway, here is the code that I changed:\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0try:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# NOTE (rmk): blockRebase cannot be executed on persistent\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0#             domains, so we need to temporarily undefine it.\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0#             If any part of this block fails, the domain is\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0#             re-defined regardless.\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if guest.has_persistent_configuration():\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0guest.delete_configuration()\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# NOTE (rmk): Establish a temporary mirror of our root disk and\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0#             issue an abort once we have a complete copy.\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0dev.rebase(disk_delta, copy=True, reuse_ext=True, shallow=True)\n\n+            time.sleep(10.0)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0while dev.wait_for_job():\n-                time.sleep(0.5)\n+                time.sleep(5.0)\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0dev.abort_job()\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0libvirt_utils.chown(disk_delta, os.getuid())\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0finally:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0self._host.write_instance_config(xml)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if require_quiesce:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0self.unquiesce(context, instance, image_meta)\n\nAnd the resulting log (which indicates that it is sleeping for not just the initial 10 second call, but even more than that; this means wait_for_job is returning false immediately before applying the modification, but after the modification it is actually returning true after the initial sleep and seems to be performing correctly):\n\n2015-12-31 01:42:12.438 21232 INFO nova.compute.manager [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] instance snapshotting\n2015-12-31 01:42:12.670 21232 INFO nova.virt.libvirt.driver [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Beginning live snapshot process\n2015-12-31 01:43:02.411 21232 INFO nova.virt.libvirt.driver [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot extracted, beginning image upload\n2015-12-31 01:44:12.893 21232 INFO nova.virt.libvirt.driver [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot image upload complete\n\nSince sleeping 10 seconds before polling wait_for_job seemed to resolve it, I think there may be a race condition where wait_for_job may be called before the job is fully initialized from the rebase call. I have not had a chance to explore that possibility further though.", 
+    "tags": [
+        "libvirt", 
+        "live-snapshot"
+    ], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1530275", 
+    "owner": "https://api.launchpad.net/1.0/~slaweq", 
+    "id": 1530275, 
+    "index": 4418, 
+    "created": "2015-12-31 06:57:20.553081+00:00", 
+    "title": "Live snapshot is corrupted (possibly race condition?)", 
+    "comments": [
+        {
+            "content": "We are using nova 2:12.0.0-0ubuntu2~cloud0. Instance disks are stored in qcow2 files on ext4 filesystem. When we live snapshot, 90% of the time the produced image is corrupted; specifically, the image is only a few megabytes (e.g. 30 MB) in size, while the disk size is several GB. Here is the log from a corrupted snapshot:\n\n2015-12-31 01:40:33.304 16805 INFO nova.compute.manager [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] instance snapshotting\n2015-12-31 01:40:33.410 16805 INFO nova.virt.libvirt.driver [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Beginning live snapshot process\n2015-12-31 01:40:34.964 16805 INFO nova.virt.libvirt.driver [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot extracted, beginning image upload\n2015-12-31 01:40:37.029 16805 INFO nova.virt.libvirt.driver [req-80187ec9-a3e7-4eaf-80d4-1617da40989e 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot image upload complete\n\nThe entire operation completes in a couple of seconds, which is unexpected.\n\nWhile testing, I added some sleep calls to the _live_snapshot function in virt/libvirt/driver.py to debug the problem. A few live snapshot runs were successful, but I'm not confident that it fixed the problem. Anyway, here is the code that I changed:\n\n        try:\n            # NOTE (rmk): blockRebase cannot be executed on persistent\n            #             domains, so we need to temporarily undefine it.\n            #             If any part of this block fails, the domain is\n            #             re-defined regardless.\n            if guest.has_persistent_configuration():\n                guest.delete_configuration()\n\n            # NOTE (rmk): Establish a temporary mirror of our root disk and\n            #             issue an abort once we have a complete copy.\n            dev.rebase(disk_delta, copy=True, reuse_ext=True, shallow=True)\n\n+            time.sleep(10.0)\n            while dev.wait_for_job():\n-                time.sleep(0.5)\n+                time.sleep(5.0)\n\n            dev.abort_job()\n            libvirt_utils.chown(disk_delta, os.getuid())\n        finally:\n            self._host.write_instance_config(xml)\n            if require_quiesce:\n                self.unquiesce(context, instance, image_meta)\n\nAnd the resulting log (which indicates that it is sleeping for not just the initial 10 second call, but even more than that):\n\n2015-12-31 01:42:12.438 21232 INFO nova.compute.manager [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] instance snapshotting\n2015-12-31 01:42:12.670 21232 INFO nova.virt.libvirt.driver [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Beginning live snapshot process\n2015-12-31 01:43:02.411 21232 INFO nova.virt.libvirt.driver [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot extracted, beginning image upload\n2015-12-31 01:44:12.893 21232 INFO nova.virt.libvirt.driver [req-f3cc4b5b-98b0-4315-b514-de36a07cb8ed 94b1e02c35204ca89bd5aea99ff5ef2b 8341c85ad9ae49408fa25074adba0480 - - -] [instance: f9d52a00-8466-4436-b5b4-f0244d54dfe1] Snapshot image upload complete\n\nSince sleeping 10 seconds before polling wait_for_job seemed to resolve it, I think there may be a race condition where wait_for_job may be called before the job is fully initialized from the rebase call. I have not had a chance to explore that possibility further though.", 
+            "date_created": "2015-12-31 06:57:20.553081+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fbastani"
+        }, 
+        {
+            "content": "Do the libvirt logs show any errors?  How about the domain logs for the instance that you're performing the live snapshot on?", 
+            "date_created": "2016-03-06 20:11:57.937082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Also, what version of libvirt/qemu are you using?", 
+            "date_created": "2016-03-06 20:12:17.395707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "There are no logs; what is happening AFAIK is the rebase job hasn't started yet, so when nova gets the status it thinks the job is completed, and then it prematurely aborts the job.\n\nI am using the ones from cloud-archive:liberty repository:\n\nlibvirt 1.2.16-2ubuntu11~cloud0\nqemu-kvm 1:2.3+dfsg-5ubuntu9~cloud0", 
+            "date_created": "2016-03-07 19:39:17.502883+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fbastani"
+        }, 
+        {
+            "content": "We probably need danpb or kashyap to take a look at this one.\n\nWould be helpful if you could recreate with libvirtd debug logs, you can see how those are configured in devstack here:\n\nhttps://github.com/openstack-dev/devstack/blob/76cbbe37aae5d54542d62a5c6deec428a8cdc75e/lib/nova_plugins/functions-libvirt#L101", 
+            "date_created": "2016-04-18 18:10:12.048134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Yep, we really need to have the libvirtd debug logs, and also the full corresponding nova compute log from the same time.", 
+            "date_created": "2016-04-19 08:57:10.178356+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Marking as incomplete until we get the information needed to debug this issue.", 
+            "date_created": "2016-07-14 11:18:02.578982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I have same issue and I found that in first check in dev.wait_for_job() libvirt returns status.end = 0 and status.cur = 0. So both values are equal and nova ends this while loop and got forward. Then snapshot is broken.", 
+            "date_created": "2016-08-31 11:48:43.428996+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slaweq"
+        }, 
+        {
+            "content": "I checked also that after even very short time (I added some debug logs between start blockRebase and this while loop, status.end value was not 0 and then snapshot was fine. I also noticed that status.end value was increasing every 0.5 second (loop iteration) so it was not set to final value in first check of status.", 
+            "date_created": "2016-08-31 11:50:56.054992+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slaweq"
+        }, 
+        {
+            "content": "Libvirtd log file in attachment", 
+            "date_created": "2016-08-31 12:55:08.339999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slaweq"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-08-31 13:23:56.114299+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slaweq"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/363926", 
+            "date_created": "2016-08-31 20:33:55.307633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "TL;DR (of some long analysis that's upcoming): From the point-of-view of\nlibvirt, corruption of the snapshot can occur if libvirt issues the\n'block-job-cancel' command too soon (before the status from\n'query-block-jobs' command is reported as \"ready\": true) before the\nsnapshot operation completes.\n\nHowever, Eric Blake (libvirt / QEMU developer) speculates on IRC that,\nQEMU _might_ have a race condition that it is reporting to libvirt that\nthe live block operation is ready soon.\n\n- - -\n\nFWIW, I've also just tested this locally, and couldn't reproduce the\nissue:\n\nSet this in /etc/nova/nova.conf\n\n    [workarounds]\n    disable_libvirt_livesnapshot = False\n\nSo that the _live_snapshot() method in nova/virt/libvirt/driver.py\nexercises this code path:\n\n           [...]\n            dev.rebase(disk_delta, copy=True, reuse_ext=True, shallow=True)\n\n            while dev.wait_for_job():\n                time.sleep(0.5)\n\n            dev.abort_job()\n           [...]\n\nAnd the simple reproducer (tested with today's DevStack, with Nova\ncommit at 1abb6f7)\n\n    $ nova keypair-add oskey1 > oskey1.priv\n    $ chmod 600 oskey1.priv\n    $ nova boot --flavor 2 --key-name oskey1 --image cirros-0.3.4-x86_64-disk cvm1\n    $ nova image-create cvm1 \"snap1-of-cvm1\" --poll\n\nServer snapshotting... 100% complete\nFinished\n\nThe snapshot file (uploaded to glance doesn't seem to be corrupted).\n\nMy libvirt debug log:\nhttps://kashyapc.fedorapeople.org/virt/temp/nova-live-snapshot-libvirtd.log\n", 
+            "date_created": "2016-08-31 21:14:37.741763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "A quick note on libvirt IDs that'd be useful to know when reading the\nlogs -- libvirt increments the ID for each QMP command it issues.  E.g.\npicking randomly, if you look for the ID \"libvirt-99\" in the above log,\nlibvirt uses it to issue the QEMU Monitor Protocol (QMP) command\n'query-block' (and, you get a return from QEMU, as seen via the output\nof qemuMonitorIOProcess(), with the same ID, libvirt-99).\n\n* * *\n\nNow let's analyze the libvirtd log that is attached in comment#10.  \n[I've manually line-wrapped the error messages.]\n\n(1) Nova invokes the blockRebase() Python API (and in the logs we see\nthe C equivalent (virDomainBlockRebase() with certain parameters:\n\n    2016-08-31 12:51:48.555+0000: 87266: debug :\n    virDomainBlockRebase:9953 : dom=0x7f6938000a10, (VM:\n    name=instance-001d7e72, uuid=73aa534b-924d-4136-a4e3-7a99187b5c41),\n    disk=/home/instances/73aa534b-924d-4136-a4e3-7a99187b5c41/disk,\n    base=/storage/snapshots/tmpnwpMv4/1184d0cb36534371bc4035b251f49f85.delta,\n    bandwidth=0, flags=b\n\n(2) Which is translated to QMP command 'drive-mirror' with equivalent\nparameters:\n\n    2016-08-31 12:51:48.888+0000: 87266: info : qemuMonitorSend:998 :\n    QEMU_MONITOR_SEND_MSG: mon=0x7f6934005a90\n    msg={\"execute\":\"drive-mirror\",\"arguments\":{\"device\":\"drive-virtio-disk0\",\n         \"target\":\"/storage/snapshots/tmpnwpMv4/1184d0cb36534371bc4035b251f49f85.delta\",\n         \"sync\":\"top\",\"mode\":\"existing\",\"format\":\"qcow2\"},\"id\":\"libvirt-99\"}\n\n(3) Then, libvirt keeps polling QEMU to check how far the live block\noperation in step (2) has come along, by issuing the 'query-block-jobs'\ncommand:\n    \n    2016-08-31 12:51:48.911+0000: 87262: info : qemuMonitorIOWrite:528 :\n    QEMU_MONITOR_IO_WRITE: mon=0x7f6934005a90\n    buf={\"execute\":\"query-block-jobs\",\"id\":\"libvirt-100\"} len=51 ret=51\n    errno=11 \n    \n(4) And keeps an eye on the 'ready' parameter from the output QEMU\nissues (so that libvirt can take an action, such as, gracefully\ncompleting the live block operation):\n\n    2016-08-31 12:51:48.918+0000: 87262: info : qemuMonitorIOProcess:423\n    : QEMU_MONITOR_IO_PROCESS: mon=0x7f6934005a90 buf={\"return\":\n    [{\"io-status\": \"ok\", \"device\": \"drive-virtio-disk0\", \"busy\": true,\n    \"len\": 0, \"offset\": 0, \"paused\": false, \"speed\": 0, \"ready\": false,\n    \"type\": \"mirror\"}], \"id\": \"libvirt-100\"} len=188\n\nNOTE: The 'ready' status is \"false\" from the above command's result, so\nQEMU is still doing some work.\n\n(5) So libvirt continues to query, and on the third poll (of\n'query-block-jobs') with ID \"libvirt-102\", QEMU tells libvirt that _now_\nthe mirror job started in step (2) job is 'ready':\n\n    2016-08-31 12:51:49.927+0000: 87262: info : qemuMonitorIOProcess:423 :\n    QEMU_MONITOR_IO_PROCESS: mon=0x7f6934005a90 buf={\"return\":\n    [{\"io-status\": \"ok\", \"device\": \"drive-virtio-disk0\", \"busy\": true,\n    \"len\": 22740992, \"offset\": 22740992, \"paused\": false, \"speed\": 0,\n    \"ready\": true, \"type\": \"mirror\"}], \"id\": \"libvirt-102\"} len=201\n\nNOTE: above QEMU reports that the 'ready' status as \"true\" -- which\nmeans, the source and destination disk contents are same, and they\ncontinue to synchronize, until you take an action.\n\n(6) Now libvirt takes an action -- It aborts the operation by issuing\n'block-job-cancel', which says: \"break the mirror [the 'drive-mirror'\ncommand] with the destination (uploaded to Glance, in OpenStack's case)\nwhich is now holding the point-in-time snapshot:\n\n    2016-08-31 12:51:49.930+0000: 87264: info : qemuMonitorSend:998 :\n    QEMU_MONITOR_SEND_MSG: mon=0x7f6934005a90\n    msg={\"execute\":\"block-job-cancel\",\n    \"arguments\":{\"device\":\"drive-virtio-disk0\"},\"id\":\"libvirt-103\"}\n\nFinally, QEMU issues a BLOCK_JOB_COMPLETED event, indicating that job\nhas successfully completed.\n\n    2016-08-31 12:51:49.932+0000: 87262: info : qemuMonitorIOProcess:423 :\n    QEMU_MONITOR_IO_PROCESS: mon=0x7f6934005a90 buf={\"timestamp\":\n    {\"seconds\": 1472647909, \"microseconds\": 932027}, \"event\":\n    \"BLOCK_JOB_COMPLETED\", \"data\": {\"device\": \"drive-virtio-disk0\", \"len\":\n    22740992, \"offset\": 22740992, \"speed\": 0, \"type\": \"mirror\"}} len=205", 
+            "date_created": "2016-08-31 21:23:01.521175+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "@Kashyap Chamarthy: sorry for my mistake but I uploaded in comment 10 log from attempt to create snapshot with my patch for that issue (and my debugging temp logs which I added locally). So in nova-logs I could see that in first check in wait_for_job it returns me cur=0 and end=0 but nova continues waiting for job completed because of my patch.\nTomorrow I will try to reproduce it again (should be easy on my hosts where I have this issue) without this patch for nova and I will attach another libvirtd log here.", 
+            "date_created": "2016-08-31 21:46:35.471792+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slaweq"
+        }, 
+        {
+            "content": "Here is libvirtd log from failed attempt to create live_snapshot.", 
+            "date_created": "2016-09-01 11:15:31.975688+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slaweq"
+        }, 
+        {
+            "content": "The log attached in comment #15 is the failed case.  And, as I guessed\nin comment #12, if you look at the log file from comment #15 the\n'block-job-cancel' command is issued too soon, before QEMU reports the\nblock device job status as \"ready\" true.\n\nSo, with request id \"libvirt-14\", when libvirt queries QEMU for the\nblock device job status:\n\n  2016-09-01 11:11:43.053+0000: 29193: info : qemuMonitorIOWrite:528 :\n  QEMU_MONITOR_IO_WRITE: mon=0x7f98c4000e00\n  buf={\"execute\":\"query-block-jobs\",\"id\":\"libvirt-14\"} len=50 ret=50 \n  errno=11\n\nIt reports that it is not ready yet (see -- \"ready\": false):\n\n  2016-09-01 11:11:43.057+0000: 29193: info : qemuMonitorIOProcess:423 :\n  QEMU_MONITOR_IO_PROCESS: mon=0x7f98c4000e00 buf={\"return\": \n  [{\"io-status\": \"ok\", \"device\": \"drive-virtio-disk0\", \"busy\": true,\n  \"len\": 0, \"offset\": 0, \"paused\": false, \"speed\": 0, \"ready\": false,\n  \"type\": \"mirror\"}], \"id\": \"libvirt-14\"} len=187\n\nInstead of waiting for the block device job status to turn to \"ready\":\ntrue, Nova goes ahead and aborts the job (with 'block-job-cancel'), with\nid \"libvirt-15\":\n\n  2016-09-01 11:11:43.058+0000: 29193: info : qemuMonitorIOWrite:528 :\n  QEMU_MONITOR_IO_WRITE: mon=0x7f98c4000e00\n  buf={\"execute\":\"block-job-cancel\",\"arguments\":{\"device\":\"drive-virtio-disk0\"},\"id\":\"libvirt-15\"}\n\nSo, this (aborting the job before it's ready) is causing the snapshot to\nbe corrupted.  If Nova waits a little longer, then the snapshot is\nsuccessful (as it can be seen from my log analysis in comment #13, which\nis the good case).", 
+            "date_created": "2016-09-01 11:34:46.919574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/363926\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6b20239a5d293f55889cd1bffa59e4792c75edbf\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6b20239a5d293f55889cd1bffa59e4792c75edbf\nAuthor: S\u0142awek Kap\u0142o\u0144ski <email address hidden>\nDate:   Wed Aug 31 20:28:36 2016 +0000\n\n    Fix race condition bug during live_snapshot\n    \n    During live_snapshot creation, when nova starts block_rebase\n    operation in libvirt there is possibility that block_job is\n    not yet started and libvirt blockJobInfo method will return\n    status.end = 0 and status.cur = 0. In such case libvirt driver\n    does not wait to finish block rebase operation and that causes\n    a problem because created snapshot is corrupted.\n    \n    This patch adds check if status.end != 0 to return information\n    that job is already finished.\n    \n    Change-Id: I45ac06eae0b1949f746dae305469718649bfcf23\n    Closes-Bug: #1530275\n", 
+            "date_created": "2016-09-14 23:01:45.355093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/372127", 
+            "date_created": "2016-09-18 14:49:26.692591+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0rc1 release candidate.", 
+            "date_created": "2016-09-26 20:14:48.358741+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Lee Yarwood (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/372127", 
+            "date_created": "2016-10-18 09:41:25.266674+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0rc1 release candidate.", 
+            "date_created": "2016-10-18 17:02:24.737938+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/372127", 
+            "date_created": "2017-03-13 18:42:03.964850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

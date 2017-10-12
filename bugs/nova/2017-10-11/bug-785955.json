@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-06-28 14:34:00.027738+00:00", 
+    "description": "It is possible for nova-network to fail in ways that leaves an iptables lock file in /var/lock/nova.  In the event that a lock is present, nova-network will not be able to restart, and no error will be provided in the logfile.", 
+    "tags": [
+        "canonistack"
+    ], 
+    "importance": "Medium", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/785955", 
+    "owner": "https://api.launchpad.net/1.0/~mikeyp-3", 
+    "id": 785955, 
+    "index": 2408, 
+    "created": "2011-05-20 20:35:38.876888+00:00", 
+    "title": "nova-network and nova-compute fails to start without logging an error when iptables locks are present", 
+    "comments": [
+        {
+            "content": "It is possible for nova-network to fail in ways that leaves an iptables lock file in /var/lock/nova.  In the event that a lock is present, nova-network will not be able to restart, and no error will be provided in the logfile.", 
+            "date_created": "2011-05-20 20:35:38.876888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sleepsonthefloor"
+        }, 
+        {
+            "content": "Any detail on the failure scenario that could be used to reproduce ?", 
+            "date_created": "2011-05-24 15:27:16.413681+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I have managed to trigger this bug on a compute node.\n\nUnfortunately, I will have to use some conjecture when it comes to how the error occured. Nearest I can gather:\n\n 1. Compute node receieves a message to create a new instance.\n 2. Firewall rules are being created for the instance. Meanwhile...\n 3. Libvirtd crashes.\n 4. Nova-compute crashes.\n 5. Stale iptables lock file persists.\n\nI have not (yet) verified the above scenario.\n\nWhile the lock file persists nova-compute does not seem to process any messages from the messages queue. In fact the entire process seems wedged waiting on the lock file.\n\nSymptoms that lead me to investigate:\n\n 1. RabbitMQ queue for the compute node was non-zero\n 2. Nova-compute was not running.\n\nResolution:\n\n 1. Restart libvirtd\n 2. Restart nova-compute\n 3. Realise that nova-compute would not persist past running iptables for the first instance discovered. The log message is as follows:\n\n2011-11-11 10:27:47,800 DEBUG nova.utils [-] Attempting to grab file lock \"iptables\" for method \"_do_refresh_provider_fw_rules\"... from (pid=17684) inner /usr/lib/python2.7/dist-packages/nova/utils.py:680\n\n 4. Strace the nova-compute process and discover that nova-compute is looping while waiting for a lock to be released. A sample of the strace follows:\n\nstat(\"/var/lock/nova/compute.Dummy-1-17684\", {st_mode=S_IFREG|0644, st_size=0, ...}) = 0\nepoll_wait(4, {}, 1023, 99)             = 0\nepoll_wait(4, {}, 1023, 0)              = 0\nepoll_wait(4, {}, 1023, 0)              = 0\nepoll_wait(4, {}, 1023, 0)              = 0\nepoll_wait(4, {}, 1023, 0)              = 0\nepoll_wait(4, {}, 1023, 0)              = 0\nepoll_wait(4, {}, 1023, 0)              = 0\nlink(\"/var/lock/nova/compute.Dummy-1-17684\", \"/var/lock/nova/nova-iptables.lock.lock\") = -1 EEXIST (File exists)\n\n 5. Stop nova-compute\n 6. Verify that nova-compute is not running\n 7. Remove the lock file\n 8. Start nova-compute\n 9. Verify that the service has started correctly.\n", 
+            "date_created": "2011-11-11 11:08:29.415848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "I have this problem all the time, I'm on centos using griddynamics packages.\n\nOn my side, I do not need to try and reproduce it, it happens all the time if I have qemu-* at version 0.15.0  So I basically only get half of my instances up and running before a race condition occur (or like explained in this threat, related to crashing of libvirt or compute) and when it occurs, it stops spawning instances, the system wait for a lock file that will never come (or never leave, whatever).\n\nThis problem is not nearly as frequent with qemu 0.12\n\nBoris (praefect)", 
+            "date_created": "2011-11-23 18:21:36.506584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boris-michel-deschenes"
+        }, 
+        {
+            "content": "I have managed to trigger this running tempest - will attempt to narrow down the tests to something easily reproduced.\n", 
+            "date_created": "2012-02-22 06:07:48.394712+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikeyp-3"
+        }, 
+        {
+            "content": "We just ran into this (again) with nova-compute from precise, FWIW.", 
+            "date_created": "2012-02-23 05:58:45.307796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~elmo"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4516", 
+            "date_created": "2012-02-24 19:28:05.496038+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/4516\nCommitted: http://github.com/openstack/nova/commit/2fbccc0c693193533284330325f5803c8c6ce52a\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2fbccc0c693193533284330325f5803c8c6ce52a\nAuthor: Mike Pittaro <email address hidden>\nDate:   Fri Feb 24 09:56:26 2012 -0800\n\n    Clean stale lockfiles on service startup : fixes bug 785955\n    \n    Adds cleanup_files_locks() to nova/utils, which cleans up stale locks\n    left behind after process failures.\n    \n    Adds a call to clean up locks on service startup for nova-api, nova-cert,\n    nova-compute, nova-network, nova-objectstore, and nova-scheduler.\n    \n    Adds tools/clean_file_locks.py, which can be used to manually clean\n    stale locks.\n    \n    Change-Id: I752e0b24d3c7fc5f1dc290da355cbd7f430789b8\n", 
+            "date_created": "2012-02-25 01:24:31.496907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

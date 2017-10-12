@@ -1,0 +1,83 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-03-12 11:40:30.259865+00:00", 
+    "description": "We have noticed several circumstances (like for example if a volume is in a raid, or in use) and detach call is issued, the volume stays in the in-use state, and Xen holds on to that volume.  When the volume becomes not in use any longer (for example if you remove it from the raid, unmount it), Xen will then still have the detach command queued, and detach the device.  This may lead to confusing behavior for the user.  If a detach fails because it is in use, it should remove the queued detach command from the instance so that it isn't detached when not in use any more.", 
+    "tags": [
+        "xenserver"
+    ], 
+    "importance": "Medium", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1030108", 
+    "owner": "None", 
+    "id": 1030108, 
+    "index": 2985, 
+    "created": "2012-07-27 19:54:26.897213+00:00", 
+    "title": "xenapi: bad handling of 'volume in use' errors", 
+    "comments": [
+        {
+            "content": "We have noticed several circumstances (like for example if a volume is in a raid, or in use) and detach call is issued, the volume stays in the in-use state, and Xen holds on to that volume.  When the volume becomes not in use any longer (for example if you remove it from the raid, unmount it), Xen will then still have the detach command queued, and detach the device.  This may lead to confusing behavior for the user.  If a detach fails because it is in use, it should remove the queued detach command from the instance so that it isn't detached when not in use any more.", 
+            "date_created": "2012-07-27 19:54:26.897213+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cthier"
+        }, 
+        {
+            "content": "http://docs.vmd.citrix.com/XenServer/6.0.0/1.0/en_gb/api/?c=VBD\n\nHighlights the following error:\nDEVICE_DETACH_REJECTED\nThis means the VM will not release the volume (i.e. it is still in use).\n\nWhile this should cause the Volume detach to fail, it should not cause the volume to enter the \"error\" state, it should simply remain \"in use\".\n\nIt looks that by default, 12 attempts are made to detach the volume, we should really time out earlier, informing the user that the volume cannot be detached.\n\nWe could move to making async calls, so we can cancel this operation, and all the retry attempts, after a flag determined timeout.", 
+            "date_created": "2012-07-30 18:21:26.916673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I have just spoken to the XenAPI team.\n\nIssue 1:\nCertain versions of XenServer (up to 6.0.2) have an issue where the first call to xenapi returns quickly, telling you that the disk is in use, but the second call might take up to 20mins. This has been fixed in the upcoming XenServer 6.1. OpenStack retries, by default, 12 times.\n\nIssue 2:\nIn Xen(Server), once you request to detach a VBD, it will happen at the next time the disk is not in use. This may be at the next VM restart, or the next time the user does umount on that disk. Apparently there is no way around this, except changes to Xen.\n\nI guess we need to ensure we expose this to the user in the way we update the Volume state.\n\nA possible fix might be to make the nova code do this (to reflect how XenServer works):\n- only attempt to call VBD.unplug once\n- retry \"for ever\" to see the VBD has been successfully unpluged (or successfully destroyed, if we miss the point it has been unplugged and not destroyed during a terminate) (XenAPI has an event mechanism that may be a more efficient way to do this task)\n- ensure the volume state remains in some kind of \"unplugging\" state until the volume has been detached\n\nI am talking with the XenAPI SDK doc team to ensure XenServer documents these cases more clearly in the API docs.\n", 
+            "date_created": "2012-08-03 15:45:56.093813+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Lets look at using force=true to do the detach, if it doesn't happen.\n\nAlthough there may be data loss, maybe allowing that option could be a good way forward.\n\nI guess OpenStack should keep trying unless we make a \"force detach\" call (I guess that is a new call that needs adding into OpenStack, it could be made admin only I guess)", 
+            "date_created": "2013-03-08 15:38:54.321463+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "There is also a force=true parameter on the vbd-unplug command.\n\nA test on an iSCSI connection suggests that using this after unplug without force=true does indeed cause the detach to happen immediately.\n\nThe guest will clearly experience errors if an uncooperative detach is used.", 
+            "date_created": "2013-03-08 15:39:59.139929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "So force detach crashes the guest, better to reboot the guest.\n\nWhat we need to do is make sure OpenStack stays in the detaching state until the disk really does detach, even if that is after the next reboot.\n\nProbably should use same polling logic as resize-confirm and similar periodic tasks, rather than the current more broken solution. need to make it robust across nova-compute restarts.", 
+            "date_created": "2013-03-08 15:49:35.142730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "It's worth clarifying that the \"guest crash\" is dependent on the guest kernel - As far as Xen is concerned the disk is detached and the guest continues running.  However, in my test case of CentOS 6.0 the guest stopped responding as it was trying to use this disk which was no longer present.\n\nOther guests may respond with different error conditions.", 
+            "date_created": "2013-03-08 16:03:21.951619+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Problem:\n\nIf detach_volume fails in the unplug_vbd step, we catch the exception,\nand roll_back cinder which puts the volume in 'in-use' state.\nXen might succeed in detaching the volume later on, so though the volume is\ndetached, cinder has the state as 'in-use'.\n\nProposed solution:\n\nOn such a failure, add an error state 'failed_detach' to the volume.\nAdd a periodic task which will poll all such failed detach instances and issue \na detach_volume.\nAlternatively, the user can retry detaching the volume.\nOnce this call goes through, we can do the post detach_volume steps like \nupdating cinder db and destroying the bdm in nova db.\n\nDoes this approach have any other repercussions?", 
+            "date_created": "2013-06-10 06:06:52.962210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aditirav"
+        }, 
+        {
+            "content": "I would first concentrate on ensuring that if you call detach on an already detached volume, that the cinder state gets updated correctly. \n\nI worry about the cost of making the cinder API call to decide if there are any failed_detaches to process. Some careful caching might solve that.\n\nPerhaps a better solution is using the XenAPI events system to wait for the detach, however we need to confirm with Citrix that the correct events will be produced. This is quite related to:\nhttps://blueprints.launchpad.net/nova/+spec/xenapi-compute-driver-events\n\nI would prefer to see that as a continued \"detaching state\", rather than set it to error, but I will let the Cinder people decide what to do. If we do an add an error, something like \"detach_timeout\" might represent the state better, but I haven't really given that much thought yet.", 
+            "date_created": "2013-06-10 09:13:53.026919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Interesting alternative, with this change:\nhttps://review.openstack.org/#/c/32145/\n\nUsers can reboot a VM to remove the ERROR state.\n\nIf we fix up volumes on reboot, if the detach timeout occurs, maybe put the VM in the ERROR state, and leave the volume in Detatching in Cinder?", 
+            "date_created": "2013-06-11 09:01:57.224751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Manually marking as committed, because I got the bug wrong in the commit.", 
+            "date_created": "2013-07-18 17:34:39.719846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "my bad, wrong bug.", 
+            "date_created": "2013-07-18 17:35:23.213251+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "This now raises:\nReached maximum number of retries trying to unplug VBD OpaqueRef:50be57f5-7c5a-0e72-7659-38b37608ea2a\n\nInstance goes into the error state.\n\nIf the user calls reboot, everything will return to normal.", 
+            "date_created": "2014-03-12 11:39:51.047888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }
+    ]
+}

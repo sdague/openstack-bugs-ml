@@ -1,0 +1,121 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-04-02 00:10:37.404843+00:00", 
+    "description": "We are running Folsom with nova-network in muti host mode\n\nCompute node A = 192.168.1.10\nCompute node B = 192.168.1.11\n\nDoing a live migration of the instance from A -> B works but then the host fails to get a dhcp address.\n\nThe iptables rule added to the destination compute node is wrong.\n\nIt has:\n\n-A nova-compute-inst-4494 -s 192.168.1.10/32 -p udp -m udp --sport 67 --dport 68 -j ACCEPT\n\nWhen restarted nova-compute it changes to the correct entry of:\n\n-A nova-compute-inst-4494 -s 192.168.1.11/32 -p udp -m udp --sport 67 --dport 68 -j ACCEPT", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1092347", 
+    "owner": "None", 
+    "id": 1092347, 
+    "index": 3177, 
+    "created": "2012-12-19 23:51:52.846043+00:00", 
+    "title": "DHCP fails after live migration when using network multi host", 
+    "comments": [
+        {
+            "content": "We are running Folsom with nova-network in muti host mode\n\nCompute node A = 192.168.1.10\nCompute node B = 192.168.1.11\n\nDoing a live migration of the instance from A -> B works but then the host fails to get a dhcp address.\n\nThe iptables rule added to the destination compute node is wrong.\n\nIt has:\n\n-A nova-compute-inst-4494 -s 192.168.1.10/32 -p udp -m udp --sport 67 --dport 68 -j ACCEPT\n\nWhen restarted nova-compute it changes to the correct entry of:\n\n-A nova-compute-inst-4494 -s 192.168.1.11/32 -p udp -m udp --sport 67 --dport 68 -j ACCEPT", 
+            "date_created": "2012-12-19 23:51:52.846043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "One way to fix this is to modify the _get_dhcp_ip in nova-network to always return it's own IP address, ignoring the instance['host'] IP address as this hasn't been updated yet", 
+            "date_created": "2012-12-20 01:02:28.247744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "Hi Ivan,\n\nHow you going with this? Would be good to get this into grizzly.\n\nCheers,\nSam\n", 
+            "date_created": "2013-02-25 04:44:14.602667+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "potential workaround is to use the new setting to share the host ip for all nova-network nodes:\n\nshare_dhcp_address=True\n\n", 
+            "date_created": "2013-02-26 21:14:06.661675+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "What are the implications of setting 'share_dhcp_address=True'\n\nIs this bug still being worked on?\n\n", 
+            "date_created": "2013-04-09 22:00:51.992596+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stuart-stent"
+        }, 
+        {
+            "content": "shared_dhcp_address isn't an option here. We have nova-network on every compute node and want to keep DHCP isolated to a compute node.\n\nThis issue is still broken in Grizzly and may be related to https://bugs.launchpad.net/nova/+bug/1194178 \n\nThe proposed fix doesn't work for this either.", 
+            "date_created": "2013-07-24 02:56:36.837848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "Assigning back to nobody since it doesn't look like Ivan is working on this", 
+            "date_created": "2013-07-24 02:57:27.182965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "The fix for https://bugs.launchpad.net/nova/+bug/1194178 basically returns functionality back into Folsom that was accidentally removed from Grizzly. To work off of the beginning example:\n\nCompute node A = 192.168.1.10\nCompute node B = 192.168.1.11\n\nIn Folsom the DHCP iptables rules would be mapped to the host in which the instance is associated. Suppose you booted the instance on node A, then the rule would look like: \n\n-A instance -s 192.168.1.10/32 -p udp -m udp --sport 67 --dport 68 -j ACCEPT\n\nThis rule basically allows DHCP traffic from the nova-network on compute node A: 192.168.1.10. With the introduction of issue 1194178, the DHCP rule would ignore the instance's host and be the ip address of the nova-network that responded to that allocate_address message. In this case, there would be 50/50 chance of it being either 192.168.1.10 or 192.168.1.11. So the fix for 1194178 basically returns the functionality back.\n\nA fix for this issue would be to have the instance look like its had already migrated and on the destination host when acquiring its network_info. This will return back the correct ip address for the DHCP server (the destination host). In this example the instance is migrating from node A to node B. The method \"pre_live_migration\" is called on node B, which then makes a call to the network API to determine the instance's network info. This info is then used to setup the filtering rules for the instance. Before the call to the network API, the instance object's host field can be modified to be \"self.host\" (i.e. node B). This will be an in-memory only change and will cause the network API to repsond with the correct DHCP server.\n ", 
+            "date_created": "2013-07-24 20:37:17.109192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dscannell"
+        }, 
+        {
+            "content": "Sam: shared_dhcp_address is the right option for you. \nThe same dhcp address will be on each network/compute node, \nbut only instances on the same node are able to access the address.", 
+            "date_created": "2013-08-21 04:28:02.946148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Sam: share_dhcp_address is the right option for you.\nThe same dhcp address will be on each network/compute node,\nbut only instances on the same node are able to access the address.", 
+            "date_created": "2013-08-21 04:28:52.154231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Hi Jian,\n\nPlease see my previous comment about why shared_dhcp_address won't work for our environment. Am I missing something?", 
+            "date_created": "2013-08-21 07:45:03.432346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "Hello Sam,\n\nI am not clear about 'want to keep DHCP isolated to a compute node' now,\nsince share_dhcp_address does isolate DHCP traffic.\n\nWhat does it mean?\nWhy do you want to do so?\n\nThanks", 
+            "date_created": "2013-08-21 10:20:22.639258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "We are running nova-network in multi host mode. That means every host that has nova-compute also has nova-network running on it.\nEach compute node acts as a DHCP server for the instances on itself only.\nWe don't want to have a single DHCP address as that means a single point of failure.\nWith our set up when a compute node crashes then VMs that aren't running on that node aren't affected.\nDoes that make sense?", 
+            "date_created": "2013-08-21 23:25:48.202899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "Yes.\n\nWith share_dhcp_address turned on, you do have a single DHCP address.\nBut the address is added on each compute node, and it is only visible to \nthe instances on the same compute node. \n\nFor example, both 192.168.1.2/24 are added as the DHCP address on \ncompute node A and compute node B. Whether compute node A crashes\nor not, it will not affect instances on compute B. The address is isolated,\ninstances on compute B will never reach 192.168.1.2 on compute A.", 
+            "date_created": "2013-08-22 02:29:37.948215+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Does this bug happen with more modern versions of nova? Folsom is no longer supported.", 
+            "date_created": "2014-03-13 06:44:30.340633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Yip still affects Havana, haven't tested on trunk for a while but I assume so. \nShould I put it back to triaged? It's quite an easy bug to replicate. \n\n", 
+            "date_created": "2014-03-13 07:40:38.091903+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "Sam, can you confirm this is valid on Juno or trunk? Havana is still too old.", 
+            "date_created": "2014-12-11 18:58:20.468241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Sam, can you confirm this is valid on Juno or trunk? Havana is still too old.", 
+            "date_created": "2014-12-11 18:59:13.632100+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "I haven't setup a multi-node install to test this but I read over the code and I just don't see where we would be generating rules like this anymore.\n\nI'll try and confirm it in the next few days but I *think* this one might be invalid now.", 
+            "date_created": "2014-12-11 19:35:59.217034+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cfb-n"
+        }, 
+        {
+            "content": "This still affects Icehouse, I will be check to see if still in Juno but I suspect so. ", 
+            "date_created": "2014-12-11 21:55:34.689795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "we are testing live migration now and dhcp is working after the migration.", 
+            "date_created": "2015-04-02 00:10:29.821754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }
+    ]
+}

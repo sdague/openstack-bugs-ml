@@ -1,0 +1,131 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 11:07:38.352313+00:00", 
+    "description": "Jenkins has run into this problem often recently and I ran into it 4 time in a row on my development system.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/946687", 
+    "owner": "https://api.launchpad.net/1.0/~johannes.erdfelt", 
+    "id": 946687, 
+    "index": 2654, 
+    "created": "2012-03-04 22:38:07.987754+00:00", 
+    "title": "xenapi tests sporadically hang", 
+    "comments": [
+        {
+            "content": "Jenkins has run into this problem often recently and I ran into it 4 time in a row on my development system.", 
+            "date_created": "2012-03-04 22:38:07.987754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Hi Johannes,\n\nwhich test hangs more precisely? Did you by any chance figure out how to induce the hanging?\n\nThanks,\nArmando\n", 
+            "date_created": "2012-03-05 11:23:43.660587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Ran ./run_tests.sh -n test_xenapi:XenAPIAggregateTestCase (and without -n)  100 consecutive times. Couldn't get it to hang :(\n\n\n\n", 
+            "date_created": "2012-03-05 11:55:47.654079+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "I couldn't get it to happen when running just the aggregate tests either (or just test_xenapi), but if I run the full suite I can get it to happen (but only about 33% of the time for me). I'm not 100% sure this is a bug in the aggregate tests now since I was able to get it to hang in a different XenAPI test last night but that was the first time I've seen it not happen in the aggregate tests (in test_remove_slave).\n\nBut for reference here's four failures from Jenkins recently (all the same merge, which is why this has been frustrating me lately):\n\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1309/console\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1314/console\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1316/console\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1317/console\n\nThe last two also indicate it's not always the aggregate tests.\n\nAnd some more recently:\n\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1324/console\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1321/console\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1320/console\n\nI did some troubleshooting yesterday (and this is preliminary), but the hang isn't even in the test, it's in the setUp() before the test is run. In particular it's the host.get_record call in pool.py line 53.\n\nI'm still trying to wrap my head around what's going here since it's such an odd hang.", 
+            "date_created": "2012-03-05 14:35:00.213378+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "I know this may sound crazy, but I wonder if test ordering could be the issue here; test_xenapi runs nearly at the end, so I wonder if we can get another suite to hang by moving xenapi up in the list (maybe just renaming it to test_axenapi.py).  This might be worth a try, unless you are 100% sure  xenapi is the culprit.", 
+            "date_created": "2012-03-05 14:54:34.896980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "I'm not 100% sure of anything to do with this bug yet :)\n\nI've only ever seen it hang in test_xenapi, mostly in XenAPIAggregateTestCase, but often in XenAPIAutoDiskConfigTestCase as well.\n\nSince it's not 100% reproducible and it can move from test to test, it's most likely a race of some sort.\n\nI used pdb the last time I was able to reproduce the bug and it has left me more confused. It appears to be hung in the eventlet tpool code, waiting for the call_xenapi() call to finish. I've confirmed that the stubbing appears to be working as designed:\n\n> /home/johannes/openstack/nova/trunk/nova/virt/xenapi_conn.py(182)__init__()\n-> self._pool = pool.ResourcePool(self._session)\np self._session.XenAPI\n<module 'nova.virt.xenapi.fake' from '/home/johannes/openstack/nova/trunk/nova/virt/xenapi/fake.py'>\n\n> /home/johannes/openstack/nova/trunk/nova/virt/xenapi_conn.py(583)call_xenapi()\n-> return tpool.execute(f, *args)\np f.__dict__['_Dispatcher__send']\n<bound method FakeSessionForVMTests.xenapi_request of <nova.tests.xenapi.stubs.FakeSessionForVMTests object at 0x85bee90>>\n\nUnfortunately pdb doesn't handle threads very well.\n\nI don't think tpool is buggy here, but it's a possibility. XenAPI is the biggest user of tpool in nova so that it would make sense that it would hang in XenAPI and nowhere else.\n\nI'll see what renaming test_xenapi does.\n\nI might also try reverting recent changes to XenAPI and see when these hangs stop. As far as I can tell, this is a fairly new phenomenon (maybe the last week?) so that might make it easier to identify when the failures started beginning.", 
+            "date_created": "2012-03-05 15:31:12.412070+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "This is the earliest failure of this type I can see in Jenkins:\n\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1276/console", 
+            "date_created": "2012-03-05 15:41:13.050544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "that's bizarre! look at this one:\n\nhttps://jenkins.openstack.org/job/gate-nova-unittests/1258/console\n\nmight it be the manifestation of the same problem?", 
+            "date_created": "2012-03-05 16:00:24.557191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Yeah, I saw that too. That test is very simple, all it does is execute out to 'cp'.\n\nLooking at the tpool code, there is a problem with it's use of the pipe notifier and forking. Since the pipe gets shared between the parent and child processes, the child could steal a notification the parent is expecting. It could result in the failures we're seeing, but I can't find an scenario where that would actually happen (since every fork I can find is immediately followed by an exec), nor why it's only recently started happening.\n\nI'm going to write a new suite of tests for nova that only executes trivial programs and a suite of tests that only use tpool. See if I can reproduce the problem easier.", 
+            "date_created": "2012-03-05 16:30:36.445623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Renaming to test_axenapi, I wasn't able to reproduce over 10 runs. Renamed back to test_xenapi and it only took two tries.\n\nSo it does appear something in a previous test causes this weird hang to happen.\n\nI'm going to try my theory of new tests that stress forking and tpool.", 
+            "date_created": "2012-03-05 18:56:08.092269+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "I have a pretty good idea of what the problem is now.\n\nIt's related to using logging in a separate thread. This normally doesn't happen, but the fake XenAPI uses logging in various places. The code hangs in LOG.debug while processing the host.get_record command (SessionBase.__getattr__).\n\nThis is a problem I've seen before and I'm still trying to understand exactly what is happening with the locking in the logging module and how it interacts with eventlet and real threads.\n\nA couple of simple workarounds:\n1) Remove usage of logging in the fake XenAPI.\n2) Don't call the fake XenAPI in a tpool. Replace call_xenapi with a compatible version that just calls the code normally without the use of tpool. Might need something similar for call_xenapi_request and async_call_plugin.\n\nI'm leaning towards option 2 right now since it's the safest (in case logging gets added back) and would probably speed up the tests a little bit too.", 
+            "date_created": "2012-03-06 03:47:20.601053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "would it be safe to say that we just need to stub out tpool.execute(f, *args)?", 
+            "date_created": "2012-03-06 09:36:24.415924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Probably. I'll give that a try this morning.", 
+            "date_created": "2012-03-06 15:06:14.970096+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4968", 
+            "date_created": "2012-03-06 17:00:46.995386+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/4968\nCommitted: http://github.com/openstack/nova/commit/52b65f2f1407591fb3c9d612a2748a4953ab9543\nSubmitter: Jenkins\nBranch:    master\n\ncommit 52b65f2f1407591fb3c9d612a2748a4953ab9543\nAuthor: Johannes Erdfelt <email address hidden>\nDate:   Tue Mar 6 16:43:30 2012 +0000\n\n    Avoid running code that uses logging in a thread\n    \n    Fixes bug 946687\n    \n    This avoids problems with code that uses logging from running in a thread\n    which isn't necessary for unit tests anyway.\n    \n    Change-Id: I9c296c3c46317c9aaba7f1a92cd565a35682ce23\n", 
+            "date_created": "2012-03-06 17:42:20.271519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "My tests were showing successful builds for the last hour, but Jenkins just hung again :(", 
+            "date_created": "2012-03-06 17:55:20.528011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Further debugging information (without my tpool patch applied):\n\nThere are two logging calls being made at the same time from different threads:\n\n<_GreenThread(GreenThread-236, <eventlet.greenthread.GreenThread object at 0x8efa690>)> \nmakeRecord('nova.virt.libvirt.connection', 40, '/home/johannes/openstack/nova/trunk/nova/virt/libvirt/connection.py', 872, u'During reboot, instance disappeared.', (), None, '_wait_for_boot', {'instance': '[instance: f9ee6fc8-97d3-4c05-8f30-6b3b30490780] ', 'nova_version': '2012.10-LOCALBRANCH:LOCALREVISION', 'extra': {'instance': '[instance: f9ee6fc8-97d3-4c05-8f30-6b3b30490780] ', 'nova_version': '2012.10-LOCALBRANCH:LOCALREVISION'}})\n\n<Thread(tpool_thread_17, started daemon 140003912935168)>\nmakeRecord('nova.virt.xenapi.fake', 10, '/home/johannes/openstack/nova/trunk/nova/virt/xenapi/fake.py', 596, u'Calling getter %s', ('host.get_record',), None, '__getattr__', {'instance': '', 'nova_version': '2012.10-LOCALBRANCH:LOCALREVISION', 'extra': {'instance': '', 'nova_version': '2012.10-LOCALBRANCH:LOCALREVISION'}})\n\nGreenThread-236 is really running in MainThread.\n\nThey both call into Logger.callHandlers() and then into logging.StreamHandler at the same time. The GreenThread succeeds and continues. tpool_thread_17 hangs.\n\nStreamHandler will eventually grab a lock, which I'm fairly sure is where it's ultimately hanging. It's not clear why still.\n\nIt's also odd that something is logging libvirt errors while the XenAPI test is running. Very strange.", 
+            "date_created": "2012-03-06 19:23:13.913281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Yeah, it definitely hangs acquiring the lock:\n\nX _GreenThread/GreenThread-236/114808336 before acquire\nX Thread/tpool_thread_9/145935760 before acquire\nW _GreenThread/GreenThread-236/114808336 after acquire\nV _GreenThread/GreenThread-236/114808336 done\n\nControl never gets handed back to tpool_thread_9.\n\nI guess it's time to dig into the RLock implementation of the thread module.\n", 
+            "date_created": "2012-03-06 19:56:01.204825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Johannes.\n\nAs near as I can tell this started happening for me on Friday.\n\nAny chance these commits last Friday are the root cause here:\n\nThis looks very suspicious:\n\nhttps://github.com/openstack/nova/commit/a6589d313a30e304caac60fe9f1a64c390ae6fca\n\nThese look less suspicious but could also be related. (but probably not)\n\nhttps://github.com/openstack/nova/commit/1f7ba20f4b33f81536b7194348d7a960702ab19f#diff-23\nhttps://github.com/openstack/nova/commit/2fbab4b6706fd2c4b2fecc05f653b3051aa2ffa2\n", 
+            "date_created": "2012-03-06 21:08:06.086514+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "It's been happening since Thursday, see my earlier comment on the earliest example I found.\n\nWhat's so suspicious about that change? It removed duplicate code. See the commit message.\n\nThey may have changed the timings enough to cause the bug to start exhibiting now, but they aren't the cause of these hangs.", 
+            "date_created": "2012-03-06 21:27:24.307185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Ok, the Jenkins failure after my commit got merged appears to be a race condition between my patch getting fully merged and the next unit test running. All subsequent builds have passed (24 so far) without any problems. I still haven't been able to reproduce the hang with the patch applied.\n\nI'm still digging into the root cause of this problem and I consider the patch more of a workaround than anything now. I'll submit another patch when I know more and can properly point the blame.", 
+            "date_created": "2012-03-06 22:23:44.419169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "Finally understand the problem completely now that I figured out why my Debian system wouldn't let me use gdb and threads.\n\nMonkey patching changes the lock used to one designed for eventlet. If there is contention, it will add the green thread to a list of waiters and then start spinning in the hub waiting for the blocked thread to eventually be woken up.\n\nGreen threads can't be woken up across threads. This would normally trigger an exception, but that is silently squelched by the eventlet hub because of implementation details.\n\nSo the rule is, don't use locks, or code that uses locks, when it can contend across threads. logging is particularly dangerous.\n\nThe patch that went in is the correct fix for the problem. I'll submit another patch for HACKING so hopefully people don't step on this landmine in the future. ", 
+            "date_created": "2012-03-06 23:54:49.180954+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "nice work!!", 
+            "date_created": "2012-03-07 12:33:44.596993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }
+    ]
+}

@@ -1,0 +1,43 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-12-03 21:34:08.113439+00:00", 
+    "description": "Background: Nova commit eaaa659333c7586a71155c065dfb0f7b7e3758fc modified the Cells code (specifically instance_update_at_top()) to use objects instead of primitive dicts.  One consequence of this is that the changed fields tracking now controls what updates are applied to the parent DB.\n\nThe nova.networking.neutronv2 module retrieves the result of asynchronous network allocation and stores it in info_cache via the get_instance_nw_info() method, which takes an update_cells parameter (default True), which is ultimately passed to nova.objects.InstanceInfoCache.save().  In this case (allocate_for_instance() in neutronv2), update_cells was set to False (for reasons I don't understand).  This leads to the update message never being sent to the cells service and so network_info is not set in the parent cell on instance creation.  This has been true for a long time, but the network_info would be included very shortly thereafter in a subsequent call to instance_update_at_top.  However, the network_info field is not marked as updated in that update, and so as of the commit referenced above, with change tracking now in place, the network_info field is never updated.", 
+    "tags": [
+        "cells"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1471958", 
+    "owner": "https://api.launchpad.net/1.0/~alaski", 
+    "id": 1471958, 
+    "index": 4287, 
+    "created": "2015-07-06 19:42:10.758027+00:00", 
+    "title": "Updates to network_info in info_cache lost with Cells + NeutronV2", 
+    "comments": [
+        {
+            "content": "Background: Nova commit eaaa659333c7586a71155c065dfb0f7b7e3758fc modified the Cells code (specifically instance_update_at_top()) to use objects instead of primitive dicts.  One consequence of this is that the changed fields tracking now controls what updates are applied to the parent DB.\n\nThe nova.networking.neutronv2 module retrieves the result of asynchronous network allocation and stores it in info_cache via the get_instance_nw_info() method, which takes an update_cells parameter (default True), which is ultimately passed to nova.objects.InstanceInfoCache.save().  In this case (allocate_for_instance() in neutronv2), update_cells was set to False (for reasons I don't understand).  This leads to the update message never being sent to the cells service and so network_info is not set in the parent cell on instance creation.  This has been true for a long time, but the network_info would be included very shortly thereafter in a subsequent call to instance_update_at_top.  However, the network_info field is not marked as updated in that update, and so as of the commit referenced above, with change tracking now in place, the network_info field is never updated.", 
+            "date_created": "2015-07-06 19:42:10.758027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-nortman"
+        }, 
+        {
+            "content": "Note that I already have a fix for this which I'll be submitting shortly for review.  The obvious fix is to fix the neutronv2 code to pass update_cells=True, however I'm going to propose instead deprecating and ignoring the update_cells parameter to InstanceInfoCache.save(), as it is already checking to see whether any changes were made before sending the update to the cells service.  I believe the update_cells parameter was originally used to get rid of excessive, unnecessary update messages where nothing was actually updated, but it the change tracking in place we have a better way, and I can think of no reason why the cells should not be updated if a change was indeed made.\n", 
+            "date_created": "2015-07-06 19:46:07.977659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-nortman"
+        }, 
+        {
+            "content": "I took a stab at deprecating the update_cells param and just sending an update if network_info had changed.  The issue with this is the usage model of info_cache is to use objects.InstanceInfoCache.new() then set network_info then save.  This relies on the db layer to decide if it should update or create the cache record.  But for this bug what it means is that the field will always appear to have changed to the object so extraneous messages would be sent.  I think setting update_cells=True in allocate_for_instance is the best fix for this issue.", 
+            "date_created": "2015-09-23 18:19:04.369985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/226941", 
+            "date_created": "2015-09-23 19:00:57.750147+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/226941\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=94c4800fdaff50acbb04146b6c85429224df5575\nSubmitter: Jenkins\nBranch:    master\n\ncommit 94c4800fdaff50acbb04146b6c85429224df5575\nAuthor: Andrew Laski <email address hidden>\nDate:   Wed Sep 23 14:42:50 2015 -0400\n\n    Neutron: update cells when saving info_cache\n    \n    Updates to the instance info_cache are not synced up to parent cells by\n    default.  So when Neutron allocates a port for an instance and the\n    info_cache is updated that is not synced up.  This used to be alright\n    because the instance update that followed shortly after would sync the\n    info_cach.  This changed when cells moved to passing instance objects\n    around.  The change tracking within the object means that info_cache\n    isn't updated in the parent cell anymore because it's not 'dirty'.\n    Fixing the object to update info_cache doesn't seem like the proper fix\n    since that was a fortunate side effect before.  Instead we should\n    explicitly sync info_cache up to the parent cell when we know it's being\n    set.\n    \n    Change-Id: I6f6f10bd414b7c3f423a8f76517765748878b7d0\n    Closes-bug: #1471958\n", 
+            "date_created": "2015-10-07 14:46:43.043067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

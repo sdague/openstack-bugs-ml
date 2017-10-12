@@ -1,0 +1,84 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:47:22.523410+00:00", 
+    "description": "By making parallel API requests to create new keypairs I was able to create 162 keypairs when my quota only allows for 100.\n\nI suspect this is due to the code in Nova doing the check for how many keypairs the user currently has at the beginning of the request cycle, and if enough requests check in parallel they all return zero before any are created, allowing far too many to sneak through.\n\nI also suspect this behavior is true for any quota'd resource that doesn't go through the scheduler.\n\nThis doesn't seem like a high-priority issue with the data currently available, but it may be potentially exploitable, hence I'm setting the security flag on the ticket just to be sure it gets triaged appropriately before we allow any malicious user on the internet to exceed their quotas.", 
+    "tags": [
+        "compute", 
+        "quotas"
+    ], 
+    "importance": "Undecided", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1301532", 
+    "owner": "None", 
+    "id": 1301532, 
+    "index": 4709, 
+    "created": "2014-04-02 18:13:01.689473+00:00", 
+    "title": "Quotas can be exceeded by making highly parallel requests", 
+    "comments": [
+        {
+            "content": "By making parallel API requests to create new keypairs I was able to create 162 keypairs when my quota only allows for 100.\n\nI suspect this is due to the code in Nova doing the check for how many keypairs the user currently has at the beginning of the request cycle, and if enough requests check in parallel they all return zero before any are created, allowing far too many to sneak through.\n\nI also suspect this behavior is true for any quota'd resource that doesn't go through the scheduler.\n\nThis doesn't seem like a high-priority issue with the data currently available, but it may be potentially exploitable, hence I'm setting the security flag on the ticket just to be sure it gets triaged appropriately before we allow any malicious user on the internet to exceed their quotas.", 
+            "date_created": "2014-04-02 18:13:01.689473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gabriel-hurley"
+        }, 
+        {
+            "content": "It may be an acceptable fuzziness in quotas to preserve efficiency. If multiple calls are processed in parallel and all check quotas before proceeding, it's likely that they will both be allowed to proceed and abuse quotas.\r\n\r\nI'm not totally sure we would consider marginal abuse of quotas to be a vulnerability. It sounds like a trade-off to me. Ideally the deployer could opt for \"less performance and strict quotas\". And in a sense he can (deploy just one API server thread) :)", 
+            "date_created": "2014-04-03 10:16:29.950571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@nova-coresec: what's your take on that one ?", 
+            "date_created": "2014-04-14 14:11:15.775490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Keypairs and security groups in particular seems to be vulnerable to race conditions.  They are checked against their quotas by getting a count of existing keypairs/security_groups and then checking  count + 1 against the limit.  Looking at some other quota checks shows that the rest are either not parallelizable, i.e. number of injected files on booting an instance, or use a reservation system which relies on db transactions to enforce atomicity.  It's possible that keypairs and security groups could be moved to a reservation system but I don't know the background on why they're handled the way they are.  \n\nI agree that it's not exactly a vulnerability.  While we don't enforce strict limits on keypairs or security groups there is a limit.  But the checks could certainly use some improvement.", 
+            "date_created": "2014-04-16 18:38:01.322621+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "OK... Unless someone complains over the next days, I'll open this one publicly (and close the OSSA task), so that project teams can decide what to do with those.", 
+            "date_created": "2014-04-22 14:21:07.481839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I agree with Andrew but I am little bit interested in the number 162\n\nbecause if the number reaches 100, the next create will fail due to over quota\n\nthat means at least 62 concurrent thread exceed the quota?\n\nor maybe let's say 80 thread concurrently running and all of them get a quota value let's say 82 ,so all 80 thread pass the limit_check function then all of them increase the keypair count by 1? \n\nany additional logs can be refer to?", 
+            "date_created": "2014-07-21 06:33:53.610894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/108290", 
+            "date_created": "2014-07-21 06:56:42.144428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by jichenjc (<email address hidden>) on branch: master\nReview: https://review.openstack.org/108290\nReason: plan to use another method", 
+            "date_created": "2014-07-31 02:16:28.696067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/110863", 
+            "date_created": "2014-07-31 06:31:09.200209+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/110863\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=712108a3e118d8497a38e21a0427afbe60f90b49\nSubmitter: Jenkins\nBranch:    master\n\ncommit 712108a3e118d8497a38e21a0427afbe60f90b49\nAuthor: jichenjc <email address hidden>\nDate:   Mon Jul 21 13:02:57 2014 +0800\n\n    Add valid method check for quota resources\n    \n    ReservableResource and CountableResource comes down to\n    the method used to count the in-use\n    resources.  For ReservableResource, the count is based on the number of\n    database objects matching the project ID, whereas with\n    CountableResource, a counting function has to be specified; otherwise,\n    the classes are identical and designed to be used identically.indeed,\n    CountableResource extends ReservableResource and only overrides the\n    constructor.\n    \n    This patch add some sanity-checking to limit_check() and\n    reserve() that ensure that they only work with the correct resource\n    type(s)\n    \n    Change-Id: Ibec048a5d8c2c4a8685f5f3cc2076c64b39654a3\n    Partial-Bug: #1301532\n", 
+            "date_created": "2014-08-06 17:45:24.112955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Nothing has been done on this bug since august 6th. Setting back to triaged.", 
+            "date_created": "2014-10-09 20:45:28.392416+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "looks like this https://review.openstack.org/182445 is right way to fix this problem totally", 
+            "date_created": "2015-11-26 12:04:35.716369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:47:21.150893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

@@ -1,0 +1,56 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-08-01 10:32:17.075969+00:00", 
+    "description": "When we added the update_at field to the instance versioned notifications it become visible that nova update the updated_at field of the instance only after the instance is scheduled. However before that step the instance already goes through two state transition and therefore two instance.update notification is emitted with updated_at field being None. This looks contradicting.\n\nSteps to reproduce\n==================\n* (Apply https://review.openstack.org/#/c/475276 if it is not merged yet)\n* Boot an instance\n* Observe the update_at field of the instance.update notifications\n\nExpected result\n===============\nEvery instance.update notification has updated_at field set\n\nActual result\n=============\nThe first two instance.update notification is emitted with updated_at field being None\n\nEnvironment\n===========\n* devstack or nova functional test environment with the test case: nova.tests.functional.notification_sample_tests.test_instance.TestInstanceNotificationSample.test_create_delete_server_with_instance_update", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1704928", 
+    "owner": "https://api.launchpad.net/1.0/~balazs-gibizer", 
+    "id": 1704928, 
+    "index": 4865, 
+    "created": "2017-07-18 05:44:15.665115+00:00", 
+    "title": "updated_at field is set on the instance only after it is scheduled", 
+    "comments": [
+        {
+            "content": "When we added the update_at field to the instance versioned notifications it become visible that nova update the updated_at field of the instance only after the instance is scheduled. However before that step the instance already goes through two state transition and therefore two instance.update notification is emitted with updated_at field being None. This looks contradicting.\n\nSteps to reproduce\n==================\n* (Apply https://review.openstack.org/#/c/475276 if it is not merged yet)\n* Boot an instance\n* Observe the update_at field of the instance.update notifications\n\nExpected result\n===============\nEvery instance.update notification has updated_at field set\n\nActual result\n=============\nThe first two instance.update notification is emitted with updated_at field being None\n\nEnvironment\n===========\n* devstack or nova functional test environment with the test case: nova.tests.functional.notification_sample_tests.test_instance.TestInstanceNotificationSample.test_create_delete_server_with_instance_update", 
+            "date_created": "2017-07-18 05:44:15.665115+00:00", 
+            "author": "https://api.launchpad.net/1.0/~balazs-gibizer"
+        }, 
+        {
+            "content": "* First instance.update sent here https://github.com/openstack/nova/blob/57473088857014d7f46c17ffb3a476e09e0db30f/nova/conductor/manager.py#L976\n\n* Second instance.update sent through this instance.save() https://github.com/openstack/nova/blob/57473088857014d7f46c17ffb3a476e09e0db30f/nova/compute/manager.py#L1785\n\n* Third (the first with updated_at set) instance.update sent through resource_tracker instance_claim that will set the node and the host https://github.com/openstack/nova/blob/57473088857014d7f46c17ffb3a476e09e0db30f/nova/compute/manager.py#L1937\n", 
+            "date_created": "2017-07-18 06:32:00.982447+00:00", 
+            "author": "https://api.launchpad.net/1.0/~balazs-gibizer"
+        }, 
+        {
+            "content": "During the Third instance update when the model_query with update runs in the  sqlalchemy api the updated_at field magically updated. \nhttps://github.com/openstack/nova/blob/57473088857014d7f46c17ffb3a476e09e0db30f/nova/db/sqlalchemy/api.py#L2741 \n\nBefore model_query the values parameter of that model_query call does not contain the update_at field. \n\nSome home made tracing of these code parts:\n\n    build_and_run_instance before instance_claim None\n    resource_tracker before set_instance_host_and_node None\n    _set_instance_host_and_node before save None\n    instance.save() before instance_extra_update_by_uuid None {'numa_topology': None, 'flavor': '{\"new\": null, \"cur\": {\"nova_object.changes\": [\"extra_specs\"], \"nova_object.name\": \"Flavor\", \"nova_object.namespace\": \"nova\", \"nova_object.version\": \"1.1\", \"nova_object.data\": {\"rxtx_factor\": 1.0, \"is_public\": true, \"deleted\": false, \"name\": \"test_flavor\", \"vcpu_weight\": 0, \"root_gb\": 1, \"extra_specs\": {\"hw:watchdog_action\": \"disabled\"}, \"ephemeral_gb\": 0, \"swap\": 0, \"disabled\": false, \"updated_at\": null, \"vcpus\": 1, \"flavorid\": \"a22d5517-147c-4147-a0d1-e698df5cd4e3\", \"id\": 7, \"created_at\": \"2012-10-29T13:42:11Z\", \"deleted_at\": null, \"memory_mb\": 512}}, \"old\": null}', 'pci_requests': '[]'}\n    instance.save() before instance_update_and_get_original None {'system_metadata': {u'image_min_disk': u'1', 'boot_roles': u'', u'image_kernel_id': u'nokernel', u'image_container_format': u'raw', u'image_base_image_ref': u'155d900f-4e14-4e4c-a73d-069cbf4541e6', u'owner_project_name': None, u'image_disk_format': u'raw', u'owner_user_name': None, u'image_architecture': u'x86_64', u'image_ramdisk_id': u'nokernel'}, 'host': u'compute', 'node': u'fake-mini', 'launched_on': u'compute'}\n    convert_object_related_datetimes values, keys {'host': u'compute', 'node': u'fake-mini', 'launched_on': u'compute'} ('created_at', 'deleted_at', 'updated_at', 'launched_at', 'terminated_at')\n    convert_object_related_datetimes returning  {'host': u'compute', 'node': u'fake-mini', 'launched_on': u'compute'}\n    _instance_update before model_query {'host': u'compute', 'node': u'fake-mini', 'launched_on': u'compute'}\n    _instance_update after model_query 2012-10-29 13:42:11\n    _instance_update returns 2012-10-29 13:42:11\n    instance.save() after instance_update_and_get_original + from_db_object 2012-10-29 13:42:11+00:00\n\nI'm totally puzzled how that model_query call ends up updating the update_at field.\n ", 
+            "date_created": "2017-07-18 08:17:56.423613+00:00", 
+            "author": "https://api.launchpad.net/1.0/~balazs-gibizer"
+        }, 
+        {
+            "content": "The updated_at field is defined in the TimestampMixin in oslo.db and says it should change the value on every ONUPDATE trigger:\n\nhttps://github.com/openstack/oslo.db/blob/master/oslo_db/sqlalchemy/models.py#L139\n\nThe instance model in nova extends the TimestampMixin.", 
+            "date_created": "2017-07-18 17:18:10.863969+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Is it possible there is something stubbing out some behavior in these tests that's making it behave this way?", 
+            "date_created": "2017-07-21 15:52:55.382775+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I checked the versioned notification contents with nova that applied the 'updated_at' patch [1] in my testing environment.\n(nova master: commit b529c32ca0923b6b180d252306f4c39033d2cd43 with [1])\n\nWhen the new server was created, the versioned notification contents were in [2] (extracted 'instance.update' notifications only) .\n\nThe 'updated_at' field of the first versioned notification (instance.update)[3] was 'null'\nbecause just after the instance db record was created (inserted) and the update trigger was not applied.\n\nThe 'updated_at' field of the *second* versioned notification (instance.update) was also 'null'.\nThe second notification was emitted in nova.object.Instance.save() [4][5].\n\nThe 'nova.db.instance_update_and_get_original' method [6] returns new instance object [7],\nbut 'updated_at' is not updated(reflected).\n\nThe 'nova.db.instance_update_and_get_original' method returns the result of the 'oslo_db.sqlalchemy.update_match.update_on_match' method [8]. \nMy guess is that 'oslo_db.sqlalchemy.update_match.update_on_match' does not set the value like automatically updated by triggers\nand set the values that are passed explicitly only.\n\n[1] https://review.openstack.org/#/c/475276/\n[2] http://paste.openstack.org/show/616225/\n[3] https://github.com/openstack/nova/blob/33d25faa9c8d793325afc681945b840e7062d6a4/nova/conductor/manager.py#L1003-L1004\n[4] https://github.com/openstack/nova/blob/33d25faa9c8d793325afc681945b840e7062d6a4/nova/objects/instance.py#L802\n[5] https://github.com/openstack/nova/blob/33d25faa9c8d793325afc681945b840e7062d6a4/nova/compute/manager.py#L1759-L1760\n[6] https://github.com/openstack/nova/blob/33d25faa9c8d793325afc681945b840e7062d6a4/nova/db/sqlalchemy/api.py#L2665-L2666\n[7] https://github.com/openstack/nova/blob/33d25faa9c8d793325afc681945b840e7062d6a4/nova/objects/instance.py#L783-L787\n[8] https://github.com/openstack/nova/blob/33d25faa9c8d793325afc681945b840e7062d6a4/nova/db/sqlalchemy/api.py#L2741-L2743\n", 
+            "date_created": "2017-07-22 03:19:18.060882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~natsume-takashi"
+        }, 
+        {
+            "content": "Based on SQLAlchemy doc [1] onupdate is not expected to be called during INSERT so not having update_at set in the first instance.update seem OK.\n\nI traced the onupdate on the update_at column I can see [2] that the onupdate function is called in the second and any subsequent instance.save() but still the update_at field only updated at the third instance.save(). I followed Takashi's suspicion that sqlalchemy set the update_at field but the returned instance object is not updated with this change. So I added a direct instance query after instance.save() and it proved that the db contains an updated update_at field already at after the second instance.save() it is just not reflected in the instance object.\n\n[1] https://github.com/zzzeek/sqlalchemy/blob/master/lib/sqlalchemy/sql/schema.py#L1086\n[2] http://paste.openstack.org/show/616274/", 
+            "date_created": "2017-07-24 07:38:26.830608+00:00", 
+            "author": "https://api.launchpad.net/1.0/~balazs-gibizer"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/486561", 
+            "date_created": "2017-07-24 10:48:44.908430+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

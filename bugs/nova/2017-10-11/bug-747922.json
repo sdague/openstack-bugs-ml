@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2011-09-22 13:35:07.806550+00:00", 
+    "description": "Tested on Revision No 925.\n\nSteps to reproduce:-\n1) Run one VM instance\n2) Attach volume to the VM instance\n3) SSH to the VM instance, mount the volume and logout from SSH\n4) reboot the VM instance\n5) Again SSH to the VM instance and try to mount the volume.\nIt doesn't allow and gives the error message\n{{{\nCould not stat /dev/vdb --- No such file or directory\n\nThe device apparently does not exist; did you specify it correctly?\n}}}\n\n6) euca-describe-volumes still shows that the volume is attached to the VM instance and is in use.\n{{{\nroot@ubuntu-openstack-single-server:/home/tpatil# euca-describe-volumes\nVOLUME  vol-00000001     1              nova    in-use (admin, ubuntu-openstack-single-server, i-00000002[ubuntu-openstack-single-server], \\/dev\\/vdb)  2011-04-02T00:48:20Z\n}}}\n\n7) If I try to detach the volume, then it gives error message in the nova-compute.log\nnova-compute.log\n-----------------------\n{{{\n2011-04-01 17:59:04,743 ERROR nova [-] Exception during message handling\n(nova): TRACE: Traceback (most recent call last):\n(nova): TRACE:   File \"/home/tpatil/nova/nova/rpc.py\", line 190, in _receive\n(nova): TRACE:     rval = node_func(context=ctxt, **node_args)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/exception.py\", line 120, in _wrap\n(nova): TRACE:     return f(*args, **kw)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/compute/manager.py\", line 105, in decorated_function\n(nova): TRACE:     function(self, context, instance_id, *args, **kwargs)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/compute/manager.py\", line 779, in detach_volume\n(nova): TRACE:     volume_ref['mountpoint'])\n(nova): TRACE:   File \"/home/tpatil/nova/nova/exception.py\", line 120, in _wrap\n(nova): TRACE:     return f(*args, **kw)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/virt/libvirt_conn.py\", line 405, in detach_volume\n(nova): TRACE:     raise exception.NotFound(_(\"No disk at %s\") % mount_device)\n(nova): TRACE: NotFound: No disk at vdb\n(nova): TRACE:\n}}}", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/747922", 
+    "owner": "https://api.launchpad.net/1.0/~itohm", 
+    "id": 747922, 
+    "index": 2350, 
+    "created": "2011-04-02 01:08:44.718563+00:00", 
+    "title": "Rebooting instance doesn't restore mounted volume", 
+    "comments": [
+        {
+            "content": "Tested on Revision No 925.\n\nSteps to reproduce:-\n1) Run one VM instance\n2) Attach volume to the VM instance\n3) SSH to the VM instance, mount the volume and logout from SSH\n4) reboot the VM instance\n5) Again SSH to the VM instance and try to mount the volume.\nIt doesn't allow and gives the error message\n{{{\nCould not stat /dev/vdb --- No such file or directory\n\nThe device apparently does not exist; did you specify it correctly?\n}}}\n\n6) euca-describe-volumes still shows that the volume is attached to the VM instance and is in use.\n{{{\nroot@ubuntu-openstack-single-server:/home/tpatil# euca-describe-volumes\nVOLUME  vol-00000001     1              nova    in-use (admin, ubuntu-openstack-single-server, i-00000002[ubuntu-openstack-single-server], \\/dev\\/vdb)  2011-04-02T00:48:20Z\n}}}\n\n7) If I try to detach the volume, then it gives error message in the nova-compute.log\nnova-compute.log\n-----------------------\n{{{\n2011-04-01 17:59:04,743 ERROR nova [-] Exception during message handling\n(nova): TRACE: Traceback (most recent call last):\n(nova): TRACE:   File \"/home/tpatil/nova/nova/rpc.py\", line 190, in _receive\n(nova): TRACE:     rval = node_func(context=ctxt, **node_args)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/exception.py\", line 120, in _wrap\n(nova): TRACE:     return f(*args, **kw)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/compute/manager.py\", line 105, in decorated_function\n(nova): TRACE:     function(self, context, instance_id, *args, **kwargs)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/compute/manager.py\", line 779, in detach_volume\n(nova): TRACE:     volume_ref['mountpoint'])\n(nova): TRACE:   File \"/home/tpatil/nova/nova/exception.py\", line 120, in _wrap\n(nova): TRACE:     return f(*args, **kw)\n(nova): TRACE:   File \"/home/tpatil/nova/nova/virt/libvirt_conn.py\", line 405, in detach_volume\n(nova): TRACE:     raise exception.NotFound(_(\"No disk at %s\") % mount_device)\n(nova): TRACE: NotFound: No disk at vdb\n(nova): TRACE:\n}}}", 
+            "date_created": "2011-04-02 01:08:44.718563+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "Hi Tushar,\n\nYou use KVM on Ubuntu, right?\nAlso, you rebooted the instance on the guest OS?\nI mean, not using euca-reboot-instances.\n\nI'm feeling  that the root cause of this issue would  be  a KVM problem.\nIf this issue is reproducible, please check collect information before and after rebooting instances on compute node.\n\n  # virsh dumpxml VM_NAME\n\nI guess the device you attached to your VM vanished from VM configuration after guest OS reboot.\nIn the case, what we can do anyway would be logging the exeption and  cleaning up database, I think.\n\n-Masanori\n", 
+            "date_created": "2011-04-06 02:16:52.237677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itohm"
+        }, 
+        {
+            "content": "BTW, if you used euca-reboot-instances on KVM based systems, the issue gets back to nova side.\nAt this moment, libvirt does not support rebooting KVM instances, and the current implementation of\nRebootInstance is like the following.\n\n  trunk/nova/virt/libvirt_conn.py\n    473     def reboot(self, instance):\n    474         self.destroy(instance, False)      # DESTROY ONCE\n    475         xml = self.to_xml(instance)\n\nOne idea could be calling virsh dumpxml to the instance to be rebooted and updating the above xml here.\n\n    476         self.firewall_driver.setup_basic_filtering(instance)\n    477         self.firewall_driver.prepare_instance_filter(instance)\n    478         self._conn.createXML(xml, 0)    # CREATE AGAIN, AND THERE IS NO CODE TO RE-ATTACH EBSs.\n    479         self.firewall_driver.apply_instance_filter(instance)\n    480\n    481         timer = utils.LoopingCall(f=None)\n    482\n    483         def _wait_for_reboot():\n    484             try:\n    485                 state = self.get_info(instance['name'])['state']\n    486                 db.instance_set_state(context.get_admin_context(),\n    487                                       instance['id'], state)\n    488                 if state == power_state.RUNNING:\n    489                     LOG.debug(_('instance %s: rebooted'), instance['name'])\n    490                     timer.stop()\n    491             except Exception, exn:\n    492                 LOG.exception(_('_wait_for_reboot failed: %s'), exn)\n    493                 db.instance_set_state(context.get_admin_context(),\n    494                                       instance['id'],\n    495                                       power_state.SHUTDOWN)\n    496                 timer.stop()\n    497\n    498         timer.f = _wait_for_reboot\n    499         return timer.start(interval=0.5, now=True)\n\n-Masanori\n", 
+            "date_created": "2011-04-06 02:29:42.027185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itohm"
+        }, 
+        {
+            "content": "Hi,\n\nI wrote an ultimately STUPID workaround fix on this issue and linked my branch here.\nActually, this issue is a problematic one if we want to resolve it in an elegant way, I think.\n\nAnyway, it looks working on my Ubuntu 10.10 box at least.\n\nTushar, if you are testing volume driver other than ISCSI or multiple multi-node nova installation,\ncould you try the patch below?\n\n  lp:~itoumsn/nova/lp747922\n\nThanks,\n", 
+            "date_created": "2011-04-13 17:48:37.131152+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itohm"
+        }, 
+        {
+            "content": "I will volunteer as the assignee of this issue until someone with more elegant resolution appears...\n\n-Masanori\n", 
+            "date_created": "2011-04-13 17:53:51.966567+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itohm"
+        }, 
+        {
+            "content": "I tested using your branch lp:~itoumsn/nova/lp747922 and it seems to be working as expected now.\n\nAfter rebooting the instance, I see the volume is still attached and I can see all files intact.\n\nThank you.", 
+            "date_created": "2011-04-14 18:54:56.695387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "Hi Tushar,\n\nThanks for testing. :)\nI will post a merge request soon after the cactus release.\n\nThanks,\nMasanori\n", 
+            "date_created": "2011-04-15 01:17:07.675916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itohm"
+        }, 
+        {
+            "content": "pardon me, i'm a newbie here, how can i apply above patch into my existing cloud? :)", 
+            "date_created": "2011-08-23 14:43:53.916209+00:00", 
+            "author": "https://api.launchpad.net/1.0/~imelurang"
+        }
+    ]
+}

@@ -1,0 +1,73 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 09:58:53.443508+00:00", 
+    "description": "As of 1300 UTC approce all tripleo CI is failing to bring up instances\n\nlooks like the commit that caused it is\nhttps://review.openstack.org/#/c/71557/\n\njust waiting for some CI to finish to confirm.", 
+    "tags": [
+        "ci"
+    ], 
+    "importance": "Critical", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1347795", 
+    "owner": "https://api.launchpad.net/1.0/~pmurray", 
+    "id": 1347795, 
+    "index": 198, 
+    "created": "2014-07-23 16:27:56.134992+00:00", 
+    "title": "All baremetal instance going to ERROR state", 
+    "comments": [
+        {
+            "content": "As of 1300 UTC approce all tripleo CI is failing to bring up instances\n\nlooks like the commit that caused it is\nhttps://review.openstack.org/#/c/71557/\n\njust waiting for some CI to finish to confirm.", 
+            "date_created": "2014-07-23 16:27:56.134992+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "As far as I got triaging this, it seems to stem from this line:\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L384\n\n   def update_available_resources(self, context):\n        ...\n        LOG.audit(_(\"Auditing locally available compute resources\"))\n        resources = self.driver.get_available_resource(self.nodename)\n\n    def _write_ext_resources(self, resources):\n        resources['stats'] = {}\n        resources['stats'].update(self.stats)\n        self.ext_resources_handler.write_resources(resources)\n\nWhen a virt driver returns resources containing a \"stats\" dict, prior to this patch, those stats were exposed to the scheduler and used to inform the ComputeCapabilitiesFilter. After the referenced patch landed, they are ignored, and any stats are overwritten with an empty dict.\n\nThis passes the gate because libvirt does not use this mechanism.", 
+            "date_created": "2014-07-23 19:51:46.419563+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "I am told that there's a patch out there to fix this on the nova side, but its not linked here. Can I have a hint please?", 
+            "date_created": "2014-07-23 23:25:08.981617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Patch appears to be https://review.openstack.org/#/c/109033", 
+            "date_created": "2014-07-23 23:31:45.813188+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Devananda is absolutely right - the _write_ext_resources() method assumes that stats is not defined and so over-writes it. The fix for this should be to change:\n\ndef _write_ext_resources(self, resources):\n        resources['stats'] = {}\n        ...\n\nto something like:\n\ndef _write_ext_resources(self, resources):\n        if 'stats' not in resources:\n            resources['stats'] = {}\n        ...\n\nBut I need to verify this is sufficient as the driver seems to pass the stats dict back back already serialized as a json blob.", 
+            "date_created": "2014-07-24 10:59:31.976505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "On further investigation it seems that the driver stats field was never handled properly. In the periodic task it is passed through without modification (i.e. the Nova resource tracker stats are not added), in other code paths that update the compute_node it is over-written by the Nova resource tracker stats.\n\nI have run up an ironic environment with a number of nodes without the https://review.openstack.org/#/c/71557/ commit and looked at the database. Some reported the driver stats and some the nova stats, but none reported the union of the two.\n\nSo the revert may fix the CI, but it will not correct the problem.", 
+            "date_created": "2014-07-24 12:00:42.859369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/109301", 
+            "date_created": "2014-07-24 14:08:06.144264+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/109033\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8ecc07e8f21bddf60fe836f34beab470589918e0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8ecc07e8f21bddf60fe836f34beab470589918e0\nAuthor: Derek Higgins <email address hidden>\nDate:   Wed Jul 23 17:24:18 2014 +0100\n\n    Revert \"Add extensible resources to resource tracker\"\n    \n    This bug added a regression to both nova-bm and ironic,\n    neither can deploy instances.\n    Fixes-bug: #1347795\n    \n    This reverts commit 50b4ba4ee583d25eef10a6608172c002f9bec6f2.\n    \n    Change-Id: Icc8d629467911972480b633c7808a0964c9f1c7d\n", 
+            "date_created": "2014-07-24 19:06:32.311636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is related to: https://bugs.launchpad.net/nova/+bug/1348288", 
+            "date_created": "2014-07-25 04:12:10.697416+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Change abandoned by Paul Murray (<email address hidden>) on branch: master\nReview: https://review.openstack.org/109301\nReason: This has been superseded by the revert: revehttps://review.openstack.org/#/c/109033", 
+            "date_created": "2014-07-25 06:39:05.232102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi, \n\nI can confirm that reverting \"Add extensible resources to resource tracker\" fixed the Ironic boot issues (ironic devstack setup).", 
+            "date_created": "2014-07-25 07:29:31.903141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marios-b"
+        }
+    ]
+}

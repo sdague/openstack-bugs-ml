@@ -1,0 +1,109 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-03-03 16:18:59.623664+00:00", 
+    "description": "LibvirtDriver's _get_instance_disk_info calls libvirt_utils.get_disk_backing_file() if processing a qcow2 backing file.  If this is a file belonging to an attached and NFS-hosted Cinder volume, it may be owned by qemu:qemu and  therefore not readable as the nova user.\n\n[update: am now aiming at a different solution]\nMy proposed solution is to run the images.qemu_img_info() call as root in this case.\n\nNote that this requires a change to grenade to upgrade the rootwrap configuration for gating to pass.\n[/update]", 
+    "tags": [
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 36, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1416132", 
+    "owner": "https://api.launchpad.net/1.0/~ankitagrawal", 
+    "id": 1416132, 
+    "index": 1678, 
+    "created": "2015-01-29 22:15:41.527407+00:00", 
+    "title": "_get_instance_disk_info fails to read files from NFS due to permissions", 
+    "comments": [
+        {
+            "content": "LibvirtDriver's _get_instance_disk_info calls libvirt_utils.get_disk_backing_file() if processing a qcow2 backing file.  If this is a file belonging to an attached and NFS-hosted Cinder volume, it may be owned by qemu:qemu and  therefore not readable as the nova user.\n\nMy proposed solution is to run the images.qemu_img_info() call as root in this case.\n\nNote that this requires a change to grenade to upgrade the rootwrap configuration for gating to pass.", 
+            "date_created": "2015-01-29 22:15:41.527407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/149037/\n", 
+            "date_created": "2015-01-29 22:20:18.490588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "It is a bit unclear to me when would this happen under normal circumstances?\n\nReading the code of _get_instance_disk_info - it seems to me that it was meant to skip all volumes and does a poor job of that. Maybe that's where the fix should be?", 
+            "date_created": "2015-02-11 16:58:26.442375+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "This issue is getting reproduced only after applying cinder patch  :  https://review.openstack.org/#/c/147186/  (NFS snapshots)  with 'nfs_qcow2_volumes' config option enabled.\nSo should it be considered as bug or enhancement?", 
+            "date_created": "2015-06-15 06:58:09.103840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhijeet-malawade"
+        }, 
+        {
+            "content": "Hi Eric, Nikola,\n\nAs per discussion on IRC I have applied Nikola's patches [1] in my environment for testing but still I am getting the permission issue.\n\nERROR nova.compute.manager [req-22814e21-b10e-4a8e-a599-d26242fd0d74 None None] Error updating resources for node openstack-177: Unexpected error while running command.\nCommand: env LC_ALL=C LANG=C qemu-img info /opt/stack/data/nova/mnt/e4fc188de38439dc5443c09da9c14588/volume-50f25f26-8fe1-40c2-bedd-e243c34a48fc\nExit code: 1\nStdout: u''\nStderr: u\"qemu-img: Could not open '/opt/stack/data/nova/mnt/e4fc188de38439dc5443c09da9c14588/volume-50f25f26-8fe1-40c2-bedd-e243c34a48fc': Could not open '/opt/stack/data/nova/mnt/e4fc188de38439dc5443c09da9c14588/volume-50f25f26-8fe1-40c2-bedd-e243c34a48fc': Permission denied\\n\"\n\n[1] https://review.openstack.org/#/c/180638/\n\n", 
+            "date_created": "2015-06-26 09:32:38.424413+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Change abandoned by Eric Harney (<email address hidden>) on branch: master\nReview: https://review.openstack.org/149037", 
+            "date_created": "2015-07-07 13:10:30.390341+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi,\n\nBDM entry and instance xml for reference, http://paste.openstack.org/show/321326/", 
+            "date_created": "2015-07-14 09:03:03.321118+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Results of ls -lr since its a permission issue:\n\nopenstack@openstack-177: ls -lr /opt/stack/data/nova/\n\ntotal 12\n-rw-r--r-- 1 openstack openstack    0 Jul  7 01:48 nova-iptables\ndrwxr-xr-x 2 openstack root      4096 Jul  7 01:48 keys\ndrwxr-xr-x 6 openstack root      4096 Jul  9 02:54 instances\ndrwxr-xr-x 6 openstack openstack 4096 Jul  7 01:50 CA\n", 
+            "date_created": "2015-07-14 09:19:40.493037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Ok so after a lengthy investigation - I think the root cause of this is that we call libvirt.driver._get_instance_disk_info (from _get_disk_over_committed_size_total see https://github.com/openstack/nova/blob/b0854ba0c697243aa3d91170d1a22896aed60e02/nova/virt/libvirt/driver.py#L6511). This method gets called without the block device information, but it is obvious that it cannot possibly do it's job correctly without the block device mapping information as it relies on it to filter out the volumes (see https://github.com/openstack/nova/blob/b0854ba0c697243aa3d91170d1a22896aed60e02/nova/virt/libvirt/driver.py#L6421).\n\nThere are 2 ways to fix this bug IMHO neither of which are easy. First one is that we pass the block device info to the libvirt driver on every get_available_resources pass. This will require some invasive refactoring of the resource tracker. We will also want to avoid looping over every instance and firing of N queries for block devices, so some refactoring of the instance related DB layer methods will be needed so that we can join-load block device in a single query.\n\nAnother way to approach the bug is to decide if disk_available_least is something we actually care about. It does seem to be used in the disk filter, but it seems to be wildely incorrect for at least some deployment scenarios (RBD for example) but also very useful when using qcow backing files.\n", 
+            "date_created": "2015-08-26 19:31:17.130263+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Hi Nikola,\n\nI have tried to pass bdm info to '_get_instance_disk_info' method as per your comment, and it is solving this issue (poc gerrit patch ; https://review.openstack.org/#/c/221162/).  Currently this patch will make N number of queries for getting bdm info and instance from DB.\n", 
+            "date_created": "2015-09-08 07:03:03.624573+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhijeet-malawade"
+        }, 
+        {
+            "content": "Hi Diana,\n\nAre you going to submit another patch to fix this issue completely?\nI have found your patch (https://review.openstack.org/#/c/229964/) which partially fixes this issue.\nIf not I would like to work on this.\n\nThanks", 
+            "date_created": "2015-10-16 13:53:28.643528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhijeet-malawade"
+        }, 
+        {
+            "content": "Feel free to grab it, Abhijeet. Thanks for asking :)\n\nIf it's still open in a week or so I may give it a go, but my plate is otherwise full for next week.\n\nHave a great weekend!\n\nCheers,\n\n--diana", 
+            "date_created": "2015-10-16 14:05:21.717069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~diana-clarke"
+        }, 
+        {
+            "content": "@Abhijeet: It looks like my latest patch set auto-assigned this bug to me. Feel free to grab it back. Cheers!", 
+            "date_created": "2015-11-12 15:15:29.041662+00:00", 
+            "author": "https://api.launchpad.net/1.0/~diana-clarke"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/229964\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=110bb30d0f2a183aa54ec1289a58a15ea26b0495\nSubmitter: Jenkins\nBranch:    master\n\ncommit 110bb30d0f2a183aa54ec1289a58a15ea26b0495\nAuthor: Diana Clarke <email address hidden>\nDate:   Thu Oct 1 11:33:14 2015 -0400\n\n    Replace N block_device_mapping queries with 1\n    \n    The ExtendedVolumes post-processing extension used to do N\n    block_device_mapping queries (one query per instance in a 'nova list').\n    Instead, do one block_device_mapping query with an IN clause of\n    instance UUIDs.\n    \n    Change-Id: I32a1bd0e05a7a938e531d00bedfab23a0bb68538\n    Partial-Bug: #1416132\n    Closes-Bug: #1359808\n", 
+            "date_created": "2015-11-13 13:30:40.724003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/245656", 
+            "date_created": "2015-11-16 08:04:21.688958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sergey Nikitin (<email address hidden>) on branch: stable/liberty\nReview: https://review.openstack.org/245656", 
+            "date_created": "2015-12-09 13:10:23.802009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/221162\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1345d0fe1cad5093d49a58b6f0b7f4cb650f61d8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1345d0fe1cad5093d49a58b6f0b7f4cb650f61d8\nAuthor: Abhijeet Malawade <email address hidden>\nDate:   Fri Sep 4 00:21:47 2015 -0700\n\n    Pass bdm info to _get_instance_disk_info method\n    \n    If bdm info is not passed to the '_get_instance_disk_info' method,\n    then in case of processing qcow2 backing file, it raises permission\n    denied error provided the backing is belonging to an attached and\n    NFS-hosted Cinder volume.\n    \n    Passed bdm info to the '_get_instance_disk_info' method if any\n    volumes are attached to the instance.\n    \n    Co-Authored-By: Ankit Agrawal <email address hidden>\n    Closes-Bug: #1416132\n    Change-Id: I5d5c64ea4d304022282ec9ab121e295f3c9e0d03\n", 
+            "date_created": "2016-02-29 16:07:35.402353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b3 development milestone.", 
+            "date_created": "2016-03-03 16:18:59.077697+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ]
+}

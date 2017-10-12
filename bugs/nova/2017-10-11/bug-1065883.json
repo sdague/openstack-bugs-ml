@@ -1,0 +1,72 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 10:55:39.482753+00:00", 
+    "description": "I'm testing using ceph RADOS block devices to back nova volumes; however I've hit an issue which limits its usefulness in environments where cephx authentication is required.\n\nConfiguration is directly taken from http://ceph.com/docs/master/rbd/rbd-openstack/#configuring-cinder-nova-volume.  Note that nova-volume and nova-compute are running on different hosts.\n\nThe problem is as follows:\n\nThe rbd_user and rbd_secret_uuid must be configured in nova-volume to ensure that when the nova-compute nodes attach volumes to instances, they will use the libvirt stored secret.\n\nHowever, the libvirt secret UUID when created on each of the compute nodes is going to be different; and nova-compute will try to attach using the secret provided from nova-volume - for which it has no knowledge.\n\nI also want to configure nova-compute with a different username to nova-volume/cinder to provide more granular access control to ceph.\n\nThe user and secret_uuid should be configured in nova-compute; not provided by nova-volume.\n\nI've worked around this using this patch/hack:\n\n=== modified file 'nova/virt/libvirt/volume.py'\n--- nova/virt/libvirt/volume.py\t2012-08-27 15:37:18 +0000\n+++ nova/virt/libvirt/volume.py\t2012-10-12 08:37:38 +0000\n@@ -88,9 +88,11 @@\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0conf.serial = connection_info.get('serial')\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0netdisk_properties = connection_info['data']\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if netdisk_properties.get('auth_enabled'):\n-            conf.auth_username = netdisk_properties['auth_username']\n+            conf.auth_username = FLAGS.rbd_user or \\\n+                                 netdisk_properties['auth_username']\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0conf.auth_secret_type = netdisk_properties['secret_type']\n-            conf.auth_secret_uuid = netdisk_properties['secret_uuid']\n+            conf.auth_secret_uuid = FLAGS.rbd_secret_uuid or \\\n+                                    netdisk_properties['secret_uuid']\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0return conf\n\nWhich basically allows me to override the auth_username and auth_secret_uuid through the nova-compute configuration file.\n\nProblemType: Bug\nDistroRelease: Ubuntu 12.10\nPackage: nova-compute (not installed)\nProcVersionSignature: Ubuntu 3.5.0-17.27-generic 3.5.5\nUname: Linux 3.5.0-17-generic x86_64\nApportVersion: 2.6.1-0ubuntu2\nArchitecture: amd64\nDate: Fri Oct 12 09:38:32 2012\nSourcePackage: nova\nUpgradeStatus: Upgraded to quantal on 2012-06-11 (122 days ago)", 
+    "tags": [
+        "amd64", 
+        "apport-bug", 
+        "patch", 
+        "quantal", 
+        "running-unity"
+    ], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1065883", 
+    "owner": "https://api.launchpad.net/1.0/~james-page", 
+    "id": 1065883, 
+    "index": 3148, 
+    "created": "2012-10-12 08:51:18.440722+00:00", 
+    "title": "ceph rbd username and secret should be configured in nova-compute, not passed from nova-volume/cinder", 
+    "comments": [
+        {
+            "content": "I'm testing using ceph RADOS block devices to back nova volumes; however I've hit an issue which limits its usefulness in environments where cephx authentication is required.\n\nConfiguration is directly taken from http://ceph.com/docs/master/rbd/rbd-openstack/#configuring-cinder-nova-volume.\n\nThe problem is as follows:\n\nThe rbd_user and rbd_secret_uuid must be configured in nova-volume to ensure that when the nova-compute nodes attach volumes to instances, they will use the libvirt stored secret.\n\nHowever, the secret UUID when created on each of the compute nodes is going to be different; and nova-compute will try to attach using the secret provided from nova-volume - for which it has no knowledge.\n\nI also want to configure nova-compute with a different username to nova-volume/cinder to provide more granular access control to ceph.\n\nI've worked around this using this patch/hack:\n\n=== modified file 'nova/virt/libvirt/volume.py'\n--- nova/virt/libvirt/volume.py\t2012-08-27 15:37:18 +0000\n+++ nova/virt/libvirt/volume.py\t2012-10-12 08:37:38 +0000\n@@ -88,9 +88,11 @@\n         conf.serial = connection_info.get('serial')\n         netdisk_properties = connection_info['data']\n         if netdisk_properties.get('auth_enabled'):\n-            conf.auth_username = netdisk_properties['auth_username']\n+            conf.auth_username = FLAGS.rbd_user or \\\n+                                 netdisk_properties['auth_username']\n             conf.auth_secret_type = netdisk_properties['secret_type']\n-            conf.auth_secret_uuid = netdisk_properties['secret_uuid']\n+            conf.auth_secret_uuid = FLAGS.rbd_secret_uuid or \\\n+                                    netdisk_properties['secret_uuid']\n         return conf\n\nWhich basically allows me to override the auth_username and auth_secret_uuid through the nova-compute configuration file.\n\nProblemType: Bug\nDistroRelease: Ubuntu 12.10\nPackage: nova-compute (not installed)\nProcVersionSignature: Ubuntu 3.5.0-17.27-generic 3.5.5\nUname: Linux 3.5.0-17-generic x86_64\nApportVersion: 2.6.1-0ubuntu2\nArchitecture: amd64\nDate: Fri Oct 12 09:38:32 2012\nSourcePackage: nova\nUpgradeStatus: Upgraded to quantal on 2012-06-11 (122 days ago)", 
+            "date_created": "2012-10-12 08:51:18.440722+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-10-12 08:51:18.440722+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Revised patch which ensures sheepdog handling does not get interfered with", 
+            "date_created": "2012-10-12 10:12:41.627431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "You can actually specify the uuid for the secret when you add it to libvirt, so it can be the same on all compute hosts.\n\ni.e.\n\n<secret ephemeral='no' private='no'>\n  <usage type='ceph'>\n    <name>client.volumes secret</name>\n  </usage>\n  <uuid>a060c8a3-d905-45ec-84a6-0b5d7e25c5cb</uuid>\n</secret>\n\nLibvirt only generates a random uuid if you don't specify one. I'll update the Ceph docs to clarify this.\n\nYour patch does make sense if you want to control more finely which rados user's your using on the compute nodes. It's easier than running multiple (cinder|nova)-volume processes, but the long term solution probably involves changing the volume driver to use different rados pools and users based on volume_type or some other configuration.\n\nHowever, with the current rbd volume driver using only a single pool, I'm not sure how much finer-grained the compute node permissions could be compared to the volume service permissions. What do you have in mind?\n\nBTW, sheepdog and nbd don't have auth support through libvirt, so you don't need to check specifically for rbd in your patch.", 
+            "date_created": "2012-10-12 15:39:15.171819+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdurgin"
+        }, 
+        {
+            "content": "Hi Josh \n\nI was aware that was possible; however I'm deploying openstack automatically and I don't really want to pass the uuid around between nova-volume and nova-compute nodes. \n\nI simply want to provide each of the compute nodes with the cephx key it needs to use and a generated username - and it will just configure its own set of secrets and configure nova appropriately, overriding the config that nova-volume may/will have sent.\n\nMy finer grained access control requirement was really around having different keys for volume/cinder and compute - so if I add/remove additional compute farms I can easily manage the keys on a per role basis. \n\nI guess I was just being hyper-cautious with the rbd check in the patch :-)\n\n\n", 
+            "date_created": "2012-10-12 16:09:39.189814+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "I see, that makes sense now. It'd be good to get this patch upstream for grizzly.", 
+            "date_created": "2012-10-12 16:45:44.531668+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdurgin"
+        }, 
+        {
+            "content": "I'll work on doing that as my first code contribution to OpenStack!\n", 
+            "date_created": "2012-10-12 16:57:07.450800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2012.2-0ubuntu5\n\n---------------\nnova (2012.2-0ubuntu5) quantal-proposed; urgency=low\n\n  [ Adam Gandelman ]\n  * Move management of /var/lib/nova/volumes from nova-common to\n    nova-volume.  Ensure it has proper permissions. (LP: #1065320)\n  * debian/patches/avoid_setuptools_git_dependency.patch:  Remove\n    setuptools_git from tools/pip-requires to avoid it being automatically\n    added to python-nova's runtime dependencies. (LP: #1059907)\n\n  [ Chuck Short ]\n  * debian/patches/rbd-security.patch: Support override of ceph rbd\n    user and secret in nova-compute. (LP: #1065883)\n  * debian/patches/ubuntu/fix-libvirt-firewall-slowdown.patch: Fix\n    refreshing of security groups in libvirt not to block on RPC calls.\n    (LP: #1062314)\n  * debian/patches/ubuntu/fix-ec2-volume-id-mappings.patch: Read deleted\n    snapshot and volume id mappings. (LP: #1065785)\n -- Chuck Short <email address hidden>   Fri, 12 Oct 2012 12:35:01 -0500", 
+            "date_created": "2012-10-15 09:45:38.642784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/14458\nCommitted: http://github.com/openstack/nova/commit/af51b46b1e08b26c07bd32019e54b9c521cb7813\nSubmitter: Jenkins\nBranch:    master\n\ncommit af51b46b1e08b26c07bd32019e54b9c521cb7813\nAuthor: James Page <email address hidden>\nDate:   Mon Oct 15 13:21:55 2012 +0100\n\n    Allow local rbd user and secret_uuid configuration\n    \n    By default, the rbd_user and rbd_secret_uuid are specified in the\n    nova-volume/cinder configuration and passed to nova-compute when\n    volumes are attached to instances.\n    \n    This change allows these values to be specified locally in\n    nova-compute which means access control to RADOS devices in ceph\n    can be managed independently from nova-volume/cinder with no\n    requirement for consistent uuid's for libvirt secrets.\n    \n    Fixes bug 1065883.\n    \n    Change-Id: I9f07d040ae267bfbe8f794a5d22d327106314cc6\n", 
+            "date_created": "2012-10-22 01:24:41.681923+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is there an essex variant of this patch available?", 
+            "date_created": "2012-12-18 22:30:23.516999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pjdc"
+        }
+    ]
+}

@@ -1,0 +1,45 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:56:17.431651+00:00", 
+    "description": "Currently when specifying NUMA cell memory via flavor extra_specs or image properties, MiB units are used. According to the libvirt xml domain format documentation (http://libvirt.org/formatdomain.html) , cell memory should be specified in KiB.\n\nIn this example, we use the following extra_specs:\n\"hw:numa_policy\": \"strict\", \"hw:numa_mem.1\": \"2048\", \"hw:numa_mem.0\": \"6144\", \"hw:numa_nodes\": \"2\", \"hw:numa_cpus.0\": \"0,1,2\", \"hw:numa_cpus.1\": \"3\"\n\nThe flavor has 8192 MB of ram and 4 vcpus.\n\nWhen using qemu 2.1.0, the following will be seen in the n-cpu logs when booting a machine with NUMA specs.\n\n\"libvirtError: internal error: process exited while connecting to monitor: qemu-system-x86_64: total memory for NUMA nodes (8388608) should equal RAM size (200000000)\"\n\nPlease note that the 200000000 is 8388608 KiB in bytes and hex (simply an issue with the qemu error message). The error shows that 8192 KiB is being requested rather than 8192 MiB. Because the RAM size does not equal the total memory size, the machine fails to boot.\n\nWhen using versions of qemu lower than 2.1.0 the issue is not obvious, as machines with  NUMA specs boot, but only because of a bug (that has since been resolved) in qemu. This is because the check to ensure that RAM size equals the NUMA node total memory does not happen in versions lower than 2.1.0\n\nIn short, we should be using KiB units for NUMA cell memory, or at least be converting from MiB to KiB before creating the xml. Otherwise, NUMA placement will not behave as intended.\n\nTo be fair, I haven't had the chance to look at the memory placement in a guest booted using qemu 2.0.0 or lower, though I suspect the memory placement would be incorrect.. If anyone has the chance to look, it would be greatly appreciated.\n\nI am currently investigating the appropriate fix for this alongside Tiago Mello. We made a quick fix in /nova/virt/libvirt/config.py on line 495:\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0cell.set(\"memory\", str(self.memory * 1024))\n\nMutiplying by 1024 allowed the machine to properly boot, but it is probably a bit too quick and dirty. Just thought it would be worth mentioning.\n\nSys-info:\nx86_64 machine\n\nVirt-info:\nqemu version 2.1.0\nlibvirt version 1.2.2\n\nKenerl-info:\n3.13.0-35-generic #62-Ubuntu SMP Fri Aug 15 01:58:42 UTC 2014 x86_64 x86_64 x86_64 GNU/Linux\n\nOS-info:\nDistributor ID:\tUbuntu\nDescription:\tUbuntu 14.04.1 LTS\nRelease:\t14.04\nCodename:\ttrusty", 
+    "tags": [
+        "juno-rc-potential", 
+        "libvirt", 
+        "libvirt-driver"
+    ], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1373159", 
+    "owner": "https://api.launchpad.net/1.0/~ndipanov", 
+    "id": 1373159, 
+    "index": 1623, 
+    "created": "2014-09-23 22:38:29.531744+00:00", 
+    "title": "NUMA Topology cell memory sent to xml in MiB, but qemu uses KiB", 
+    "comments": [
+        {
+            "content": "Currently when specifying NUMA cell memory via flavor extra_specs or image properties, MiB units are used. According to the libvirt xml domain format documentation (http://libvirt.org/formatdomain.html) , cell memory should be specified in KiB.\n\nIn this example, we use the following extra_specs:\n\"hw:numa_policy\": \"strict\", \"hw:numa_mem.1\": \"2048\", \"hw:numa_mem.0\": \"6144\", \"hw:numa_nodes\": \"2\", \"hw:numa_cpus.0\": \"0,1,2\", \"hw:numa_cpus.1\": \"3\"\n\nThe flavor has 8192 MB of ram and 4 vcpus.\n\nWhen using qemu 2.1.0, the following will be seen in the n-cpu logs when booting a machine with NUMA specs. \n\n\"libvirtError: internal error: process exited while connecting to monitor: qemu-system-x86_64: total memory for NUMA nodes (8388608) should equal RAM size (200000000)\"\n\nPlease not that the 200000000 is 8388608 KiB in bytes and hex (simply an issue with the qemu error message). The error shows that 8192 KiB is being requested rather than 8192 MiB. Because the RAM size does not equal the total memory size, the machine fails to boot.\n\nWhen using versions of qemu lower than 2.1.0 the issue is not obvious, as machines with  NUMA specs boot, but only because of a bug (that has since been resolved) in qemu. This is because the check to ensure that RAM size equals the NUMA node total memory does not happen in versions lower than 2.1.0\n\nIn short, we should be using KiB units for NUMA cell memory, or at least be converting from MiB to KiB before creating the xml. Otherwise, NUMA placement will not behave as intended.\n\nTo be fair, I haven't had the chance to look at the memory placement in a guest booted using qemu 2.0.0 or lower, though I suspect the memory placement would be incorrect.. If anyone has the chance to look, it would be greatly appreciated.\n\nI am currently investigating the appropriate fix for this alongside Tiago Mello. We made a quick fix in /nova/virt/libvirt/config.py on line 495:\n\n                cell.set(\"memory\", str(self.memory * 1024))\n\nMutiplying by 1024 allowed the machine to properly boot, but it is probably a bit too quick and dirty. Just thought it would be worth mentioning.", 
+            "date_created": "2014-09-23 22:38:29.531744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjturek"
+        }, 
+        {
+            "content": "So after a bit more investigating, I have a better understanding of what the consequences of specifying cell memory in MiB rather than the expected KiB.\n\nWhen using qemu-2.1.0:\nThe feature simply does not work. Machines with NUMA specs that should boot, fail at the libvirt/qemu level and go to error. This happens regardless of whether cell memory is specified or is using the default of equally distributing the memory across the cells.\n\nWhen using qemu-2.0.0 (or lower):\nMachines boot, but with the wrong NUMA topology. For example, with either of the following extra_specs:\n{\"hw:numa_policy\": \"strict\", \"hw:numa_mem.1\": \"2048\", \"hw:numa_mem.0\": \"6144\", \"hw:numa_nodes\": \"2\", \"hw:numa_cpus.0\": \"0,1,2\", \"hw:numa_cpus.1\": \"3\"}\n{{\"hw:numa_policy\": \"strict\", \"hw:numa_nodes\": \"2\"}\n\nThe following topology is found on the guest:\nnode 0 cpus: 0 1 2 3\nnode 0 size: 7986 MB\nnode 0 free: 7568 MB\nnode distances:\nnode   0 \n  0:  10 \n\n\nThe quick fix that Tiago and I tried produces the following topology, which is the intended behavior:\n\nWhen extra specs are{\"hw:numa_policy\": \"strict\", \"hw:numa_nodes\": \"2\"}\n\nnode 0 cpus: 0 1\nnode 0 size: 3955 MB\nnode 0 free: 3728 MB\nnode 1 cpus: 2 3\nnode 1 size: 4031 MB\nnode 1 free: 3846 MB\nnode distances:\nnode   0   1 \n  0:  10  20 \n  1:  20  10 \n\nWhen extra_specs are {\"hw:numa_policy\": \"strict\", \"hw:numa_mem.1\": \"2048\", \"hw:numa_mem.0\": \"6144\", \"hw:numa_nodes\": \"2\", \"hw:numa_cpus.0\": \"0,1,2\", \"hw:numa_cpus.1\": \"3\"}\n\navailable: 2 nodes (0-1)\nnode 0 cpus: 0 1 2\nnode 0 size: 5971 MB\nnode 0 free: 5587 MB\nnode 1 cpus: 3\nnode 1 size: 2015 MB\nnode 1 free: 1983 MB\nnode distances:\nnode   0   1 \n  0:  10  20 \n  1:  20  10 \n\nSo in short, the feature is not working as intended and once qemu-2.1.0 becomes more common, it will be broken. I'll be proposing a fix later today for this.", 
+            "date_created": "2014-09-25 14:31:10.180145+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjturek"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/124187", 
+            "date_created": "2014-09-25 21:25:21.719816+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Move to high as when you have NUMA it can stop VMs booting, due to bad memory config.", 
+            "date_created": "2014-09-30 09:24:44.275664+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/124187\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6a374f21495c12568e4754800574e6703a0e626f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6a374f21495c12568e4754800574e6703a0e626f\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Sep 30 12:39:22 2014 +0200\n\n    libvirt: Make sure NUMA cell memory is in Kb in XML\n    \n    This patch makes libvirt report memory in Mb (as\n    hardware.VirtNUMATopologyUsage class expects Mb) and that when\n    generating XML we use Kb as this is what libvirt expects by default.\n    \n    Change-Id: Ic4518acf6bcee463009437829646de8c83aff6bf\n    Closes-bug: #1373159\n", 
+            "date_created": "2014-09-30 13:42:23.201798+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

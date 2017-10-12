@@ -1,0 +1,108 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 08:46:16.928816+00:00", 
+    "description": "When trying to attach a cinder volume to a VMware based instance I am seeing the attached error in the nova-compute logs. Cinder does not report back any problem to the user.", 
+    "tags": [
+        "vmware"
+    ], 
+    "importance": "High", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1193980", 
+    "owner": "https://api.launchpad.net/1.0/~smurugesan", 
+    "id": 1193980, 
+    "index": 1136, 
+    "created": "2013-06-24 02:44:59.142744+00:00", 
+    "title": "Regression: Cinder Volumes 'unable to find iscsi target' for VMware instances", 
+    "comments": [
+        {
+            "content": "When trying to attach a cinder volume to a VMware based instance I am seeing the attached error in the nova-compute logs. Cinder does not report back any problem to the user.", 
+            "date_created": "2013-06-24 02:44:59.142744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sina-sa"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-06-24 02:44:59.142744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sina-sa"
+        }, 
+        {
+            "content": "Can you re-run this example with the logging level set to 'debug' for us?\n I need to see which part of this branch gets followed:\n\n        if device_name:\n            LOG.debug(_(\"Discovered iSCSI target %(target_iqn)s from \"\n                        \"%(target_portal)s.\"),\n                      {'target_iqn': target_iqn,\n                       'target_portal': target_portal})\n        else:\n            LOG.debug(_(\"Unable to discovered iSCSI target %(target_iqn)s \"\n                        \"from %(target_portal)s.\"),\n                      {'target_iqn': target_iqn,\n                       'target_portal': target_portal})\n\n... these only log in debug mode.", 
+            "date_created": "2013-07-26 23:15:59.474972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Hey Shawn,\n\nSorry for the delay on this. \n\nHere is the error output with debug and verbose set to True in nova.conf on the nova-compute node, hope this is correct, if not let me know I can dump more output:\n\nhttp://paste.openstack.org/show/42932/", 
+            "date_created": "2013-08-02 09:12:09.526386+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sina-sa"
+        }, 
+        {
+            "content": "@sina-sa\n\nObviously, I'm taking a little bit to come back around on some of these myself.\n\nI thought I had written you a reply before, but I must have forgotten to hit \"Post Comment\"\n\nThe first 11 lines are the interesting part.\n\n> Unable to discovered iSCSI target iqn.2010-10.org.openstack:volume-d0433ba1-d2c1-478c-96a1-b9074c57c62e from 192.168.125.27:3260. discover_st /usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/volumeops.py:111\n\nMeans that 192.168.125.27 canot reach  iqn.2010-10.org.openstack:volume-d0433ba1-d2c1-478c-96a1-b9074c57c62e so the driver can't complete the action. To further diagnose this ... we need to figure out how to tell if that network segment really can be traversed or not.\n\nCan you verify you can make the network traversal?\n", 
+            "date_created": "2013-08-14 16:51:44.957611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Hey Shawn,\n\nAgain sorry for the delay. \n\nFrom the nova-compute host I can definitely connect to the ip and port \n\nroot@nova-compute:~# nc -v 192.168.125.27 3260\nConnection to 192.168.125.27 3260 port [tcp/*] succeeded!\n\n(for reference, the .27 is the cinder-api/volume/scheduler host and .28 is the nova-compute host)", 
+            "date_created": "2013-08-22 03:26:59.284217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sina-sa"
+        }, 
+        {
+            "content": "Hi Sina,\n\nCould you please post your cinder and nova configuration? Also, could you please describe your cinder configuration including:\n\n1. What cinder driver are you using?\n2. Are you trying to mount an LVM volume served by iSCSI?\n3. Are you trying to mount an external Cinder node via iSCSI?\n\nThanks!", 
+            "date_created": "2013-08-26 04:50:04.016762+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rhsu"
+        }, 
+        {
+            "content": "Hi Ryan,\n\n1. Cinder driver is default in this case\n2+3. Not sure I understood these questions? When you say mount, what are you referring to? When you say \"external cinder node\" what are you referring to? \n\nIn nova.conf on the nova-compute node the only configuration option specified for volumes is:\nvolume_api_class=nova.volume.cinder.API\n\nIn cinder.conf the related options (which are default):\niscsi_helper=tgtadm\nvolume_name_template = volume-%s\nvolume_group = cinder-volumes\n\nThe cinder server is running cinder-api, cinder-volume, cinder-scheduler along with a separate server running nova-compute.", 
+            "date_created": "2013-09-04 05:52:50.712383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sina-sa"
+        }, 
+        {
+            "content": "I think root cause is here:\n\nhttps://github.com/openstack/nova/blob/master/nova/virt/vmwareapi/volumeops.py#L172\n\ndef get_volume_connector(self, instance):\n        \"\"\"Return volume connector information.\"\"\"\n        instance_name = instance['name']\n        vm_ref = vm_util.get_vm_ref(self._session, instance)\n        iqn = volume_util.get_host_iqn(self._session, self._cluster)\n        return {'ip': CONF.vmware.host_ip,\n                'initiator': iqn,\n                'host': CONF.vmware.host_ip,\n                'instance': vm_ref.value}\n\nThe 'host' is presumed to be the SDK host. In the case of vCenter, the host will be the ESXi host the instance is run on.", 
+            "date_created": "2013-09-10 16:32:58.389077+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I was able to reproduce the error message, \"StorageError: Unable to find iSCSI Target\", using the latest upstream code. You need to be using the vSphere nova driver and the default cinder driver. Steps to reproduce:\n\n1. Spawn an instance\n2. Create a volume\n3. Attach the volume to the instance\n\nAt this time, monitor n-cpu.log and you'll see the error:\n\n[req-b76ae0c1-2cd3-4794-8b52-747abe65351e demo invisible_to_admin] Exception during message handling\nTraceback (most recent call last):\n  File \"/opt/stack/nova/nova/openstack/common/rpc/amqp.py\", line 461, in _process_data\n    **args)\n  File \"/opt/stack/nova/nova/openstack/common/rpc/dispatcher.py\", line 172, in dispatch\n    result = getattr(proxyobj, method)(ctxt, **kwargs)\n  File \"/opt/stack/nova/nova/exception.py\", line 89, in wrapped\n    payload)\n  File \"/opt/stack/nova/nova/exception.py\", line 73, in wrapped\n    return f(self, context, *args, **kw)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 243, in decorated_function\n    pass\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 229, in decorated_function\n    return function(self, context, *args, **kwargs)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 271, in decorated_function\n    e, sys.exc_info())\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 258, in decorated_function\n    return function(self, context, *args, **kwargs)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 3577, in attach_volume\n    context, instance, mountpoint)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 3572, in attach_volume\n    mountpoint, instance)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 3614, in _attach_volume\n    connector)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 3604, in _attach_volume\n    mountpoint)\n  File \"/opt/stack/nova/nova/virt/vmwareapi/driver.py\", line 611, in attach_volume\n    mountpoint)\n  File \"/opt/stack/nova/nova/virt/vmwareapi/volumeops.py\", line 274, in attach_volume\n    self._attach_volume_iscsi(connection_info, instance, mountpoint)\n  File \"/opt/stack/nova/nova/virt/vmwareapi/volumeops.py\", line 247, in _attach_volume_iscsi\n    raise volume_util.StorageError(_(\"Unable to find iSCSI Target\"))\nStorageError: Unable to find iSCSI Target", 
+            "date_created": "2013-09-10 16:50:44.753180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rhsu"
+        }, 
+        {
+            "content": "If I'm right about root cause this might fix it:\n\n* https://review.openstack.org/45906\n\nIt's a one-liner.", 
+            "date_created": "2013-09-10 16:56:59.400562+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Still not clear on root cause for this.", 
+            "date_created": "2013-09-18 20:17:10.717542+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I guess you are hitting this issue because the iscsi server location from where the iscsi tagets are discovered is not added to the iscsi software adapter on the host. When I added the iscsi server location, I was able to attach the cinder volume as a rdm disk :)\r\n\r\nHaving said that, it's the driver that should add the iscsi server address to the adapter (provided the adapter has Send Target Discover method enabled) and do the rescan. \r\n\r\nI have a small patch to get this going. I will soon upload it after adding some tests. ", 
+            "date_created": "2013-09-30 08:42:25.370566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smurugesan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/49465", 
+            "date_created": "2013-10-03 01:43:33.316372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "VMware drivers fail to attach a iSCSI backed cinder volume because the underlying retrieval api was updated to a newer version (see bug 1183654) but not it's usage in volume_util. This is a regression over Grizzly release. Also, we fail to specify the iscsi server location (target portal) in the api calls. Both are critical for the existing feature to work. ", 
+            "date_created": "2013-10-03 01:48:06.937748+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smurugesan"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49465\nCommitted: http://github.com/openstack/nova/commit/e70211ff89785fed6a868eaab723847833590502\nSubmitter: Jenkins\nBranch:    master\n\ncommit e70211ff89785fed6a868eaab723847833590502\nAuthor: Sabari Kumar Murugesan <email address hidden>\nDate:   Thu Oct 3 23:50:05 2013 -0700\n\n    VMware: fix regression attaching iscsi cinder volumes\n    \n    VMware drivers fail to attach a iSCSI backed cinder volume with an\n    error 'unable to find iscsi targets' because the underlying\n    retrieval api was updated to a newer version but not it's usage in\n    volume_util (see commit e331287cdd1300878bfb9bbb3630889370e5fa72).\n    This is a regression over Grizzly release.\n    \n    Fixes: bug #1193980\n    \n    Change-Id: Ic2d1dc800fa10295a4d7312fbeeaa0e16d792755\n", 
+            "date_created": "2013-10-14 07:56:19.630332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/53595", 
+            "date_created": "2013-10-24 12:11:08.676784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/53595\nCommitted: http://github.com/openstack/nova/commit/66f2db53460520019c6845be7f2997d6769dfe0d\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 66f2db53460520019c6845be7f2997d6769dfe0d\nAuthor: Sabari Kumar Murugesan <email address hidden>\nDate:   Thu Oct 3 23:50:05 2013 -0700\n\n    VMware: fix regression attaching iscsi cinder volumes\n    \n    VMware drivers fail to attach a iSCSI backed cinder volume with an\n    error 'unable to find iscsi targets' because the underlying\n    retrieval api was updated to a newer version but not it's usage in\n    volume_util (see commit e331287cdd1300878bfb9bbb3630889370e5fa72).\n    This is a regression over Grizzly release.\n    \n    Fixes: bug #1193980\n    \n    (cherry picked from commit e70211ff89785fed6a868eaab723847833590502)\n    \n    Change-Id: I14fe62ad98fd9161df3ce6c06160b2759a9e38b2\n", 
+            "date_created": "2013-10-27 08:10:02.750635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

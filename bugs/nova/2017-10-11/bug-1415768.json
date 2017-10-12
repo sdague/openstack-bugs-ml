@@ -1,0 +1,54 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-11-19 21:48:06.495667+00:00", 
+    "description": "After restarting nova-compute process, I found that the pci device assigned to instance in libvirt.xml was different with the record in 'pci_devices' DB table. \n\nEvery time nova-compute was restarted, pci_tracker.allocations was reset to empty dict, it didn't contain the pci devices had been allocated to instances, so some pci devices would be reallocated to the instances, and record these pci into DB, maybe they was inconsistent with the libvirt.xml.\n\nIOW, nova-compute would reallocated the pci device for the instance with pci request when restarting.\n\nSee details:\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/compute/resource_tracker.py#n347\n\nThis is a probabilistic problem, not always can be reproduced. If the instance have a lot of pci devices, it happen more.\n\nFace this bug in kilo master.", 
+    "tags": [
+        "compute", 
+        "pci-passthrough"
+    ], 
+    "importance": "High", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1415768", 
+    "owner": "https://api.launchpad.net/1.0/~pmurray", 
+    "id": 1415768, 
+    "index": 1676, 
+    "created": "2015-01-29 07:54:52.835592+00:00", 
+    "title": "the pci deivce assigned to instance is inconsistent with DB record when restarting nova-compute", 
+    "comments": [
+        {
+            "content": "After restarting nova-compute process, I found that the pci device assigned to instance in libvirt.xml was different with the record in 'pci_devices' DB table. \n\nEvery time nova-compute was restarted, pci_tracker.allocations was reset to empty dict, it didn't contain the pci devices had been allocated to instances, so some pci devices would be reallocated to the instances, and record these pci into DB, maybe they was inconsistent with the libvirt.xml.\n\nIOW, nova-compute would reallocated the pci device for the instance with pci request when restarting.\n\nSee details:\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/compute/resource_tracker.py#n347\n\nThis is a probabilistic problem, not always can be reproduced. If the instance have a lot of pci devices, it happen more.\n\nFace this bug in kilo master.", 
+            "date_created": "2015-01-29 07:54:52.835592+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiwik-chenrui"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/151528", 
+            "date_created": "2015-01-30 04:12:13.278172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/148904\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c3ffcd18d9fb1d999d6fa360a811b4c7fdcaba13\nSubmitter: Jenkins\nBranch:    master\n\ncommit c3ffcd18d9fb1d999d6fa360a811b4c7fdcaba13\nAuthor: Paul Murray <email address hidden>\nDate:   Tue Aug 26 18:31:30 2014 +0200\n\n    Move ComputeNode creation at init stage in ResourceTracker\n    \n    This is the first step in a series refactoring code that uses\n    ResourceTracker.compute_node so that it can later be changed\n    to be a ComputeNode object. Note that in this patch compute_node\n    is still a dict.\n    \n    The main refactor in this patch is to move initialization of the\n    compute_node property to a new method called _init_compute_node()\n    That is called near the beginning of update_available_resource().\n    \n    At the moment the update methods use a method parameter called\n    resources that is either the resources data structure obtained from\n    the virt driver or the compute_node property, depending on how it is\n    called. The result is always copied into the compute_node property.\n    This change initialises the compute_node property and creates the\n    compute node record as an initialisation step.\n    \n    Moving the initialization of the compute_node property to the start\n    of update_available_resources() paves the way for the next patch in\n    this series to use it consistently in the update methods. The\n    code will then be ready to introduce the ComputeNode object.\n    \n    This patch also fixes bug 1415768\n    \n    Co-Authored-By: Sylvain Bauza <email address hidden>\n    Co-Authored-By: Ed Leafe <email address hidden>\n    \n    Closes-bug #1415768\n    \n    Change-Id: Ic04af76c3835a5bf63a42163d0335d6c7e26d68a\n", 
+            "date_created": "2015-03-27 19:28:55.373178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Rui Chen (<email address hidden>) on branch: master\nReview: https://review.openstack.org/151528\nReason: Replace by https://review.openstack.org/#/c/148904/", 
+            "date_created": "2015-03-30 03:30:24.767985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/173226", 
+            "date_created": "2015-04-14 09:12:35.277918+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Full disclosure: I was guilty to discuss the bug intent with the backport proposer thru private channels since it was not clear what's the reason to nominate the bug for Juno while it's a refactor and of Low importance. Here is the summary of the discussion for other's reference.\n\nThe failure scenario is as follows: nova-compute is started with no pci devices, then a device is assigned to it, and db is populated with proper records; then the service is restarted; _update_available_resource is called for the node, and it goes directly to pci_manager.PciDevTracker initialization, passing node_id argument as None, since self.compute_node is not yet initialized (it will be initialized later in the method, by calling to _sync_compute_node, but it will be too late). So manager.PciDevTracker is initialized with empty node_id, so pci_devs are not initialized at all, meaning all pci devices that were created before the service restart are lost.\n\nThe fix moves the code that initializes self.compute_node to before manager.PciDevTracker initialization, so that node_id is always passed properly, meaning that self.pci_devs are actually loaded from db and reused.\n\nThe end result of the bug is that nova-compute forgets about any pci devices that were created before restart, and also fails to start the service at all. So pci passthrough users are busted, meaning they cannot rely on the service to come up after any restart, or crash. Which is a really major issue for those users.\n\nWith that in mind, I now believe the backport should be merged.", 
+            "date_created": "2015-04-15 10:33:22.154855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/173226\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6c4f6fb466cce6b02087418055ff56c41679db79\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 6c4f6fb466cce6b02087418055ff56c41679db79\nAuthor: Paul Murray <email address hidden>\nDate:   Tue Aug 26 18:31:30 2014 +0200\n\n    Move ComputeNode creation at init stage in ResourceTracker\n    \n    This is the first step in a series refactoring code that uses\n    ResourceTracker.compute_node so that it can later be changed\n    to be a ComputeNode object. Note that in this patch compute_node\n    is still a dict.\n    \n    The main refactor in this patch is to move initialization of the\n    compute_node property to a new method called _init_compute_node()\n    That is called near the beginning of update_available_resource().\n    \n    At the moment the update methods use a method parameter called\n    resources that is either the resources data structure obtained from\n    the virt driver or the compute_node property, depending on how it is\n    called. The result is always copied into the compute_node property.\n    This change initialises the compute_node property and creates the\n    compute node record as an initialisation step.\n    \n    Moving the initialization of the compute_node property to the start\n    of update_available_resources() paves the way for the next patch in\n    this series to use it consistently in the update methods. The\n    code will then be ready to introduce the ComputeNode object.\n    \n    This patch also fixes bug 1415768\n    \n    Co-Authored-By: Sylvain Bauza <email address hidden>\n    Co-Authored-By: Ed Leafe <email address hidden>\n    \n    (cherry picked from commit c3ffcd18d9fb1d999d6fa360a811b4c7fdcaba13)\n    \n    Conflicts:\n    \tnova/compute/resource_tracker.py\n    \tnova/tests/pci/test_pci_manager.py\n    \tnova/tests/unit/compute/test_tracker.py\n    \n    Closes-bug #1415768\n    Closes-bug #1383465\n    \n    Change-Id: Ic04af76c3835a5bf63a42163d0335d6c7e26d68a\n", 
+            "date_created": "2015-04-16 17:58:13.673604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

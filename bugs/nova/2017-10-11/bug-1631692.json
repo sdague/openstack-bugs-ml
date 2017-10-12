@@ -1,0 +1,50 @@
+{
+    "status": "Incomplete", 
+    "last_updated": "2016-10-13 03:41:50.244869+00:00", 
+    "description": "It's not the rescue image volume,it\u2018s the instance attach volume(ceph rbd device,maybe vdb) before rescue. \nAfter unrescue the instance,if try to del a detached the volume vbd will go wrong.\nSpecifically:\n1.the ceph rdb watchers is still watcher\n   use the cmd-line:  rbd status volumes/volume-uuid  you will see that .\n   When in this state,the rbd cannot be rm\n2.the database was updated the volumes info,status->available,attach_status->detached.\n3.the instance still can see and use this rbd ,you can format\u3001mount and r/w the disk.But if you reboot the instance , this disk will disappear.\n\nthe tempest case and error report:\ntempest.api.compute.servers.test_server_rescue_negative.ServerRescueNegativeTestJSON.test_rescued_vm_detach_volume\nERROR cinder.volume.manager [req-xxx] Unable to delete busy volume\n\nReproduce the steps:\n1.nova volume-attach instance-uuid volume-uuid\n2.nova rescue --password admin --image image-uuid instance-uuid\n3.nova unrescue instance-uuid\n4.nova volume-detach instance-uuid volume-uuid\n  and you can see the ceph rdb status and check the rbd still watcher or not\n5.if the rbd still watcher ,any operation to del the volume , will fail\u3002", 
+    "tags": [
+        "ceph", 
+        "liberty", 
+        "rdb"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1631692", 
+    "owner": "None", 
+    "id": 1631692, 
+    "index": 6471, 
+    "created": "2016-10-09 03:57:26.253822+00:00", 
+    "title": "After unrescue a instance\uff0cdel a detached rbd volume  will go wrong", 
+    "comments": [
+        {
+            "content": "It's not the rescue image volume,it\u2018s the instance attach volume(ceph rbd device,maybe vdb) before rescue. \nAfter unrescue the instance,if try to del a detached the volume vbd will go wrong.\nSpecifically:\n1.the ceph rdb watchers is still watcher\n   use the cmd-line:  rbd status volumes/volume-uuid  you will see that .\n   When in this state,the rbd cannot be rm\n2.the database was updated the volumes info,status->available,attach_status->detached.\n3.the instance still can see and use this rbd ,you can format\u3001mount and r/w the disk.But if you reboot the instance , this disk will disappear.\n\nthe tempest case and error report:\ntempest.api.compute.servers.test_server_rescue_negative.ServerRescueNegativeTestJSON.test_rescued_vm_detach_volume\nERROR cinder.volume.manager [req-xxx] Unable to delete busy volume\n\nReproduce the steps:\n1.nova volume-attach instance-uuid volume-uuid\n2.nova rescue --password admin --image image-uuid instance-uuid\n3.nova unrescue instance-uuid\n4.nova volume-detach instance-uuid volume-uuid\n  and you can see the ceph rdb status and check the rbd still watcher or not\n5.if the rbd still watcher ,any operation to del the volume , will fail\u3002", 
+            "date_created": "2016-10-09 03:57:26.253822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tanyy1990"
+        }, 
+        {
+            "content": "I found the same bug report in here:\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1303549\nSame phenomenon,and almost same soft version,but According to his steps,I was failed to reproduce that.", 
+            "date_created": "2016-10-09 08:44:44.974849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tanyy1990"
+        }, 
+        {
+            "content": "tanyy, I am not able to reproduce this and works perfectly well for me. Can you give some more details how you got here ?", 
+            "date_created": "2016-10-12 12:36:20.938607+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parora"
+        }, 
+        {
+            "content": "[stack@controller devstack]$ nova volume-detach a3e5e950-a51f-483a-ac48-85203bdb0bc9 29dd9434-7559-404b-9c61-9d943936c2bf\n[stack@controller devstack]$ cinder list\n+--------------------------------------+-----------+----------+------+-------------+----------+-------------+\n| ID                                   | Status    | Name     | Size | Volume Type | Bootable | Attached to |\n+--------------------------------------+-----------+----------+------+-------------+----------+-------------+\n| 29dd9434-7559-404b-9c61-9d943936c2bf | available | test_vol | 1    | ceph        | false    |             |\n+--------------------------------------+-----------+----------+------+-------------+----------+-------------+\n[stack@controller devstack]$ cinder delete 29dd9434-7559-404b-9c61-9d943936c2bf\nRequest to delete volume 29dd9434-7559-404b-9c61-9d943936c2bf has been accepted.\n[stack@controller devstack]$ cinder list\n+----+--------+------+------+-------------+----------+-------------+\n| ID | Status | Name | Size | Volume Type | Bootable | Attached to |\n+----+--------+------+------+-------------+----------+-------------+\n+----+--------+------+------+-------------+----------+-------------+\n\n\nFor the the volume got deleted, can you confirm where you see it as non deleted ?", 
+            "date_created": "2016-10-12 12:37:17.136553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parora"
+        }, 
+        {
+            "content": "thanks Prateek Arora (parora) \nYes,the volumes status was updated in database,but you still can use this volume in instance,you.\nAnd I found the same bug report :https://bugs.launchpad.net/nova/+bug/1485399\n\nlike Augustina Ragwitz (auggy) said:\nI just verified this without Ceph to make sure there was no issue with attaching and detaching volumes generally and was unable to reproduce.\n\nTo clarify, the problem being reported looks like if you detach a Ceph volume while an instance is booting up, the instance doesn't register it as detached.\n\nMarking as Confirmed to get into the triage queue so someone with Ceph can attempt to reproduce this.\n\nAnd,you can use this shell script to reproduce:\n#!/bin/bash\ndate\nprintf \"begin to attach volume:\\n\"\ntime nova  volume-attach instance-uuid volume-uuid\n#get some sleep , and make sure attach success\ndeclare -i time=1\nwhile [ $time -lt 5 ]\ndo\n    printf \"$time\\n\"\n    time+=1\n    sleep 1\ndone\n\nprintf \"begin to reboot the instance:\\n\"\ntime nova reboot  instance-uuid\n#Sleep 1 sec , so we can make sure the instance status update to active\ndeclare -i time=1\nwhile [ $time -lt 2 ]\ndo\n    printf \"$time\\n\"\n    time+=1\n    sleep 1\ndone\n\ndate\nprintf \"begin to detach the volume:\\n\"\ntime nova volume-detach volume-uuid\n\n", 
+            "date_created": "2016-10-13 03:40:48.079698+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tanyy1990"
+        }, 
+        {
+            "content": "use the cmd-line: rbd status volumes/volume-uuid you will see it.", 
+            "date_created": "2016-10-13 03:41:49.363082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tanyy1990"
+        }
+    ]
+}

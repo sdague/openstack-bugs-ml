@@ -1,0 +1,128 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-08-01 12:58:12.290991+00:00", 
+    "description": "The method at vmops.py _get_datacenter_ref_and_name does not calculate datacenter properly.\n\n    def _get_datacenter_ref_and_name(self):\n        \"\"\"Get the datacenter name and the reference.\"\"\"\n        dc_obj = self._session._call_method(vim_util, \"get_objects\",\n                \"Datacenter\", [\"name\"])\n        vm_util._cancel_retrieve_if_necessary(self._session, dc_obj)\n        return dc_obj.objects[0].obj, dc_obj.objects[0].propSet[0].val\n\nThis will not be correct on systems with more than one datacenter.\n\nStack trace from logs:\n\nERROR nova.compute.manager [req-9395fe41-cf04-4434-bd77-663e93de1d4a foo bar] [instance: 484a42a2-642e-4594-93fe-4f72ddad361f] Error: ['Traceback (most recent call last):\\n', '  File \"/opt/stack/nova/nova/compute/manager.py\", line 942, in _build_instance\\n    set_access_ip=set_access_ip)\\n', '  File \"/opt/stack/nova/nova/compute/manager.py\", line 1204, in _spawn\\n    LOG.exception(_(\\'Instance failed to spawn\\'), instance=instance)\\n', '  File \"/usr/lib/python2.7/contextlib.py\", line 24, in __exit__\\n    self.gen.next()\\n', '  File \"/opt/stack/nova/nova/compute/manager.py\", line 1200, in _spawn\\n    block_device_info)\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/driver.py\", line 176, in spawn\\n    block_device_info)\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/vmops.py\", line 208, in spawn\\n    _execute_create_vm()\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/vmops.py\", line 204, in _execute_create_vm\\n    self._session._wait_for_task(instance[\\'uuid\\'], vm_create_task)\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/driver.py\", line 559, in _wait_for_task\\n    ret_val = done.wait()\\n', '  File \"/usr/local/lib/python2.7/dist-packages/eventlet/event.py\", line 116, in wait\\n    return hubs.get_hub().switch()\\n', '  File \"/usr/local/lib/python2.7/dist-packages/eventlet/hubs/hub.py\", line 187, in switch\\n    return self.greenlet.switch()\\n', 'NovaException: A specified parameter was not correct. \\nspec.location.folder\\n']\n\nvCenter error is:\n\"A specified parameter was not correct. spec.location.folder\"\n\nWork around:\nuse only one datacenter, use only one cluster, turn on DRS\n\nAdditional failures:\n2013-07-18 10:59:12.788 DEBUG nova.virt.vmwareapi.vmware_images [req-e8306ffe-c6c7-4d0f-a466-fb532375cbd3 7799f10ca7da47f3b2660feb363b370b 0e1771f8db984a3599596fae62609d9a] [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] Got image size of 687865856 for the image cde14862-60b8-4360-a145-06585b06577c get_vmdk_size_and_properties /usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/vmware_images.py:156\n2013-07-18 10:59:12.963 WARNING nova.virt.vmwareapi.network_util [req-e8306ffe-c6c7-4d0f-a466-fb532375cbd3 7799f10ca7da47f3b2660feb363b370b 0e1771f8db984a3599596fae62609d9a] [(ManagedObjectReference){\n\u00a0\u00a0\u00a0value = \"network-1501\"\n\u00a0\u00a0\u00a0_type = \"Network\"\n\u00a0}, (ManagedObjectReference){\n\u00a0\u00a0\u00a0value = \"network-1458\"\n\u00a0\u00a0\u00a0_type = \"Network\"\n\u00a0}, (ManagedObjectReference){\n\u00a0\u00a0\u00a0value = \"network-2085\"\n\u00a0\u00a0\u00a0_type = \"Network\"\n\u00a0}, (ManagedObjectReference){\n\u00a0\u00a0\u00a0value = \"network-1143\"\n\u00a0\u00a0\u00a0_type = \"Network\"\n\u00a0}]\n2013-07-18 10:59:13.326 DEBUG nova.virt.vmwareapi.vmops [req-e8306ffe-c6c7-4d0f-a466-fb532375cbd3 7799f10ca7da47f3b2660feb363b370b 0e1771f8db984a3599596fae62609d9a] [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] Creating VM on the ESX host _execute_create_vm /usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/vmops.py:207\n2013-07-18 10:59:14.258 3145 DEBUG nova.openstack.common.rpc.amqp [-] Making synchronous call on conductor ... multicall /usr/lib/python2.7/dist-packages/nova/openstack/common/rpc/amqp.py:583\n2013-07-18 10:59:14.259 3145 DEBUG nova.openstack.common.rpc.amqp [-] MSG_ID is 8ef36d061a9341a09d3a5451df798673 multicall /usr/lib/python2.7/dist-packages/nova/openstack/common/rpc/amqp.py:586\n2013-07-18 10:59:14.259 3145 DEBUG nova.openstack.common.rpc.amqp [-] UNIQUE_ID is 680b790574c64a9783fd2138c43f5f6d. _add_unique_id /usr/lib/python2.7/dist-packages/nova/openstack/common/rpc/amqp.py:337\n2013-07-18 10:59:18.757 3145 WARNING nova.virt.vmwareapi.driver [-] Task [CreateVM_Task] (returnval){\n\u00a0\u00a0\u00a0value = \"task-33558\"\n\u00a0\u00a0\u00a0_type = \"Task\"\n\u00a0} status: error The input arguments had entities that did not belong to the same datacenter.\n\n2013-07-18 10:59:18.758 ERROR nova.compute.manager [req-e8306ffe-c6c7-4d0f-a466-fb532375cbd3 7799f10ca7da47f3b2660feb363b370b 0e1771f8db984a3599596fae62609d9a] [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] Instance failed to spawn\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] Traceback (most recent call last):\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 1103, in _spawn\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] block_device_info)\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/driver.py\", line 177, in spawn\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] block_device_info)\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/vmops.py\", line 217, in spawn\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] _execute_create_vm()\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/vmops.py\", line 213, in _execute_create_vm\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] self._session._wait_for_task(instance['uuid'], vm_create_task)\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/driver.py\", line 554, in _wait_for_task\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] ret_val = done.wait()\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] File \"/usr/lib/python2.7/dist-packages/eventlet/event.py\", line 116, in wait\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] return hubs.get_hub().switch()\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] File \"/usr/lib/python2.7/dist-packages/eventlet/hubs/hub.py\", line 187, in switch\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] return self.greenlet.switch()\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] NovaException: The input arguments had entities that did not belong to the same datacenter.\n2013-07-18 10:59:18.758 3145 TRACE nova.compute.manager [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539]\n\n2013-07-18 10:59:20.029 ERROR nova.compute.manager [req-e8306ffe-c6c7-4d0f-a466-fb532375cbd3 7799f10ca7da47f3b2660feb363b370b 0e1771f8db984a3599596fae62609d9a] [instance: 5b3961b6-38d9-409c-881e-fe50f67b1539] Error: ['Traceback (most recent call last):\\n', ' File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 848, in _run_instance\\n set_access_ip=set_access_ip)\\n', ' File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 1107, in _spawn\\n LOG.exception(_(\\'Instance failed to spawn\\'), instance=instance)\\n', ' File \"/usr/lib/python2.7/contextlib.py\", line 24, in __exit__\\n self.gen.next()\\n', ' File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 1103, in _spawn\\n block_device_info)\\n', ' File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/driver.py\", line 177, in spawn\\n block_device_info)\\n', ' File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/vmops.py\", line 217, in spawn\\n _execute_create_vm()\\n', ' File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/vmops.py\", line 213, in _execute_create_vm\\n self._session._wait_for_task(instance[\\'uuid\\'], vm_create_task)\\n', ' File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/driver.py\", line 554, in _wait_for_task\\n ret_val = done.wait()\\n', ' File \"/usr/lib/python2.7/dist-packages/eventlet/event.py\", line 116, in wait\\n return hubs.get_hub().switch()\\n', ' File \"/usr/lib/python2.7/dist-packages/eventlet/hubs/hub.py\", line 187, in switch\\n return self.greenlet.switch()\\n', 'NovaException: The input arguments had entities that did not belong to the same datacenter.\\n']\n\n2013-07-18 10:59:23.831 3145 WARNING nova.virt.vmwareapi.driver [-] Task [CreateVM_Task] (returnval){\n\u00a0\u00a0\u00a0value = \"task-33558\"\n\u00a0\u00a0\u00a0_type = \"Task\"\n\u00a0} status: error The input arguments had entities that did not belong to the same datacenter.\n2013-07-18 10:59:23.832 3145 WARNING nova.virt.vmwareapi.driver [-] In vmwareapi:_poll_task, Got this error Trying to re-send() an already-triggered event.\n2013-07-18 10:59:23.833 3145 ERROR nova.utils [-] in fixed duration looping call\n2013-07-18 10:59:23.833 3145 TRACE nova.utils Traceback (most recent call last):\n2013-07-18 10:59:23.833 3145 TRACE nova.utils File \"/usr/lib/python2.7/dist-packages/nova/utils.py\", line 594, in _inner\n2013-07-18 10:59:23.833 3145 TRACE nova.utils self.f(*self.args, **self.kw)\n2013-07-18 10:59:23.833 3145 TRACE nova.utils File \"/usr/lib/python2.7/dist-packages/nova/virt/vmwareapi/driver.py\", line 580, in _poll_task\n2013-07-18 10:59:23.833 3145 TRACE nova.utils done.send_exception(excep)\n2013-07-18 10:59:23.833 3145 TRACE nova.utils File \"/usr/lib/python2.7/dist-packages/eventlet/event.py\", line 208, in send_exception\n2013-07-18 10:59:23.833 3145 TRACE nova.utils return self.send(None, args)\n2013-07-18 10:59:23.833 3145 TRACE nova.utils File \"/usr/lib/python2.7/dist-packages/eventlet/event.py\", line 150, in send\n2013-07-18 10:59:23.833 3145 TRACE nova.utils assert self._result is NOT_USED, 'Trying to re-send() an already-triggered event.'\n2013-07-18 10:59:23.833 3145 TRACE nova.utils AssertionError: Trying to re-send() an already-triggered event.\n2013-07-18 10:59:23.833 3145 TRACE nova.utils", 
+    "tags": [
+        "vmware"
+    ], 
+    "importance": "High", 
+    "heat": 40, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1180044", 
+    "owner": "https://api.launchpad.net/1.0/~garyk", 
+    "id": 1180044, 
+    "index": 1089, 
+    "created": "2013-05-14 18:27:08.210649+00:00", 
+    "title": "nova failures when vCenter has multiple datacenters", 
+    "comments": [
+        {
+            "content": "When *any* VMware vCenter managed data center contains no hosts to provision an image, the nova boot command will fail silently. Empty data centers without ESX hosts are usually left behind by administrator error. Removing the empty data center resolves the issue.\n\nStack trace from logs:\n\nERROR nova.compute.manager [req-9395fe41-cf04-4434-bd77-663e93de1d4a foo bar] [instance: 484a42a2-642e-4594-93fe-4f72ddad361f] Error: ['Traceback (most recent call last):\\n', '  File \"/opt/stack/nova/nova/compute/manager.py\", line 942, in _build_instance\\n    set_access_ip=set_access_ip)\\n', '  File \"/opt/stack/nova/nova/compute/manager.py\", line 1204, in _spawn\\n    LOG.exception(_(\\'Instance failed to spawn\\'), instance=instance)\\n', '  File \"/usr/lib/python2.7/contextlib.py\", line 24, in __exit__\\n    self.gen.next()\\n', '  File \"/opt/stack/nova/nova/compute/manager.py\", line 1200, in _spawn\\n    block_device_info)\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/driver.py\", line 176, in spawn\\n    block_device_info)\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/vmops.py\", line 208, in spawn\\n    _execute_create_vm()\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/vmops.py\", line 204, in _execute_create_vm\\n    self._session._wait_for_task(instance[\\'uuid\\'], vm_create_task)\\n', '  File \"/opt/stack/nova/nova/virt/vmwareapi/driver.py\", line 559, in _wait_for_task\\n    ret_val = done.wait()\\n', '  File \"/usr/local/lib/python2.7/dist-packages/eventlet/event.py\", line 116, in wait\\n    return hubs.get_hub().switch()\\n', '  File \"/usr/local/lib/python2.7/dist-packages/eventlet/hubs/hub.py\", line 187, in switch\\n    return self.greenlet.switch()\\n', 'NovaException: A specified parameter was not correct. \\nspec.location.folder\\n']\n\nWork around: remove the empty data center.", 
+            "date_created": "2013-05-14 18:27:08.210649+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I tried to reproduce this by taking a working setup with a single datacenter and adding a second empty datacenter.  Even when i restacked the environment, I did not see an error, so there must be slightly more to it than described.  ", 
+            "date_created": "2013-05-27 23:00:55.700936+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "This probably has something to do with how \"spec.location.folder\" is calculated. It probably doesn't manifest in all situations.", 
+            "date_created": "2013-06-03 16:51:53.721176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I can triage and work on this issue.", 
+            "date_created": "2013-06-03 21:32:09.665889+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smurugesan"
+        }, 
+        {
+            "content": "Root cause:\nhttps://github.com/openstack/nova/blob/master/nova/virt/vmwareapi/vmops.py#L200\n\nDoes not specify HOST!\nhttp://pubs.vmware.com/vsphere-51/index.jsp#com.vmware.wssdk.apiref.doc/vim.Folder.html#createVm\n\nReference:\n\"The target host on which the virtual machine will run. This must specify a host that is a member of the ComputeResource indirectly specified by the pool. For a stand-alone host or a cluster with DRS, host can be omitted, and the system selects a default.\"", 
+            "date_created": "2013-06-06 23:18:46.833230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Lowering priority since there is a work-around.", 
+            "date_created": "2013-06-10 17:16:05.381913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Please keep \"Critical\" for serious regressions / data loss issues / issues affecting all Nova users.\r\nSee https://wiki.openstack.org/wiki/Bugs for guidelines.", 
+            "date_created": "2013-06-18 13:20:54.060309+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "There is a work-around, so yes. This is no longer critical.", 
+            "date_created": "2013-06-18 14:03:53.694587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/33576", 
+            "date_created": "2013-06-19 02:31:47.817808+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "See also: https://bugs.launchpad.net/nova/+bug/1208906\n\nThese are related problems due to how the driver handles inventory hierarchy.", 
+            "date_created": "2013-08-06 16:19:13.477571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Test inventory used for this bug: http://imgur.com/a/rg8sP#1", 
+            "date_created": "2013-08-06 17:57:10.527776+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/43270", 
+            "date_created": "2013-08-22 10:52:50.316212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The method at vmops.py _get_datacenter_ref_and_name does not calculate datacenter properly.\n\n    def _get_datacenter_ref_and_name(self):\n        \"\"\"Get the datacenter name and the reference.\"\"\"\n        dc_obj = self._session._call_method(vim_util, \"get_objects\",\n                \"Datacenter\", [\"name\"])\n        vm_util._cancel_retrieve_if_necessary(self._session, dc_obj)\n        return dc_obj.objects[0].obj, dc_obj.objects[0].propSet[0].val\n\nThis will not be correct on systems with more than one datacenter.", 
+            "date_created": "2013-08-22 11:52:02.034621+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Gary, please take these two patches and run them down.", 
+            "date_created": "2013-08-27 20:35:55.937869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Since the current patch is a WIP, I'm going to put this on the potential list for the havana RC", 
+            "date_created": "2013-09-23 19:10:26.089103+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/52384", 
+            "date_created": "2013-10-17 13:16:50.060174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/52630/ (No idea why Jenkins does not update the bug automatically)", 
+            "date_created": "2013-10-18 13:24:59.670689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "cut-and-paste of comments posted on review. I want to be sure to preserve the knowledge I gained from working this bug for several weeks. By all means, Gary please finish the work. Thank you.\n\nConceptually, all VMs in a vCenter are placed under a Datacenter and each datacenter has a vmfolder that holds all instances. The idea of a datacenter (at least conceptually) is that this represents a segregated hunk of hardware so when you ask about all virtual machines in a datacenter in Cleveland, it makes no sense to talk about the ones in Munich (as an exaggerated example nobody really does that).\n\n\nSo selecting the correct datacenter paths is pretty important. vmfolder happens to be an implicit and hidden path for VM placement specification even so, Nova must tell vCenter \"the scheduler said place it here\" where here is the vmfolder, datastore, etc. Since the current scheduler is only giving the datastore coordinate we can extrapolate which datacenter the scheduler meant by calculating the nearest in tree vmfolder path.\nCurrently the driver completely ignores all this and we tell people to just use one datacenter so that the calculation can't possibly get messed up (but more than one and the path calculation can be wrong) so this is a pretty major driver change we need to get right.\n\nWe need to be sure that we encode the tree traversals correctly so that the scheduler's intentions are properly translated into vCenter commands. That's not happening right now.\nI will pull this for manual testing later this week but I can tell by looking you'll still fail when there are more than one datacenter and the intended datacenter is not *first* or position 0.", 
+            "date_created": "2013-10-23 14:42:29.069528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/52630\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a25b2ac5f440f7ace4678b21ada6ebf5ce5dff3c\nSubmitter: Jenkins\nBranch:    master\n\ncommit a25b2ac5f440f7ace4678b21ada6ebf5ce5dff3c\nAuthor: Gary Kotton <email address hidden>\nDate:   Fri Oct 18 06:12:40 2013 -0700\n\n    VMware: fix bug when more than one datacenter exists\n    \n    In the case that there was more than one datacenter defined on the VC,\n    then spawning an instance would result in an exception. The reason for this\n    was that the nova compute would not set the correct datacenter for the\n    selected datastore.\n    \n    The fix also takes care of the correct folder selection. This too was a\n    result of not selecting the correct folder for the data center.\n    \n    The 'fake' configuration was updated to contain an additional data\n    center with its on datastore.\n    \n    Closes-Bug: #1180044\n    Closes-Bug: #1214850\n    \n    Co-authored-by: Shawn Harsock <email address hidden>\n    \n    Change-Id: Ib61811fffcbc80385efc3166c9e366fdaa6432bd\n", 
+            "date_created": "2013-12-16 20:15:14.429322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/62587", 
+            "date_created": "2013-12-17 09:41:32.375142+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Status changed to 'Confirmed' because the bug affects multiple users.", 
+            "date_created": "2014-02-11 11:01:47.423761+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Icehouse was released with Ubuntu 14.04 - marking fix-released.", 
+            "date_created": "2014-08-01 12:58:05.633478+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }
+    ]
+}

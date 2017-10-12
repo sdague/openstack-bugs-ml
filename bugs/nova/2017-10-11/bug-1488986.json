@@ -1,0 +1,38 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2015-09-23 14:27:22.252620+00:00", 
+    "description": "a) nova compute service updates info of compute-node by run update_available_resource every CONF.update_resources_interval(60s by default). \nb) for every scheduler request:\n1. select_destinations is called and get all HostStates(if compute-node is newer that local hoststate info based on updated_at, update the HostStates with the compute info from DB)\n2. check if the host resource can meet instance requirement one by one with updating the HostState resource iteratively, if yes, send build_and_run_instance cast RPC to the corresponding compute node.\n3.compute service accept the amqp message and consumed the instance requirement and write new compute info into DB.\n4.compute try to spawn the instance, once failed, roll back step 3.\n\nMy question:\nif user set CONF.update_resources_interval 1s, that is, compute node service updates compute info into DB every 1s. \nFor the case: the user sends multi nova boot request,  and the first boot request goes to step 2 and the compute node service runs periodic task update_available_resource at the same time. And the second boot request go to step 1 and the first request still not goes to step3, so the second boot request gets HostStates set without the first instance's consumption and scheduler service will schedule a host for it without considering the first instance consumption. And the following request repeats.\n\nCan this race condition occur?", 
+    "tags": [
+        "scheduler"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1488986", 
+    "owner": "None", 
+    "id": 1488986, 
+    "index": 1731, 
+    "created": "2015-08-26 13:47:07.657939+00:00", 
+    "title": "nova scheduler for race condition", 
+    "comments": [
+        {
+            "content": "a) nova compute service updates info of compute-node by run update_available_resource every CONF.update_resources_interval(60s by default). \nb) for every scheduler request:\n1. select_destinations is called and get all HostStates(if compute-node is newer that local hoststate info based on updated_at, update the HostStates with the compute info from DB)\n2. check if the host resource can meet instance requirement one by one with updating the HostState resource iteratively, if yes, send build_and_run_instance cast RPC to the corresponding compute node.\n3.compute service accept the amqp message and consumed the instance requirement and write new compute info into DB.\n4.compute try to spawn the instance, once failed, roll back step 3.\n\nMy question:\nif user set CONF.update_resources_interval 1s, that is, compute node service updates compute info into DB every 1s. \nFor the case: the user sends multi nova boot request,  and the first boot request goes to step 2 and the compute node service runs periodic task update_available_resource at the same time. And the second boot request go to step 1 and the first request still not goes to step3, so the second boot request gets HostStates set without the first instance's consumption and scheduler service will schedule a host for it without considering the first instance consumption. And the following request repeats.\n\nCan this race condition occur?", 
+            "date_created": "2015-08-26 13:47:07.657939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liuhoug"
+        }, 
+        {
+            "content": "even ignore periodic task update_available_resource, I think there is still race condition for scheduler.\nif first boot request uses ---max-count option, saying 10, and the ten instances are scheduled to the same compute node. And the corresponding compute node service will try to spawn the instances one by one. when handling the 3rd one, the compute info in DB has only accounted 3 instances' consumption. At this moment, the second boot request is being handled by scheduler and the HostState for this boot is updated with info from DB which only accounts 3 instances' consumption.  So second boot can be scheduled wrongly.\n", 
+            "date_created": "2015-08-27 02:13:32.188898+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liuhoug"
+        }, 
+        {
+            "content": "This is a known issue , I can't find the exact bp but a lot of work are ongoing :)\nin case some one can find and share the links here... FYI ", 
+            "date_created": "2015-08-27 13:39:14.219305+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "So, it's pretty hard to explain in one small comment how the model is behaving, but please consider that we have 'sort of' two-phase commits when booting an instance.\n\nWhen a request comes in, you're right, the instances are elected iteratively by decrementing the resource usage of the elected node in HostState.consume_from_instance(). That means that when you're asking for 10 instances of the same type, the corresponding HostState(s) will be decremented before the next filters call which should provide a good way for ensuring consistency. That's only when the 10 instances are elected that the scheduler gives the answer back to the *conductor* which calls the respective compute managers (ie. your step #3 is incorrect since Juno).\n\nNow, that HostState model is something kept in-memory and only refreshed when a new request comes in. That means that if you have two schedulers running separately (or when you have 2 concurrent requests coming in), then yes you could have race conditions. \n\nThat's not really a problem in general, because if your could is enough sized, it will go to the compute manager which will use a context manager called \"instance_claim()\" for ensuring that its *OWN* internal representation is correct (and that method is thread-safe in the context). If the scheduler decision was incorrect, then it raises an error which is catched by the compute manager which calls again the conductor to ask for a reschedule (by excluding the wrong host).\n\nSo, see, when we have races, we have retries (that's the 2PC I mentioned). That's not perfect, in particular when the cloud is a bit full, and that's why we're working towards resolving that thru multiple possibilities :\n\nhttps://review.openstack.org/#/c/192260/7/doc/source/scheduler_evolution.rst,cm\n\nTo be honest, I don't see clear actionable items in your bug request. I'd rather propose you to join the scheduler meetings happening every Mondays at 1400 UTC if you wish to help us and contribute.\n\n", 
+            "date_created": "2015-09-23 14:27:07.352338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }
+    ]
+}

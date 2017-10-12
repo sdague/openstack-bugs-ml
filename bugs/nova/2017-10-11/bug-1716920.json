@@ -1,0 +1,55 @@
+{
+    "status": "New", 
+    "last_updated": "2017-10-11 12:08:36.745108+00:00", 
+    "description": "The deletion of online snapshots of remotefs based volumes breaks the .info file/backing chain of these volumes. Logs can be seen in any current Quobyte CI run in Cinder/Nova/OS-Brick . Afaics the the other driver using this (VZstorage) has it's CI skip the affected tests (e.g. test_snapshot_create_delete_with_volume_in_use).\n\nI ran a lot of tests and so far i can say that the first deletion of a member in the backing chain works (snapshot is deleted) but seemingly leaves the .info files content and/or the backing chain of the volume file in a broken state. The error can be identified e.g. by the following log pattern:\n\nThis is the first snapshot deletion that runs successfully (the snapshots id is 91755e5f-e573-4ddb-84af-3712d69a). The ID of the snapshot and its snapshot_file name do match their uuids:\n\n2017-09-13 08:28:59.436 20467 DEBUG cinder.volume.drivers.remotefs [req-eda7ddf5-217d-490d-a8d4-1813df68d8db tempest-VolumesSnapshotTestJSON-708947401 -] Deleting online snapshot 91755e5f-e573-4ddb-84af-3712d69a\nfc89 of volume 94598844-418c-4b5d-b034-5330e24e7421 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1099\n2017-09-13 08:28:59.487 20467 DEBUG cinder.volume.drivers.remotefs [req-eda7ddf5-217d-490d-a8d4-1813df68d8db tempest-VolumesSnapshotTestJSON-708947401 -] snapshot_file for this snap is: volume-94598844-418c-4b5d-b034-5330e24e7421.91755e5f-e573-4ddb-84af-3712d69afc89 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1124\n\nThe next snapshot to be deleted (138a1f62-7582-4aaa-9d72-9eada34b) shows that a wrong snapshot_file is read from the volumes .info file. In fact it shows the file of the previous snapshot :\n\n2017-09-13 08:29:01.857 20467 DEBUG cinder.volume.drivers.remotefs [req-6ad4add9-34b8-41b9-a1f0-7dc2d6bb1862 tempest-VolumesSnapshotTestJSON-708947401 -] Deleting online snapshot 138a1f62-7582-4aaa-9d72-9eada34b\neeaf of volume 94598844-418c-4b5d-b034-5330e24e7421 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1099\n2017-09-13 08:29:01.872 20467 DEBUG cinder.volume.drivers.remotefs [req-6ad4add9-34b8-41b9-a1f0-7dc2d6bb1862 tempest-VolumesSnapshotTestJSON-708947401 -] snapshot_file for this snap is: volume-94598844-418c-4b5d-b034-5330e24e7421.91755e5f-e573-4ddb-84af-3712d69afc89 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1124\n\nNow this second snapshot deletion fails because the snapshot file for 138a1f62-7582-4aaa-9d72-9eada34b no longer exists:\n\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server ProcessExecutionError: Unexpected error while running command.\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Command: /usr/bin/python -m oslo_concurrency.prlimit --as=1073741824 --cpu=8 -- env LC_ALL=C qemu-img info /opt/stack/data/cinder/mnt/a1e3635ffba9fce1b854369f1a255d7b/volume-94598844-418c-4b5d-b034-5330e24e7421.138a1f62-7582-4aaa-9d72-9eada34beeaf\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Exit code: 1\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Stdout: u''\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Stderr: u\"qemu-img: Could not open '/opt/stack/data/cinder/mnt/a1e3635ffba9fce1b854369f1a255d7b/volume-94598844-418c-4b5d-b034-5330e24e7421.138a1f62-7582-4aaa-9d72-9eada34beeaf': Could not open '/opt/stack/data/cinder/mnt/a1e3635ffba9fce1b854369f1a255d7b/volume-94598844-418c-4b5d-b034-5330e24e7421.138a1f62-7582-4aaa-9d72-9eada34beeaf': No such file or directory\\n\"\n\nThe referenced tempest test fails 100% of the time in our CIs. I manually tested the scenario and found the same results. Furthermore i was able, by creating three consecutive snapshots from a single volume and deleting them one after the other, to create a snapshot file with a broken backing file link. In the end i was left with a volume file and an overlay file referencing a removed backing file (previous snapshot of the same volume).\n\nI was able to run the scenario without issues when using offline snapshots. Thus this seems to be related to the usage of the online snapshot deletion via the Nova API.", 
+    "tags": [
+        "quobyte", 
+        "remotefs", 
+        "snapshot"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1716920", 
+    "owner": "None", 
+    "id": 1716920, 
+    "index": 7035, 
+    "created": "2017-09-13 13:24:10.669486+00:00", 
+    "title": "online snapshot deletion breaks volume info and backing chain (with remotefs drivers?)", 
+    "comments": [
+        {
+            "content": "The deletion of online snapshots of remotefs based volumes breaks the .info file/backing chain of these volumes. Logs can be seen in any current Quobyte CI run in Cinder/Nova/OS-Brick . Afaics the the other driver using this (VZstorage) has it's CI skip the affected tests (e.g. test_snapshot_create_delete_with_volume_in_use). \n\nI ran a lot of tests and so far i can say that the first deletion of a member in the backing chain works (snapshot is deleted) but seemingly leaves the .info files content and/or the backing chain of the volume file in a broken state. The error can be identified e.g. by the following log pattern:\n\nThis is the first snapshot chain deletion that runs successfully (the snapshots id is 91755e5f-e573-4ddb-84af-3712d69a). The ID of the snapshot and its snapshot_file name do match their uuids:\n\n2017-09-13 08:28:59.436 20467 DEBUG cinder.volume.drivers.remotefs [req-eda7ddf5-217d-490d-a8d4-1813df68d8db tempest-VolumesSnapshotTestJSON-708947401 -] Deleting online snapshot 91755e5f-e573-4ddb-84af-3712d69a\nfc89 of volume 94598844-418c-4b5d-b034-5330e24e7421 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1099 \n2017-09-13 08:28:59.487 20467 DEBUG cinder.volume.drivers.remotefs [req-eda7ddf5-217d-490d-a8d4-1813df68d8db tempest-VolumesSnapshotTestJSON-708947401 -] snapshot_file for this snap is: volume-94598844-418c-4b5d-b034-5330e24e7421.91755e5f-e573-4ddb-84af-3712d69afc89 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1124 \n\nThe next snapshot to be deleted (138a1f62-7582-4aaa-9d72-9eada34b) shows that a wrong snapshot_file is read from the volumes .info file. In fact it shows the file of the previous snapshot :\n\n2017-09-13 08:29:01.857 20467 DEBUG cinder.volume.drivers.remotefs [req-6ad4add9-34b8-41b9-a1f0-7dc2d6bb1862 tempest-VolumesSnapshotTestJSON-708947401 -] Deleting online snapshot 138a1f62-7582-4aaa-9d72-9eada34b\neeaf of volume 94598844-418c-4b5d-b034-5330e24e7421 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1099\n2017-09-13 08:29:01.872 20467 DEBUG cinder.volume.drivers.remotefs [req-6ad4add9-34b8-41b9-a1f0-7dc2d6bb1862 tempest-VolumesSnapshotTestJSON-708947401 -] snapshot_file for this snap is: volume-94598844-418c-4b5d-b034-5330e24e7421.91755e5f-e573-4ddb-84af-3712d69afc89 _delete_snapshot /opt/stack/cinder/cinder/volume/drivers/remotefs.py:1124\n\nNow this second snapshot deletion fails because the snapshot file for 138a1f62-7582-4aaa-9d72-9eada34b no longer exists:\n\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server ProcessExecutionError: Unexpected error while running command. \n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Command: /usr/bin/python -m oslo_concurrency.prlimit --as=1073741824 --cpu=8 -- env LC_ALL=C qemu-img info /opt/stack/data/cinder/mnt/a1e3635ffba9fce1b854369f1a255d7b/volume-94598844-418c-4b5d-b034-5330e24e7421.138a1f62-7582-4aaa-9d72-9eada34beeaf\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Exit code: 1 \n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Stdout: u''\n2017-09-13 08:29:02.674 20467 ERROR oslo_messaging.rpc.server Stderr: u\"qemu-img: Could not open '/opt/stack/data/cinder/mnt/a1e3635ffba9fce1b854369f1a255d7b/volume-94598844-418c-4b5d-b034-5330e24e7421.138a1f62-7582-4aaa-9d72-9eada34beeaf': Could not open '/opt/stack/data/cinder/mnt/a1e3635ffba9fce1b854369f1a255d7b/volume-94598844-418c-4b5d-b034-5330e24e7421.138a1f62-7582-4aaa-9d72-9eada34beeaf': No such file or directory\\n\" \n\n\nThe referenced tempest test fails 100% of the time in our CIs. I manually tested the scenario and found the same results. Furthermore i was able, by creating three consecutive snapshots from a single volume and deleting them one after the other, to create a snapshot file with a broken backing file link. In the end i was left with a volume file and an overlay file referencing a removed backing file (previous snapshot of the same volume).\n\nI was able to run the scenario without issues when using offline snapshots. Thus this seems to be related to the usage of the online snapshot deletion via the Nova API.", 
+            "date_created": "2017-09-13 13:24:10.669486+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "This issue started up around the 28th of August but definitely not earlier than the 24th of August.", 
+            "date_created": "2017-09-13 13:32:54.372849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "I'm adding a shell log that shows a manual reproduction of breaking the backing chain of a volume with three snapshots via deleting the latest snapshot while the volume is attached to a running VM. This was run in a current trunk setup with DevStack.", 
+            "date_created": "2017-09-14 09:21:57.678294+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2017-09-14 09:22:12.853777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "I did more manual testing and followed up into the details of what Nova does during the assisted snapshot deletaion.\nAfaics Nova starts a block rebase that never returns which probably is the reason why the backing chain is not adapted and the whole test times out.", 
+            "date_created": "2017-09-14 13:39:31.158984+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "I'd be happy to get hints on how to trace the block rebase process, i've no idea which binary does that and how check it. There's no further log output in the Nova log...", 
+            "date_created": "2017-09-14 13:48:17.877019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "Update:\nI followed up with manual testing & patching the code. The Nova block commit does terminate fine (it's just that there's no message provided about that). So i'm back on square one following up on why the backing chain breaks. Will dig further...", 
+            "date_created": "2017-10-11 12:08:35.497276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }
+    ]
+}

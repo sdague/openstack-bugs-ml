@@ -1,0 +1,73 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:27:52.300502+00:00", 
+    "description": "I wrote a Tempest test for making sure that resizing a stopped server works since the API supports that scenario, and Jenkins passes (with the libvirt driver) but XenServer CI failed on the new tests:\n\nhttp://dd6b71949550285df7dc-dda4e480e005aaa13ec303551d2d8155.r49.cf1.rackcdn.com/12/87312/3/testr_results.html.gz\n\nTraceback (most recent call last):\n  File \"tempest/api/compute/servers/test_server_actions.py\", line 220, in test_resize_server_confirm_from_stopped\n    self._test_resize_server_confirm(stop=True)\n  File \"tempest/api/compute/servers/test_server_actions.py\", line 201, in _test_resize_server_confirm\n    self.client.wait_for_server_status(self.server_id, 'VERIFY_RESIZE')\n  File \"tempest/services/compute/json/servers_client.py\", line 168, in wait_for_server_status\n    raise_on_error=raise_on_error)\n  File \"tempest/common/waiters.py\", line 89, in wait_for_server_status\n    raise exceptions.TimeoutException(message)\nTimeoutException: Request timed out\nDetails: Server a3bdc31f-c8db-4751-af96-db9e17ce744c failed to reach VERIFY_RESIZE status and task state \"None\" within the required time (196 s). Current status: ACTIVE. Current task state: None.", 
+    "tags": [
+        "xenserver"
+    ], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1308064", 
+    "owner": "None", 
+    "id": 1308064, 
+    "index": 1476, 
+    "created": "2014-04-15 13:22:51.007160+00:00", 
+    "title": "resizing a stopped server fails with xenapi", 
+    "comments": [
+        {
+            "content": "I wrote a Tempest test for making sure that resizing a stopped server works since the API supports that scenario, and Jenkins passes (with the libvirt driver) but XenServer CI failed on the new tests:\n\nhttp://dd6b71949550285df7dc-dda4e480e005aaa13ec303551d2d8155.r49.cf1.rackcdn.com/12/87312/3/testr_results.html.gz\n\nTraceback (most recent call last):\n  File \"tempest/api/compute/servers/test_server_actions.py\", line 220, in test_resize_server_confirm_from_stopped\n    self._test_resize_server_confirm(stop=True)\n  File \"tempest/api/compute/servers/test_server_actions.py\", line 201, in _test_resize_server_confirm\n    self.client.wait_for_server_status(self.server_id, 'VERIFY_RESIZE')\n  File \"tempest/services/compute/json/servers_client.py\", line 168, in wait_for_server_status\n    raise_on_error=raise_on_error)\n  File \"tempest/common/waiters.py\", line 89, in wait_for_server_status\n    raise exceptions.TimeoutException(message)\nTimeoutException: Request timed out\nDetails: Server a3bdc31f-c8db-4751-af96-db9e17ce744c failed to reach VERIFY_RESIZE status and task state \"None\" within the required time (196 s). Current status: ACTIVE. Current task state: None.", 
+            "date_created": "2014-04-15 13:22:51.007160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hmm, looks like this could be an environment issue with the XenServer CI.\n\nEither way, looks like it should be investigated a little more form the XenServer CI point of view.", 
+            "date_created": "2014-04-15 14:08:52.792964+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Why do you suspect the CI rather than a nova issue for this?", 
+            "date_created": "2014-04-15 14:21:46.864125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "I am seeing this in the n-cpu log:\n\n\"VM already halted, skipping shutdown\"\n\nThat's when confirm_migration is called on the driver and it shuts down the VM, and in this case it's already shutdown, but that shouldn't cause any failures, it probably shouldn't be a warning in this case though.", 
+            "date_created": "2014-04-15 15:47:13.187512+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm seeing http://paste.openstack.org/show/76070/ as a possible cause here - although that's only being seen in my local environment with https://review.openstack.org/#/c/87958/ applied.\n\nIntroduced by https://github.com/openstack/nova/blob/master/nova/network/api.py#L473 (from https://review.openstack.org/#/c/87019/)", 
+            "date_created": "2014-04-17 10:51:03.894617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Bob, that was fixed in rc2 with this: https://review.openstack.org/86194", 
+            "date_created": "2014-04-17 12:27:23.751199+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/87958\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b634bf3a0b3dbccec6c3d7b26ab2a67d8eb1a6e5\nSubmitter: Jenkins\nBranch:    master\n\ncommit b634bf3a0b3dbccec6c3d7b26ab2a67d8eb1a6e5\nAuthor: Bob Ball <email address hidden>\nDate:   Wed Apr 16 13:23:45 2014 +0100\n\n    XenAPI: Use local rsync rather than remote if possible\n    \n    Using ssh depends on the host being set up to be able to SSH into\n    itself which is not a common scenario.  While this is unavoidable for\n    the current implementation of resize across multiple hosts, if there\n    is a single host (i.e. a test scenario) or the resize is restricted\n    to the same host then we can succeed without SSH access\n    \n    Dependency on Ia310e31d31aaf5c979e41c64af8223202a18e03a is because the\n    tests will always fail without Ia310 therefore this fix cannot be tested\n    without taking Ia310 as well.\n    \n    Closes-bug: 1308064\n    \n    Change-Id: I15802a1d97d380b1c5b74fc9f92ece2494fe789a\n", 
+            "date_created": "2014-04-23 16:58:57.065528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Resize from stopped still doesn't seem to be working for xenserver, otherwise there are other infra issues:\n\nhttps://review.openstack.org/#/c/87312/", 
+            "date_created": "2014-05-05 15:24:29.177545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Re-opening since this is still failing in XenServer CI with resize from stopped tests.", 
+            "date_created": "2014-05-05 15:26:42.456875+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think this bug is fixed, but I've raised bug 1317792 as a new race condition I have identified which can affect resize test cases.", 
+            "date_created": "2014-05-09 09:07:46.289878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Bob, thanks, yeah looks like the resize from stopped test I added in that one patch is passed xenserver CI now, but hitting another race with shelve/unshelve:\n\nhttp://dd6b71949550285df7dc-dda4e480e005aaa13ec303551d2d8155.r49.cf1.rackcdn.com/12/87312/7/7848/testr_results.html.gz\n\nSo a different bug - this one is good, thanks!", 
+            "date_created": "2014-05-15 01:46:21.376275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

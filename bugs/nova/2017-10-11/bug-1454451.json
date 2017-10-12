@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-01-21 23:18:29.826465+00:00", 
+    "description": "I'm running into an issue with kilo-3 that I think is present in current trunk.  Basically it results in multiple instances (with dedicated cpus) being pinned to the same physical cpus.\n\nI think there is a race between the claimed CPUs of an instance being persisted to the DB, and the resource audit scanning the DB for instances and subtracting pinned CPUs from the list of available CPUs.\n\nThe problem only shows up when the following sequence happens:\n1) instance A (with dedicated cpus) boots on a compute node\n2) resource audit runs on that compute node\n3) instance B (with dedicated cpus) boots on the same compute node\n\nSo you need to either be booting many instances, or limiting the valid compute nodes (host aggregate or server groups), or have a small cluster in order to hit this.\n\nThe nitty-gritty view looks like this:\n\nWhen booting up an instance we hold the COMPUTE_RESOURCE_SEMAPHORE in compute.resource_tracker.ResourceTracker.instance_claim() and that covers updating the resource usage on the compute node. But we don't persist the instance numa topology to the database until after instance_claim() returns, in compute.manager.ComputeManager._build_instance().  Note that this is done *after* we've given up the semaphore, so there is no longer any sort of ordering guarantee.\n\ncompute.resource_tracker.ResourceTracker.update_available_resource() then aquires COMPUTE_RESOURCE_SEMAPHORE, queries the database for a list of instances and uses that to calculate a new view of what resources are available. If the numa topology of the most recent instance hasn't been persisted yet, then the new view of resources won't include any pCPUs pinned by that instance.\n\ncompute.manager.ComputeManager._build_instance() runs for the next instance and based on the new view of available resources it allocates the same pCPU(s) used by the earlier instance. Boom, overlapping pinned pCPUs.\n\n\nLastly, the same bug applies to the compute.manager.ComputeManager.rebuild_instance() case.  It uses the same pattern of doing the claim and then updating the instance numa topology after releasing the semaphore.", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1454451", 
+    "owner": "https://api.launchpad.net/1.0/~cbf123", 
+    "id": 1454451, 
+    "index": 1745, 
+    "created": "2015-05-12 23:22:51.510041+00:00", 
+    "title": "simultaneous boot of multiple instances leads to cpu pinning overlap", 
+    "comments": [
+        {
+            "content": "I'm running into an issue with kilo-3 that I think is present in current trunk.\n\nI think there is a race between the claimed CPUs of an instance being persisted to the DB, and the resource audit scanning the DB for instances and subtracting pinned CPUs from the list of available CPUs.\n\nThe problem only shows up when the following sequence happens:\n1) instance A (with dedicated cpus) boots on a compute node\n2) resource audit runs on that compute node\n3) instance B (with dedicated cpus) boots on the same compute node\n\nSo you need to either be booting many instances, or limiting the valid compute nodes (host aggregate or server groups), or have a small cluster in order to hit this.\n\n\nThe nitty-gritty view looks like this:\n\nWhen booting up an instance we hold the COMPUTE_RESOURCE_SEMAPHORE in compute.resource_tracker.ResourceTracker.instance_claim() and that covers updating the resource usage on the compute node. But we don't persist the instance numa topology to the database until after instance_claim() returns, in compute.manager.ComputeManager._build_instance().  Note that this is done *after* we've given up the semaphore, so there is no longer any sort of ordering guarantee.\n\ncompute.resource_tracker.ResourceTracker.update_available_resource() then aquires COMPUTE_RESOURCE_SEMAPHORE, queries the database for a list of instances and uses that to calculate a new view of what resources are available. If the numa topology of the most recent instance hasn't been persisted yet, then the new view of resources won't include any pCPUs pinned by that instance.\n\ncompute.manager.ComputeManager._build_instance() runs for the next instance and based on the new view of available resources it allocates the same pCPU(s) used by the earlier instance. Boom, overlapping pinned pCPUs.", 
+            "date_created": "2015-05-12 23:22:51.510041+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/182766", 
+            "date_created": "2015-05-13 17:26:53.143623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/182766\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2427d288bc017a5b91430ffe16419d47703d2060\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2427d288bc017a5b91430ffe16419d47703d2060\nAuthor: Chris Friesen <email address hidden>\nDate:   Wed May 13 11:15:25 2015 -0600\n\n    Fix race between resource audit and cpu pinning\n    \n    This fixes a race between the claimed CPUs of an instance being\n    persisted to the DB, and the resource audit scanning the DB for\n    instances and subtracting pinned CPUs from the list of available CPUs.\n    \n    The problem only shows up when the following sequence happens:\n    1) instance A (with dedicated cpus) boots on a compute node\n    2) resource audit runs on that compute node\n    3) instance B (with dedicated cpus) boots on the same compute node\n    \n    The bug is that the claimed numa topology isn't updated until\n    after we release COMPUTE_RESOURCES_SEMAPHORE, so when the resource\n    audit retrieves the list of instances the numa_topology hasn't\n    been updated yet for the most recent one.\n    \n    The fix is to persist the claimed numa topology before releasing\n    COMPUTE_RESOURCES_SEMAPHORE.\n    \n    Closes-Bug: #1454451\n    Co-Authored-By: Dan Smith <email address hidden>\n    Change-Id: I553f2e43a68577c83d890c3671380af68f9e725a\n", 
+            "date_created": "2015-05-15 23:59:33.576714+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/185591", 
+            "date_created": "2015-05-26 13:25:55.889260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/185647", 
+            "date_created": "2015-05-26 15:41:35.816859+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/185591\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b13726bcf6b9e6a006ec9bfcde051331741ded5a\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit b13726bcf6b9e6a006ec9bfcde051331741ded5a\nAuthor: Chris Friesen <email address hidden>\nDate:   Wed May 13 11:15:25 2015 -0600\n\n    Fix race between resource audit and cpu pinning\n    \n    This fixes a race between the claimed CPUs of an instance being\n    persisted to the DB, and the resource audit scanning the DB for\n    instances and subtracting pinned CPUs from the list of available CPUs.\n    \n    The problem only shows up when the following sequence happens:\n    1) instance A (with dedicated cpus) boots on a compute node\n    2) resource audit runs on that compute node\n    3) instance B (with dedicated cpus) boots on the same compute node\n    \n    The bug is that the claimed numa topology isn't updated until\n    after we release COMPUTE_RESOURCES_SEMAPHORE, so when the resource\n    audit retrieves the list of instances the numa_topology hasn't\n    been updated yet for the most recent one.\n    \n    The fix is to persist the claimed numa topology before releasing\n    COMPUTE_RESOURCES_SEMAPHORE.\n    \n    Closes-Bug: #1454451\n    Co-Authored-By: Dan Smith <email address hidden>\n    (cherry picked from commit 2427d288bc017a5b91430ffe16419d47703d2060)\n    \n    Conflicts:\n    \tnova/compute/manager.py\n    \tnova/tests/unit/compute/test_resource_tracker.py\n    \tnova/tests/unit/compute/test_tracker.py\n    \n    Change-Id: I553f2e43a68577c83d890c3671380af68f9e725a\n", 
+            "date_created": "2015-09-21 18:04:24.475361+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/juno\nReview: https://review.openstack.org/185647\nReason: Juno is EOL soon.", 
+            "date_created": "2015-12-02 03:15:04.631955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

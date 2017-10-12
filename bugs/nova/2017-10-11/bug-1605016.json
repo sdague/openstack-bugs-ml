@@ -1,0 +1,128 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-08-15 16:49:01.716971+00:00", 
+    "description": "Post copy live migration causes loss of networking for the duration of the post copy phase.\n\nPost copy live migration is implemented for the libvirt virt driver with qemu. It works by switching the active VM to the destination early (before the copy is complete) and then completes the copy using the post copy algorithm.\n\nPort rebind is done in post_live_migration_at_destination() which is called after the migration has completed. So the destination VM has no networking for the duration of the post copy phase.\n\nThe network ports should be rebound to the destination immediately after the switch so the destination VM has access to its networking.", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "High", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1605016", 
+    "owner": "None", 
+    "id": 1605016, 
+    "index": 1951, 
+    "created": "2016-07-20 23:31:48.720128+00:00", 
+    "title": "Post copy live migration interrupts network connectivity", 
+    "comments": [
+        {
+            "content": "Post copy live migration causes loss of networking for the duration of the post copy phase.\n\nPost copy live migration is implemented for the libvirt virt driver with qemu. It works by switching the active VM to the destination early (before the copy is complete) and then completes the copy using the post copy algorithm.\n\nPort rebind is done in post_live_migration_at_destination() which is called after the migration has completed. So the destination VM has no networking for the duration of the post copy phase.\n\nThe network ports should be rebound to the destination immediately after the switch so the destination VM has access to its networking.", 
+            "date_created": "2016-07-20 23:31:48.720128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Libvirt emits an event at the destination when the post-copy switch happens: event DOMAIN_EVENT_RESUMED with a reason of VIR_DOMAIN_EVENT_RESUMED_POSTCOPY\n\nThis could be used to trigger the network rebind\n", 
+            "date_created": "2016-07-26 15:15:16.504165+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "The problem here is making sure we work in both the post_copy and non-post copy case.\n\nI have a feeling we need to feed an extra active_on_destination callback into the driver.live_migration method, and we can then make sure thats call in post-copy and non-post copy cases. For many drivers you just call that then the success call back one after the other.\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L5249\n\nWe should then be able to fit this into the regular call patterns so its not a \"special\" code path.\n\nBasically for neutron, we need to update the port biding to point to the destination node as soon as the VM goes active on the destination. In compute manager land this is the call that we need to make:\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L5522\n\nYou can see that call through to the neutron code here:\nhttps://git.openstack.org/cgit/openstack/nova/tree/nova/network/neutronv2/api.py#n1934\n\nFor a quick fix, I think you can probably make that network_api call on the source node, in a post_copy_just_happened call, and only call the network_api for the neutron case? But not sure if we want to carry... its nasty.", 
+            "date_created": "2016-08-26 07:34:52.049315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Hi,\n\nAs I am working on some other stuff, I won't be having much time to work on this.\n\nBeing a high priority bug, it would be good if someone else can take this.\n\n\n", 
+            "date_created": "2016-08-26 10:18:01.514569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ratailor"
+        }, 
+        {
+            "content": "Is there a minimum version of libvirt for that event when networking is complete? If so, I'm assuming it's the same as the minimum version for post-copy support, is that correct?", 
+            "date_created": "2016-09-06 14:15:10.799723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm parking working on this for the moment because I can't reproduce it. I trust that it's a real problem, and I believe I have an outline solution to it, but I'm reluctant to invest significant effort without a reproducer in case I have misunderstood it. Here is my current understanding:\n\nAfter migration completes, the instance has moved from host A to host B. It is now running on host B, but nova has not yet told neutron about this, so it has no networking. Note that this is true of both post-copy and regular migrations, but with post-copy the window is longer. Consequently for the remainder of this bit, lets ignore post-copy.\n\nSo, the instance is running on host B, but neutron doesn't know yet. Nova then does:\n\ncomputemanager._post_live_migration (executed on the source host):\n  self.network_api.migrate_instance_start(ctxt, instance, migration)\n\ncomputemanager.post_live_migration_at_destination (executed on the dest host):\n  self.network_api.setup_networks_on_host(context, instance, DEST)\n  self.network_api.migrate_instance_finish(context, instance, migration)\n\nIncidentally, note that all of these are all rpc calls, so it's irrelevant which compute host executes them. They could easily all be run on the source host (which is what I propose).\n\nUsing a physical analogy, it was my understanding that until nova executes the above sequence of neutron commands, the patch cable to the network switch is still plugged in to the source. After executing the above, we ensure that the relevant network segment has a presence on host B, we remove the patch cable from the source and plug it into the destination instead. Until we do this, the destination isn't connected to anything, so it doesn't have a network.\n\nHowever, this isn't what I think I observed.\n\nI created 2 instances on a private network. I had InstanceA continuously ping InstanceB over the private network. I put a breakpoint in _post_live_migration() before it executes any of the above network mangling, then live migrated InstanceB. I waited until n-cpu dropped into the breakpoint. At this point, it is my expectation that the migration has completed, but networking hasn't been reconfigured for the new location, yet. Consequently, it is my expectation that the ping should be interrupted until I allow _post_live_migration() to continue. However, the ping was not interrupted.\n\nI spoke to Dan Berrang\u00e9 about this on IRC, and he suggested that it's because neutron was using linuxbridge. I didn't get the detail, but the gist seemed to be that the network was already configured at both ends, so there would be no interruption. However, I'm guessing that there's some other configuration which would be affected? Without being able to reproduce that, though, I'll come back to where I started, which is that I'm reluctant to spend a lot of time potentially not fixing the problem. I'm worried I may have misunderstood what we're trying to achieve.\n\nReproducer aside, if I have correctly understood the problem, I think I have a solution to it. The simple part is how to initiate the network switchover immediately we switch to post-copy, rather than waiting for migration completion. We explicitly kick off post-copy _live_migration_monitor on the source host with:\n\n    libvirt_migrate.trigger_postcopy_switch(guest, instance, migration)\n\nModulo code organisation, we just have to execute the above neutron rpc calls at the same time from _live_migration_monitor. The complication is in not subsequently executing them again when the migration completes.\n\nThe first part is simple, because _post_live_migration() runs on the source compute, which is the same compute which initiated the post-copy. With a trivial matter of programming, we can arrange for _post_live_migration to not call network_api.migrate_instance_start(). The problem is that post_live_migration_at_destination() is an rpc call which:\n\n* Does not have an existing argument we can abuse for this purpose\n* May not support it anyway: we don't know in advance\n\nWe presumably don't want to do this twice, so we need to know at least by the time we initiate post-copy whether we can tell the subsequent call to post_live_migration_at_destination() not to do it again. If we can't do that, we can't do the early initiation of the network switchover.\n\nI discussed this rpc problem with Dan Smith. He proposed that we address it with 2 RPC changes:\n\n* pre_live_migration() is updated to return a sentinel indicating that post_live_migration_at_destination() supports an 'already-networked' flag.\n\n* post_live_migration_at_destination() gains an 'already-networked' flag.\n\nThe sentinel from pre_live_migration() is available in computemanager._do_live_migration(), so we can make it available to driver.live_migration() and computemanager._post_live_migration(). A bit of a pain to make 2 RPC changes, but hopefully not rocket science. No new calls required.\n\nSo, to work on this, I'm really looking for some devstack incantations which will give me a neutron configuration which actually demonstrates the problem. Can anybody help?", 
+            "date_created": "2016-09-08 13:54:06.823486+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Hi Matthew,\n  I'll let all the detail of the internal APIs of open-stack wash-over me, but as a suggestion for how to reproduce, perhaps:\n\n   a) Start a guest with a fair amount of RAM - the more the merrier.\n   b) Start pinging the guest from a 3rd host - ideally outside the set of switches being managed.\n   c) In the guest run something that really heavily dirties memory - .e.g. the 'stress' command setup to use as much of the guest RAM as possible, or google's stressapptest\n\nI'm hoping that (a) & (c) will force it to spend a long time during the postcopy phase.\nI'm hoping that pinging from outside inwards means that it wouldn't be prone to the bridge/switch detecting the guest has moved by itself.\n\nDave", 
+            "date_created": "2016-09-08 14:09:02.071180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dgilbert-h"
+        }, 
+        {
+            "content": "Thanks, Dave. I've actually already managed to reproduce post-copy. I took stress.c from the qemu source, and ran it in a 2G guest, so pretty much as you describe.\n\nThe issue I'm having is actually with reproducing the network side of the problem. The default networking seems annoyingly immune to this issue :)\n\nYou say:  ...pinging the guest from a 3rd host - ideally outside the set of switches being managed\n\nIs that bit important? Is my test of a ping between 2 guests on the same virtual network invalid? I'm just trying to simplify the networking I have to configure.", 
+            "date_created": "2016-09-08 14:23:40.079192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "> You say: ...pinging the guest from a 3rd host - ideally outside the set of switches being managed\n\n> Is that bit important? Is my test of a ping between 2 guests on the same virtual network invalid? \n> I'm just trying to simplify the networking I have to configure.\n\nThat depends on how your networking is setup and what actually happens when you switch over on migration works;  in a simple world where the two VMs and hosts are connected to a switch/bridge, once the destination starts spewing out packets then any switch/bridge tables will know to send their packets back to the new destination host.\nSo pinging between 2 guests on the same virtual network might be that simple case, because as soon as the destination starts to send packets out the other VM will no how to send the answers back.\n\nNow, if you're two guests are actually connected by some set of tunnels and firewalled and stuff then packets wont be able to get out from the destination host until that firewalling/tunnelling has changed.\nQEMU does an 'announce' once the destination starts, so anything on the same bridge should notice it (probably even for incoming pings).\n\nI was just hoping that doing incoming from outside would force it all to go through the full network stack.", 
+            "date_created": "2016-09-08 14:39:02.524565+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dgilbert-h"
+        }, 
+        {
+            "content": "I had a Helion install that uses DVR lying around so I tried to produce the network outage. It doesn't have post copy so I tested it by delaying the post_live_migration_at_destination() method using a 30 second sleep. That prevents the ports being rebound for 30 seconds. I compared that to what happens without a pause.\n\nI created a VM, ping it from outside and migrate it. The ping responses below show a short pause in which 3 icmp packets are dropped at the time of switchover:\n\n64 bytes from 172.31.0.3: icmp_seq=27 ttl=62 time=0.504 ms\n64 bytes from 172.31.0.3: icmp_seq=28 ttl=62 time=0.698 ms\n64 bytes from 172.31.0.3: icmp_seq=29 ttl=62 time=15.4 ms\n64 bytes from 172.31.0.3: icmp_seq=30 ttl=62 time=1.00 ms\nFrom 172.31.0.3: icmp_seq=34 Redirect Host(New nexthop: 172.31.0.3)\nFrom 172.31.0.3: icmp_seq=35 Redirect Host(New nexthop: 172.31.0.3)\nFrom 172.31.0.3: icmp_seq=36 Redirect Host(New nexthop: 172.31.0.3)\n64 bytes from 172.31.0.3: icmp_seq=34 ttl=62 time=2733 ms\n64 bytes from 172.31.0.3: icmp_seq=35 ttl=62 time=1725 ms\n64 bytes from 172.31.0.3: icmp_seq=36 ttl=62 time=717 ms\n64 bytes from 172.31.0.3: icmp_seq=37 ttl=62 time=1.20 ms\n64 bytes from 172.31.0.3: icmp_seq=38 ttl=62 time=1.00 ms\n64 bytes from 172.31.0.3: icmp_seq=39 ttl=62 time=1.09 ms\n64 bytes from 172.31.0.3: icmp_seq=40 ttl=62 time=0.577 ms\n\n\nI repeated this with a 30 second sleep inserted at the start of post_live_migration_at_destination():\n\n64 bytes from 172.31.0.3: icmp_seq=35 ttl=62 time=0.438 ms\n64 bytes from 172.31.0.3: icmp_seq=36 ttl=62 time=0.936 ms\n64 bytes from 172.31.0.3: icmp_seq=37 ttl=62 time=0.498 ms\n64 bytes from 172.31.0.3: icmp_seq=38 ttl=62 time=1.15 ms\nFrom 172.31.0.3: icmp_seq=73 Redirect Host(New nexthop: 172.31.0.3)\nFrom 172.31.0.3: icmp_seq=73 Redirect Host(New nexthop: 172.31.0.3)\nFrom 172.31.0.3: icmp_seq=74 Redirect Host(New nexthop: 172.31.0.3)\nFrom 172.31.0.3: icmp_seq=74 Redirect Host(New nexthop: 172.31.0.3)\nFrom 172.31.0.3: icmp_seq=75 Redirect Host(New nexthop: 172.31.0.3)\nFrom 172.31.0.3: icmp_seq=75 Redirect Host(New nexthop: 172.31.0.3)\n64 bytes from 172.31.0.3: icmp_seq=76 ttl=62 time=1.03 ms\n64 bytes from 172.31.0.3: icmp_seq=77 ttl=62 time=0.644 ms\n64 bytes from 172.31.0.3: icmp_seq=78 ttl=62 time=0.754 ms\n64 bytes from 172.31.0.3: icmp_seq=79 ttl=62 time=0.629 ms\n\nThis shows that 34 icmp packets are dropped.\n\nThis was not done with post copy, but it does show the effect of not rebinding the ports with DVR. In general the network connectivity will depend on the implementation.\n\n", 
+            "date_created": "2016-09-09 11:26:32.079153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Note: the short pause and packet loss observed on switchover in the normal case is related to this bug: https://bugs.launchpad.net/neutron/+bug/1456073 and is being improved.\n\nThe setup I had above was using Mitaka.", 
+            "date_created": "2016-09-09 11:30:05.963133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Repeated above pinging from another vm instead of outside world. Same outage confirmed (but no redirects).\n\nWithout pause (loses pings 46-49):\n64 bytes from 172.31.0.3: seq=43 ttl=63 time=2.402 ms\n64 bytes from 172.31.0.3: seq=44 ttl=63 time=0.724 ms\n64 bytes from 172.31.0.3: seq=45 ttl=63 time=2.484 ms\n64 bytes from 172.31.0.3: seq=50 ttl=60 time=2389.050 ms\n64 bytes from 172.31.0.3: seq=51 ttl=60 time=1388.451 ms\n64 bytes from 172.31.0.3: seq=52 ttl=60 time=387.826 ms\n64 bytes from 172.31.0.3: seq=53 ttl=60 time=1.087 ms\n64 bytes from 172.31.0.3: seq=54 ttl=60 time=1.042 ms\n\n\nWith the pause (loses pings 90-123):\n64 bytes from 172.31.0.3: seq=86 ttl=60 time=0.936 ms\n64 bytes from 172.31.0.3: seq=87 ttl=60 time=1.092 ms\n64 bytes from 172.31.0.3: seq=88 ttl=60 time=1.075 ms\n64 bytes from 172.31.0.3: seq=89 ttl=60 time=1.608 ms\n64 bytes from 172.31.0.3: seq=124 ttl=64 time=1.456 ms\n64 bytes from 172.31.0.3: seq=125 ttl=64 time=0.339 ms\n64 bytes from 172.31.0.3: seq=126 ttl=64 time=0.397 ms\n64 bytes from 172.31.0.3: seq=127 ttl=64 time=0.492 ms\n", 
+            "date_created": "2016-09-09 12:20:46.790716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "An update: after lots of help from ajo and haleyb, I've established that this bug is not reproduced in 'non-dvr' mode, but is reproduced in dvr mode. I now have a local multi-node devstack with dvr where I can reproduce this. I'll work on it next week.", 
+            "date_created": "2016-09-09 18:42:53.100427+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Describing my 'reproducer' in a little more detail:\n\n* Boot an instance on devstack's 'private' network\n* Ping the instance's ip on private continuously from the controller node\n* Live migrate the instance\n\nWhat I observe is:\n\n* When migrating *to* the controller node where my ping is running, there is a short, or no interruption.\n\n* When migrating *from* the controller node, i.e. the migration target is the node where my ping is not running, there is an interruption of a few seconds: typically about 6 seconds.\n\n* When migrating *from* the controller node and I pause execution before allowing post-live-migration() to run, there is a much longer interruption: typically about 30 seconds. However, the ping resumes *before* I unpause execution. Allowing post-live-migration() to continue running has no effect.\n\nI assume therefore that there is some periodic task, or network discovery or some such mechanism which will cause the networking to self-heal in this situation.", 
+            "date_created": "2016-09-12 13:56:43.553198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/369423", 
+            "date_created": "2016-09-13 12:39:06.714662+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Maybe we should lower the priority (Importance) of this bug, given that not many folks hit this issue?", 
+            "date_created": "2017-02-01 18:22:59.921857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sarafraj-singh"
+        }, 
+        {
+            "content": "It would be good to get it fixed; Not many people have hit it partially because postcopy is new, so the question is how many would hit it if they tried to use it.", 
+            "date_created": "2017-02-01 18:52:46.434097+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dgilbert-h"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/434870", 
+            "date_created": "2017-02-16 12:58:05.045637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/413021\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 10:02:30.159349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/404607\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 10:02:35.330336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/369423\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 10:04:52.878546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I am not working on this bug anymore. It would be great if someone else who are interested in this patch can take over it.\n\nRegards,\nSiva.", 
+            "date_created": "2017-08-15 16:48:43.341945+00:00", 
+            "author": "https://api.launchpad.net/1.0/~siva-radhakrishnan"
+        }
+    ]
+}

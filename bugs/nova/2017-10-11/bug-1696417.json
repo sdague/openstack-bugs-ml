@@ -1,0 +1,63 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-09-08 22:01:32.027901+00:00", 
+    "description": "Reproduceable under conditions:\n\n* Mitaka upgraded to Newton\n* online_data_migrations have not yet migrated flavors and/or aggregates from the nova database, to the nova-api database\n* One or more of the datetime-fields (created_at, updated_at, deleted_at) are set.\n** Because a custom flavor has been created\n** Because a flavor has been updated\n** Because a flavor has been deleted (deleted flavors are probably not relevant, as the new table have no deleted flag, it just removes them altogether)\n\nSteps to reproduce:\n\n* Run 'nova-manage db online_data_migrations'\n\nIt throws an error message like:\nError attempting to run <function migrate_flavors at 0x488f398>\n\nWorkaround:\n\n* Set created_at,updated_at and deleted_at to NULL\n* Run migration\n\n\n\nI have done quite a bit of troubleshooting, but haven't managed to write a patch so far.  As far as I can tell, inserting a flavor or aggregate to the new tables fail due to the datetime fields including a timezone.  There exists code for stripping away the timezone in nova/db/sqlalchemy/api.py (convert_objects_related_datetimes) - but the timezone reappears in nova/objects/flavor.py", 
+    "tags": [
+        "openstack-version.mitaka"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1696417", 
+    "owner": "None", 
+    "id": 1696417, 
+    "index": 6889, 
+    "created": "2017-06-07 13:10:58.498878+00:00", 
+    "title": "nova-manage db online_data_migrations can fail when upgrading to newton under certain conditions", 
+    "comments": [
+        {
+            "content": "Reproduceable under conditions:\n\n* Mitaka upgraded to Newton\n* online_data_migrations have not yet migrated flavors and/or aggregates from the nova database, to the nova-api database\n* One or more of the datetime-fields (created_at, updated_at, deleted_at) are set.\n** Because a custom flavor has been created\n** Because a flavor has been updated\n** Because a flavor has been deleted (deleted flavors are probably not relevant, as the new table have no deleted flag, it just removes them altogether)\n\nSteps to reproduce:\n\n* Run 'nova-manage db online_data_migrations'\n\nIt throws an error message like:\nError attempting to run <function migrate_flavors at 0x488f398>\n\nWorkaround:\n\n* Set created_at,updated_at and deleted_at to NULL\n* Run migration\n\n\n\nI have done quite a bit of troubleshooting, but haven't managed to write a patch so far.  As far as I can tell, inserting a flavor or aggregate to the new tables fail due to the datetime fields including a timezone.  There exists code for stripping away the timezone in nova/db/sqlalchemy/api.py (convert_objects_related_datetimes) - but the timezone reappears in nova/objects/flavor.py", 
+            "date_created": "2017-06-07 13:10:58.498878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trygve-vea-gmail"
+        }, 
+        {
+            "content": "Could you please provide more details about at least the stacktrace ?\n", 
+            "date_created": "2017-06-07 16:49:31.157582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "There is no stacktrace to provide, the output of command is:\n\n# nova-manage db online_data_migrations\nOption \"rpc_backend\" from group \"DEFAULT\" is deprecated for removal.  Its value may be silently ignored in the future.\nOption \"notification_topics\" from group \"DEFAULT\" is deprecated. Use option \"topics\" from group \"oslo_messaging_notifications\".\nRunning batches of 50 until complete\nError attempting to run <function migrate_flavors at 0x63f3848>\nError attempting to run <function migrate_aggregates at 0x634f7d0>\n\n\nAdding --verbose or --debug does not change the output either.", 
+            "date_created": "2017-06-07 17:10:02.962016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trygve-vea-gmail"
+        }, 
+        {
+            "content": "There's a workaround for this,\nRun these in this order\n\nnova-manage db sync;\nnova-manage api_db sync;\nnova-manage db online_data_migrations;\n\nRecently ran into this out of nowhere, this seems to resolve the issue.\n", 
+            "date_created": "2017-06-09 19:13:02.774628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jrepka"
+        }, 
+        {
+            "content": "Automatically discovered version mitaka in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 16:00:02.067821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-08-27 04:18:07.674502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "I also ran into this exact same issue. We have mysql as the backend. And the datetime type is not timezone aware. Neither \"--verbose\" and \"--debug\" are effective for the online_data_migrations command as they are not being taken into consideration. I ended up manually printing out the traceback by adding these two lines\n\nimport sys, traceback\ntraceback.print_exc(file=sys.stdout)\n\nhere https://github.com/openstack/nova/blob/stable/newton/nova/cmd/manage.py#L897\n\nAnd able to see more information on the failure. Here's a sample traceback.\n\n\nRunning batches of 50 until complete\n-------------- 2017-05-19 23:34:43+00:00 -----------------\nError attempting to run <function migrate_flavors at 0x7f5a0d758e60>\nTraceback (most recent call last):\n  File \"/opt/stack/venv/nova-20170728T171245Z/lib/python2.7/site-packages/nova/cmd/manage.py\", line 892, in _run_migration\n    found, done = migration_meth(ctxt, count)\n  File \"/opt/stack/venv/nova-20170728T171245Z/lib/python2.7/site-packages/nova/objects/flavor.py\", line 717, in migrate_flavors\n    flavor._flavor_create(ctxt, flavor_values)\n  File \"/opt/stack/venv/nova-20170728T171245Z/lib/python2.7/site-packages/nova/objects/flavor.py\", line 463, in _flavor_create\n    return _flavor_create(context, updates)\n  File \"/opt/stack/venv/nova-20170728T171245Z/lib/python2.7/site-packages/oslo_db/sqlalchemy/enginefacade.py\", line 824, in wrapper\n    return fn(*args, **kwargs)\n  File \"/opt/stack/venv/nova-20170728T171245Z/lib/python2.7/site-packages/nova/objects/flavor.py\", line 166, in _flavor_create\n    raise db_exc.DBError(e)\nDBError: (_mysql_exceptions.OperationalError) (1292, \"Incorrect datetime value: '2017-05-19 23:34:43+00:00' for column 'created_at' at row 1\") [SQL: u'INSERT INTO flavors (created_at, updated_at, id, name, memory_mb, vcpus, root_gb, ephemeral_gb, flavorid, swap, rxtx_factor, vcpu_weight, disabled, is_public) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'] [parameters: (datetime.datetime(2017, 5, 19, 23, 34, 43, tzinfo=<iso8601.Utc>), None, 16, 'foo', 1024, 1, 2, 0, '50aae60f-ba2a-40d8-a0c3-2117ba0dd2a6', 0, 1.0, 0, 0, 0)]\n\nLooks like migrations code is attempting to insert a timezone aware datetime field into mysql.\n\n", 
+            "date_created": "2017-09-06 23:12:40.789063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~guang-yee"
+        }, 
+        {
+            "content": "But the fix is a bit complicated. I can think of a few option.\n\n1. expose a global configurable option in oslo.versionedobjects to set the tzinfo_aware option.\n\nhttps://github.com/openstack/oslo.versionedobjects/blob/master/oslo_versionedobjects/fields.py#L453\n\nIt shouldn't be per class as a given DB is either timezone-aware or not.\n\n2. expose the option at the service level (i.e. in Nova config) and pass in the tzinfo_aware parameter when we instantiate the DateTimeField.\n\n3. expose a global option in oslo.db and do the conversion there.\n", 
+            "date_created": "2017-09-06 23:21:27.626737+00:00", 
+            "author": "https://api.launchpad.net/1.0/~guang-yee"
+        }, 
+        {
+            "content": "Pushed a patch for option #1 here\n\nhttps://review.openstack.org/#/c/502189/\n", 
+            "date_created": "2017-09-08 22:01:31.370555+00:00", 
+            "author": "https://api.launchpad.net/1.0/~guang-yee"
+        }
+    ]
+}

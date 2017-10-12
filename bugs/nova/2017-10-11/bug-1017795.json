@@ -1,0 +1,178 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:25:38.201655+00:00", 
+    "description": "When using Nova scheduler with either the DifferentHostFilter and/or SameHostFilter we expose a way to make repeated DB calls via compute_api.get(). A user could submit requests to create servers with scheduler_hints such that thousands of DB calls to lookup an instance ID are made... which can cause the Nova scheduler to hang until the all the lookups are finished.\n\nTo reproduce:\n\n1) Create a valid instance.\n\n2) Obtain the 'ID' of the instance. You can do this by looking at the instance_name (an extended server attribute)\n\n3) Create specially formated server create request which repeates the valid instance ID in the os:scheduler_hints part of the request. See the following example request:\n\n{\n\"server\" : {\n\"name\" : \"sched_tester\",\n\"imageRef\" : \"7d3b6df9-0cb0-45ce-b9d8-621829d85554\",\n\"flavorRef\" : \"1\"\n},\n\"os:scheduler_hints\" : {\n  \"same_host\": [\"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\"...]\n}\n}\n\nIf you script it you can repeat the ID 10,000 times or so before you hit the request size limit for nova... plenty enough to cause Nova scheduler hangs for 5-10 minutes per server request (actual times would depend on DB performance, size, etc.)\n\nMaking 5-10 of these requests could take out all the Nova schedulers for a given cloud thus causing a server outage.\n\n-----\n\nAs a temporary workaround users can simply disable the DifferentHostFilter and/or SameHostFilter options in nova.conf. (these are not on by default so users would have had to enable them to begin with)\n\n-----\n\nA good solution to this might be to avoid repeated calls to compute_api.get and replace them with a single call to get all the instance host IDs for a particular user/tenant. This would however limit the selection capabilities to instances within the current user/tenants account. I think this is acceptable. We could also put a flat limit on the number of allowed instance_id/uuids used for the scheduler_hint requests.\n\n-----\n\nIt looks like this affects both Folsom and Essex.", 
+    "tags": [
+        "verification-done"
+    ], 
+    "importance": "High", 
+    "heat": 264, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1017795", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 1017795, 
+    "index": 717, 
+    "created": "2012-06-26 03:36:48.538936+00:00", 
+    "title": "scheduler hang (DOS) possible with DifferentHostFilter/SameHostFilter ", 
+    "comments": [
+        {
+            "content": "When using Nova scheduler with either the DifferentHostFilter and/or SameHostFilter we expose a way to make repeated DB calls via compute_api.get(). A user could submit requests to create servers with scheduler_hints such that thousands of DB calls to lookup an instance ID are made... which can cause the Nova scheduler to hang until the all the lookups are finished.\n\nTo reproduce:\n\n1) Create a valid instance.\n\n2) Obtain the 'ID' of the instance. You can do this by looking at the instance_name (an extended server attribute)\n\n3) Create specially formated server create request which repeates the valid instance ID in the os:scheduler_hints part of the request. See the following example request:\n\n{\n\"server\" : {\n\"name\" : \"sched_tester\",\n\"imageRef\" : \"7d3b6df9-0cb0-45ce-b9d8-621829d85554\",\n\"flavorRef\" : \"1\"\n},\n\"os:scheduler_hints\" : {\n  \"same_host\": [\"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\", \"1234\"...]\n}\n}\n\nIf you script it you can repeat the ID 10,000 times or so before you hit the request size limit for nova... plenty enough to cause Nova scheduler hangs for 5-10 minutes per server request (actual times would depend on DB performance, size, etc.)\n\nMaking 5-10 of these requests could take out all the Nova schedulers for a given cloud thus causing a server outage.\n\n-----\n\nAs a temporary workaround users can simply disable the DifferentHostFilter and/or SameHostFilter options in nova.conf. (these are not on by default so users would have had to enable them to begin with)\n\n-----\n\nA good solution to this might be to avoid repeated calls to compute_api.get and replace them with a single call to get all the instance host IDs for a particular user/tenant. This would however limit the selection capabilities to instances within the current user/tenants account. I think this is acceptable. We could also put a flat limit on the number of allowed instance_id/uuids used for the scheduler_hint requests.\n\n-----\n\nIt looks like this affects both Folsom and Essex.", 
+            "date_created": "2012-06-26 03:36:48.538936+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "@Dan: good find -- if you work on a patch, please post it here (private) rather than on Gerrit (public).", 
+            "date_created": "2012-06-26 11:13:13.573235+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Attaching patch/fix for Folsom.", 
+            "date_created": "2012-06-26 16:48:13.176559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Attaching patch fix for Essex.", 
+            "date_created": "2012-06-26 17:01:47.934225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "ttx: Both of the attached patches replace the compute_api.get calls with a single compute_api.get_all call which should be limited to the context and only contain servers for each user/tenant.\n\nLike I mentioned above an alternate solution might be leave the compute_api.get call as is and simply limit the number of UUIDs we allow to be specified in the scheduler_hints.\n\nWe'll see what other think....", 
+            "date_created": "2012-06-26 17:08:22.609088+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Addig nova-core to review the patches and give opinion on last comment.\nPlease do not share this publicly yet, and +1 or -1 in the comments here.", 
+            "date_created": "2012-06-27 15:49:11.463284+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposed impact description, please confirm:\n\nTitle: Scheduler denial of service through scheduler_hints\nImpact: High\nReporter: Dan Prince (Red Hat)\nProducts: Nova\nAffects: Essex, Folsom series\n\nDescription:\nDan Prince from Red Hat reported a vulnerability in Nova scheduler nodes. By creating servers with malicious scheduler_hints, an authenticated user may generate a huge amount of database calls, potentially resulting in a Denial of Service attack against Nova scheduler nodes. Only setups exposing the OpenStack API and enabling DifferentHostFilter and/or SameHostFilter are affected.\n", 
+            "date_created": "2012-06-27 15:54:55.719080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "ttx: I think that impact description looks fine.", 
+            "date_created": "2012-06-27 16:15:16.620923+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Seems reasonable to me ... are there related reviews for these patches?", 
+            "date_created": "2012-06-28 15:07:42.859479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sandy-walsh"
+        }, 
+        {
+            "content": "The two patches have slightly different diffs, but it seems they could be the same. Not sure if this was just the way patch worked but for later comparisons it would be nice to have them the same.", 
+            "date_created": "2012-06-28 15:09:56.474993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sandy-walsh"
+        }, 
+        {
+            "content": "Hi Sandy:\n\nThere aren't currently reviews for these patches since this ticket is private (security related). Once we get approval I think ttx sets the date for the public disclosure and we go from there. The idea is to pre-approve these patches here privately and then have it go right in once the public disclosure is made.\n\nThe reason the patches have slightly different diffs is because the Essex version of the affinity scheduler is slightly different than Folsmom's.", 
+            "date_created": "2012-06-28 15:47:54.961252+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "looks reasonable. +1", 
+            "date_created": "2012-06-28 16:49:36.787792+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Pushed downstream, proposed CRD is Wednesday, July 4th 1500 UTC", 
+            "date_created": "2012-06-29 12:15:38.285886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hmm, due to independence day, I proposed Tuesday, July 3rd 1500 UTC instead (which is very short) with a fallback to Wednesday July 11th, 1500 UTC.", 
+            "date_created": "2012-06-29 12:21:07.692293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Patches look good to me too.", 
+            "date_created": "2012-06-29 12:55:29.666542+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "July 3rd sounds fine to me. Let me know if we need to use the fallback instead.", 
+            "date_created": "2012-06-29 13:15:54.957768+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Date was pushed back to Wednesday July 11th, 1500 UTC, by popular demand.", 
+            "date_created": "2012-07-02 08:06:57.143967+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Adding Dave Walker for stable/*", 
+            "date_created": "2012-07-11 09:42:30.759376+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Attaching a rebase of the Folsom diff. No major changes.... \n\n[dprince@dovetail ~]$ diff folsom.diff folsom2.diff \n2c2\n< index b4e1a30..b0eb3eb 100644\n---\n> index e2a38b1..db8da1a 100644\n5c5\n< @@ -26,8 +26,11 @@ class AffinityFilter(filters.BaseHostFilter):\n---\n> @@ -25,8 +25,11 @@ class AffinityFilter(filters.BaseHostFilter):\n19c19\n< @@ -38,10 +41,11 @@ class DifferentHostFilter(AffinityFilter):\n---\n> @@ -37,12 +40,13 @@ class DifferentHostFilter(AffinityFilter):\n24a25,26\n>          if isinstance(affinity_uuids, basestring):\n>              affinity_uuids = [affinity_uuids]\n32c34\n< @@ -56,11 +60,12 @@ class SameHostFilter(AffinityFilter):\n---\n> @@ -57,13 +61,14 @@ class SameHostFilter(AffinityFilter):\n37a40,41\n>          if isinstance(affinity_uuids, basestring):\n>              affinity_uuids = [affinity_uuids]", 
+            "date_created": "2012-07-11 12:50:42.625437+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Adding Canonical security so that they can coordinate on the same Launchpad bug", 
+            "date_created": "2012-07-11 12:58:45.692678+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/9637", 
+            "date_created": "2012-07-11 14:06:03.530502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/9638", 
+            "date_created": "2012-07-11 14:20:05.435084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/9639", 
+            "date_created": "2012-07-11 14:27:45.205946+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/9637\nCommitted: http://github.com/openstack/nova/commit/034762e8060dcf0a11cb039b9d426b0d0bb1801d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 034762e8060dcf0a11cb039b9d426b0d0bb1801d\nAuthor: Dan Prince <email address hidden>\nDate:   Tue Jun 26 12:44:35 2012 -0400\n\n    Use compute_api.get_all in affinity filters.\n    \n    Updates the affinity filters so they make a single compute API\n    call to lookup instance host information rather than single\n    lookups for each UUID.\n    \n    This resolves a potential performance issue which can cause a\n    scheduler to hang while processing requests which contain large numbers\n    of UUID's in the scheduler_hints.\n    \n    Fixes LP Bug #1017795.\n    \n    Change-Id: I30f434faf109058573ee41c4a6abce2e48939e8d\n", 
+            "date_created": "2012-07-11 15:20:55.611327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Patches out, bug opened", 
+            "date_created": "2012-07-11 16:05:47.898339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/9639\nCommitted: http://github.com/openstack/nova/commit/25f5bd31805bd21d7b7e3583c775252aa8f737e9\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit 25f5bd31805bd21d7b7e3583c775252aa8f737e9\nAuthor: Dan Prince <email address hidden>\nDate:   Wed Jul 11 10:19:05 2012 -0400\n\n    Use compute_api.get_all in affinity filters.\n    \n    Updates the affinity filters so they make a single compute API\n    call to lookup instance host information rather than single\n    lookups for each UUID.\n    \n    This resolves a potential performance issue which can cause a\n    scheduler to hang while processing requests which contain large numbers\n    of UUID's in the scheduler_hints.\n    \n    Fixes LP Bug #1017795.\n    \n    Change-Id: Ie33378a992e53002c16b2d99135699b576f3d7e3\n", 
+            "date_created": "2012-07-11 16:41:49.771078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "OSSA 2012-009", 
+            "date_created": "2012-07-11 16:43:38.802603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "In Ubuntu, this was address for Ubuntu 12.04 LTS (aka precise) in nova 2012.1+stable~20120612-3ee026e-0ubuntu1.2 as described in USN 1501-1: http://www.ubuntu.com/usn/usn-1501-1 . Thanks!", 
+            "date_created": "2012-07-11 18:15:52.859412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sbeattie"
+        }, 
+        {
+            "content": "Ubuntu 12.04 was fixed in http://www.ubuntu.com/usn/usn-1501-1.", 
+            "date_created": "2012-08-24 19:05:47.594977+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Please find the attached test log from the Ubuntu Server Team's CI infrastructure.  As part of the verification process for this bug, Nova has been deployed and configured across multiple nodes using precise-proposed as an installation source.  After successful bring-up and configuration of the cluster, a number of exercises and smoke tests have be invoked to ensure the updated package did not introduce any regressions. A number of test iterations were carried out to catch any possible transient errors.\n\nPlease Note the list of installed packages at the top and bottom of the report.\n\nFor records of upstream test coverage of this update, please see the Jenkins links in the comments of the relevant  upstream code-review(s):\n\nTrunk review: https://review.openstack.org/9637\nStable review: https://review.openstack.org/9639\n\nAs per the provisional Micro Release Exception granted to this package by the Technical Board, we hope this contributes toward verification of this update.", 
+            "date_created": "2012-08-30 07:44:35.933125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Test coverage log.", 
+            "date_created": "2012-08-30 07:44:38.109881+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "The verification of this Stable Release Update has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regresssions.", 
+            "date_created": "2012-09-03 15:24:53.788004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }
+    ]
+}

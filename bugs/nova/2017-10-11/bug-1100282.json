@@ -1,0 +1,471 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-06-04 23:32:55.218766+00:00", 
+    "description": "Jonathan Murray from NCC Group reported that you can DoS keystone servers using XML entities in Keystone requests.\n\n[ Joshua Harlow from Yahoo! independently reported the same issue plaguing Nova (using minidom). ]\n\nPOST /v2.0/tokens HTTP/1.1\ncontent-type: application/xml\n\n<!DOCTYPE foo [\n<!ENTITY a \"AAAA lots of As AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAvAAAAAAAAAA\" >\n<!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;\" >\n<!ENTITY c \"&b;&b;&b;&b;&b;&b;&b;&b;\" >\n]>\n<auth>\n<tenantName>&c;</tenantName>\n<passwordCredentials>\n<username>&c;</username>\n<username>&c;</username>\n<username>&c;</username>\n<username>&c;</username>\n<password>&c;</password>\n<somethingElse>&c;</somethingElse>\n<somethingElse1>&c;</somethingElse1>\n<somethingElse2>&c;</somethingElse2>\n</passwordCredentials>\n</auth>\n\nIn that precise case it might be an issue with the XML library we use, although it sounds generally safer to disable parsing ENTITY blocks entirely if we can.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 290, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1100282", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 1100282, 
+    "index": 927, 
+    "created": "2013-01-16 13:47:43.145440+00:00", 
+    "title": "[OSSA 2013-004] DoS through XML entity expansion (CVE-2013-1664)", 
+    "comments": [
+        {
+            "content": "Jonathan Murray from NCC Group reported that you can DoS keystone servers using XML entities in Keystone requests:\n\nPOST /v2.0/tokens HTTP/1.1\ncontent-type: application/xml\n\n<!DOCTYPE foo [ \n<!ENTITY a \"AAAA lots of As AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAvAAAAAAAAAA\" > \n<!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;\" > \n<!ENTITY c \"&b;&b;&b;&b;&b;&b;&b;&b;\" > \n]> \n<auth>\n<tenantName>&c;</tenantName>\n<passwordCredentials>\n<username>&c;</username>\n<username>&c;</username>\n<username>&c;</username>\n<username>&c;</username>\n<password>&c;</password>\n<somethingElse>&c;</somethingElse>\n<somethingElse1>&c;</somethingElse1>\n<somethingElse2>&c;</somethingElse2>\n</passwordCredentials>\n</auth>\n\nIn that precise case it might be an issue with the XML library we use, although it sounds generally safer to disable parsing ENTITY blocks entirely if we can.", 
+            "date_created": "2013-01-16 13:47:43.145440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Looks like we could pass an etree.XMLParser with resolve_entities=False to etree.fromstring. Thoughts ?", 
+            "date_created": "2013-01-16 14:02:11.448359+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I wrote a 4KB request similar to the above that took about 10 minutes to consume > 1 GB server memory.\n\nThierry's suggestion fixes the DoS vulnerability, but then the same request will still return a 500 as the subsequent code doesn't know how to deal with XML Entities.\n\nThe attached patch completely ignores XML entities, comments, and processing instructions -- the sample request above now results in a quick 401 Unauthorized, as expected.", 
+            "date_created": "2013-01-18 02:05:08.755372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Backport to stable/folsom", 
+            "date_created": "2013-01-18 02:29:49.766311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Backport to stable/essex", 
+            "date_created": "2013-01-18 02:30:17.151820+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Awesome, Dolph! keystone-core please +1 the proposed patches.\n\nAnyone with spare cycles to check which OTHER openstack projects are affected by the same issue ?\nlxml is used in cinder, glance, nova and oslo. If affected I'd rather do them all in one go.", 
+            "date_created": "2013-01-18 11:11:28.182957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposed combined impact description with bug 1100279:\n\n========\nTitle: Information leak and Denial of Service using XML entities\nReporter: Jonathan Murray (NCC Group)\nProducts: Keystone\nAffects: All versions\n\nDescription:\nJonathan Murray from NCC Group reported a vulnerability in the parsing of XML requests in Keystone. By using entities in XML requests, an unauthenticated attacker may crash the Keystone API server, resulting in a denial of service. Authenticated attackers may also leverage XML entities to read the content of a local file on the Keystone API server.\n=========\n\nRamdom questions: there is no way of disabling XML requests completely, right ?", 
+            "date_created": "2013-01-18 14:25:26.120007+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Since essex, there is definitely a way to disable XML. We opt to translate XML<-->JSON in middleware so that the application itself only has to speak JSON.\n\nIt's included by keystone.conf.sample, but you can remove the keystone.middleware:XmlBodyMiddleware from your application pipelines to completely disable XML support.", 
+            "date_created": "2013-01-18 16:51:01.676480+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "OK then I propose the following impact description:\n\n========\nTitle: Information leak and Denial of Service using XML entities\nReporter: Jonathan Murray (NCC Group)\nProducts: Keystone\nAffects: All versions\n\nDescription:\nJonathan Murray from NCC Group reported a vulnerability in the parsing of XML requests in Keystone. By using entities in XML requests, an unauthenticated attacker may crash the Keystone API server, resulting in a denial of service. Authenticated attackers may also leverage XML entities to read the content of a local file on the Keystone API server. This only affects servers with XML support enabled (with keystone.middleware:XmlBodyMiddleware in the WSGI pipeline).\n=========\n\nRemaining tasks before disclosure:\nKeystone Core: please +1 proposed patches\nAnyone: please +1 proposed impact description\nVMT: Analyze other projects to make sure they don't suffer from the same issue", 
+            "date_created": "2013-01-21 11:00:52.037051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I think the description is accurate, but you could be more specific, I suppose. Instead of:\n\n> an unauthenticated attacker may crash the Keystone API server, resulting in a denial of service. \n\n... change to:\n\n> an unauthenticated attacker may consume excessive resources on the Keystone API server, resulting in a denial of service and potentially a crash.", 
+            "date_created": "2013-01-21 17:04:26.766073+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "I like it. here it goes:\n\n========\nTitle: Information leak and Denial of Service using XML entities\nReporter: Jonathan Murray (NCC Group)\nProducts: Keystone\nAffects: All versions\n\nDescription:\nJonathan Murray from NCC Group reported a vulnerability in the parsing of XML requests in Keystone. By using entities in XML requests, an unauthenticated attacker may consume excessive resources on the Keystone API server, resulting in a denial of service and potentially a crash. Authenticated attackers may also leverage XML entities to read the content of a local file on the Keystone API server. This only affects servers with XML support enabled (with keystone.middleware:XmlBodyMiddleware in the WSGI pipeline).\n=========", 
+            "date_created": "2013-01-22 10:11:45.999619+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+1", 
+            "date_created": "2013-01-22 15:31:46.983865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "+1 ", 
+            "date_created": "2013-01-22 18:06:07.301963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ayoung"
+        }, 
+        {
+            "content": "I'm running similar requests on Fedora and I can't seem to reproduce this. I'm wondering if the underlying version of python-lxml is also part of what is causing the problems.\n\n[root@nova1 ~]# rpm -qi python-lxml\nName        : python-lxml\nVersion     : 2.3.3\n\nWhich version are you guys using?", 
+            "date_created": "2013-01-23 19:14:58.800980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Okay. I got it to happen. Just had to tune things a bit....", 
+            "date_created": "2013-01-23 19:26:15.582833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "FWIW:\n\n  $ pip freeze | grep lxml\n  lxml==3.1beta1", 
+            "date_created": "2013-01-23 19:39:06.085029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "ttx:\n\nI tested this today with Nova using a similar XML request (lots of entity expansions) and cause the same exploit. Essentially the request took forever and pegged the CPU on the machine.\n\nWe are going to need a different fix in Nova though because minidom is actually the XML call we use there:\n\n    dom = minidom.parseString(body)\n\nBoth Cinder and Quantum will have similar issues due to the fact that they use minidom.parseString as well. So whatever we do to fix minidom in Nova should work there as well.\n\nFrom what I can tell Glance is clean though.\n\n----\n\nI'm looking into a fix for the minidom issue... shall I post the patches into this ticket?", 
+            "date_created": "2013-01-23 21:17:51.125980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Thanks for looking into this. Yes, you can post here, and I'll create tasks for all affected projects. Looks like getting this one right will push us after 2012.2.3, but it's better this way.", 
+            "date_created": "2013-01-24 08:32:48.847902+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Joshua Harlow independently reported the Nova issue on another bug, and had a proposed way of fixing it:\n\n\" Possibly fixed by simply adjusting the following: http://docs.python.org/2/library/pyexpat.html?highlight=xml.parsers#xml.parsers.expat.xmlparser.SetParamEntityParsing \"\n", 
+            "date_created": "2013-01-30 09:54:51.519840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Has this issue been raised to the Python-dev security team? http://www.python.org/news/security/\n\nI mentioned it to one member of the team, and they're aware of the issue, but weren't aware that it affected us.", 
+            "date_created": "2013-01-31 20:45:50.648058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "It also looks like this may affect libraries other than minidom. The python-dev team (Christian Heimes) is working on a patch. I would imagine we could get a copy of that patch if we contact them.", 
+            "date_created": "2013-01-31 20:52:35.257860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Same here, looking for someway to get minidom to stop doing what its doing, more patches the better :)", 
+            "date_created": "2013-02-01 00:30:37.899625+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "This example causes the expat library to turn off entity expansion.\n\nLooking at the c code there is an odd section that this causes to run.\n\nvoid XMLCALL\nXML_SetDefaultHandler(XML_Parser parser,\n                      XML_DefaultHandler handler)\n{\n  defaultHandler = handler;\n  defaultExpandInternalEntities = XML_FALSE;\n}\n\nBasically be setting the default handler to anything it will cause expansion to stop.\nNormal xml documents seem to flow through just fine.", 
+            "date_created": "2013-02-01 02:17:04.643180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "We could just monkey-patch the previous SafeExpatParser over the ExpatParser and all minidom calls should proceed without expansion, thats one way (or people can be forced to use this parser, wherever a parse occurs).", 
+            "date_created": "2013-02-01 02:18:32.248143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "This fix is a little different, just by causing the C function to be activated (and then restoring the previous handler) will accomplish the same goal (odd stuff....)\n", 
+            "date_created": "2013-02-01 08:23:17.695910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "@Doug: I'm not sure this should be considered a Python vulnerability, unless there is no way of disabling parsing of extensions in minidom. You could argue that the default should be safer, or that documentation should be clearer...\n\nWho do you recommend we talk to at this point ? Security team ? Christian (email?) ?", 
+            "date_created": "2013-02-01 09:06:49.464486+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Thierry, Based on the informal conversation I had with Jesse Noller yesterday I definitely recommend contacting the security team. Given that they are working on some sort of patch already, they may have done analysis that tells them this is an issue with the stdlib. At the very least the example cases uncovered by this bug report could give them more tests for that patch. If it turns out the solution is better runtime configuration, we may be able to influence their default settings or the API for configuring the parser.\n\nIn any case, Jesse strongly encouraged us to talk to them. I would do it, but it would be better for someone with stronger knowledge of the issue to have that conversation.", 
+            "date_created": "2013-02-01 15:29:50.654941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-01 18:26:00.484009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "So a little of how I traced this down.\n\n  - Figured out what exactly the minidom parseString was doing when it created a parser (when none was provided).\n  - This seemed to then go into the code @ http://svn.python.org/view/python/trunk/Lib/xml/dom/minidom.py?revision=75305&view=markup#l1917\n  - Note that it seems to jump into 2 different DOM impls depending on if a parser is provided or not so first I tried to see if I could\n    monkey-patch out the parser it was 'creating' when no parser was selected, basically by trying to patch out the function @\n    http://svn.python.org/view/python/trunk/Lib/xml/dom/expatbuilder.py?revision=50941&view=markup#l932\n  - This is how I then noticed that http://svn.python.org/view/python/trunk/Lib/xml/dom/expatbuilder.py?revision=50941&view=markup#l155\n    is what is actually creating the underlying parser (so I was trying to then adjust settings in that underlying parser that would\n    make it work like we expected). This is where I realized that self._parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)\n    isn't actually doing anything, I didn't dive to much into the C code to figure out exactly why this call isn't actually changing anything\n    but from initial dive I found http://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?view=markup#l2215 which seems to be the\n    entity expansion/reference code, note from that code there is logic around 'XML_ERROR_RECURSIVE_ENTITY_REF;' but this doesn't stop the\n    case we are seeing that actually isn't recursive. This code then eventually calls http://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?view=markup#l4665\n    which then starts the whole 'doContent()' function over again. \n  - So then I was looking back at that C code @ line http://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?view=markup#l2225\n    and was like it seems to be checking 'else if (defaultHandler)' and then stopping entity expansion right there if said handler actually\n    exists, which I was like well thats odd. So then I started seeing about replacing this default handler (which apparently does not exist\n    on said parsers unless set). This is how I then started looking at http://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?revision=77680&view=markup#l1271\n    and seeing if I could just set any handler on this parser to stop it from doing what it was doing, so this is how I discovered that setting any\n    default handler will cause 'defaultExpandInternalEntities = XML_TRUE;' to be called, which is then how i stumbled upon \n    http://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?view=markup#l2257 and this resulted in me messing with the default handler to see what I could\n    set (anything actually) to turn off entity expansion.\n\nEnd of chapter, josh vs the DTD beast.\n", 
+            "date_created": "2013-02-01 18:55:02.446566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "@harlowja: Thanks for the info.\n\n@ttx: I've had similar luck in trying to get minidom to stop parsing XML entities. Nothing obvious seems to work... What Josh posted in fix.py definately stops entity expansion. This approach definately falls into the \"work around\" category but given the lack of a better solution I'd say we go with it for now. If we get a better solution from the Python security team we can drop it in as a replacement too. I'm going to post some Nova patches which use this approach for Grizzly (above), Folsom, and Essex this afternoon.", 
+            "date_created": "2013-02-01 19:07:31.962811+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "I'm seeing a minor XML formatting issue. For the most part tests are passing... but I'm having to change two test cases when using the custom minidom parser. This fix is to do this...\n\n+++ b/nova/tests/integrated/api_samples/os-security-groups/security-group-post-r\n@@ -1,5 +1,3 @@\n <security_group name=\"%(group_name)s\">\n-    <description>\n-        description\n-    </description>\n+    <description>description</description>\n </security_group>", 
+            "date_created": "2013-02-01 19:48:30.784474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "I also tried tracking down a little of what the 3 enums were doing @ http://svn.python.org/view/python/trunk/Modules/expat/expat.h?revision=47033&view=markup#l853 but didn't go to far, I tried seeing if somehow those enums weren't getting mapped correctly (they should be 0, 1, 2 in typical c compilers) but that didn't change anything. \n\nSome points these affect: \n\nhttp://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?revision=77680&view=markup#l1409\n\nThe only real place this seems used:\n\nhttp://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?revision=77680&view=markup#l3328\n\nNote that its not used in the actual doContent function, http://svn.python.org/view/python/trunk/Modules/expat/xmlparse.c?revision=77680&view=markup#l2139 but I might have missed something.", 
+            "date_created": "2013-02-01 20:41:09.569889+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-01 20:46:52.009553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Okay. Fixed the XML formatting issue. Had to tweak Nova's wsgi.py extract_text function a bit. Upcoming grizzly patch is better.", 
+            "date_created": "2013-02-01 22:04:05.080381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-01 22:08:18.143702+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-02 19:35:08.900037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-02 19:35:37.283206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "@Joshua - The latest versions of Python are in hg. I don't know if they've been mirroring hg changes back to the svn repository. See http://hg.python.org/cpython/file/5bf91dfb1e34/Modules/expat/xmlparse.c for the Python 2.7 version of xmlparse.c.", 
+            "date_created": "2013-02-02 20:01:13.594111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "@Doug - good to know, looks like similar functions, but newer updated files, thx!", 
+            "date_created": "2013-02-02 23:12:55.187797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Hello,\n\nI'm a Python core developer and member of the Python Security Response Team. I have found the vulnerability in Python's standard library XML parser and libexpat a couple of months ago. I have been working on a patch for a while but the patch is not ready yet. The libexpat and stdlib's XML parser are vulnerable to three kinds of XML attacks related to inline DTDs and ENTITY.\n\nA quick and dirty workaround is to reject all XML data that contain the strings '<!ENTITY' and its utf-16-be, utf-16-le and utf-32 variants. That may generate false positive hits in CDATA sections but the likelihood is very small. Your code should also limit the maximum length of the input string and make sure it's not vulnerable to gzip bombs.\n\nI'm going to read this thread now ...\n\nChristian", 
+            "date_created": "2013-02-03 20:09:13.639475+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heimes"
+        }, 
+        {
+            "content": "Two quicks comments.\n\n1) It's sufficient and a little bit faster to write:\n\nclass ExpatParserNoEntity(ExpatParser):\n    def reset(self):\n        ExpatParser.reset(self)\n        self._parser.DefaultHandler = None\n\nNone disables the feature completely\n\n\n2) You should definitely disable entity expansion in LXML. Although libxml2 protects from excessive exponential expansion it's still vulnerable to quadratic blowup. I'm in contact with a libxml2 developer.\n", 
+            "date_created": "2013-02-03 22:18:59.749420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heimes"
+        }, 
+        {
+            "content": "I compared your patches with my patch for Python's standard library. Your approach seems to work well but I'm not sure if it intercepts all possible attacks. When you overwrite DefaultHandler you don't get any error messages when an entity occurs in the XML document.\n\nI like to suggest a different approach. You can either reject all XML documents with an inline DTD (SOAP does it) or you can disallow entity declarations:\n\nclass ProtectedExpatParser(ExpatParser):\n    def __init__(self, forbid_dtd=True, forbid_entities=True,\n                 *args, **kwargs):\n        # Python 2.x old style class\n        ExpatParser.__init__(self, *args, **kwargs)\n        self.forbid_dtd = forbid_dtd\n        self.forbid_entities = forbid_entities\n        \n    def start_doctype_decl(self, name, sysid, pubid, has_internal_subset):\n        raise ValueError(\"Inline DTD forbidden\")\n\n    def entity_decl(self, entityName, is_parameter_entity, value, base, systemId, publicId, notationName):\n        raise ValueError(\"<!ENTITY> forbidden\")\n\n    def unparsed_entity_decl(self, name, base, sysid, pubid, notation_name):\n        # expat 1.2\n        raise ValueError(\"<!ENTITY> forbidden\")\n\n    def reset(self):\n        ExpatParser.reset(self)\n        if self.forbid_dtd:\n            self._parser.StartDoctypeDeclHandler = self.start_doctype_decl\n        if self.forbid_entities:\n            self._parser.EntityDeclHandler = self.entity_decl\n            self._parser.UnparsedEntityDeclHandler = self.unparsed_entity_decl\n\nWith this parser errors and attacks aren't ignored silently.\n\nYour fix for LXML may contain a flaw, too. LXML used to have an issue when parser is shared by multiple threads. I don't know if your are using threads nor if LXML still has a problem with shared parser instances. At work we are using a thread local storage to have a parser context for each thread.", 
+            "date_created": "2013-02-03 23:51:42.420477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heimes"
+        }, 
+        {
+            "content": "Christian:\n\nThanks for having a look at this. ProtectedExpatParser looks good to me, is self documenting, and I like that it doesn't silently ignore things as well. Thanks for this.\n\nttx: The incoming Nova patches use the new ProtectedExpatParser implementation...", 
+            "date_created": "2013-02-04 02:36:53.723323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 02:38:08.755085+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 02:38:32.919763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 02:38:57.933623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 03:18:13.816656+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 03:18:57.900925+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 03:19:24.698945+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 03:21:14.115719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-04 03:37:26.697574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "ttx: Okay. Cinder patches are attached.\n\nAlso, I looked again and although Quantum calls minidom.parse... once in wsgi.py it doesn't appear to be used. Note: We will certainly need the etree fix to be added once this hits: https://review.openstack.org/#/c/19998/13/quantum/wsgi.py (upstream branch under review to add XML support for the Quantum V2 API).\n\nI think olso can wait till after we disclose this right?", 
+            "date_created": "2013-02-04 03:43:32.010708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "@Dan: Thx for the updated patches. Agree that Oslo can be fixed after disclosure.\n\n@Christian: Thx for reaching out, still busy traveling back from FOSDEM and will be fully up to speed again starting Wednesday. I'm handling the disclosure process for this bug and I was wondering if we (OpenStack) can proceed in responsible disclosure or if you wanted to coordinate the python stdlib security fix(es) with ours. I see some urgency in the fact that this issue was independently reported to us 4 times over the last two weeks, which means there is research/pentest activity around this. How far are you from public disclosure on your side ?\n", 
+            "date_created": "2013-02-04 10:22:18.079102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "LXML still suggests a parser pool for threaded applications. \n\nhttp://lxml.de/element_classes.html\nTo avoid interfering with other modules, however, it is usually a better idea to use a dedicated parser for each module (or a parser pool when using threads) and then register the required lookup scheme only for this parser.\n\nHere is some example code from our code at work. We are using a custom Element class and thread local storage for parser instances.\n\nimport threading\nfrom lxml import etree\n\nclass RestrictedElement(etree.ElementBase):\n    __slots__ = ()\n    # blacklist = (etree._Element, etree._ProcessingInstruction, etree._Comment)\n    blacklist = etree._Element\n\n    def __iter__(self):\n        blacklist = self.blacklist\n        for child in super(RestrictedElement, self).__iter__():\n            if isinstance(child, blacklist):\n                continue\n            yield child\n\n    def iterchildren(self, tag=None, reversed=False):\n        blacklist = self.blacklist\n        children = super(RestrictedElement, self).iterchildren(tag=tag, \n                                                               reversed=reversed)\n        for child in children:\n            if isinstance(child, blacklist):\n                continue\n            yield child\n\n    # you may need to overwrite getchildren, find, findall and more if you use them\n\n\nclass ParserTLS(threading.local):\n    parser_cfg = {\n        'resolve_entities': False,\n        'remove_comments': True,\n        'remove_pis': True,\n    }\n\n    @property\n    def parser(self):\n        parser = getattr(self, \"_parser\", None)\n        if parser is None:\n            parser = etree.XMLParser(**self.parser_cfg)\n            lookup = etree.ElementDefaultClassLookup(element=RestrictedElement)\n            parser.set_element_class_lookup(lookup)\n            self._parser = parser\n        return parser\n\nif __name__ == \"__main__\":\n    tls = ParserTLS()\n    tree = etree.parse(\"test.xml\", parser=tls.parser)\n    print tree.getroot().text\n    print list(tree.getroot().iterchildren())\n\n\n@Thierry:\nI'll ask on the PSRT list. My patch for expat won't be ready until Wednesday but we can release the restricted expat parsers classes for etree, sax and minidom as hotfixes. I'm waiting for some code review now. I also need to get back to the libxml2 guys ASAP.", 
+            "date_created": "2013-02-04 12:10:01.706027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heimes"
+        }, 
+        {
+            "content": "@Christian: let me explain our disclosure system to see how we can align.\n\nWe push the patches to a set of downstream stakeholders (think distros) so that they can coordinate their own updates with ours. That restricted disclosure window usually lasts 3-5 business days, and then we push the patches publicly. So it would be great to come up with a common \"public date\" and then we can align our responsible disclosure process to that. For example if we agree we can go public Tuesday next week, I can send patches to the distros wednesday. Let me know what public date sounds doable for the Python side.", 
+            "date_created": "2013-02-04 15:41:00.270035+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Vish/Russell/Mikal: could you review the proposed Nova patches ?\nCinder-core: same for Cinder patches.\n\nPlease +1 on the bug as a comment and don't disclose those patches publicly.", 
+            "date_created": "2013-02-04 15:57:03.706500+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+1 on nova patches", 
+            "date_created": "2013-02-05 19:27:07.190736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "+1 for the Cinder versions", 
+            "date_created": "2013-02-05 19:40:06.917669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Please see proposed description:\n-------------\nTitle: Information leak and Denial of Service using XML entities\nReporter: Jonathan Murray (NCC Group), Joshua Harlow (Yahoo!)\nProducts: Keystone, Nova, Cinder\nAffects: All versions\n\nDescription:\nJonathan Murray from NCC Group and Joshua Harlow from Yahoo! independently reported a vulnerability in the parsing of XML requests in Keystone. By using entities in XML requests, an unauthenticated attacker may consume excessive resources on the Keystone, Nova or Cinder API servers, resulting in a denial of service and potentially a crash. Authenticated attackers may also leverage XML entities to read the content of a local file on the Keystone API server. This only affects servers with XML support enabled.\n--------------\n", 
+            "date_created": "2013-02-07 12:43:59.305419+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Quantum Grizzly is now affected (since yesterday) so patch should be ported to it... however it should not block security fix since it only affects version under development.", 
+            "date_created": "2013-02-07 12:46:59.759324+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Russell, Mikal, Cinder-core: we could use another +1 on the patch sets", 
+            "date_created": "2013-02-07 12:49:59.174614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposed description failed to credit Stuart Stent, see new version:\n-------------\nTitle: Information leak and Denial of Service using XML entities\nReporter: Jonathan Murray (NCC Group), Joshua Harlow (Yahoo!), Stuart Stent\nProducts: Keystone, Nova, Cinder\nAffects: All versions\n\nDescription:\nJonathan Murray from NCC Group, Joshua Harlow from Yahoo! and Stuart Stent independently reported a vulnerability in the parsing of XML requests in Keystone, Nova and Cinder. By using entities in XML requests, an unauthenticated attacker may consume excessive resources on the Keystone, Nova or Cinder API servers, resulting in a denial of service and potentially a crash. Authenticated attackers may also leverage XML entities to read the content of a local file on the Keystone API server. This only affects servers with XML support enabled.\n--------------\n", 
+            "date_created": "2013-02-07 12:58:24.255306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "ttx: +1 for the proposed description.", 
+            "date_created": "2013-02-08 15:47:41.991898+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "description sounds good to me", 
+            "date_created": "2013-02-08 15:54:25.251047+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Nova patches look good to me", 
+            "date_created": "2013-02-11 14:18:04.237816+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Sent to downstream stakeholders\n\nProposed public disclosure date/time:\n*Tuesday February 19th, 1500UTC*", 
+            "date_created": "2013-02-11 22:53:34.534521+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Have you taken care of lxml, too? I just noticed that lxml always resolves and loads external entities with file:// URLs. An attacker can possibly load and retrieve all (XML) files that the service is allowed to access. \n\nExample:\n\nexternal_file.xml\n==============\n<!DOCTYPE external [\n<!ENTITY ee SYSTEM \"file:///PATH/TO/simple.xml\">\n]>\n<root>&ee;</root>\n\nsimple.xml\n=========\n<!-- comment -->\n<root>\n   <element key='value'>text</element>\n   <element>text</element>tail\n   <empty-element/>\n</root>\n\n>>> from lxml import etree\n>>> tree = etree.parse(\"external_file.xml\")\n>>> print(etree.tostring(tree))\n<root><!-- comment -->\n<root>\n   <element key=\"value\">text</element>\n   <element>text</element>tail\n   <empty-element/>\n</root>\n</root>\n", 
+            "date_created": "2013-02-11 23:55:45.892461+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heimes"
+        }, 
+        {
+            "content": "@Christian Heimes: The patches for keystone are applicable to lxml.etree, and set resolve_entities=False to address that specific issue.", 
+            "date_created": "2013-02-12 01:27:28.001490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "> Please use CVE-2013-0278 for Keystone\n> Please use CVE-2013-0279 for Cinder\n> Please use CVE-2013-0280 for Nova", 
+            "date_created": "2013-02-12 05:38:29.497033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "For reference the Python CVE numbers are\n\nCVE-2013-1664 Unrestricted entity expansion induces DoS vulnerabilities in Python XML libraries (XML bomb)\nCVE-2013-1665 External entity expansion in Python XML libraries inflicts potential security flaws and DoS vulnerabilities", 
+            "date_created": "2013-02-18 14:07:47.995886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heimes"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/22309", 
+            "date_created": "2013-02-19 15:00:26.860822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/22310", 
+            "date_created": "2013-02-19 15:00:37.490801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/22311", 
+            "date_created": "2013-02-19 15:01:35.542985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/22312", 
+            "date_created": "2013-02-19 15:01:50.123803+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/22313", 
+            "date_created": "2013-02-19 15:03:02.310740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/22314", 
+            "date_created": "2013-02-19 15:06:47.634344+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/22315", 
+            "date_created": "2013-02-19 15:07:07.302414+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/22316", 
+            "date_created": "2013-02-19 15:09:16.867793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22309\nCommitted: http://github.com/openstack/nova/commit/59933249054bf71ec963585198583fe78050c9d6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 59933249054bf71ec963585198583fe78050c9d6\nAuthor: Dan Prince <email address hidden>\nDate:   Fri Feb 1 17:04:27 2013 -0500\n\n    Add a safe_minidom_parse_string function.\n    \n    Adds a new utils.safe_minidom_parse_string function and\n    updates external API facing Nova modules to use it.\n    This ensures we have safe defaults on our incoming API XML parsing.\n    \n    Internally safe_minidom_parse_string uses a ProtectedExpatParser\n    class to disable DTDs and entities from being parsed when using\n    minidom.\n    \n    Fixes LP Bug #1100282.\n    \n    Change-Id: Ib90d6379320ff1d007f8a661f7ddaa286ba6918e\n", 
+            "date_created": "2013-02-19 18:39:52.286408+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22314\nCommitted: http://github.com/openstack/keystone/commit/8a2274595ac628b2373eab0cb14690f866b7a024\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 8a2274595ac628b2373eab0cb14690f866b7a024\nAuthor: Dolph Mathews <email address hidden>\nDate:   Tue Feb 19 09:04:11 2013 -0600\n\n    Disable XML entity parsing\n    \n    Fixes bug 1100282 and bug 1100279.\n    \n    Change-Id: Ibf2d73bca17b689cfa2dfd29eb15ea6e7458a123\n", 
+            "date_created": "2013-02-19 20:08:14.193428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22310\nCommitted: http://github.com/openstack/cinder/commit/91ccd1501acb1316b05a0dc010601ad85a9ebd3b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 91ccd1501acb1316b05a0dc010601ad85a9ebd3b\nAuthor: Dan Prince <email address hidden>\nDate:   Sun Feb 3 21:54:33 2013 -0500\n\n    Add a safe_minidom_parse_string function.\n    \n    Adds a new utils.safe_minidom_parse_string function and\n    updates external API facing Cinder modules to use it.\n    This ensures we have safe defaults on our incoming API XML parsing.\n    \n    Internally safe_minidom_parse_string uses a ProtectedExpatParser\n    class to disable DTDs and entities from being parsed when using\n    minidom.\n    \n    Fixes LP Bug #1100282.\n    \n    Change-Id: Iff8340033c8e8db58184944a1bf705e16b8b3e03\n", 
+            "date_created": "2013-02-20 00:00:44.753210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22311\nCommitted: http://github.com/openstack/cinder/commit/fcf249d1f06938280d841cb13b61556971a58e0c\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit fcf249d1f06938280d841cb13b61556971a58e0c\nAuthor: Dan Prince <email address hidden>\nDate:   Sun Feb 3 22:25:12 2013 -0500\n\n    Add a safe_minidom_parse_string function.\n    \n    Adds a new utils.safe_minidom_parse_string function and\n    updates external API facing Cinder modules to use it.\n    This ensures we have safe defaults on our incoming API XML parsing.\n    \n    Internally safe_minidom_parse_string uses a ProtectedExpatParser\n    class to disable DTDs and entities from being parsed when using\n    minidom.\n    \n    Fixes LP Bug #1100282 for Folsom.\n    \n    Change-Id: Ie8ae7a6e12fbf51de406d10ca21072140374abf5\n", 
+            "date_created": "2013-02-20 00:25:42.378540+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22312\nCommitted: http://github.com/openstack/nova/commit/2ae74f8222058e475350458ca0c820adb910582c\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 2ae74f8222058e475350458ca0c820adb910582c\nAuthor: Dan Prince <email address hidden>\nDate:   Sat Feb 2 11:34:25 2013 -0500\n\n    Add a safe_minidom_parse_string function.\n    \n    Adds a new utils.safe_minidom_parse_string function and\n    updates external API facing Nova modules to use it.\n    This ensures we have safe defaults on our incoming API XML parsing.\n    \n    Internally safe_minidom_parse_string uses a ProtectedExpatParser\n    class to disable DTDs and entities from being parsed when using\n    minidom.\n    \n    Fixes LP Bug #1100282 for Folsom.\n    \n    Change-Id: I6a4051b5e66f3ce5a330b2589c42e6e9e5b9268e\n", 
+            "date_created": "2013-02-20 00:39:08.617123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22313\nCommitted: http://github.com/openstack/nova/commit/c0a10dbd8f903ebb2e417cc821cf8555bee8d188\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit c0a10dbd8f903ebb2e417cc821cf8555bee8d188\nAuthor: Dan Prince <email address hidden>\nDate:   Sat Feb 2 14:32:12 2013 -0500\n\n    Add a safe_minidom_parse_string function.\n    \n    Adds a new utils.safe_minidom_parse_string function and\n    updates external API facing Nova modules to use it.\n    This ensures we have safe defaults on our incoming API XML parsing.\n    \n    Internally safe_minidom_parse_string uses a ProtectedExpatParser\n    class to disable DTDs and entities from being parsed when using\n    minidom.\n    \n    Fixes LP Bug #1100282 for Essex.\n    \n    Change-Id: I815b27ff2845293e3d6771ff8f99944ec08ccbd5\n", 
+            "date_created": "2013-02-20 00:39:29.583517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22315\nCommitted: http://github.com/openstack/keystone/commit/2afe8e46893ca27ea9d61f29419d0ec23a6d8db3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2afe8e46893ca27ea9d61f29419d0ec23a6d8db3\nAuthor: Dolph Mathews <email address hidden>\nDate:   Tue Feb 19 09:00:40 2013 -0600\n\n    Disable XML entity parsing\n    \n    Fixes bug 1100282 and bug 1100279.\n    \n    Change-Id: I6a7c9e7110e1c7890205d6e4550ab46295c68906\n", 
+            "date_created": "2013-02-20 10:26:37.358276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22316\nCommitted: http://github.com/openstack/keystone/commit/8945567b5ec39c7f32f27aec4eccf230cc86646c\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit 8945567b5ec39c7f32f27aec4eccf230cc86646c\nAuthor: Dolph Mathews <email address hidden>\nDate:   Tue Feb 19 09:08:41 2013 -0600\n\n    Disable XML entity parsing\n    \n    Fixes bug 1100282 and bug 1100279.\n    \n    Change-Id: Idd3989356dfededc3d863770f0ca1661c1d45782\n", 
+            "date_created": "2013-02-20 10:26:50.108439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/22988", 
+            "date_created": "2013-02-26 16:33:00.885636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/23024", 
+            "date_created": "2013-02-26 20:48:27.732154+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22988\nCommitted: http://github.com/openstack/oslo-incubator/commit/0d7417cff68e74f636d371529998e275e2765be8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0d7417cff68e74f636d371529998e275e2765be8\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Tue Feb 26 11:26:24 2013 -0500\n\n    Port safe parsing with minidom patches from Nova\n    \n    Prevent attacks through xml entity expansion etc.\n    \n    Fixes LP# 1100282\n    \n    Change-Id: I391531deac122697556c282184c8f8890ea66489\n", 
+            "date_created": "2013-02-27 22:23:10.863483+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/23024\nCommitted: http://github.com/openstack/quantum/commit/1f716e3effe1ad6eeb042a11f06a5c89498a34b8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1f716e3effe1ad6eeb042a11f06a5c89498a34b8\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Tue Feb 26 15:43:50 2013 -0500\n\n    Prevent DoS through XML entity expansion\n    \n    Add a ProtectedXMLParser that overrides the\n    doctype declaration handler. The handler simply\n    throws an exception and prevents any further\n    parsing of the incoming xml.\n    \n    Fixes LP Bug #1100282\n    \n    Change-Id: I6488e1a6a52326006e7e7927ece5b5939b72e83e\n", 
+            "date_created": "2013-03-06 01:42:37.705894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Old bug cleanup, this was properly merged etc, looks like status was just missed.", 
+            "date_created": "2014-06-04 23:32:48.902586+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }
+    ]
+}

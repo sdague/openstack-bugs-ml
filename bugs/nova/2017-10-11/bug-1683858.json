@@ -1,0 +1,45 @@
+{
+    "status": "Triaged", 
+    "last_updated": "2017-08-28 21:40:48.350012+00:00", 
+    "description": "Some virt drivers report additional overhead per instance for memory and disk usage on a compute node. That is not reported in the allocations records for a given instance on a resource provider (compute node), however:\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/scheduler/client/report.py#L157\n\nIt is used as part of the claim test on the compute when creating an instance or moving an instance. For creating an instance, that's done here:\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/compute/resource_tracker.py#L144-L156\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/compute/claims.py#L165\n\nWhere Claim.memory_mb is the instance.flavor.memory_mb + overhead:\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/compute/claims.py#L106\n\nSo ultimately what we claim on the compute node is not what we report to placement for allocations for that instance. This matters because when the filter scheduler is asking placement for a list of resource providers that can fit a given request memory_mb and disk_gb it relies on the inventory for the compute node resource provider and the existing usage (allocations) for that provider, and we aren't reporting the full story to placement.\n\nThis could lead to placement telling the filter scheduler there is room to place an instance on a given compute node when in fact that could fail the claim once we get to the host, which would results in a retry of the build on another host (which can be expensive).\n\nAlso, when we start having multi-cell support with a top-level conductor that the computes can't reach, we won't have build retries anymore, so you'd just fail the claim and the build would be done and the instance would go to ERROR state. So it's critical that the placement service has the proper information for making the correct decision on the first try.", 
+    "tags": [
+        "placement", 
+        "resource-tracker", 
+        "scheduler"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1683858", 
+    "owner": "None", 
+    "id": 1683858, 
+    "index": 4798, 
+    "created": "2017-04-18 15:52:29.342683+00:00", 
+    "title": "Allocation records do not contain overhead information", 
+    "comments": [
+        {
+            "content": "Some virt drivers report additional overhead per instance for memory and disk usage on a compute node. That is not reported in the allocations records for a given instance on a resource provider (compute node), however:\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/scheduler/client/report.py#L157\n\nIt is used as part of the claim test on the compute when creating an instance or moving an instance. For creating an instance, that's done here:\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/compute/resource_tracker.py#L144-L156\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/compute/claims.py#L165\n\nWhere Claim.memory_mb is the instance.flavor.memory_mb + overhead:\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/compute/claims.py#L106\n\nSo ultimately what we claim on the compute node is not what we report to placement for allocations for that instance. This matters because when the filter scheduler is asking placement for a list of resource providers that can fit a given request memory_mb and disk_gb it relies on the inventory for the compute node resource provider and the existing usage (allocations) for that provider, and we aren't reporting the full story to placement.\n\nThis could lead to placement telling the filter scheduler there is room to place an instance on a given compute node when in fact that could fail the claim once we get to the host, which would results in a retry of the build on another host (which can be expensive).\n\nAlso, when we start having multi-cell support with a top-level conductor that the computes can't reach, we won't have build retries anymore, so you'd just fail the claim and the build would be done and the instance would go to ERROR state. So it's critical that the placement service has the proper information for making the correct decision on the first try.", 
+            "date_created": "2017-04-18 15:52:29.342683+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Note that while the filter scheduler uses the placement service to find compute node resource providers for a given request spec, and the allocations in placement don't have the disk/memory overhead values, the RamFilter and DiskFilter are both still enabled by default. And they rely on the values set in the compute_nodes table in the resource tracker that takes into account the overhead:\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/compute/resource_tracker.py#L746-L747\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/scheduler/filters/ram_filter.py#L34\n\nhttps://github.com/openstack/nova/blob/15.0.0/nova/scheduler/filters/disk_filter.py#L40\n\nThis means the placement service could return a compute node resource provider that it thinks has space for ram/disk usage, but the ram/disk filters could still filter that host out.\n\nWe still need to fix this bug, however, because long-term we want to remove the RamFilter and DiskFilter from the default list of enabled filters for the filter scheduler since we should be able to calculate that information from the placement service.", 
+            "date_created": "2017-04-18 21:49:42.815192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think we need add a RPC method to get overhead value in compute node. Before we report instance resource, we need get overhead from compute node via RPC.", 
+            "date_created": "2017-04-20 09:24:38.437254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~int32bit"
+        }, 
+        {
+            "content": "That's being discussed as an option in the 'claims in scheduler' spec here:\n\nhttps://review.openstack.org/#/c/437424/5/specs/pike/approved/placement-claims.rst\n\nThe other alternative being discussed is doing track the overhead in the allocation records and just have operators (or the virt driver) increase the reserved inventory to account for estimated overhead.", 
+            "date_created": "2017-04-20 13:55:20.740605+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "We talked a bit about this at the Pike summit in Boston in May 2017, some notes are in this recap ML thread:\n\nhttp://lists.openstack.org/pipermail/openstack-dev/2017-May/117028.html\n\n\"We also spent a good chunk of the session talking about overhead \ncalculations for memory_mb and disk_gb which happens in the compute and \non a per-hypervisor basis. In the absence of automating ways to adjust \nfor overhead, our solution for now is operators can adjust reserved host \nresource values (vcpus, memory, disk) via config options and be \nconservative or aggressive as they see fit. Chris Dent and I also noted \nthat you can adjust those reserved values via the placement REST API but \nthey will be overridden by the config in a periodic task - which may be \na bug, if not at least a surprise to an operator.\"", 
+            "date_created": "2017-08-28 21:40:46.353080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

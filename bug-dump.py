@@ -56,6 +56,15 @@ def parse_args():
                         help='The project to act on')
     return parser.parse_args()
 
+def safe_owner(message):
+    try:
+        return str(message.owner)
+    except Exception:
+        return ""
+
+def bug_file(project, bug):
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    return 'bugs/%s/%s/bug-%s.json' % (project, today, bug.id)
 
 def collect_bugs(project_name):
     launchpad = Launchpad.login_anonymously('Bug Learn',
@@ -70,12 +79,17 @@ def collect_bugs(project_name):
                                     omit_duplicates=True,
                                     order_by='-importance'):
         bug = launchpad.load(task.bug_link)
+        fname = bug_file(project_name, bug)
+        if os.path.exists(fname):
+            print("Already fetched: %s" % fname)
+            continue
+
         nova_status = 'Unknown'
         nova_owner = 'Unknown'
         comments = []
         for m in bug.messages:
             comments.append(
-                {"author": str(m.owner),
+                {"author": safe_owner(m),
                  "content": unicode(m.content),
                  "date_created": str(m.date_created)
                  })
@@ -104,9 +118,8 @@ def collect_bugs(project_name):
             "comments": comments,
             "tags": bug.tags
         }
-        num = bug_data["link"].split("/")[-1]
         try:
-            path = 'bugs/%s/%s/bug-%s.json' % (project_name, today, num)
+            path = fname
             if not os.path.isdir(os.path.dirname(path)):
                 os.makedirs(os.path.dirname(path))
             with open(path, 'w') as f:

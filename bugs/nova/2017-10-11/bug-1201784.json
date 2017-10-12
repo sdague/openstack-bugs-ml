@@ -1,0 +1,58 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-09-17 18:37:01.985179+00:00", 
+    "description": "I've noticed nova resize doesn't fail on the client side when the server doesn't actually do the resize. 2 examples:\n\n * resizing to a flavor with too much RAM. The scheduler can't find a host, but the command line call succeeds, and the server state stays the same.\n\n * resizing a shutdown server, where nothing seems to be happening.\n\nUsing devstack and latest master.", 
+    "tags": [
+        "scheduler"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1201784", 
+    "owner": "None", 
+    "id": 1201784, 
+    "index": 3848, 
+    "created": "2013-07-16 12:23:21.177850+00:00", 
+    "title": "Resize doesn't fail when the operation doesn't complete", 
+    "comments": [
+        {
+            "content": "I've noticed nova resize doesn't fail on the client side when the server doesn't actually do the resize. 2 examples:\n\n * resizing to a flavor with too much RAM. The scheduler can't find a host, but the command line call succeeds, and the server state stays the same.\n\n * resizing a shutdown server, where nothing seems to be happening.\n\nUsing devstack and latest master.", 
+            "date_created": "2013-07-16 12:23:21.177850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~therve"
+        }, 
+        {
+            "content": "I think that this is not a bug but **design** behavior.\n\ndef prep_resize(self, context, image, request_spec, filter_properties,\n                    instance, instance_type, reservations):\n        \"\"\"Tries to call schedule_prep_resize on the driver.\n        Sets instance vm_state to ACTIVE on NoHostFound\n        Sets vm_state to ERROR on other exceptions\n        \"\"\"\n        instance_uuid = instance['uuid']\n        with compute_utils.EventReporter(context, conductor_api.LocalAPI(),\n                                         'schedule', instance_uuid):\n            try:\n                kwargs = {\n                    'context': context,\n                    'image': image,\n                    'request_spec': request_spec,\n                    'filter_properties': filter_properties,\n                    'instance': instance,\n                    'instance_type': instance_type,\n                    'reservations': reservations,\n                }\n                return self.driver.schedule_prep_resize(**kwargs)\n            except exception.NoValidHost as ex:\n                self._set_vm_state_and_notify('prep_resize',\n                                             {'vm_state': vm_states.ACTIVE,  <<<<<<< If no valid host for resize, then the VM will be rollback to ACTIVE.\n                                              'task_state': None},\n                                             context, ex, request_spec)\n                if reservations:\n                    QUOTAS.rollback(context, reservations)\n            except Exception as ex:", 
+            "date_created": "2013-07-20 08:49:01.381356+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "The fact that the instance stays ACTIVE makes sense, the problem is that the client is not notified in any way on what happens. The resize action doesn't return anything, and it sounds like it could return an error in several cases, like NoHostFound or when the instance state is incorrect.", 
+            "date_created": "2013-07-22 08:19:32.771626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~therve"
+        }, 
+        {
+            "content": "Thomas, does the scheduler log is helpful? nova scheduler can tell you that there is no valid host for resize.\n\nAlso I have fixed another issue that may impact you: https://bugs.launchpad.net/nova/+bug/1204905, the fix can make sure that if resize/code migration failed, the VM can rollback to its original state.", 
+            "date_created": "2013-07-28 07:49:13.479825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "The scheduler log contains the message, but it's not available to the user.\n\n I don't know if bug #1204905 is related. My experience of resize against a shutdown server is that nothing happens.", 
+            "date_created": "2013-07-28 08:05:47.415062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~therve"
+        }, 
+        {
+            "content": "Got it. My fault, since cold migration and resize share same code path, what I fixed in  bug #1204905 is for cold migration, just ignore it.\n\nI'm not sure if we can get fault for a VM which is not in ERROR state. Perhaps the fixer can check more. ;-)\n\n", 
+            "date_created": "2013-07-29 02:59:18.252389+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "This *is* by design because the call to start the resize is cast-ed (like almost everything else) from the api node and returns immediately. We don't know that it failed until potentially much later. I'm going to mark this as invalid, but if I'm missing something, please reopen.", 
+            "date_created": "2013-09-17 17:00:58.278566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "I understand that the call may not fail by design. That said, there should be a way to know that it failed, as right now the way to detect that is to check that the server is in ACTIVE state. As we change the status to VERIFY_RESIZE when it succeeeds, it seems we could change it to RESIZE_ERROR when it fails.\n\nMaybe we should change the bug to \"There is no way to discover why a resize operation failed.\"", 
+            "date_created": "2013-09-17 18:37:01.124961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~therve"
+        }
+    ]
+}

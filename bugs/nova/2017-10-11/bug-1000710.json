@@ -1,0 +1,78 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-03-18 11:29:14.263686+00:00", 
+    "description": "Using the newly enabled volume support on canonistack, it arrived at a state where the volume believed it was in-use by the instance, but the instance had not registered it. The volume then refused to be detached from the instance, the command succeeded but no change occurred.\n\nThe sequence of events was:\n* Start instance (using ubuntu-precise-12.04-i386-server-20120424 image)\n* Create volume\n* Wait till instance was listed as ACTIVE (volume was also available at this point)\n* Attach volume\n* SSH to instance... fails, instance not yet booted enough\n* Wait more (took quite a long time)\n* SSH to instance\n* dmesg contains nothing about volume\n\nThe suggestion is the attach happened to soon in the boot process.\n\nTo recover, did:\n* Reboot instance\n* Wait till instance is listed as ACTIVE and can SSH to it\n* Volume is now back to being available\n* Attach volume\n* dmesg contains information about the new volume", 
+    "tags": [
+        "canonistack"
+    ], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1000710", 
+    "owner": "None", 
+    "id": 1000710, 
+    "index": 2817, 
+    "created": "2012-05-17 11:17:25.387065+00:00", 
+    "title": "Attaching volume during instance boot doesn't work", 
+    "comments": [
+        {
+            "content": "Using the newly enabled volume support on canonistack, it arrived at a state where the volume believed it was in-use by the instance, but the instance had not registered it. The volume then refused to be detached from the instance, the command succeeded but no change occurred.\n\nThe sequence of events was:\n* Start instance\n* Create volume\n* Wait till instance was listed as ACTIVE\n* Attach volume\n* SSH to instance... fails, instance not yet booted enough\n* Wait more\n* SSH to instance\n* dmesg contains nothing about volume\n\nThe suggestion is the attach happened to soon in the boot process.\n\nTo recover, did:\n* Reboot instance\n* Wait till instance is listed as ACTIVE and can SSH to it\n* Volume is now back to being available\n* Attach volume\n* dmesg contains information about the new volume", 
+            "date_created": "2012-05-17 11:17:25.387065+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gz"
+        }, 
+        {
+            "content": "I'm confused because\r\na.) dmesg on the first boot did not have anything in it\r\nb.) reboot (without re-attach) showed the drive.\r\n\r\nThose two items in the bug report just seem strange.", 
+            "date_created": "2012-05-17 13:53:48.335981+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-05-17 14:36:04.004417+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-05-17 14:36:31.390623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "I've attached dmesg output from first boot and second boot that Martin provided me with.\nSome things to note:\n * instance was 12.04 ubuntu-precise-12.04-amd64-server-20120424\n * both first boot and reboot took 90 seconds to get to the acpi messages. These messages come as a result of 'module-init-tools.conf' upstart job reading /etc/modules which includes 'acpiphp'.  In my boot just now (and even subsequent reboot) that occurs more around 3 seconds of uptime.\n", 
+            "date_created": "2012-05-17 14:43:50.608855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "I'm currently not able to reproduce this, with something like the following:\n\nami=ami-000000bf\nzone=nova\nsize=2\ninstsize=m1.medium\nkey=mykey\n\nisready() { local s=$(euca-describe-instances \"$1\" | awk '$2 == i { print $6 }' \"i=$1\" ); echo $s 1>&2; [ \"$s\" = \"running\" ]; }\n\nout=$(euca-create-volume -z $zone -s $size)\nvol=$(echo \"$out\" | awk '$1 = \"VOLUME\" { print $2 }')\nsleep 5; # to let it get to available\n\nout=$(euca-run-instances \"--key=$key\" \"--instance-type=$instsize\" $ami)\ninst=$(echo \"$out\" | awk '-F\\t' '$1 == \"INSTANCE\" { print $2 }')\nwhile ! isready $inst; do echo -n .; sleep 1; done; euca-attach-volume $vol --instance=$inst --device=/dev/vdz", 
+            "date_created": "2012-05-17 15:00:29.828744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "OK.\nso, re-reading the above, and conversing with Martin.\nthings of note:\n * after first boot, the volume showed as 'in-use', but the disk was not attached to the instance.\n * after re-boot, the volume showed as 'available' again.  Basically, the volume got stuck in 'in-use' when it really wasnt.\n\nI suspect that what happened was this:\n * initial attach failed badly, leaving 'in-use'\n * the reboot (or possibly a timeout) kicked nova to re-evaluate the situation, and it recognized that the volume was not in-use.\n\nSo, i think the real issue is likely that the volume just got marked as in use, even though the libvirt (or something else) actually failed, and then it took something (timeout or reboot) to get back to sane state.", 
+            "date_created": "2012-05-17 15:17:53.971728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Our current hypothesis for how this situation happened in the first place is that because nova-api returns success early, it's possible to run the attach before the volume has actually been successfully created. \n\nIt looks like the attach needs to block internally to wait for the volume creation to succeed before it can proceed with action.\n\n", 
+            "date_created": "2012-05-18 09:13:27.646133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nick-moffitt"
+        }, 
+        {
+            "content": "So you tried to attacht the volume while its being created?", 
+            "date_created": "2012-08-08 19:23:00.902060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "What release was this canonistack region running at the time the problem was seen?", 
+            "date_created": "2012-11-16 05:31:53.645905+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "We cannot solve the issue you reported without more information. Could you please provide the requested information ?", 
+            "date_created": "2012-12-13 10:44:23.335465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This bug lacks the necessary information to effectively reproduce and fix it, therefore it has been closed. Feel free to reopen the bug by providing the requested information and set the bug status back to ''New''.", 
+            "date_created": "2013-03-18 02:02:12.775881+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ]
+}

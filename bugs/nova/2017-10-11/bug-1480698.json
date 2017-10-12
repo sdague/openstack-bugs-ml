@@ -1,0 +1,60 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-11-03 13:41:31.042462+00:00", 
+    "description": "http://logs.openstack.org/59/138659/33/check/gate-tempest-dsvm-neutron-linuxbridge/29e7adc/logs/screen-n-api.txt.gz?level=ERROR\n\n2015-07-21 11:29:53.660 ERROR nova.api.ec2 [req-522a314d-e88e-4982-b014-64141aeef73a tempest-EC2KeysTest-362858920 tempest-EC2KeysTest-451984995] Unexpected OperationalError raised: (_mysql_exceptions.OperationalError) (1040, 'Too many connections')", 
+    "tags": [
+        "db", 
+        "gate", 
+        "network"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1480698", 
+    "owner": "https://api.launchpad.net/1.0/~rpodolyaka", 
+    "id": 1480698, 
+    "index": 5678, 
+    "created": "2015-08-02 18:15:39.866044+00:00", 
+    "title": "MySQL error - too many connections", 
+    "comments": [
+        {
+            "content": "http://logs.openstack.org/59/138659/33/check/gate-tempest-dsvm-neutron-linuxbridge/29e7adc/logs/screen-n-api.txt.gz?level=ERROR\n\n2015-07-21 11:29:53.660 ERROR nova.api.ec2 [req-522a314d-e88e-4982-b014-64141aeef73a tempest-EC2KeysTest-362858920 tempest-EC2KeysTest-451984995] Unexpected OperationalError raised: (_mysql_exceptions.OperationalError) (1040, 'Too many connections')", 
+            "date_created": "2015-08-02 18:15:39.866044+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scollins"
+        }, 
+        {
+            "content": "we see this in a lot of contexts downstream, and it turns out that based on load and such we do in fact need to raise the mysql_max_connections limit.       Nova spawns a lot of Python processes, and each one can use anywhere from 1- 15 connections, 5 of which are persistently pooled.\n\nI'm hearing on IRC that we're seeing it on Neutron as well and that the incidence of both seems to correspond.    Basically, the source of the connections needs to be understood.   I'd recommend using netstat to help figure it out, here's a line I used to identify individual processes:\n\n    netstat -ntp | grep python | grep ESTABLISHED | grep 3306 | cut -c80-86 | sed 'sX/.*XX' | xargs -n1 ps -p | grep -v \"CMD\"\n", 
+            "date_created": "2015-08-03 16:13:56.451700+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "Most likely we need to tweak some settings my.cnf either in DevStack or DevStack-Gate.", 
+            "date_created": "2015-08-04 01:23:41.573125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scollins"
+        }, 
+        {
+            "content": "Roman wrote a patch to gain more information: https://review.openstack.org/#/c/209858/", 
+            "date_created": "2015-08-06 12:24:31.938972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Yeah, I'm trying to figure out what's going on by periodically dumping information about connections to MySQL (https://review.openstack.org/#/c/209858/ - periodic task in nova-conductor).\n\nI rechecked the patch multiple times - for most jobs the number of connections never exceeds ~150-200 units. So it's not clear to me how we actually managed to hit this problem (as in devstack the max connections number limit is set to 1024 - https://github.com/openstack-dev/devstack/blob/master/lib/databases/mysql#L99).\n\nCuriously, according to logstash, there was another hit in the gate recently. But it was another Neutron job. I'm going to try something similar with Neutron too, as those jobs are only triggered on new changes to Neutron code.", 
+            "date_created": "2015-08-13 16:32:03.598067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "what can happen is if something deadlocks hard in the DB, the other processes would pile up on top of it waiting.  Though I've never really seen MySQL have a permanent deadlock before.", 
+            "date_created": "2015-08-13 16:45:22.194744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "This is not really a nova job, it's unsurprising that we see this in neutron jobs, there are more services, so more connections. Though now that we're using the pure python mysql driver we might not need such a high API worker count", 
+            "date_created": "2015-09-23 14:33:25.977313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "worker counts IMO (and in others O) need to come way down across openstack services.     esp the worker-per-core model, on a 24 core machine we see all kinds of services spinning up dozens of DB connections (b.c. they are pooled) and then just sitting idle.", 
+            "date_created": "2015-09-23 14:57:24.481300+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }
+    ]
+}

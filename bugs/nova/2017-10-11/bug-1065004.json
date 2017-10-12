@@ -1,0 +1,61 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 10:51:49.305506+00:00", 
+    "description": "The dnsmasq hostsfile does not contain the newly created hosts, when you launch the instances.\nProblem since: \nhttps://review.openstack.org/#/c/14174/\nhttps://github.com/openstack/nova/commit/5fd7a9dba127bae812333196a5fa48a933212aeb\n\n0.) See my relevant configuration entries:\nstack@DevStackOSDomU:~/devstack$ cat /etc/nova/nova.conf |\ngrep -e compute_scheduler_driver -e multi_host -e network_manager\ncompute_scheduler_driver=nova.scheduler.filter_scheduler.FilterScheduler\nmulti_host=True\nnetwork_manager=nova.network.manager.FlatDHCPManager\n\n1.) See that there is no dnsmasq running\nstack@DevStackOSDomU:~/devstack$ ps ax | grep dnsmasq\n12742 pts/19   S+     0:00 grep dnsmasq\n\n2.) Fire up an instance\nstack@DevStackOSDomU:~/devstack$ . openrc admin\nstack@DevStackOSDomU:~/devstack$ nova boot --image=tty --flavor=m1.tiny sampleserver\n.\n.\n.\n| id | 6e90a769-0bdf-42bd-86a7-da776700bf6a |\n.\n.\n.\n\n3.) Wait until it is running\nstack@DevStackOSDomU:~/devstack$ nova show 6e90a769-0bdf-42bd-86a7-da776700bf6a\n+-------------------+----------- ... -+\n| Property          | Value      ...  |\n+-------------------+----------- ... -+\n.\n.\n.\n| private network   | 10.0.0.2   ...  | <- see the IP\n.\n.\n.\n| status            | ACTIVE     ...  | <- instance is active\n+-------------------+----------- ... -+\n\n4.) And look at the DHCP database - it is empty!!!:\nstack@DevStackOSDomU:~/devstack$ ps ax | grep dnsmasq\n... --dhcp-hostsfile=/opt/stack/data/nova/networks/nova-xenbr1.conf ...\nstack@DevStackOSDomU:~/devstack$ cat /opt/stack/data/nova/networks/nova-xenbr1.conf\nstack@DevStackOSDomU:~/devstack$ wc /opt/stack/data/nova/networks/nova-xenbr1.conf\n0 0 0 /opt/stack/data/nova/networks/nova-xenbr1.conf\n\n5.) Restart nova-network\nstack@DevStackOSDomU:~/devstack$ pkill -HUP -f \"nova-network\"\nstack@DevStackOSDomU:~/devstack$ NL=`echo -ne '\\015'`\nstack@DevStackOSDomU:~/devstack$ screen -S stack -p n-net -X stuff \"cd /opt/stack/nova && /usr/local/bin/nova-network$NL\"\n\n6.) See, that dhcp entries are there now:\nstack@DevStackOSDomU:~/devstack$ cat /opt/stack/data/nova/networks/nova-xenbr1.conf\nfa:16:3e:46:6a:be,sampleserver.novalocal,10.0.0.2\nstack@DevStackOSDomU:~/devstack$ wc /opt/stack/data/nova/networks/nova-xenbr1.conf\n 0  1 49 /opt/stack/data/nova/networks/nova-xenbr1.conf", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1065004", 
+    "owner": "https://api.launchpad.net/1.0/~belliott", 
+    "id": 1065004, 
+    "index": 847, 
+    "created": "2012-10-10 12:43:04.948400+00:00", 
+    "title": "Fail to assign private fixed ip with multi_host", 
+    "comments": [
+        {
+            "content": "floating ip exercises are failing, at least on XenServer:\nI guess, that it is happening since https://github.com/openstack/nova/commit/5fd7a9dba127bae812333196a5fa48a933212aeb\n\nSee the exercise.sh log\n\n+ nova add-floating-ip f72920ee-eda7-41be-b826-044b052914f6 172.24.4.226\n+ timeout 15 sh -c 'while ! ping -c1 -w1 172.24.4.226; do sleep 1; done'\nPING 172.24.4.226 (172.24.4.226) 56(84) bytes of data.\n\n--- 172.24.4.226 ping statistics ---\n1 packets transmitted, 0 received, 100% packet loss, time 0ms\n\nPING 172.24.4.226 (172.24.4.226) 56(84) bytes of data.\nFrom 172.24.4.226 icmp_seq=1 Destination Host Unreachable\n\n--- 172.24.4.226 ping statistics ---\n1 packets transmitted, 0 received, +1 errors, 100% packet loss, time 0ms\n\nPING 172.24.4.226 (172.24.4.226) 56(84) bytes of data.\n\n--- 172.24.4.226 ping statistics ---\n1 packets transmitted, 0 received, 100% packet loss, time 0ms\n\nPING 172.24.4.226 (172.24.4.226) 56(84) bytes of data.\n\n--- 172.24.4.226 ping statistics ---\n1 packets transmitted, 0 received, 100% packet loss, time 0ms\n\nPING 172.24.4.226 (172.24.4.226) 56(84) bytes of data.\n\n--- 172.24.4.226 ping statistics ---\n1 packets transmitted, 0 received, 100% packet loss, time 0ms\n\nPING 172.24.4.226 (172.24.4.226) 56(84) bytes of data.\nFrom 172.24.4.226 icmp_seq=1 Destination Host Unreachable\n\n--- 172.24.4.226 ping statistics ---\n1 packets transmitted, 0 received, +1 errors, 100% packet loss, time 0ms\n\nPING 172.24.4.226 (172.24.4.226) 56(84) bytes of data.\n\n--- 172.24.4.226 ping statistics ---\n1 packets transmitted, 0 received, 100% packet loss, time 0ms\n\n+ echo 'Couldn'\\''t ping server with floating ip'\nCouldn't ping server with floating ip\n+ exit 1", 
+            "date_created": "2012-10-10 12:43:04.948400+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mate-lakat"
+        }, 
+        {
+            "content": "If that's of any help, I personally don't see this in my DevStack instance; I have just built a new instance and run exercise tests against trunk. floating_ips pass just fine. I am running against XCP 1.1 and XCP 1.5", 
+            "date_created": "2012-10-10 16:16:32.431119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "So my setup is using multi_host. It turned out, that even the fixed ips are not allocated. It turned out, that assembling the dhcp lease file depends on the host field. See nova/db/sqlalchemy/api.py:\n\n2196 def network_get_associated_fixed_ips(\n....\n2223     if host:\n2224         query = query.filter(models.Instance.host == host)\n\nAnd I think it is causing me a headache. If I restart nova-network, everything works, because on startup, the host is already filled in.\n\nArmando, are you using multi_host / custom scheduler?\n\nI am using:\nnetwork_manager=nova.network.manager.FlatDHCPManager\ncompute_scheduler_driver=nova.scheduler.filter_scheduler.FilterScheduler\n", 
+            "date_created": "2012-10-15 13:31:09.281377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mate-lakat"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/14464", 
+            "date_created": "2012-10-15 16:12:10.325039+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/14488", 
+            "date_created": "2012-10-16 16:00:16.833425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/14488\nCommitted: http://github.com/openstack/nova/commit/2649f14673f8ef5ca257583f1cdf5fe57d4734b9\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2649f14673f8ef5ca257583f1cdf5fe57d4734b9\nAuthor: Brian Elliott <email address hidden>\nDate:   Tue Oct 16 15:58:20 2012 +0000\n\n    Set host prior to allocating network information.\n    \n    Make sure 'host' field on the instance is set before allocating\n    network information.\n    \n    bug 1065004\n    \n    Change-Id: I7b929fd50a057c8c69a0b83e07cdc5cd9cb55b45\n", 
+            "date_created": "2012-10-16 18:05:04.078084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/14757", 
+            "date_created": "2012-10-24 13:19:55.372247+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Folsom changed squashed into https://review.openstack.org/#/c/16677/", 
+            "date_created": "2012-11-21 19:32:50.818174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/16677\nCommitted: http://github.com/openstack/nova/commit/284f6ea64b0837981a24251825b19abef354a9a8\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 284f6ea64b0837981a24251825b19abef354a9a8\nAuthor: Brian Elliott <email address hidden>\nDate:   Mon Oct 8 18:35:14 2012 +0000\n\n    Set instance host field after resource claim\n    \n    Set the 'host' field on the instance after the resource tracker\n    on the compute node has accepted the build.\n    \n    The field is set after resources are confirmed to be available while the\n    COMPUTE_RESOURCES_SEMAPHORE is held.  The semaphore ensures the\n    resources usage values will be consistent even if the\n    update_available_resource periodic task audit runs.\n    \n    bug 1060255\n    \n    (cherry picked from commit 5fd7a9dba127bae812333196a5fa48a933212aeb)\n    \n    Also includes the following bugfix to the original patch:\n    \n    Set host prior to allocating network information.\n    \n    Make sure 'host' field on the instance is set before allocating\n    network information.\n    \n    bug 1065004\n    \n    (cherry picked from commit 2649f14673f8ef5ca257583f1cdf5fe57d4734b9)\n    Change-Id: I92105ec14924960ac8ef7ca8c810783085314e10\n", 
+            "date_created": "2012-11-27 01:55:46.761568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

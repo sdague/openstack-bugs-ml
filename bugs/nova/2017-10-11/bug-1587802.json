@@ -1,0 +1,95 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-02-27 20:29:32.859250+00:00", 
+    "description": "when using ceph as backend, instance can resize to a smaller flavor successfully without any exception, ResizeError failed to raise.\n\nwhen using ceph as backend, xml file looks like this:\n    <disk type='network' device='disk'>\n      <driver name='qemu' type='raw' cache='writeback'/>\n      <auth username='cinder'>\n        <secret type='ceph' uuid='457eb676-33da-42ec-9a8c-9293d545c337'/>\n      </auth>\n      <source protocol='rbd' name='vms/e888e9c5-4c63-4ec3-a8fe-45a432cc82e0_disk'>\n        <host name='172.16.40.18' port='6789'/>\n      </source>\n      <target dev='vda' bus='virtio'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>\n    </disk>\n\nAs the disk type is network, so get_instance_disk_info cannot get disk_info\nnova/virt/libvirt/driver.py:\n    def _get_instance_disk_info(self, instance_name, xml,\n                                block_device_info=None):\n        ......\n        for cnt, path_node in enumerate(path_nodes):\n            disk_type = disk_nodes[cnt].get('type')\n            path = path_node.get('file') or path_node.get('dev')\n            target = target_nodes[cnt].attrib['dev']\n\n            if not path:\n                LOG.debug('skipping disk for %s as it does not have a path',\n                          instance_name)\n                continue\n\n            if disk_type not in ['file', 'block']:\n                LOG.debug('skipping disk because it looks like a volume', path)\n                continue\n\n            if target in volume_devices:\n                LOG.debug('skipping disk %(path)s (%(target)s) as it is a '\n                          'volume', {'path': path, 'target': target})\n                continue\n         ......\n\n\nnova/virt/libvirt/driver.py:\n\u00a0\u00a0\u00a0\u00a0@staticmethod\n\u00a0\u00a0\u00a0\u00a0def _is_booted_from_volume(instance, disk_mapping):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"\"\"Determines whether the VM is booting from volume\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0Determines whether the disk mapping indicates that the VM\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0is booting from a volume.\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"\"\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0return ((not bool(instance.get('image_ref')))\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0or 'disk' not in disk_mapping)\n\nIn the end when migrate_disk_and_power_off calling is_booted_from_volume, disk_mapping = [] and treated as volume backed instance.", 
+    "tags": [
+        "ceph", 
+        "in-stable-newton", 
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1587802", 
+    "owner": "https://api.launchpad.net/1.0/~ftersin", 
+    "id": 1587802, 
+    "index": 4545, 
+    "created": "2016-06-01 09:51:15.764293+00:00", 
+    "title": "libvirt resize down prevention is invalid when using rbd as backend", 
+    "comments": [
+        {
+            "content": "when using ceph as backend, instance can resize to a smaller flavor, and vm_state become error in the end.\n\nnova/virt/libvirt/driver.py:\n    @staticmethod\n    def _is_booted_from_volume(instance, disk_mapping):\n        \"\"\"Determines whether the VM is booting from volume\n\n        Determines whether the disk mapping indicates that the VM\n        is booting from a volume.\n        \"\"\"\n        return ((not bool(instance.get('image_ref')))\n                or 'disk' not in disk_mapping)\n\nwhen using rbd as backend, the function cannot find 'disk' in disk_mapping, and treat it as booted_from_volume", 
+            "date_created": "2016-06-01 09:51:15.764293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yang-shengming"
+        }, 
+        {
+            "content": "Which version of nova are you hitting this on? Does it exist in the latest release (mitaka)?", 
+            "date_created": "2016-06-03 19:27:05.324929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Also see:\n\nhttps://ask.openstack.org/en/question/79054/openstack-kilo-cant-resize-instance-down/\n\nAre you trying to resize down to a flavor that won't fit the image?", 
+            "date_created": "2016-06-03 19:29:54.331497+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/325708", 
+            "date_created": "2016-06-06 03:37:09.677186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Matt, I'm exactly trying resize down to a flavor that won't fit the image. It comes to me on Liberty. After seeing the code on master, I guess it hasn't been fixed yet. I commit a patch which changed the is_booted_from_volume judgment.", 
+            "date_created": "2016-06-06 03:45:30.038858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yang-shengming"
+        }, 
+        {
+            "content": "Yang, sorry for changed assignee. It has been changed authomatically, and i can not set it back. Try yourself, pls.", 
+            "date_created": "2016-06-28 14:50:58.351612+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ftersin"
+        }, 
+        {
+            "content": "@yang-shengming hi, could you please attach traceback and libvirt's domain definition here.", 
+            "date_created": "2016-09-27 10:07:52.940330+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tdurakov"
+        }, 
+        {
+            "content": "I had meant to add some steps to reproduce the problem:\n\n1. Set up devstack with ceph\n2. Boot instance with a flavor with some disk\n3. Resize down to a flavor with a smaller disk than step 2\n4. Confirm resize\n5. Shelve instance\n6. Unshelve instance\n\nResult: Instance will not be unshelved: \u201cFlavorDiskSmallerThanImage: Flavor's disk is too small for requested image. Flavor disk is 1073741824 bytes, image is 5368709120 bytes.\u201d\n", 
+            "date_created": "2016-10-20 16:33:55.304393+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Change abandoned by Feodor Tersin (<email address hidden>) on branch: master\nReview: https://review.openstack.org/334609\nReason: in favor of Ie424d172", 
+            "date_created": "2016-11-17 05:33:43.488564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/382024\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ed994bb4d72b5f93cfb76a5f726264e4896ad4ed\nSubmitter: Jenkins\nBranch:    master\n\ncommit ed994bb4d72b5f93cfb76a5f726264e4896ad4ed\nAuthor: Feodor Tersin <email address hidden>\nDate:   Tue Oct 4 20:17:17 2016 +0300\n\n    libvirt: Improve _is_booted_from_volume implementation\n    \n    Currently this method cannot be used widely due to its parameters. It\n    requires device_info - the dict which can not be easily obtained in many\n    cases. Since it is often needed to figure out if an instance is booted\n    from volume, and the method name is \"appropriate\", this sometimes leads\n    to errors (when string result of get_instance_disk_info is passed as an\n    argument to _is_booted_from_volume; see also Id5901254).\n    \n    This patch makes _is_booted_from_volume to use standard\n    block_device_info structure, which is accessible in almost any driver\n    method.\n    \n    Closes-bug: 1596957\n    Closes-bug: 1587802\n    Change-Id: Ie424d172ac9d6aeb42d83e512f2a18713134be3b\n", 
+            "date_created": "2016-12-07 13:13:55.212117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b2 development milestone.", 
+            "date_created": "2016-12-15 17:34:42.344663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/416558", 
+            "date_created": "2017-01-04 13:51:21.794140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/325708\nReason: This patch has been sitting unchanged for more than 12 weeks. I am therefore going to abandon it to keep the review queue sane. Please feel free to restore the change if you're still working on it.", 
+            "date_created": "2017-02-06 01:42:20.329137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/416558\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c9ea2e179e7408f8b8f41579c6915be519c0b04e\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit c9ea2e179e7408f8b8f41579c6915be519c0b04e\nAuthor: Feodor Tersin <email address hidden>\nDate:   Tue Oct 4 20:17:17 2016 +0300\n\n    libvirt: Improve _is_booted_from_volume implementation\n    \n    Currently this method cannot be used widely due to its parameters. It\n    requires device_info - the dict which can not be easily obtained in many\n    cases. Since it is often needed to figure out if an instance is booted\n    from volume, and the method name is \"appropriate\", this sometimes leads\n    to errors (when string result of get_instance_disk_info is passed as an\n    argument to _is_booted_from_volume; see also Id5901254).\n    \n    This patch makes _is_booted_from_volume to use standard\n    block_device_info structure, which is accessible in almost any driver\n    method.\n    \n    Closes-bug: 1596957\n    Closes-bug: 1587802\n    Change-Id: Ie424d172ac9d6aeb42d83e512f2a18713134be3b\n    (cherry picked from commit ed994bb4d72b5f93cfb76a5f726264e4896ad4ed)\n", 
+            "date_created": "2017-02-16 06:30:19.500941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.4 release.", 
+            "date_created": "2017-02-27 20:29:32.235008+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

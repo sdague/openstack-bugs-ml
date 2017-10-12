@@ -1,0 +1,41 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-03-09 06:53:57.499652+00:00", 
+    "description": "Discussed in the -dev mailing list here:\n\nhttp://lists.openstack.org/pipermail/openstack-dev/2015-December/082596.html\n\nWhen nova deletes a volume-backed instance, it detaches the volume first here:\n\nhttps://github.com/openstack/nova/blob/5508e11cf873384a28dc7416168d34e85f2c06cf/nova/compute/manager.py#L2293\n\nAnd then deletes the volume here (if the delete_on_termination flag was set to True):\n\nhttps://github.com/openstack/nova/blob/5508e11cf873384a28dc7416168d34e85f2c06cf/nova/compute/manager.py#L2320\n\nThe problem is this code races since the detach is async, nova gets back a 202 and then goes on to delete the volume, which can fail if the volume status is not 'available' yet, as seen here:\n\nhttp://logstash.openstack.org/#dashboard/file/logstash.json?query=message:%5C%22Failed%20to%20delete%20volume%5C%22%20AND%20message:%5C%22due%20to%5C%22%20AND%20tags:%5C%22screen-n-cpu.txt%5C%22\n\nhttp://logs.openstack.org/36/231936/9/check/gate-tempest-dsvm-full-lio/31de861/logs/screen-n-cpu.txt.gz?level=TRACE#_2015-12-18_13_59_16_071\n\n2015-12-18 13:59:16.071 WARNING nova.compute.manager [req-22431c70-78da-4fea-b132-170d27177a6f tempest-TestVolumeBootPattern-196984582 tempest-TestVolumeBootPattern-290257504] Failed to delete volume: 16f9252c-4036-463b-a053-60d4f46796c1 due to Invalid input received: Invalid volume: Volume status must be available or error or error_restoring or error_extending and  must not be migrating, attached, belong to a consistency group or have snapshots. (HTTP 400) (Request-ID: req-260c7d2a-d0aa-4ee1-b5a0-9b0c45f1d695)\n\nThis isn't an error in nova because the compute manager's _delete_instance method calls _cleanup_volumes with raise_exc=False, but this will orphan volumes in cinder, which then requires manual cleanup on the cinder side.", 
+    "tags": [
+        "compute", 
+        "kilo-backport-potential", 
+        "liberty-backport-potential", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1527623", 
+    "owner": "https://api.launchpad.net/1.0/~glongwave", 
+    "id": 1527623, 
+    "index": 4413, 
+    "created": "2015-12-18 14:23:02.858522+00:00", 
+    "title": "Nova might orphan volumes when it's racing to delete a volume-backed instance", 
+    "comments": [
+        {
+            "content": "Discussed in the -dev mailing list here:\n\nhttp://lists.openstack.org/pipermail/openstack-dev/2015-December/082596.html\n\nWhen nova deletes a volume-backed instance, it detaches the volume first here:\n\nhttps://github.com/openstack/nova/blob/5508e11cf873384a28dc7416168d34e85f2c06cf/nova/compute/manager.py#L2293\n\nAnd then deletes the volume here (if the delete_on_termination flag was set to True):\n\nhttps://github.com/openstack/nova/blob/5508e11cf873384a28dc7416168d34e85f2c06cf/nova/compute/manager.py#L2320\n\nThe problem is this code races since the detach is async, nova gets back a 202 and then goes on to delete the volume, which can fail if the volume status is not 'available' yet, as seen here:\n\nhttp://logstash.openstack.org/#dashboard/file/logstash.json?query=message:%5C%22Failed%20to%20delete%20volume%5C%22%20AND%20message:%5C%22due%20to%5C%22%20AND%20tags:%5C%22screen-n-cpu.txt%5C%22\n\nhttp://logs.openstack.org/36/231936/9/check/gate-tempest-dsvm-full-lio/31de861/logs/screen-n-cpu.txt.gz?level=TRACE#_2015-12-18_13_59_16_071\n\n2015-12-18 13:59:16.071 WARNING nova.compute.manager [req-22431c70-78da-4fea-b132-170d27177a6f tempest-TestVolumeBootPattern-196984582 tempest-TestVolumeBootPattern-290257504] Failed to delete volume: 16f9252c-4036-463b-a053-60d4f46796c1 due to Invalid input received: Invalid volume: Volume status must be available or error or error_restoring or error_extending and  must not be migrating, attached, belong to a consistency group or have snapshots. (HTTP 400) (Request-ID: req-260c7d2a-d0aa-4ee1-b5a0-9b0c45f1d695)\n\nThis isn't an error in nova because the compute manager's _delete_instance method calls _cleanup_volumes with raise_exc=False, but this will orphan volumes in cinder, which then requires manual cleanup on the cinder side.", 
+            "date_created": "2015-12-18 14:23:02.858522+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "We could wait for detach to complete or timeout, similar to what we do with boot from volume when creating the volume and attaching it to the instance:\n\nhttps://github.com/openstack/nova/blob/5508e11cf873384a28dc7416168d34e85f2c06cf/nova/compute/manager.py#L1398", 
+            "date_created": "2015-12-18 14:23:47.763668+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/260339", 
+            "date_created": "2015-12-22 06:12:56.848455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Note that this might re-introduce the race seen in bug 1464259 where tempest is racing to delete the volume snapshot while nova is deleting the volume associated with the snapshot. If we start waiting for the volume to be detached before we delete it, that could add just enough time for the race in tempest to show up again.", 
+            "date_created": "2015-12-22 15:53:55.595036+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

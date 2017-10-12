@@ -1,0 +1,136 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2017-09-20 20:09:36.231687+00:00", 
+    "description": "Using Grizzly with Neutron: If there are multiple security groups with the same name (in other tenants for example), it is not possible to boot an instance with this security group as Horizon will only use the name of the security group.\n\nExample from logs:\n2013-07-21 03:39:12.432 ERROR nova.network.security_group.quantum_driver [req-aaca5681-72b8-41dc-a89c-9a5c95c7eff4 33fe423e114c4586a573514b3e98341e e91fe07ea4834f8487c5cec7deaa2eac] Quantum Error: Multiple security_group matches found for name 'web', use an ID to be more specific.\n2013-07-21 03:39:12.439 ERROR nova.api.openstack [req-aaca5681-72b8-41dc-a89c-9a5c95c7eff4 33fe423e114c4586a573514b3e98341e e91fe07ea4834f8487c5cec7deaa2eac] Caught error: Multiple security_group matches found for name 'web', use an ID to be more specific.", 
+    "tags": [
+        "api", 
+        "in-stable-kilo", 
+        "network", 
+        "neutron"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 94, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1203413", 
+    "owner": "None", 
+    "id": 1203413, 
+    "index": 1392, 
+    "created": "2013-07-21 03:06:25.535578+00:00", 
+    "title": "VM launch fails with Neutron in 'admin' tenant if 'admin' and 'demo' tenants have secgroups with a same name 'web'", 
+    "comments": [
+        {
+            "content": "Using Grizzly with Neutron: If there are multiple security groups with the same name (in other tenants for example), it is not possible to boot an instance with this security group as Horizon will only use the name of the security group.\n\nExample from logs:\n2013-07-21 03:39:12.432 ERROR nova.network.security_group.quantum_driver [req-aaca5681-72b8-41dc-a89c-9a5c95c7eff4 33fe423e114c4586a573514b3e98341e e91fe07ea4834f8487c5cec7deaa2eac] Quantum Error: Multiple security_group matches found for name 'web', use an ID to be more specific.\n2013-07-21 03:39:12.439 ERROR nova.api.openstack [req-aaca5681-72b8-41dc-a89c-9a5c95c7eff4 33fe423e114c4586a573514b3e98341e e91fe07ea4834f8487c5cec7deaa2eac] Caught error: Multiple security_group matches found for name 'web', use an ID to be more specific.", 
+            "date_created": "2013-07-21 03:06:25.535578+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kstev"
+        }, 
+        {
+            "content": "Hi Guys,\nsame problem here. Any news for the fix?\n\nThanks", 
+            "date_created": "2013-09-04 15:50:16.790215+00:00", 
+            "author": "https://api.launchpad.net/1.0/~colo90"
+        }, 
+        {
+            "content": "If the fix isn't too invasive this should be fixed in RC1, the impact is serious and users shouldn't be blocked because they used the same security group name that someone else happens to be using in an unrelated project.", 
+            "date_created": "2013-09-12 14:05:10.611089+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jpichon"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/46300", 
+            "date_created": "2013-09-12 15:26:15.549416+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Note: This only happens if the user is an admin in the current project (this limits the impact a little).", 
+            "date_created": "2013-09-17 14:31:21.598503+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jpichon"
+        }, 
+        {
+            "content": "[Havana] If we have the solutions in bug 1207184, this issue disappears from Havana.\n\n[Grizzly]\nNeturon security group support was added in Havana, so this issue still exists in Grizzly.\nThe proposed fix does not solve the issue since it break nova native security group implementation.\n\nI am not sure it should be dealt with in Horizon not Nova itself.\nWhen nova security group driver is \"nova\", we must pass \"name\".\nWhen nova security group driver is \"quantum\", we must pass \"uuid\".\nIt is a strange API indeed.\n\n[Minor correction] This happens in the following two cases.[\n(1) the user has an admin role and security groups from all tenants are visible (as described in Julie's comment)\n(2) a user creates multiple security groups in neutron by CLI. (very rase cases)", 
+            "date_created": "2013-09-19 17:08:21.500878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "Sorry that my last comment is a bit wrong. Let me correct.\nI was confused with add_security_group_instance and create_server.\n\nThe proposed fix looks insufficient with nova-network security group.\n\nIn Havana, the current behavior of Nova and Neutron are as follows:\n(a1) nova-network security group (with nova driver) accepts \"Name\" of security groups.\n(a2) Nova security group with neutron driver accepts UUID or Name.\n(b) Neutron native security group API requires UUID.\n\nIn Grizzy, we need to consider cases (a1) and (a2).\n(b2) does not need to be considered since Neutron native security group support is not implemented in Grizzly.", 
+            "date_created": "2013-09-23 09:50:38.161006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "I think this issue should be fixed in nova ideally, but there seems to be several work around in Horizon.\n\nBasically I think ID is better since it is unique in the system, so it looks good to me to change sg.name to sg.id as the proposed patch does. In addition to this, the possible workaround in Horizon are:\n\n(1) Before/Inside calling server_create called from handle() in create_instance workflow class, if security_group ID is an integer (nova-network is used),  to retrieve name according to its ID and pass security group name as a parameter of server_create()\n\n(2) Similar to (1), to encode sg.id and sg.name with json in populate_groups_choices in project/instances/workflows/create_instance.py, and use sg.name when sg.id is an integer not UUID. This saves additional security_group_list API call.\n\n(3) Use security_group name as security group ID if ID is an integer in api/nova. It can be done in api/nova SecurityGroup class.\n\nAll of the above options look  workarounds to me, but it can help us.\n\nI would like to know your opinions.", 
+            "date_created": "2013-09-23 11:00:32.757525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "This is a bug of Nova.\n\nWe can reproduce it with CLI with \"admin\" user.\nhttp://paste.openstack.org/show/47673/\n\nThe point is both \"demo\" and \"admin\" tenant have security groups named with \"web\".\n", 
+            "date_created": "2013-09-29 09:19:22.521268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "In Horizon, there are two options:\n(a) Add some workaround to avoid this bug,\n(b) No fix in Havana and wait for Nova fix\n", 
+            "date_created": "2013-09-29 09:24:35.308405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "As amotoki suggested, this is a fundamental incompatibility between Nova and Quantum's implementations (and personally I've thought Nova's use of the \"name\" instead of the \"id\" has been wrong for a long time). Given where we're at in the release cycle I don't want to add a lot of monkey-patching on our end to work around a bug that's not ours.\r\n\r\nIf Nova happens to fix this issue in their RC candidate, I'd love to fix it for us as well.\r\n\r\nOtherwise, this should be included in the release notes for the Havana release.", 
+            "date_created": "2013-09-30 19:13:46.895695+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gabriel-hurley"
+        }, 
+        {
+            "content": "The proposed patch in Horizon is insufficient and marked as \"Do not Merge\", so reset the status to \"Confirmed\".", 
+            "date_created": "2013-10-02 12:52:59.204160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "\nSo far I have found out that, when I am giving \"nova secgroup-list\" command, novaclient is sending \"curl -i http://127.0.0.1:9696/v2.0/security-groups/8ae7b26b-8a28-4389-ad3b-0884e1aa5015.json\" rest api to neutron that fetches tenant specific security group list.\nOn the other hand, when I am giving \"nova boot\" command from admin, with --security-groups flag set to certain security-group name which is already present in any other tenant, novaclient is sending \"curl -i http://127.0.0.1:9696/v2.0/security-groups.json?fields=id&name=web -X GET -H \"X-Auth-Token:\" rest api to neutron that fetches all security groups irrespective of tenant.\nI am moving forward in the direction of resolving below rest api to be generated as tenant-specific like one generated in case of giving \"nova secgroup-list\" command.", 
+            "date_created": "2014-10-14 06:25:33.988906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~watsalya-mishra"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/131727", 
+            "date_created": "2014-10-29 12:21:14.219786+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Amandeep (<email address hidden>) on branch: master\nReview: https://review.openstack.org/131727", 
+            "date_created": "2014-11-11 05:16:38.076680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This bug seems have been fixed. I cannot reproduce it in devstack with  Akihiro provided steps.\n", 
+            "date_created": "2015-05-28 09:11:19.343843+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cy-lee"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/211046", 
+            "date_created": "2015-08-10 08:52:27.121711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/211046\nCommitted: https://git.openstack.org/cgit/openstack/horizon/commit/?id=5562694b7c81821820a846dd76471f66d8a47c12\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5562694b7c81821820a846dd76471f66d8a47c12\nAuthor: Radomir Dopieralski <email address hidden>\nDate:   Mon Aug 10 10:48:27 2015 +0200\n\n    Use security group id not name in the create instance dialog\n    \n    It's possible to create multiple security groups with the same name,\n    and then launching an instance will error with \"Error: Multiple\n    security_group matches found for name 'foo', use an ID to be more specific.\"\n    \n    The solution is to use the group id instead of group name in the form.\n    \n    This only works with Neutron, because Nova-Network not only requires the\n    groups to be passed by name, but also passes them by name internally in\n    several places.\n    \n    Change-Id: I83587e15a8c18d64a29fd1083e786a73162b19f9\n    Partial-bug: #1203413\n", 
+            "date_created": "2015-09-03 20:23:01.726981+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/229767", 
+            "date_created": "2015-10-01 08:03:56.696066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/229767\nCommitted: https://git.openstack.org/cgit/openstack/horizon/commit/?id=5b9bdca15b31fbc75dc674da8d3f965ebe94cf1c\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 5b9bdca15b31fbc75dc674da8d3f965ebe94cf1c\nAuthor: Radomir Dopieralski <email address hidden>\nDate:   Mon Aug 10 10:48:27 2015 +0200\n\n    Use security group id not name in the create instance dialog\n    \n    It's possible to create multiple security groups with the same name,\n    and then launching an instance will error with \"Error: Multiple\n    security_group matches found for name 'foo', use an ID to be more specific.\"\n    \n    The solution is to use the group id instead of group name in the form.\n    \n    This only works with Neutron, because Nova-Network not only requires the\n    groups to be passed by name, but also passes them by name internally in\n    several places.\n    \n    Change-Id: I83587e15a8c18d64a29fd1083e786a73162b19f9\n    Partial-bug: #1203413\n    (cherry picked from commit 5562694b7c81821820a846dd76471f66d8a47c12)\n", 
+            "date_created": "2015-10-01 15:04:33.027147+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is legacy behavior in Nova network, and the kind of issue that isn't going to be addressed at this point. ", 
+            "date_created": "2016-02-12 11:47:59.144611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "@Sean Dague\nnot legacy behavior in Nova network.\nI hava same issue in neutron Havana.", 
+            "date_created": "2016-08-05 01:32:29.725163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~leegy"
+        }, 
+        {
+            "content": "Looks like we've already merged patch to Horizon", 
+            "date_created": "2017-09-20 18:20:39.090969+00:00", 
+            "author": "https://api.launchpad.net/1.0/~e0ne"
+        }
+    ]
+}

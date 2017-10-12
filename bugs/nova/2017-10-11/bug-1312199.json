@@ -1,0 +1,145 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-09-27 16:23:23.661276+00:00", 
+    "description": "Logstash query: message: \"MP-BIOS bug\" AND tags:\"console\"\n\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOiBcIk1QLUJJT1MgYnVnXCIgQU5EIHRhZ3M6XCJjb25zb2xlXCIiLCJmaWVsZHMiOltdLCJvZmZzZXQiOjAsInRpbWVmcmFtZSI6ImFsbCIsImdyYXBobW9kZSI6ImNvdW50IiwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjEzOTgzNDg0NzIzNzcsIm1vZGUiOiIiLCJhbmFseXplX2ZpZWxkIjoiIn0=\n\ncirros-0.3.1-x86_64-uec  sometimes fails to boot with libvirt/ soft qemu in the openstack gate jobs.\n\nThe VM's serial console log ends with:\n\n[    1.096067] ftrace: allocating 27027 entries in 106 pages\n[    1.140070] ..TIMER: vector=0x30 apic1=0 pin1=2 apic2=-1 pin2=-1\n[    1.148071] ..MP-BIOS bug: 8254 timer not connected to IO-APIC\n[    1.148071] ...trying to set up timer (IRQ0) through the 8259A ...\n[    1.148071] ..... (found apic 0 pin 2) ...\n[    1.152071] ....... failed.\n[    1.152071] ...trying to set up timer as Virtual Wire IRQ...", 
+    "tags": [
+        "gate", 
+        "havana-backport-potential", 
+        "libvirt"
+    ], 
+    "importance": "Low", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1312199", 
+    "owner": "https://api.launchpad.net/1.0/~afazekas", 
+    "id": 1312199, 
+    "index": 6143, 
+    "created": "2014-04-24 14:13:55.174111+00:00", 
+    "title": "cirros 0.3.1 fails to boot", 
+    "comments": [
+        {
+            "content": "Logstash query: message: \"MP-BIOS bug\" AND tags:\"console\"\n\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOiBcIk1QLUJJT1MgYnVnXCIgQU5EIHRhZ3M6XCJjb25zb2xlXCIiLCJmaWVsZHMiOltdLCJvZmZzZXQiOjAsInRpbWVmcmFtZSI6ImFsbCIsImdyYXBobW9kZSI6ImNvdW50IiwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjEzOTgzNDg0NzIzNzcsIm1vZGUiOiIiLCJhbmFseXplX2ZpZWxkIjoiIn0=\n\n\ncirros-0.3.1-x86_64-uec  sometimes fails to boot with libvirt/ soft qemu in the openstack gate jobs.", 
+            "date_created": "2014-04-24 14:13:55.174111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Couple of comments:\n\n(1) From a related old bug, https://bugzilla.redhat.com/show_bug.cgi?id=502058#c15: qemu -no-kvm guest hangs at during timer setup; works with noapic \n\n    \"After some examination of the code, this turns out to\n    be a known problem with the code that tests for buggy\n    timers.  This code is not necessary when running in\n    qemu, and it gets confused because it tries to do accurate\n    timing checks which sometimes fail in virt.  For more\n    information, see:\n\n    https://bugzilla.redhat.com/show_bug.cgi?id=698842#c8\n\n    Adding kernel no_timer_check option appears to fix the\n    problem for me, but I am still doing testing.\"\n\n\n(2) Taking to one of the upstream KVM developers (Amos Kong),  says, the above check is too strict for virtualization environments, and recommends to try \"no_timer_check\" option on Kernel command-line to alleviate this.", 
+            "date_created": "2014-05-27 07:47:13.443519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Just a note:\n\nno_timer_check is added implicitly when the kernel detects it is booting under KVM.\n\nHowever when booting under TCG (software emulation) you have to add this to the guest kernel command line explicitly.\n\nTBH I believe this is a bug: the kernel should add this flag automatically whenever it detects any kind of virtualization being used, but it doesn't right now so you have to add it.", 
+            "date_created": "2014-05-27 08:50:09.101266+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "AFAIK Detecting a not accelerated qemu as hypervisor is not an easy task even on a booted system [1].\n\nWhen the image is UEC (the kernel image) is separated, nova would be able to pass no_timer_check as kernel parameter.\nThis is only required when the CONF.libvirt.virt_type=qemu.\nLinux automatically turns off the  timer_check when the hypervisor is mshyperv and kvm.\nAFAIK xen also uses para virtualized clock.\nThis seams like this is only way to provide stable boot with existing uec images in soft qemu.\n\nAdding nova to this bug for the above change.\n\nDevstack automatically decide when to to use kvm  or qemu.\nThe kvm is selected when the system is able to use hardware acceleration with qemu/kvm.\n\nThe cloud image needs to be altered in most cases, when qemu is selected type and the cloud image is not uec in order to use no_timer_check parameter.\nThis includes the f20 cloud image and all cloud images I saw so far.\nIt affects the heat-slow jobs.\n\nAdding devstack as affected component for this change.\n\nA Bug for Linux kernel and F20 could image will be created as well. \n\n[1] http://fedorapeople.org/cgit/rjones/public_git/virt-what.git/tree/virt-what.in?id=8aa72773cebbc742d9378fed6b6ac13cb57b0eb3#n228", 
+            "date_created": "2014-05-28 07:11:46.517789+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Probably a good loops_per_jiffy parameter also required. The same as used on the host probably good if the architecture is the same.\nBy using the  BogoMIPS from the /proc/cpuinfo \nI got good lpj by this formula: BogoMIPS/2*1000.\n\nThe notsc kernel parameter is also recommended if the HW acceleration (kvm) not enabled. ", 
+            "date_created": "2014-05-28 09:21:19.292546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Yes you're correct.  I thought that qemu (TCG) exported a CPUID leaf so we could detect it, but it seems that it does not.  As you say the kernel parameter would have to be added, either using -append (separate kernel) or by modifying the disk image.\n\nHere's a short Python script that can modify the disk image (not suggesting we use it, this is just as a demonstration):\n\n#!/usr/bin/python\nimport guestfs\nimport re\ng = guestfs.GuestFS (python_return_dict=True)\ng.add_drive (\"cirros-0.3.1-x86_64-disk.img\")\ng.launch ()\ng.mount (\"/dev/sda1\", \"/\")\nlines = g.read_lines (\"/boot/grub/menu.lst\")\nlines = [re.sub (r'^kernel(.*) console=',\n                 r'kernel\\1 no_timer_check console=', line)\n         for line in lines]\ncontent = \"\\n\".join (lines)\ng.write (\"/boot/grub/menu.lst\", content)\ng.shutdown ()\ng.close ()", 
+            "date_created": "2014-05-28 09:25:42.123912+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "FWIW it would be better if the host kernel exposed its lpj setting.  At the moment it only exposes it through dmesg, which is useless as the setting disappears after some time.  I proposed this patch some time ago:\n\nhttps://lkml.org/lkml/2013/3/1/308", 
+            "date_created": "2014-05-28 09:33:33.877470+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/96180", 
+            "date_created": "2014-05-28 14:59:16.714994+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/96090/", 
+            "date_created": "2014-05-28 15:01:48.999914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "The bogomips on x86 is calculated from the lpj  by simple formula (loops_per_jiffy/(500000/HZ)) and the bogomips value expected to be the same regardless to the host kernel HZ settings.  The challenging part is  the HZ might be non-default value on the guest kernel and it \"cannot be know\" unless the we add a HZ related image property to the aki image.\nWould be better if the kernel would have 'loop per sec' or bogomips argument which is HZ independent.  (Most system nowadays uses the NO_HZ options, which means HZ=1000)\nIf the kernel parameter meaning would be changed to lpj@1000HZ would be also helpful.\n\nThe kernel uses relatively big sample for lpj measurement  and usually a relatively big 15%  error is not fatal.\nHigher then required lpj usually does not causes fatal issue, but it makes the system slower, the opposite can cause the system reads invalid data from a hardware register. Is it a real threat with an emulated hardware ? \n\nI tried to alter the kernel parameters on the f20 image with guestfish, it is working on f20, but even with the instruction [1], it has issue on Ubuntu 12.04 [2](gate).\n\nThe guestfish approach without HW acceleration is not fast.\nI will try to use a loop mount. \n\n[1] http://libguestfs.org/guestfs-faq.1.html\n[2] http://paste.openstack.org/show/81983/", 
+            "date_created": "2014-05-30 06:44:29.172098+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "[lpj]\nRight, this is the reason why exporting it in /proc/cpuinfo is necessary.  Normalizing the lpj= parameter is another approach, although I guess it would break existing users.\n\n[ubuntu]\nIt seems to be using the wrong kernel.  Did you do:\nchmod 0644 /boot/vmlinuz*\nAlso which exact versions of:\nlinux-image (kernel)\nlibguestfs\nseabios\nfebootstrap\nare installed?  You should open another bug in launchpad to track this issue separately.\n\n[loop]\nLoop mounts are insecure (as well as needing root).  If you're seeing performance problems, take a look at:\nhttp://libguestfs.org/guestfs-performance.1.html\n", 
+            "date_created": "2014-05-30 07:32:48.671931+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "The Ubuntu bug is because the virtio-serial module isn't available in the -virtual kernel.  It looks as if you need to install 'linux-image-generic' alongside it.  Basically you need to make sure 'virtio_console.ko' is present in /lib/modules/<whichever-version>.  This is a bug in Ubuntu.", 
+            "date_created": "2014-05-30 08:09:06.081691+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/96090\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6b86a61fee15ce1237303fab2f7896f8c3bcad47\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6b86a61fee15ce1237303fab2f7896f8c3bcad47\nAuthor: Attila Fazekas <email address hidden>\nDate:   Wed May 28 09:19:29 2014 +0200\n\n    Use no_timer_check with soft-qemu\n    \n    The Linux kernel timer check not working properly\n    when the hypervisor's thread preempted by the host CPU scheduler.\n    \n    The timer check is automatically disabled with other types\n    of hypervisors including the hardware accelerated kvm,\n    but timer_check is not disabled when qemu used without hardware acceleration.\n    \n    This issue is frequently mischaracterized as an SSH connectivity issue and\n    causes rechecks and occasional boot failures.\n    \n    This change adds no_timer_check kernel parameter when we are using\n    uec images with qemu.\n    \n    Closes-Bug: #1312199\n    Change-Id: I3cfdfe9048fe219fc12cdac8a399b496f237e55e\n", 
+            "date_created": "2014-06-14 04:46:56.238473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/100065", 
+            "date_created": "2014-06-14 16:19:35.838369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm surprised this patch would work, as normally using -append would only work when using an external kernel & initrd.", 
+            "date_created": "2014-06-14 16:49:01.692970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/100065\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=485f25df181dedf2ba475f5e550af4f9f41089a3\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 485f25df181dedf2ba475f5e550af4f9f41089a3\nAuthor: Attila Fazekas <email address hidden>\nDate:   Wed May 28 09:19:29 2014 +0200\n\n    Use no_timer_check with soft-qemu\n    \n    The Linux kernel timer check not working properly\n    when the hypervisor's thread preempted by the host CPU scheduler.\n    \n    The timer check is automatically disabled with other types\n    of hypervisors including the hardware accelerated kvm,\n    but timer_check is not disabled when qemu used without hardware acceleration.\n    \n    This issue is frequently mischaracterized as an SSH connectivity issue and\n    causes rechecks and occasional boot failures.\n    \n    This change adds no_timer_check kernel parameter when we are using\n    uec images with qemu.\n    \n    Closes-Bug: #1312199\n    Change-Id: I3cfdfe9048fe219fc12cdac8a399b496f237e55e\n    (cherry picked from commit 6b86a61fee15ce1237303fab2f7896f8c3bcad47)\n", 
+            "date_created": "2014-06-24 19:36:24.102347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/102793", 
+            "date_created": "2014-06-26 10:44:02.194750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/96180\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=b3e722df60bef0aae1381c962b252ab26b52b589\nSubmitter: Jenkins\nBranch:    master\n\ncommit b3e722df60bef0aae1381c962b252ab26b52b589\nAuthor: Attila Fazekas <email address hidden>\nDate:   Wed May 28 16:15:53 2014 +0200\n\n    soft-qemu handling with F20 could image\n    \n    When the qume used with Linux image without\n    a para-virtualized timer, various timing issues can happen,\n    if the qemu process preempted in the wrong time, for example\n    at timer test.\n    \n    The issues less like happens on low load, high core number\n    host system, but it can happen.\n    \n    For soft qemu (TCG) generally recommended to explicitly disable the\n    timer check.\n    \n    Pre-caching the Fedora `gate edition` image, which contains the\n    the no_timers_check option.\n    \n    Related-Bug: #1297560\n    Partial-Bug: #1312199\n    \n    Change-Id: Id5cd01a92a047b7859914e5bb017c15ee443b4d5\n", 
+            "date_created": "2014-06-26 16:40:30.944494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/102793\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=bfcb2ff732ffdf2ed50be6a677f1b6182a0213a4\nSubmitter: Jenkins\nBranch:    master\n\ncommit bfcb2ff732ffdf2ed50be6a677f1b6182a0213a4\nAuthor: Attila Fazekas <email address hidden>\nDate:   Thu Jun 26 12:38:20 2014 +0200\n\n    Switch to Fedora-x86_64-20-20140618-sda\n    \n    The heat-slow job using the Fedora-20 image as L2 guest, the\n    currently used version is affected by the heartbleed issue and\n    the Mb-Bios bug issue observed with emulation.\n    \n    This version of the  Fedora cloud image uses the no_timer_check\n    kernel parameter, which solves the MP-Bios Bug issue.\n    \n    The Image tested with ~3000 heat-slow job, without any issue.\n    \n    Change-Id: I9ce9b7769c2d91e630b0362f2c2c6ac9066defbc\n    Closes-Bug: #1312199\n    Closes-Bug: #1297560\n", 
+            "date_created": "2014-07-02 15:19:59.181446+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I don't really see much we could change in cirros here, other than building in the kernel parameter.  I'm not entirely opposed to doing that, but\n\nI don't really agree with the nova fix of adding parameters \"by default\" to the kernel command line.  Nova should be pretty dumb.  The more it knows and reacts to the specific behavior of operating systems it runs under kvm, the more that knowledge can become brittle or out dated.  Ie, in future linux kernels adding no_timer_check  might have negative side affects, and openstack will the be in the position of having to guess whether or not to add the parameter based on perceived version of the kernel that it is going to boot.  Worse, the image author will then be in the position of having to \"fight\" this guess.\n\n\nAnyway, with regard to ubuntu bug, 14.04 is fix-released in that it has VIRTIO_CONSOLE=y.  12.04 has VIRTIO_CONSOLE=m and that is available in the linux-generic as Robert stated. Clearly it should have beein in the -virtual or builtin.\n\n", 
+            "date_created": "2014-09-10 13:34:46.583508+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/130375", 
+            "date_created": "2014-10-22 22:06:17.528163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: stable/icehouse\nReview: https://review.openstack.org/130375\nReason: dropping in favor of https://review.openstack.org/#/c/130611/.", 
+            "date_created": "2014-10-23 18:03:55.476671+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "marking this wont fix. if it istill a problem in future cirros with newer kernel, we can re-open.", 
+            "date_created": "2015-05-27 19:13:28.979978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Just saw this again with both Centos and Cirros on Tripleo (virtual Machine based install, so nested virt)\n\n[    0.148008] ...trying to set up timer as Virtual Wire IRQ...\n\n\nhttp://download.cirros-cloud.net/0.3.4/cirros-0.3.4-x86_64-disk.img\n\nCentOS-7-x86_64-GenericCloud", 
+            "date_created": "2016-07-06 02:26:50.126009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ayoung"
+        }, 
+        {
+            "content": "Saw this on Packstack Installation on CentOS-7-x86_64 with \nCirros http://download.cirros-cloud.net/0.3.4/cirros-0.3.4-x86_64-disk.img\n\nIt is also a virtual machine based install.\n\n", 
+            "date_created": "2016-09-27 16:23:22.942632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ppawan"
+        }
+    ]
+}

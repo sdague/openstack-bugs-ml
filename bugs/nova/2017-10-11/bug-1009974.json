@@ -1,0 +1,83 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2012-06-30 02:22:02.916816+00:00", 
+    "description": "Originally posted to the openstack list; see https://lists.launchpad.net/openstack/msg12819.html for the original thread.\n\nSymptom is relatively easy to describe: you run \"nova live-migration <guest> <host>\", and nothing happens.\n\nA few words of background:\n\n- System is Ubuntu precise with stock packages and regular updates, no external PPAs. nova-compute is at version 2012.1-0ubuntu2.1.\n\n- libvirtd is running with the \"-l\" option and with a working TCP socket as described here:\nhttp://docs.openstack.org/trunk/openstack-compute/admin/content/configuring-live-migrations.html\n\n- /var/lib/nova/instances is on GlusterFS.\n\nNow, if you're setting various --*vnc* flags in nova.conf, live migration fails even at the libvirt level (a similar issue has been\nreported here recently, see https://lists.launchpad.net/openstack/msg12425.html).\n\n# virsh migrate --live --p2p --domain instance-0000000a \\\n  --desturi qemu+tcp://skunk-x/system\nerror: Unable to read from monitor: Connection reset by peer\n\n(\"skunk-x\" is secondary IP address of the host \"skunk\", living in a dedicated network used for migrations).\n\nThis is in the libvirt.log on the source host:\n2012-06-05 20:39:25.838+0000: 12241: error : virNetClientProgramDispatchError:174 : Unable to read from monitor: Connection reset by peer\n\nAt the same time, I am seeing this in the libvirtd log on the target host:\n2012-06-05 20:39:25.394+0000: 6828: error : qemuMonitorIORead:513 : Unable to read from monitor: Connection reset by peer\n\nRemoving all --*vnc* flags from nova.conf resolved that issue for me.\n\nThen, doing the same command as above resulted in a connection timeout, because even if I set \"qemu+tcp://skunk-x/system\" as the libvirt destination URI, libvirt opens a separate socket on an ephemeral port on skunk's primary interface, which in that case was being blocked by my iptables config:\n\n# virsh migrate --live --p2p \\\n  --domain instance-0000000d --desturi qemu+tcp://skunk-x/system\nerror: unable to connect to server at 'skunk:49159': Connection timed out\n\nSwitching the migration to tunnelled mode solved that issue.\n\n# virsh domstate instance-0000000d\nrunning\n# virsh migrate --live --p2p \\\n  --domain instance-0000000d --desturi qemu+tcp://skunk-x/system \\\n  --tunnelled\n# virsh --connect qemu+tcp://skunk-x/system domstate instance-0000000d\nrunning\n\nSo therefore, these are the flags that I'm using in my nova.conf:\n\n--live_migration_uri=\"qemu+tcp://%s-x/system\"\n--live_migration_flag=\"VIR_MIGRATE_UNDEFINE_SOURCE,\nVIR_MIGRATE_PEER2PEER, VIR_MIGRATE_TUNNELLED\"\n\n(Note that \"VIR_MIGRATE_UNDEFINE_SOURCE, VIR_MIGRATE_PEER2PEER\" is the default for --live_migration_flag; VIR_MIGRATE_TUNNELLED is my addition. I've also tried migrating over the primary interface, without tunnelling. No change: works in libvirt, doesn't work with Nova.)\n\n\"nova live-migration <guest> <host>\" returns an exit code of 0, and the only trace that I find of the migration in the logs is this, which is evidently from the pre_live_migration method.\n\n2012-06-06 11:05:13 DEBUG nova.rpc.amqp [-] received {u'_context_roles':\n[u'KeystoneServiceAdmin', u'admin', u'KeystoneAdmin'], u'_msg_id':\nu'069c958b7c03482aa4f0dda00010eb10', u'_context_read_deleted': u'no',\nu'_context_request_id': u'req-71c4ffea-4d3d-471c-98bc-8a27aaff8f2c',\nu'args': {u'instance_id': 13, u'block_migration': False, u'disk': None},\nu'_context_auth_token': '<SANITIZED>', u'_context_is_admin': True,\nu'_context_project_id': u'9c929e61e7624fbe895ae0de38bd1471',\nu'_context_timestamp': u'2012-06-06T09:05:09.992775',\nu'_context_user_id': u'1c8c118c7c244d2d94cc516ab6f24c03', u'method':\nu'pre_live_migration', u'_context_remote_address': u'10.43.0.2'} from\n(pid=14437) _safe_log\n/usr/lib/python2.7/dist-packages/nova/rpc/common.py:160\n\nLooks like it never gets to live_migration.", 
+    "tags": [
+        "in-stable-essex"
+    ], 
+    "importance": "High", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1009974", 
+    "owner": "None", 
+    "id": 1009974, 
+    "index": 704, 
+    "created": "2012-06-07 12:20:39.618745+00:00", 
+    "title": "'nova live-migration' fails silently", 
+    "comments": [
+        {
+            "content": "Originally posted to the openstack list; see https://lists.launchpad.net/openstack/msg12819.html for the original thread.\n\nSymptom is relatively easy to describe: you run \"nova live-migration <guest> <host>\", and nothing happens.\n\nA few words of background:\n\n- System is Ubuntu precise with stock packages and regular updates, no external PPAs. nova-compute is at version 2012.1-0ubuntu2.1.\n\n- libvirtd is running with the \"-l\" option and with a working TCP socket as described here:\nhttp://docs.openstack.org/trunk/openstack-compute/admin/content/configuring-live-migrations.html\n\n- /var/lib/nova/instances is on GlusterFS.\n\nNow, if you're setting various --*vnc* flags in nova.conf, live migration fails even at the libvirt level (a similar issue has been\nreported here recently, see https://lists.launchpad.net/openstack/msg12425.html).\n\n# virsh migrate --live --p2p --domain instance-0000000a \\\n  --desturi qemu+tcp://skunk-x/system\nerror: Unable to read from monitor: Connection reset by peer\n\n(\"skunk-x\" is secondary IP address of the host \"skunk\", living in a dedicated network used for migrations).\n\nThis is in the libvirt.log on the source host:\n2012-06-05 20:39:25.838+0000: 12241: error : virNetClientProgramDispatchError:174 : Unable to read from monitor: Connection reset by peer\n\nAt the same time, I am seeing this in the libvirtd log on the target host:\n2012-06-05 20:39:25.394+0000: 6828: error : qemuMonitorIORead:513 : Unable to read from monitor: Connection reset by peer\n\nRemoving all --*vnc* flags from nova.conf resolved that issue for me.\n\nThen, doing the same command as above resulted in a connection timeout, because even if I set \"qemu+tcp://skunk-x/system\" as the libvirt destination URI, libvirt opens a separate socket on an ephemeral port on skunk's primary interface, which in that case was being blocked by my iptables config:\n\n# virsh migrate --live --p2p \\\n  --domain instance-0000000d --desturi qemu+tcp://skunk-x/system\nerror: unable to connect to server at 'skunk:49159': Connection timed out\n\nSwitching the migration to tunnelled mode solved that issue.\n\n# virsh domstate instance-0000000d\nrunning\n# virsh migrate --live --p2p \\\n  --domain instance-0000000d --desturi qemu+tcp://skunk-x/system \\\n  --tunnelled\n# virsh --connect qemu+tcp://skunk-x/system domstate instance-0000000d\nrunning\n\nSo therefore, these are the flags that I'm using in my nova.conf:\n\n--live_migration_uri=\"qemu+tcp://%s-x/system\"\n--live_migration_flag=\"VIR_MIGRATE_UNDEFINE_SOURCE,\nVIR_MIGRATE_PEER2PEER, VIR_MIGRATE_TUNNELLED\"\n\n(Note that \"VIR_MIGRATE_UNDEFINE_SOURCE, VIR_MIGRATE_PEER2PEER\" is the default for --live_migration_flag; VIR_MIGRATE_TUNNELLED is my addition. I've also tried migrating over the primary interface, without tunnelling. No change: works in libvirt, doesn't work with Nova.)\n\n\"nova live-migration <guest> <host>\" returns an exit code of 0, and the only trace that I find of the migration in the logs is this, which is evidently from the pre_live_migration method.\n\n2012-06-06 11:05:13 DEBUG nova.rpc.amqp [-] received {u'_context_roles':\n[u'KeystoneServiceAdmin', u'admin', u'KeystoneAdmin'], u'_msg_id':\nu'069c958b7c03482aa4f0dda00010eb10', u'_context_read_deleted': u'no',\nu'_context_request_id': u'req-71c4ffea-4d3d-471c-98bc-8a27aaff8f2c',\nu'args': {u'instance_id': 13, u'block_migration': False, u'disk': None},\nu'_context_auth_token': '<SANITIZED>', u'_context_is_admin': True,\nu'_context_project_id': u'9c929e61e7624fbe895ae0de38bd1471',\nu'_context_timestamp': u'2012-06-06T09:05:09.992775',\nu'_context_user_id': u'1c8c118c7c244d2d94cc516ab6f24c03', u'method':\nu'pre_live_migration', u'_context_remote_address': u'10.43.0.2'} from\n(pid=14437) _safe_log\n/usr/lib/python2.7/dist-packages/nova/rpc/common.py:160\n\nLooks like it never gets to live_migration.", 
+            "date_created": "2012-06-07 12:20:39.618745+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fghaas"
+        }, 
+        {
+            "content": "For anyone else affected by this issue, please see Bug #987473.\n\nIn this case, it was apparently caused by the presence of double quotes around the --live_migration_uri and\n--live_migration_flag values. Removing the double quotes immediately made the issue go away.\n\n", 
+            "date_created": "2012-06-09 18:37:09.796938+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fghaas"
+        }, 
+        {
+            "content": "Closing as invalid, as this is more of a documentation on general config-file parsing issue, rather than one caused by nova-compute directly.", 
+            "date_created": "2012-06-09 18:38:13.692110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fghaas"
+        }, 
+        {
+            "content": "Added this as a doc bug, here's a copy-paste from an email from Florian:\n\nApologies for the noise. I had mistakenly believed that since the list\nof --live_migration_flags contained spaces, it was OK to quote the\n--live_migration_* options. Evidently it's not, as removing the double\nquotes made the problem go away. My guests now do migrate.\n\nAnne/Thierry: I've thus far been unable to find any documentation that\nsays \"don't use double quotes in nova.conf\". In fact,\nhttp://docs.openstack.org/trunk/openstack-compute/admin/content/compute-options-reference.html\nuses them in several places, including the --live_migration* flags. That\nquotes can break things appears to be a known issue as per\nhttps://bugs.launchpad.net/nova/+bug/987473. Is this something that we\nshould mention in the documentation, or is this unexpected parser\nbehavior that needs to get fixed?", 
+            "date_created": "2012-06-10 01:46:07.449061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lorinh"
+        }, 
+        {
+            "content": "I have the same problem.\n\nI changed the nova.conf:\n\n\n--live_migration_uri=qemu+tcp://%s-x/system\n--live_migration_flag=VIR_MIGRATE_UNDEFINE_SOURCE,VIR_MIGRATE_PEER2PEER, VIR_MIGRATE_TUNNELLED\n\nand\n\nnova live-migration bd8474bc-2c93-4df8-ae04-372f10471b96 cloud02\n\nBut nothing happens. In the logs I see that it passes the iptables rules (new-network) but nothing else happens.\n\n", 
+            "date_created": "2012-06-10 03:29:33.729972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdieder"
+        }, 
+        {
+            "content": "@mdieder, you do realize that \"qemu+tcp://%s-x/system\" will only work in a situation like the one I originally described? I.e. you have to have a second IP address on that box, which is resolvable as <hostname>-x from the other host. Also, that whitespace before your VIR_MIGRATE_TUNNELLED would likely cause that option to be ignored.", 
+            "date_created": "2012-06-10 19:59:02.118061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fghaas"
+        }, 
+        {
+            "content": "http://review.openstack.org/8383 submitted to the openstack-manuals repo.", 
+            "date_created": "2012-06-10 21:02:30.899568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fghaas"
+        }, 
+        {
+            "content": "Hi,\n\nI had the same problem, and I couldn't solve it by above ways (remove double quote and add live_migration_flag in nova.conf).\n\nVM (on Host1 ) -> Host2\nHost1's ip address is 192.168.0.1\nHost2's ip address is 192.168.0.2\n\nI set the configuration of VNC in nova.conf as below:\n# on Host1\nvncserver_proxyclient_address=192.168.0.1\nvncserver_listen=192.168.0.1\n\n# on Host2\nvncserver_proxyclient_address=192.168.0.2\nvncserver_listen=192.168.0.2\n\nI got traffic logs of libvirt between servers and found the xml file and the entry of VNC settings that is transferred before migration.\nIt is maybe invalid because it still contains the ip address of Host1. I think it should contain the ip address of Host2.\n\n    <graphics type='vnc' port='5900' autoport='yes' listen='192.168.0.1' keymap='ja'>\n      <listen type='address' address='192.168.0.1'/>\n    </graphics>\n\nSo, I changed nova.conf on Host1 and Host2:\n# on Host1\nvncserver_proxyclient_address=192.168.0.1\nvncserver_listen=0.0.0.0\n\n# on Host2\nvncserver_proxyclient_address=192.168.0.2\nvncserver_listen=0.0.0.0\n\nAfter change, I restarted nova-compute, relaunched instances and tried live-migration. VNC and live-migration worked fine.", 
+            "date_created": "2012-06-12 18:36:49.773618+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hok-kanny"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8383\nCommitted: http://github.com/openstack/openstack-manuals/commit/e5e6e85ccef04063c275b4fd420ebb4477325bb5\nSubmitter: Jenkins\nBranch:    master\n\ncommit e5e6e85ccef04063c275b4fd420ebb4477325bb5\nAuthor: Florian Haas <email address hidden>\nDate:   Sun Jun 10 22:32:43 2012 +0200\n\n    Remove double quotes from nova.conf options reference\n    \n    Using double quotes in nova.conf can seriously mess up Nova in\n    all sorts of ways. Remove their erroneous use from the config\n    documentation, and also emphasize that using them is a bad idea.\n    \n    bug 1009974\n    \n    Change-Id: I6b8423739ce19e7dd9ab426ea70bc8c330b2455a\n", 
+            "date_created": "2012-06-14 15:28:53.280242+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Hokuto Hoshi,\n\nI had the same problem too.\nThank you very much, VNC and live-migration now works very well.", 
+            "date_created": "2012-06-14 16:58:04.782470+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cmingt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8923\nCommitted: http://github.com/openstack/openstack-manuals/commit/306347d87079ae656a91b36c281a03125712e960\nSubmitter: Jenkins\nBranch:    master\n\ncommit 306347d87079ae656a91b36c281a03125712e960\nAuthor: Lorin Hochstein <email address hidden>\nDate:   Mon Jun 25 09:16:38 2012 -0400\n\n    Documents vncserver_listen flag when used with live migrations\n    \n    Live migration breaks if vncserver_listen is set to a specific host\n    IP address.\n    \n    Documentation based on this comment from the openstack-operators\n    mailing list:\n    http://lists.openstack.org/pipermail/openstack-operators/2012-June/000965.html\n    \n    See also comments in bug 1009974.\n    \n    Change-Id: I21b1d3eb5380effda3e2bfcd4f3ea15ea43f096a\n", 
+            "date_created": "2012-06-26 22:59:21.932040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/9179", 
+            "date_created": "2012-06-29 17:30:40.628551+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/9179\nCommitted: http://github.com/openstack/openstack-manuals/commit/da29b30ead43a3b53d8092f63f3b2aaa5761d32a\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit da29b30ead43a3b53d8092f63f3b2aaa5761d32a\nAuthor: Lorin Hochstein <email address hidden>\nDate:   Mon Jun 25 09:16:38 2012 -0400\n\n    Documents vncserver_listen flag when used with live migrations\n    \n    Live migration breaks if vncserver_listen is set to a specific host\n    IP address.\n    \n    Documentation based on this comment from the openstack-operators\n    mailing list:\n    http://lists.openstack.org/pipermail/openstack-operators/2012-June/000965.html\n    \n    See also comments in bug 1009974.\n    \n    Cherry picked from https://review.openstack.org/8923\n    \n    Change-Id: I21b1d3eb5380effda3e2bfcd4f3ea15ea43f096a\n", 
+            "date_created": "2012-06-30 02:22:01.908019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

@@ -1,0 +1,63 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-06-02 14:31:53.751802+00:00", 
+    "description": "Starting with Git revision bf181c2 (according to smokestack) I'm now getting 'VDI resize failed' errors on nova-compute XenServer:\n\n2011-09-29 14:35:49,665 ERROR nova.compute.manager [-] Instance '1' failed to spawn. Is virtualization enabled in the BIOS? Details: ['SR_BACKEND_FAILURE_110', '', \"VDI resize failed [opterr=Command ['/usr/sbin/vhd-util', 'revert', '--debug', '-n', '/var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/366c6ed4-5030-4f7b-b8d9-3f14e51a5743.vhd', '-j', '.journal-366c6ed4-5030-4f7b-b8d9-3f14e51a5743'] failed (2): ]\", '']\n(nova.compute.manager): TRACE: Traceback (most recent call last):\n(nova.compute.manager): TRACE:   File \"/usr/lib/python2.6/dist-packages/nova/compute/manager.py\", line 426, in _run_instance\n(nova.compute.manager): TRACE:     network_info, block_device_info)\n(nova.compute.manager): TRACE:   File \"/usr/lib/python2.6/dist-packages/nova/virt/xenapi_conn.py\", line 190, in spawn\n(nova.compute.manager): TRACE:     self._vmops.spawn(context, instance, network_info)\n(nova.compute.manager): TRACE:   File \"/usr/lib/python2.6/dist-packages/nova/virt/xenapi/vmops.py\", line 213, in spawn\n(nova.compute.manager): TRACE:     raise spawn_error\n(nova.compute.manager): TRACE: Failure: ['SR_BACKEND_FAILURE_110', '', \"VDI resize failed [opterr=Command ['/usr/sbin/vhd-util', 'revert', '--debug', '-n', '/var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/366c6ed4-5030-4f7b-b8d9-3f14e51a5743.vhd', '-j', '.journal-366c6ed4-5030-4f7b-b8d9-3f14e51a5743'] failed (2): ]\", '']\n\n---\n\nThis is causing instances to fail to boot.", 
+    "tags": [
+        "xenserver"
+    ], 
+    "importance": "High", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/862653", 
+    "owner": "None", 
+    "id": 862653, 
+    "index": 500, 
+    "created": "2011-09-29 18:39:32.299067+00:00", 
+    "title": "'VDI resize failed' errors on nova-compute (XenServer)", 
+    "comments": [
+        {
+            "content": "Starting with Git revision bf181c2 (according to smokestack) I'm now getting 'VDI resize failed' errors on nova-compute XenServer:\n\n2011-09-29 14:35:49,665 ERROR nova.compute.manager [-] Instance '1' failed to spawn. Is virtualization enabled in the BIOS? Details: ['SR_BACKEND_FAILURE_110', '', \"VDI resize failed [opterr=Command ['/usr/sbin/vhd-util', 'revert', '--debug', '-n', '/var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/366c6ed4-5030-4f7b-b8d9-3f14e51a5743.vhd', '-j', '.journal-366c6ed4-5030-4f7b-b8d9-3f14e51a5743'] failed (2): ]\", '']\n(nova.compute.manager): TRACE: Traceback (most recent call last):\n(nova.compute.manager): TRACE:   File \"/usr/lib/python2.6/dist-packages/nova/compute/manager.py\", line 426, in _run_instance\n(nova.compute.manager): TRACE:     network_info, block_device_info)\n(nova.compute.manager): TRACE:   File \"/usr/lib/python2.6/dist-packages/nova/virt/xenapi_conn.py\", line 190, in spawn\n(nova.compute.manager): TRACE:     self._vmops.spawn(context, instance, network_info)\n(nova.compute.manager): TRACE:   File \"/usr/lib/python2.6/dist-packages/nova/virt/xenapi/vmops.py\", line 213, in spawn\n(nova.compute.manager): TRACE:     raise spawn_error\n(nova.compute.manager): TRACE: Failure: ['SR_BACKEND_FAILURE_110', '', \"VDI resize failed [opterr=Command ['/usr/sbin/vhd-util', 'revert', '--debug', '-n', '/var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/366c6ed4-5030-4f7b-b8d9-3f14e51a5743.vhd', '-j', '.journal-366c6ed4-5030-4f7b-b8d9-3f14e51a5743'] failed (2): ]\", '']\n\n---\n\nThis is causing instances to fail to boot.", 
+            "date_created": "2011-09-29 18:39:32.299067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Okay. Spent a good bit of time tinkering w/ this issue this afternoon. The VDI resize code added in bf181c2 is absolutely the problem. If I comment it out I'm able to boot instances fine.\n\nI'm using XenServer 5.6 SP2:\n\n[root@xen1 ~]# cat /etc/*release\nXenServer release 5.6.100-46766p (xenenterprise)\n\nThis isn't an out of space issue for my SR. The same thing appears to happen on multiple Xen Servers. The SR's are pretty big and I can boot an instance normally. Furthermore I'm also able to do instances resizes and just about anything else on these machines which are all Dell R710's.\n\nWhen the instance fails to boot I can go to the machine and reproduce this manually with the following command:\n\n[root@xen1 ~]# xe vdi-resize uuid=b8714fde-9741-4ea0-b460-15c4e8b444df disk-size=20GiB\nError code: SR_BACKEND_FAILURE_110\nError parameters: , VDI resize failed [opterr=Command ['/usr/sbin/vhd-util', 'revert', '--debug', '-n', '/var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/b8714fde-9741-4ea0-b460-15c4e8b444df.vhd', '-j', '.journal-b8714fde-9741-4ea0-b460-15c4e8b444df'] failed (2): ], \n\n---\n\nAlso. If I comment out this code I can boot instances fine:\n\n-        for vdi in vdis:\n-            if vdi[\"vdi_type\"] == \"os\":\n-                self.resize_instance(instance, vdi[\"vdi_uuid\"])\n\nFurthermore. I've verified that I can resize VDI's just fine for an instance once I've started and stopped the instance. So for example if I:\n\n1) boot an instance\n2) shut it down\n3) I can then resize the VDI on the command line just fine with 'xe vdi-resize' to sizes much large than 20 Gigs.\n\nSo what I'm saying is that VDI resizes appear to fail before we've spawned the instance at least once. Once we've spawned it we can shut it down and perform whatever resize we want.\n\n---\n\nSo as far as I can tell booting instances on stock XenServer 5.6 SP2 breaks w/ this commit. Is this a XenServer issue that I need a patch to fix or something?\n\n\n", 
+            "date_created": "2011-10-01 00:19:28.815873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "When this happens I'm also seeing the following output in /var/log/messages on my XenServer box:\n\nOct  3 09:08:48 dev3 vhd-util: libvhd::vhd_read: /var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/49a735c9-00f9-437e-ba9c-2700b5e7ea63.vhd: read of 512 returned 0, errno: -22\nOct  3 09:08:48 dev3 vhd-util: libvhd::vhd_validate_footer: invalid footer cookie:\nOct  3 09:08:48 dev3 vhd-util: libvhd::vhd_read_short_footer: /var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/49a735c9-00f9-437e-ba9c-2700b5e7ea63.vhd: failed reading short footer: -22\nOct  3 09:08:48 dev3 vhd-util: libvhd::vhd_validate_footer: invalid footer cookie:\nOct  3 09:08:48 dev3 vhd-util: libvhd::vhd_read_footer_at: /var/run/sr-mount/934ab597-ff32-94f6-c1da-9213c7f02a65/49a735c9-00f9-437e-ba9c-2700b5e7ea63.vhd: reading footer at 0x54aa7e00 failed: -22\nOct  3 09:08:48 dev3 fe: 4535 (/opt/xensource/sm/EXTSR <methodCall><methodName>vdi_resize_online</methodName...) exitted with code 0\n", 
+            "date_created": "2011-10-03 13:14:11.982519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Still looking for information on this one. As far as I can tell OpenStack Essex will not work out of the box with a stock XenServer 5.6 SP2 installation (w/ thin provisioning). By stock I mean I install XenServer 5.6 SP2 from the ISO's, select thin provisioning in the installer and let it run through a default installation.\n\nI'd be interested to see if anyone who has a working XenServer 5.6 installation (using kickstarts or whatever) could add to this thread.\n\nFor now I have to do this to work around the issue:\n\n+++ b/nova/virt/xenapi/vmops.py\n@@ -166,9 +166,9 @@ class VMOps(object):\n                 instance.user_id, instance.project_id,\n                 disk_image_type)\n \n-        for vdi in vdis:\n-            if vdi[\"vdi_type\"] == \"os\":\n-                self.resize_instance(instance, vdi[\"vdi_uuid\"])\n+        #for vdi in vdis:\n+            #if vdi[\"vdi_type\"] == \"os\":\n+                #self.resize_instance(instance, vdi[\"vdi_uuid\"])\n", 
+            "date_created": "2011-10-12 18:59:56.925679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Any speculation on a time for a fix for this?", 
+            "date_created": "2011-11-23 15:16:45.690947+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glen-campbell"
+        }, 
+        {
+            "content": "Hi Glen,\n\nIt appears that the vhd_util resize operation doesn't like to work with some OVA images (ones not created on XenServer?).\n\nhttps://github.com/xen-org/blktap/blob/master/vhd/lib/vhd-util-resize.c#L1052\n\nIn my case I think I was using a small Debian Squeeze image that I converted to OVA format using xenconvert (months ago). The image was fine and it booted w/ nova before this commit. Additionally my initial image was also resizable after it booted fully.\n\n---\n \nThe work around for me was to manually create a new OVA image by hand using the VHD of the booted instance on XenServer.  Creating a tar of that VHD with an empty manifest.ovf makes this issue go away.\n\nMy guess is that others might hit this same issue when using nova w/ XenServer. Specifically anyone booting an OVA image which wasn't created directly from a XenServer dom0.\n\nHope that helps. I didn't have time to track it any further.\n\nDan", 
+            "date_created": "2011-11-27 21:37:14.762582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Dan: status?", 
+            "date_created": "2012-02-01 15:24:47.103560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "This is a vhd-util issue -- it checks the VHD image header for a specific creator code ... which may or may not be there depending on how you created the image. This is especially problematic if you created the image with XenConvert ... We should file this as a bug for XCP (also present there), although I don't know if there are specific reason they are checking for it.\n\nWe should mark this bug as invalid and redline the documentation.", 
+            "date_created": "2012-02-02 18:33:15.371807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ken-pepple"
+        }, 
+        {
+            "content": "marking this as invalid for nova and marked it for xcp", 
+            "date_created": "2012-02-02 19:25:26.484647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }
+    ]
+}

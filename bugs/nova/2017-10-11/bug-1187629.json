@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 12:04:25.125535+00:00", 
+    "description": "nova-compute manager doesn't send the argument \"injected_files\" to \"driver.spawn\":\n\n\"nova/compute/manager.py\"\n    def rebuild_instance(self, context, instance, orig_image_ref, image_ref,\n                         injected_files, new_pass, orig_sys_metadata=None):\n\n            instance.injected_files = injected_files                                                           \n            network_info = self.network_api.get_instance_nw_info(context,                                      \n                                                                 instance)\n            device_info = self._setup_block_device_mapping(context, instance)                                  \n\n            instance = self._instance_update(context,                                                          \n                                             instance['uuid'],\n                                             task_state=task_states.                                           \n                                                 REBUILD_SPAWNING,\n                                             expected_task_state=task_states.\n                                                 REBUILD_BLOCK_DEVICE_MAPPING)\n            # pull in new password here since the original password isn't in\n            # the db\n            admin_password = new_pass\n\n            self.driver.spawn(context, instance, image_meta,\n                              [], admin_password,     <--- Here.\n                              self._legacy_nw_info(network_info),\n                              device_info)\n\n\nThe definition for \"driver.spawn\" is as following:\n\"nova/virt/libvirt/driver.py\"\ndef spawn(self, context, instance, image_meta, injected_files,\n\t\t  admin_password, network_info=None, block_device_info=None):\n\n\nThe possible fix is as following:\n            # instance.injected_files = injected_files \n            ...\n            self.driver.spawn(context, instance, image_meta,\n                              # [], admin_password,                                  \n                              injected_files, admin_password,\n                              self._legacy_nw_info(network_info),                    \n                              device_info)\n\nThis should be a bug, and exists in the Folsom and master branch.", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "Undecided", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1187629", 
+    "owner": "https://api.launchpad.net/1.0/~maheshp", 
+    "id": 1187629, 
+    "index": 3718, 
+    "created": "2013-06-05 05:18:45.473113+00:00", 
+    "title": "'injected_files' doesn't work for nova rebuild", 
+    "comments": [
+        {
+            "content": "nova-compute manager doesn't send the argument \"injected_files\" to \"driver.spawn\":\n\n\"nova/compute/manager.py\"\n    def rebuild_instance(self, context, instance, orig_image_ref, image_ref,\n                         injected_files, new_pass, orig_sys_metadata=None):\n\n            instance.injected_files = injected_files                                                           \n            network_info = self.network_api.get_instance_nw_info(context,                                      \n                                                                 instance)\n            device_info = self._setup_block_device_mapping(context, instance)                                  \n\n            instance = self._instance_update(context,                                                          \n                                             instance['uuid'],\n                                             task_state=task_states.                                           \n                                                 REBUILD_SPAWNING,\n                                             expected_task_state=task_states.\n                                                 REBUILD_BLOCK_DEVICE_MAPPING)\n            # pull in new password here since the original password isn't in\n            # the db\n            admin_password = new_pass\n\n            self.driver.spawn(context, instance, image_meta,\n                              [], admin_password,     <--- Here.\n                              self._legacy_nw_info(network_info),\n                              device_info)\n\n\nThe definition for \"driver.spawn\" is as following:\n\"nova/virt/libvirt/driver.py\"\ndef spawn(self, context, instance, image_meta, injected_files,\n\t\t  admin_password, network_info=None, block_device_info=None):\n\n\nThe possible fix is as following:\n            # instance.injected_files = injected_files \n            ...\n            self.driver.spawn(context, instance, image_meta,\n                              # [], admin_password,                                  \n                              injected_files, admin_password,\n                              self._legacy_nw_info(network_info),                    \n                              device_info)\n\nThis should be a bug, and exists in the Folsom and master branch.", 
+            "date_created": "2013-06-05 05:18:45.473113+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tw-nova"
+        }, 
+        {
+            "content": "Since we do not store 'inject_files' information into database, which means that we will lose the information after create_instance finished. ", 
+            "date_created": "2013-07-02 03:29:56.937854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gtt116"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/35278", 
+            "date_created": "2013-07-02 11:55:26.239829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "It would be good to ensure this was considered a real bug in Nova by getting a priority set, or someone commenting on the proposed nova patch.", 
+            "date_created": "2013-07-15 17:11:50.818965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "$ glance image-list\n+--------------------------------------+---------------------------------+-------------+------------------+----------+--------+\n| ID                                   | Name                            | Disk Format | Container Format | Size     | Status |\n+--------------------------------------+---------------------------------+-------------+------------------+----------+--------+\n| befba0fb-4e69-4051-b488-9f140c5325fa | cirros-0.3.1-x86_64-uec         | ami         | ami              | 25165824 | active |\n| c91697db-6dab-404f-bccd-5d9ad10e208b | cirros-0.3.1-x86_64-uec-kernel  | aki         | aki              | 4955792  | active |\n| eb042039-c4d4-4f49-85ab-dc3de687dc90 | cirros-0.3.1-x86_64-uec-ramdisk | ari         | ari              | 3714968  | active |\n+--------------------------------------+---------------------------------+-------------+------------------+----------+--------+\n$ glance image-download befba0fb-4e69-4051-b488-9f140c5325fa >image.img\n$ file image.img \nimage.img: Linux rev 1.0 ext3 filesystem data, UUID=74251bb8-3a28-4a46-9a78-064497b26b9d, volume name \"cirros-rootfs\"\n$ mkdir /tmp/loop\n$ sudo mount -o loop image.img /tmp/loop/\n$ ls /tmp/loop/\nlost+found\n\nIt seams still empty.\n\nKeeping test in the repo which referencing to not exiting directory is not good.\nImplementing the https://bugs.launchpad.net/tempest/+bug/893843 would be better test for injections.\n\nThe other possible solution on the nova side, is creating the directories automatically, but I am not sure what will be the correct permission  -- owner/group  and/or security label for new directory.", 
+            "date_created": "2013-07-15 20:51:58.495010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/35473\nCommitted: http://github.com/openstack/tempest/commit/21599a9d463a6b6263f90824c25542f2c175d6c6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 21599a9d463a6b6263f90824c25542f2c175d6c6\nAuthor: Mahesh Panchaksharaiah <email address hidden>\nDate:   Wed Jul 3 15:28:58 2013 +0530\n\n    Using relative path for personality file in rebuild server test.\n    \n    Personality files with absolute paths e.g /etc/rebuild.txt breaks on the test\n    cirros image. This is because cirros has an empty root filesystem.\n    \n    fixes lp 1187629\n    \n    Change-Id: I5b2b37224b722686c3163214fbd53227ac9ce49f\n", 
+            "date_created": "2013-07-15 22:02:20.750094+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/35278\nCommitted: http://github.com/openstack/nova/commit/876bba6d45fac0456679321fd45c3a787113b648\nSubmitter: Jenkins\nBranch:    master\n\ncommit 876bba6d45fac0456679321fd45c3a787113b648\nAuthor: Mahesh Panchaksharaiah <email address hidden>\nDate:   Mon Jul 1 18:42:09 2013 +0530\n\n    Personality files can be injected during server rebuild\n    \n    Injected files are ignored during a server rebuild, this patch fixes\n    this issue.\n    \n    Fixes: bug #1187629\n    \n    Change-Id: I5e7776de07c8513e36c2926b1fc58c66b382a5ec\n", 
+            "date_created": "2013-08-20 00:18:47.277978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

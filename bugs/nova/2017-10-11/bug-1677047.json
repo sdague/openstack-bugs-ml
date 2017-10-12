@@ -1,0 +1,36 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-06 16:36:10.955412+00:00", 
+    "description": "Description\n===========\nThe nova.image.glance.GlanceImageServiceV2.download method recently added fsync [1][2] before closing the download file.\n\nSome hypervisors don't use regular files for download.  For example, PowerVM uses a FIFO pipe, the other end of which is read by a service that offloads the image data to a remote node.\n\nfsync on a pipe, FIFO, or socket errors with EINVAL [3].\n\n[1] https://review.openstack.org/#/c/441246/\n[2] https://review.openstack.org/#/c/443583/\n[3] http://man7.org/linux/man-pages/man2/fsync.2.html#ERRORS\n\nSteps to reproduce\n==================\nInvoke nova.image.glance.GlanceImageServiceV2.download with data=None, dst_path=path where path represents a FIFO or socket.\n\nExpected result\n===============\nSuccessful transfer of data through the FIFO/socket.\n\nActual result\n=============\nAn exception similar to the following:\n\n  File \"/usr/local/lib/python2.7/dist-packages/pypowervm/internal_utils/thread_utils.py\", line 34, in future_func\n    return func(*args, **kwargs)\n  File \"/opt/stack/nova/nova/virt/powervm/disk/ssp.py\", line 161, in upload\n    IMAGE_API.download(context, image_meta.id, dest_path=path)\n  File \"/opt/stack/nova/nova/image/api.py\", line 184, in download\n    dst_path=dest_path)\n  File \"/opt/stack/nova/nova/image/glance.py\", line 387, in download\n    os.fsync(data.fileno())\nOSError: [Errno 22] Invalid argument\n\nImmutable reference to the offending fsync call: https://github.com/openstack/nova/blob/640b152004fe3d9c43c26538809c3ac796f20eba/nova/image/glance.py#L375\n\nEnvironment\n===========\ndevstack, pike, with the nova tree at this in-flight patch set: https://review.openstack.org/#/c/443189/15\n\nUbuntu 16.04.1 LTS running on PowerVM NovaLink, using Shared Storage Pools through a single VIOS.\n\nNo networking.\n\nLogs & Configs\n==============\nAvailable on request if needed.  This is a snap to reproduce.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1677047", 
+    "owner": "https://api.launchpad.net/1.0/~efried", 
+    "id": 1677047, 
+    "index": 6760, 
+    "created": "2017-03-28 21:50:10.537101+00:00", 
+    "title": "glance download fsync raises EINVAL for FIFOs", 
+    "comments": [
+        {
+            "content": "Description\n===========\nThe nova.image.glance.GlanceImageServiceV2.download method recently added fsync [1][2] before closing the download file.\n\nSome hypervisors don't use regular files for download.  For example, PowerVM uses a FIFO pipe, the other end of which is read by a service that offloads the image data to a remote node.\n\nfsync on a pipe, FIFO, or socket errors with EINVAL [3].\n\n[1] https://review.openstack.org/#/c/441246/\n[2] https://review.openstack.org/#/c/443583/\n[3] http://man7.org/linux/man-pages/man2/fsync.2.html#ERRORS\n\nSteps to reproduce\n==================\nInvoke nova.image.glance.GlanceImageServiceV2.download with data=None, dst_path=path where path represents a FIFO or socket.\n\nExpected result\n===============\nSuccessful transfer of data through the FIFO/socket.\n\nActual result\n=============\nAn exception similar to the following:\n\n  File \"/usr/local/lib/python2.7/dist-packages/pypowervm/internal_utils/thread_utils.py\", line 34, in future_func\n    return func(*args, **kwargs)\n  File \"/opt/stack/nova/nova/virt/powervm/disk/ssp.py\", line 161, in upload\n    IMAGE_API.download(context, image_meta.id, dest_path=path)\n  File \"/opt/stack/nova/nova/image/api.py\", line 184, in download\n    dst_path=dest_path)\n  File \"/opt/stack/nova/nova/image/glance.py\", line 387, in download\n    os.fsync(data.fileno())\nOSError: [Errno 22] Invalid argument\n\nImmutable reference to the offending fsync call: https://github.com/openstack/nova/blob/640b152004fe3d9c43c26538809c3ac796f20eba/nova/image/glance.py#L375\n\nEnvironment\n===========\ndevstack, pike, with the nova tree at this in-flight patch set: https://review.openstack.org/#/c/443189/15\n\nUbuntu 16.04.1 LTS running on PowerVM NovaLink, using Shared Storage Pools through a single VIOS.\n\nNo networking.\n\nLogs & Configs\n==============\nAvailable on request if needed.  This is a snap to reproduce.", 
+            "date_created": "2017-03-28 21:50:10.537101+00:00", 
+            "author": "https://api.launchpad.net/1.0/~efried"
+        }, 
+        {
+            "content": "Three potential responses spring to mind:\n\n1) Wrap fsync with try/except and ignore the EINVAL.\n\n2) Condition the fsync.  E.g. a) if not any(S_ISFIFO, S_ISSOCK); or b) if any(S_ISREG, S_ISBLK, S_ISCHR) - though I like that less.\n\n3) Tough luck, rewrite your consumer to use dst_path=None, data=a_filehandle_you_open_and_maintain_yourself.\n\nMy personal favorite is 2a; I'll go ahead and propose it.", 
+            "date_created": "2017-03-28 21:57:39.639860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~efried"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/451094", 
+            "date_created": "2017-03-28 22:16:57.810353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/451094\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=641798f75f50e7b4db3c7a8ccefcb8b590228893\nSubmitter: Jenkins\nBranch:    master\n\ncommit 641798f75f50e7b4db3c7a8ccefcb8b590228893\nAuthor: Eric Fried <email address hidden>\nDate:   Tue Mar 28 17:13:09 2017 -0500\n\n    Glance download: only fsync files\n    \n    Recent changes [1][2] added fsync to the data file in\n    GlanceImageServiceV2.download.  This raises EINVAL if the file is a\n    pipe/FIFO or socket [3].\n    \n    This change set adds a static _safe_fsync method to GlanceImageServiceV2\n    which conditions the fsync call not to run if the file handle represents\n    a pipe/FIFO or socket, and uses that call from the download method.\n    \n    [1] https://review.openstack.org/#/c/441246/\n    [2] https://review.openstack.org/#/c/443583/\n    [3] http://man7.org/linux/man-pages/man2/fsync.2.html#ERRORS\n    \n    Change-Id: Ied5788deadcf3d1336a48288cf49d8571db23659\n    Closes-Bug: #1677047\n", 
+            "date_created": "2017-09-06 16:36:10.437849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

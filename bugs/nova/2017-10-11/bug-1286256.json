@@ -1,0 +1,94 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-02-12 08:06:27.009675+00:00", 
+    "description": "In some situations (using nested KVM in an environment where nested KVM support is buggy), the appliance started by libguestfs will hang and the libguestfs-launched qemu process will never exit.  This will cause the launched instance to get stuck in state=spawning forver (or until someone explicitly kills the libguestfs appliance).\n\nWe should wrap the call to guestfs.Guestfs.launch with some sort of timeout to detect this situation and at least report an error.", 
+    "tags": [
+        "libguestfs", 
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1286256", 
+    "owner": "https://api.launchpad.net/1.0/~berrange", 
+    "id": 1286256, 
+    "index": 3811, 
+    "created": "2014-02-28 17:47:33.296692+00:00", 
+    "title": "If libguestfs hangs when provisioning an instance, nova will wait forever.", 
+    "comments": [
+        {
+            "content": "In some situations (using nested KVM in an environment where nested KVM support is buggy), the appliance started by libguestfs will hang and the libguestfs-launched qemu process will never exit.  This will cause the launched instance to get stuck in state=spawning forver (or until someone explicitly kills the libguestfs appliance).\n\nWe should wrap the call to guestfs.Guestfs.launch with some sort of timeout to detect this situation and at least report an error.", 
+            "date_created": "2014-02-28 17:47:33.296692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~larsks"
+        }, 
+        {
+            "content": "Summarise what I discussed with Lars yesterday about this bug:\n\n(1) If libguestfs hangs because of nested KVM, then it likely indicates your guest is going to hang too, so libguestfs is just being the canary in the mine here.  However:\n\n(2) Some users select libvirt_type=qemu to use software emulation when they know nested KVM is broken.\n\nLibguestfs doesn't honor setting (2), but it certainly should, and it's easy to achieve that.  After creating the handle but before calling g.launch(), you need to add the following bit of code:\n\n    if // some test here that libvirt_type=qemu:\n        try:\n            g.set_backend_settings (\"force_tcg\")\n        except AttributeError:\n            # g.set_backend_settings method doesn't exist, ignore\n            pass\n\n----\n\nNote for RHOS: If you want g.set_backend_settings to be backported, you need to open a bug in https://bugzilla.redhat.com", 
+            "date_created": "2014-03-01 11:33:42.085799+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "Note that bug https://bugs.launchpad.net/nova/+bug/1286257 is open on the issue of using force_tcg when libvirt_type=qemu.  This bug is explicitly about waiting forever for the libguestfs process.  Since force_tcg isn't available in any shipping version of libguestfs in either Ubuntu, RHEL, or Fedora, I think that timing out this operation gracefully is going to be an important fix.\n", 
+            "date_created": "2014-03-02 02:21:53.669449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~larsks"
+        }, 
+        {
+            "content": "Possibly related? https://bugzilla.redhat.com/show_bug.cgi?id=1087127", 
+            "date_created": "2014-05-21 22:04:24.932165+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I do not know which version of OpenStack code was running in https://bugzilla.redhat.com/show_bug.cgi?id=1087127.  If it uses Havana code, probably https://bugs.launchpad.net/nova/+bug/1270304 can be a possible root cause.\n\nIn my bug https://bugs.launchpad.net/nova/+bug/1313477,  Icehouse code is running. I also used to encounter https://bugs.launchpad.net/nova/+bug/1270304 with Icehouse code in Feb this year. After the patch is applied, the possibility of stuck guestfs become low. However, it still occurred in  In my bug https://bugs.launchpad.net/nova/+bug/1313477.", 
+            "date_created": "2014-05-22 02:28:37.601127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "I think I catch the root cause of https://bugs.launchpad.net/nova/+bug/1313477.  It is a deadlocking issue. Is this one a similar deadlocking?", 
+            "date_created": "2014-05-29 15:35:15.923012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaoqin"
+        }, 
+        {
+            "content": "On Thu, May 29, 2014 at 03:35:15PM -0000, Qin Zhao wrote:\n> I think I catch the root cause of\n> https://bugs.launchpad.net/nova/+bug/1313477.  It is a deadlocking\n> issue. Is this one a similar deadlocking?\n\nI don't think this is the same issue.  This is clearly a problem with\nthe emulator hanging -- one can replicate the problem by simply\nrunning \"libguestfs-test-tool\".  It only happens when attempting to\nuse nested KVM in an environment in which nested KVM does not work\ncorrectly.\n\n-- \nLars Kellogg-Stedman <email address hidden> | larsks @ irc\nCloud Engineering / OpenStack          | \"   \"  @ twitter\n\n", 
+            "date_created": "2014-05-29 15:48:48+00:00", 
+            "author": "https://api.launchpad.net/1.0/~larsks"
+        }, 
+        {
+            "content": "I'm experiencing this issue now. Nested KVM, libguestfs hangs and nova waits forever. \n\nInterestingly, if I kill the first qemu-kvm process, the hanging libguestfs one, then nova proceeds to start up my instance without issue. \n\nWith a qemu wrapper that swaps in the Westmere cpu type, I can get the guestfs test tool to complete, but can't figure out how to make whichever openstack component that's responsible for kicking this off to use the wrapper.\n", 
+            "date_created": "2014-06-02 04:58:09.765546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jasonbrooks"
+        }, 
+        {
+            "content": "@Jason,\n   What is your virt_type in nova.conf set to .. qemu or kvm ? Just curious if it works for you because its set to qemu ?\nI couldn't get it to work with kvm.", 
+            "date_created": "2014-06-12 05:40:44.881832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "@Lars,\n\n>I don't think this is the same issue. This is clearly a problem with\n>the emulator hanging -- one can replicate the problem by simply\n>running \"libguestfs-test-tool\". It only happens when attempting to\n>use nested KVM in an environment in which nested KVM does not work\n>correctly.\n\n What do you mean by the above \"use nested KVM in an environment in which nested KVM does not work\ncorrectly\" ?  How does one know that ? \n\nUsing qemu/libvirt tools, nested KVM works just fine and I have been using nested KVM for while now, until I hit the libguests issue thats only thru openstack Nova usecase.", 
+            "date_created": "2014-06-12 05:42:39.703357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "Some more observations regarding this issue that I am seeign in my devstack-on-F20 setup\n\n1) The libguestfs qemu process/instance created has -machine accel=kvm inspite of my nova.conf having virt_type = qemu, is this correct ?\n\n2) Killing the libguestfs process, causes Nova to go ahead and spawn instnace successfully and the qemu instance process _does_not_ have accel=kvm (which is expected and right) as I have virt_type=qemu. Instnace is spawned fine with ACTIVE/Running state in nova list\n\n3) Connecting to VNC console of instance, OS has booted fine and is @ the login prompt\n\nThen i tried nova boot the exact same thing as before but with virt_type = kvm and ...\n\n1) I see the same Nova instnace hung at 'spawning' state\n\n2) libguestfs qmeu process has accel=kvm\n\n3) Killing libguestfs qemu process causes Nova to proceed fine and Instance is ACTIVE/Running state\n\n4) BUT... looking at the vnc console, OS isn't booted... its stuck at \"Starting up....\" for ever!\nIs this issue of OS not booting when nested KVM is enabled, related to this bug or not ?\n\nthanx,\ndeepak", 
+            "date_created": "2014-06-12 06:00:56.061048+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "> 1) The libguestfs qemu process/instance created has -machine accel=kvm\n> inspite of my nova.conf having virt_type = qemu, is this correct ?\n\nNo, it's not correct and needs to be fixed.  See comment 1.", 
+            "date_created": "2014-07-02 16:42:26.876183+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/104262", 
+            "date_created": "2014-07-02 17:16:33.887689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104262\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8b6ea606d9dd883857c13ae43baf1e80aa0e8c58\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8b6ea606d9dd883857c13ae43baf1e80aa0e8c58\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Wed Jul 2 18:06:30 2014 +0100\n\n    virt: force TCG with libguestfs unless KVM is enabled in libvirt\n    \n    If the libvirt driver has not been configured to use KVM, then\n    the libguestfs module should be forced to use TCG. This is\n    particularly important when running Nova inside a VM, which\n    might claim to have VMX/SVM support when it is in fact broken.\n    This will avoid libguestfs hanging in such scenarios.\n    \n    Resolves-bug: #1286256\n    Change-Id: I9316dcedd65244c60d468b270311f032b45b051f\n", 
+            "date_created": "2014-07-25 18:18:43.349601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "g.set_backend_settings has not been backported to libguestfs-1.20.\n\nA workaround is to disable the kvm module by adding the following lines to /etc/modprobe.d/blacklist.conf.\n\nblacklist kvm\nblacklist kvm-intel\ninstall kvm /bin/true\ninstall kvm-intel /bin/true", 
+            "date_created": "2015-02-12 08:06:26.099687+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }
+    ]
+}

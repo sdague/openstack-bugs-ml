@@ -1,0 +1,46 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:36:04.409815+00:00", 
+    "description": "When using shared storage across hypervisors, libvirt driver resize/migrate operations can result in a loss of instance data.  This is happening because many of the operations to create a copy of the instance are done within a try/except block.  Thus, if any operations fail, you're into the exception which does the following:\n\n=== code ===\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0except Exception:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0with excutils.save_and_reraise_exception():\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0self._cleanup_remote_migration(dest, inst_base,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0inst_base_resize)\n\n\u00a0\u00a0\u00a0\u00a0def _cleanup_remote_migration(self, dest, inst_base, inst_base_resize):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"\"\"Used only for cleanup in case migrate_disk_and_power_off fails.\"\"\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0try:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if os.path.exists(inst_base_resize):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0utils.execute('rm', '-rf', inst_base)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0utils.execute('mv', inst_base_resize, inst_base)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0utils.execute('ssh', dest, 'rm', '-rf', inst_base)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0except Exception:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0pass\n\n=== end ===\n\nIt doesn't take looking at this code for long to see why this is going to be a problem with shared storage.  In effect, the last ssh operation in the block above is going to blow away the original copy of the instance directory.\n\nThe issue can be easily reproduced by issuing a resize of an instance with a large root disk.  In the middle of the resize, kill the ssh process created from the following call (https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L3508) and observe the exception handler destroying everything.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1177247", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1177247, 
+    "index": 1071, 
+    "created": "2013-05-07 06:53:13.231249+00:00", 
+    "title": "libvirt migrate/resize on shared storage can cause data loss", 
+    "comments": [
+        {
+            "content": "When using shared storage across hypervisors and the libvirt driver is used with the resize or migrate calls, instance data can be permanently lost.  This is happening because many of the operations to create a copy of the instance are done within a try/except block.  Thus, if any operations fail, you're into the exception which does the following:\n\n=== code ===\n\n        except Exception:\n            with excutils.save_and_reraise_exception():\n                self._cleanup_remote_migration(dest, inst_base,\n                                               inst_base_resize)\n\n    def _cleanup_remote_migration(self, dest, inst_base, inst_base_resize):\n        \"\"\"Used only for cleanup in case migrate_disk_and_power_off fails.\"\"\"\n        try:\n            if os.path.exists(inst_base_resize):\n                utils.execute('rm', '-rf', inst_base)\n                utils.execute('mv', inst_base_resize, inst_base)\n                utils.execute('ssh', dest, 'rm', '-rf', inst_base)\n        except Exception:\n            pass\n\n=== end ===\n\nIt doesn't take looking at this code for long to see why this is going to be a problem with shared storage.  In effect, the last ssh operation in the block above is going to blow away the original copy of the instance directory.  The issue can be easily reproduced by issuing a resize of an instance with a large root disk.  In the middle of the resize, kill the ssh process created from the following call (https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L3508) and observe the exception handler destroying everything.", 
+            "date_created": "2013-05-07 06:53:13.231249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "I've got a patch ready to be submitted. ", 
+            "date_created": "2013-05-07 06:57:29.954238+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/28424", 
+            "date_created": "2013-05-07 15:40:45.366313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28424\nCommitted: http://github.com/openstack/nova/commit/9290bddd9f270d8ea4fbd6d953a8634473979cd5\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9290bddd9f270d8ea4fbd6d953a8634473979cd5\nAuthor: Rafi Khardalian <email address hidden>\nDate:   Sun May 5 22:18:33 2013 +0000\n\n    Make resize/migrated shared storage aware\n    \n    Fixes bug 1177247\n    \n    Added some logic to check for whether or not we are on a shared\n    filesystem and set shared_storage accordingly. We perform similar\n    checks in other areas of the code, typically through RPC calls.\n    However, all the resize/migrate code is slated to be refactored for\n    Hava, so the idea was to keep this patch as minimally intrusive as\n    possible.\n    \n    When shared_storage is true, we pass that on to the cleanup call\n    so that it no longer executes an rm via SSH, which was ultimately\n    destroying the original instance directory.\n    \n    Change-Id: Ie9decedd373c000211c171df64e1e96fe78e5081\n", 
+            "date_created": "2013-05-10 21:34:32.888461+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/32768", 
+            "date_created": "2013-06-12 18:54:11.522221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/32768\nCommitted: http://github.com/openstack/nova/commit/d34d4cacf7b20f72c67f7873dcf2c372abc60ecd\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit d34d4cacf7b20f72c67f7873dcf2c372abc60ecd\nAuthor: Rafi Khardalian <email address hidden>\nDate:   Sun May 5 22:18:33 2013 +0000\n\n    Make resize/migrated shared storage aware\n    \n    Fixes bug 1177247 (for stable/grizzly)\n    \n    Added some logic to check for whether or not we are on a shared\n    filesystem and set shared_storage accordingly. We perform similar\n    checks in other areas of the code, typically through RPC calls.\n    However, all the resize/migrate code is slated to be refactored for\n    Hava, so the idea was to keep this patch as minimally intrusive as\n    possible.\n    \n    When shared_storage is true, we pass that on to the cleanup call\n    so that it no longer executes an rm via SSH, which was ultimately\n    destroying the original instance directory.\n    \n    Change-Id: Ie9decedd373c000211c171df64e1e96fe78e5081\n    Cherry-Pick: 9290bddd9f270d8ea4fbd6d953a8634473979cd5\n", 
+            "date_created": "2013-07-29 18:23:50.584638+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

@@ -1,0 +1,122 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:37:09.589772+00:00", 
+    "description": "Hi,\n\nSteps to reproduce:\n\n1) create a security group that is referencing itself, for example\neuca-create-group test2\neuca-authorize test2 -P tcp -p 22 -s 0.0.0.0/0\neuca-authorize test2 -P tcp -p 6666 -o test2\n\n2) create any instance in this security group\n\neuca-run-instance .. -g test2 ..\n\nExpected result:\nno stackstrace to be thrown\nActual result:\nstacktrace with KeyError appears in the log. The iptable rules are created correctly and instance ends up in running state.\n\nFile \"/usr/lib/python2.6/site-packages/nova/compute/manager.py\", line 390, in refresh_instance_security_rules\n  return self.driver.refresh_instance_security_rules(instance)\nFile \"/usr/lib/python2.6/site-packages/nova/virt/libvirt/driver.py\", line 2269, in refresh_instance_security_rules\n  self.firewall_driver.refresh_instance_security_rules(instance)\nFile \"/usr/lib/python2.6/site-packages/nova/virt/firewall.py\", line 440, in refresh_instance_security_rules\n  self.do_refresh_instance_rules(instance)\nFile \"/usr/lib/python2.6/site-packages/nova/virt/firewall.py\", line 457, in do_refresh_instance_rules\n  network_info = self.network_infos[instance['id']]\nKeyError: 4168\n\nIt seems that self.network_infos is accessed in wrong order for the security group that is referencing itself. The stacktrace is from 'do_refresh_instance_rules' which expects network info to be already present for the instance that is being created. Reported KeyError is the id of newly created instance. The dictionary entry is added few seconds later processing the same request.\n\nFortunately, this issue does not appear to have any negative impact aside the stacktrace in the log.\n\nOpenstack version: Folsom 2012.2.4\n\nAttaching verbose log from nova-compute.\n\nRegards,\n\nBrano Zarnovican", 
+    "tags": [
+        "compute", 
+        "havana-backport-potential", 
+        "in-stable-havana", 
+        "in-stable-icehouse", 
+        "network"
+    ], 
+    "importance": "High", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1182131", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1182131, 
+    "index": 1102, 
+    "created": "2013-05-20 16:03:52.083520+00:00", 
+    "title": "nova-compute: instance created in self-referencing secgroup produces KeyError", 
+    "comments": [
+        {
+            "content": "Hi,\n\nSteps to reproduce:\n\n1) create a security group that is referencing itself, for example\neuca-create-group test2\neuca-authorize test2 -P tcp -p 22 -s 0.0.0.0/0\neuca-authorize test2 -P tcp -p 6666 -o test2\n\n2) create any instance in this security group\n\neuca-run-instance .. -g test2 ..\n\nExpected result:\nno stackstrace to be thrown\nActual result:\nstacktrace with KeyError appears in the log. The iptable rules are created correctly and instance ends up in running state.\n\nFile \"/usr/lib/python2.6/site-packages/nova/compute/manager.py\", line 390, in refresh_instance_security_rules\n  return self.driver.refresh_instance_security_rules(instance)\nFile \"/usr/lib/python2.6/site-packages/nova/virt/libvirt/driver.py\", line 2269, in refresh_instance_security_rules\n  self.firewall_driver.refresh_instance_security_rules(instance)\nFile \"/usr/lib/python2.6/site-packages/nova/virt/firewall.py\", line 440, in refresh_instance_security_rules\n  self.do_refresh_instance_rules(instance)\nFile \"/usr/lib/python2.6/site-packages/nova/virt/firewall.py\", line 457, in do_refresh_instance_rules\n  network_info = self.network_infos[instance['id']]\nKeyError: 4168\n\nIt seems that self.network_infos is accessed in wrong order for the security group that is referencing itself. The stacktrace is from 'do_refresh_instance_rules' which expects network info to be already present for the instance that is being created. Reported KeyError is the id of newly created instance. The dictionary entry is added few seconds later processing the same request.\n\nFortunately, this issue does not appear to have any negative impact aside the stacktrace in the log.\n\nOpenstack version: Folsom 2012.2.4\n\nAttaching verbose log from nova-compute.\n\nRegards,\n\nBrano Zarnovican", 
+            "date_created": "2013-05-20 16:03:52.083520+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zarnovican"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-05-20 16:03:52.083520+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zarnovican"
+        }, 
+        {
+            "content": "I am not able to re-produce the stack-trace on stable/grizzly at all. It works correctly for me.\nI ran the following,\n\neuca-add-group test3 -d test3\nGROUP   test3   test3\n\neuca-authorize test3 -P tcp -p 22 -s 0.0.0.0/0\nGROUP   test3\nPERMISSION      test3   ALLOWS  tcp     22      22      FROM    CIDR    0.0.0.0/0\n\neuca-authorize test3 -P tcp -p 6666 -o test3\nGROUP   test3\nPERMISSION      test3   ALLOWS  tcp     6666    6666    GRPNAME test3   FROM    CIDR    0.0.0.0/0\n\neuca-run-instances <image_id> -g test3\ngives all teh relevant information about the instance and its status\n", 
+            "date_created": "2013-05-23 06:16:42.564886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~avinash-prasad"
+        }, 
+        {
+            "content": "Unfortunately, I'm not able to test it on Grizzly. I'm able to reproduce it consistently also on Folsom build from EPEL.\n\n# rpm -qi openstack-nova\nName        : openstack-nova               Relocations: (not relocatable)\nVersion     : 2012.2.3                          Vendor: Fedora Project\nRelease     : 1.el6                         Build Date: Mon 04 Feb 2013 03:00:18 PM CET\nInstall Date: Thu 23 May 2013 09:23:27 AM CEST      Build Host: ppc12.phx2.fedoraproject.org\nGroup       : Applications/System           Source RPM: openstack-nova-2012.2.3-1.el6.src.rpm\n...\n\n", 
+            "date_created": "2013-05-23 08:40:03.795459+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zarnovican"
+        }, 
+        {
+            "content": "I am also seeing this bug (or something very similar) on Grizzly:\n\n2013-05-28 07:58:33.969 ERROR nova.openstack.common.rpc.amqp [req-8d5edb8b-ba0c-4552-9e8b-e6ec47f2fa75 e5195d7000ab4f55a1b542d311a59506 5dc6d827aeef43c4b5165e3e045e42c2] Exception during message handling\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp Traceback (most recent call last):\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/openstack/common/rpc/amqp.py\", line 430, in _process_data\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     rval = self.proxy.dispatch(ctxt, version, method, **args)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/openstack/common/rpc/dispatcher.py\", line 133, in dispatch\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     return getattr(proxyobj, method)(ctxt, **kwargs)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/exception.py\", line 117, in wrapped\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     temp_level, payload)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/contextlib.py\", line 24, in __exit__\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     self.gen.next()\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/exception.py\", line 94, in wrapped\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     return f(self, context, *args, **kw)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 657, in refresh_instance_security_rules\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     return _sync_refresh()\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/openstack/common/lockutils.py\", line 242, in inner\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     retval = f(*args, **kwargs)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 656, in _sync_refresh\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     return self.driver.refresh_instance_security_rules(instance)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 2778, in refresh_instance_security_rules\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     self.firewall_driver.refresh_instance_security_rules(instance)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/virt/firewall.py\", line 453, in refresh_instance_security_rules\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     self.do_refresh_instance_rules(instance)\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp   File \"/usr/lib/python2.7/dist-packages/nova/virt/firewall.py\", line 470, in do_refresh_instance_rules\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp     network_info = self.network_infos[instance['id']]\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp KeyError: 3197\n2013-05-28 07:58:33.969 27617 TRACE nova.openstack.common.rpc.amqp \n", 
+            "date_created": "2013-05-28 13:15:04.780298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amscanne"
+        }, 
+        {
+            "content": "I see it right here in a stable/icehouse nova-network jenkins run:\n\nhttp://logs.openstack.org/69/100469/1/check/check-tempest-dsvm-postgres-full/ed1c6cc/logs/screen-n-cpu.txt.gz?level=TRACE#_2014-06-17_11_06_07_182\n\nIt actually shows up quite a bit:\n\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiZG9fcmVmcmVzaF9zZWN1cml0eV9ncm91cF9ydWxlc1wiIEFORCBtZXNzYWdlOlwiS2V5RXJyb3JcIiBBTkQgdGFnczpcInNjcmVlbi1uLWNwdS50eHRcIiIsImZpZWxkcyI6W10sIm9mZnNldCI6MCwidGltZWZyYW1lIjoiNjA0ODAwIiwiZ3JhcGhtb2RlIjoiY291bnQiLCJ0aW1lIjp7InVzZXJfaW50ZXJ2YWwiOjB9LCJzdGFtcCI6MTQwMzAxMzk4MzY2M30=", 
+            "date_created": "2014-06-17 14:11:01.065083+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "As pointed out in the bug description, this doesn't appear to cause issues. The logstash query proves that, there is still a 94% success rate on the job when this shows up.", 
+            "date_created": "2014-06-17 14:12:11.555870+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Patch is here: https://review.openstack.org/#/c/104325/", 
+            "date_created": "2014-07-02 20:04:50.145533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/104335", 
+            "date_created": "2014-07-02 20:34:12.515023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104325\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=72dd81343e73baf838bc58d413413f0d57018f15\nSubmitter: Jenkins\nBranch:    master\n\ncommit 72dd81343e73baf838bc58d413413f0d57018f15\nAuthor: Dan Smith <email address hidden>\nDate:   Wed Jul 2 12:44:48 2014 -0700\n\n    Avoid referencing stale instance/network_info dicts in firewall\n    \n    This makes the virt.firewall code cleaner in terms of referencing\n    the cached instance and network_info code it stores. Before this\n    patch, concurrent instance operations could modify these two dicts\n    so that while we're iterating instances, the network_info dict\n    is suddenly missing information we need.\n    \n    The right fix for this is to use instance objects and their\n    associated info_cache objects, but that's a larger fix and one\n    not as well-suited to backporting to previous releases which\n    suffer from this as well.\n    \n    The approach taken here is that we store the instance and\n    network_info cache together in the same dict that we can pop()\n    from atomically (this is not really necessary, but helps to\n    prevent introducing more of these cases). When we iterate over\n    the contents, we iterate over a copy of the keys, being careful\n    not to let a suddenly-missing key break us, and passing the\n    details all the way down the stack instead of having deeper calls\n    hit the cache dicts again.\n    \n    Change-Id: I33366f50024a82451842d045b830ab19b59879c3\n    Closes-bug: #1182131\n", 
+            "date_created": "2014-07-03 02:21:45.535167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I think this bug is fixed, however the underlying races in firewall manip seem to still be there.", 
+            "date_created": "2014-07-03 10:53:10.561043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/104581", 
+            "date_created": "2014-07-03 15:14:33.896431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104581\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6aa368b99249d01f8fd7183c15d11986ad6a6fb7\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6aa368b99249d01f8fd7183c15d11986ad6a6fb7\nAuthor: Dan Smith <email address hidden>\nDate:   Thu Jul 3 08:09:39 2014 -0700\n\n    Avoid re-adding iptables rules for instances that have disappeared\n    \n    The remove_filters_for_instance() method fails silently if the\n    instance's chain is gone (i.e. it's been deleted). If this\n    happens while we're refreshing security group rules, we will\n    not notice this case and re-add stale rules for an old instance,\n    breaking our firewall for new instances.\n    \n    This adds a quick check after we've captured the lock to see if\n    the associated chain exists, and bails if it doesn't.\n    \n    Change-Id: Ic75988939f82de49735d85fe99a9eecd4baf45c9\n    Related-bug: #1182131\n", 
+            "date_created": "2014-07-03 21:28:23.424751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/106792", 
+            "date_created": "2014-07-14 15:22:28.057519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104335\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9f5d2a6a65edb2a5862c7f07b29ac700cec61f84\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 9f5d2a6a65edb2a5862c7f07b29ac700cec61f84\nAuthor: Dan Smith <email address hidden>\nDate:   Wed Jul 2 12:44:48 2014 -0700\n\n    Avoid referencing stale instance/network_info dicts in firewall\n    \n    This makes the virt.firewall code cleaner in terms of referencing\n    the cached instance and network_info code it stores. Before this\n    patch, concurrent instance operations could modify these two dicts\n    so that while we're iterating instances, the network_info dict\n    is suddenly missing information we need.\n    \n    The right fix for this is to use instance objects and their\n    associated info_cache objects, but that's a larger fix and one\n    not as well-suited to backporting to previous releases which\n    suffer from this as well.\n    \n    The approach taken here is that we store the instance and\n    network_info cache together in the same dict that we can pop()\n    from atomically (this is not really necessary, but helps to\n    prevent introducing more of these cases). When we iterate over\n    the contents, we iterate over a copy of the keys, being careful\n    not to let a suddenly-missing key break us, and passing the\n    details all the way down the stack instead of having deeper calls\n    hit the cache dicts again.\n    \n    Conflicts:\n    \tnova/virt/firewall.py\n    \n    Change-Id: Ib1cfd68fca7789ca4a3602c25e6b8a956303fff9\n    Closes-bug: #1182131\n    (cherry picked from commit 72dd81343e73baf838bc58d413413f0d57018f15)\n", 
+            "date_created": "2014-07-14 19:15:02.664817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/106792\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=132d5a2064cfdc579a2e51f07e10e8eafbdf6327\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 132d5a2064cfdc579a2e51f07e10e8eafbdf6327\nAuthor: Dan Smith <email address hidden>\nDate:   Thu Jul 3 08:09:39 2014 -0700\n\n    Avoid re-adding iptables rules for instances that have disappeared\n    \n    The remove_filters_for_instance() method fails silently if the\n    instance's chain is gone (i.e. it's been deleted). If this\n    happens while we're refreshing security group rules, we will\n    not notice this case and re-add stale rules for an old instance,\n    breaking our firewall for new instances.\n    \n    This adds a quick check after we've captured the lock to see if\n    the associated chain exists, and bails if it doesn't.\n    \n    Change-Id: Ic75988939f82de49735d85fe99a9eecd4baf45c9\n    Related-bug: #1182131\n    (cherry picked from commit 6aa368b99249d01f8fd7183c15d11986ad6a6fb7)\n", 
+            "date_created": "2014-07-15 18:49:41.468485+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/115267", 
+            "date_created": "2014-08-19 12:16:35.154784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/havana\nReview: https://review.openstack.org/115268", 
+            "date_created": "2014-08-19 12:24:24.368002+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/115268\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d469733e59872a897737db6ed5fd92d57986aee4\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit d469733e59872a897737db6ed5fd92d57986aee4\nAuthor: Dan Smith <email address hidden>\nDate:   Thu Jul 3 08:09:39 2014 -0700\n\n    Avoid re-adding iptables rules for instances that have disappeared\n    \n    The remove_filters_for_instance() method fails silently if the\n    instance's chain is gone (i.e. it's been deleted). If this\n    happens while we're refreshing security group rules, we will\n    not notice this case and re-add stale rules for an old instance,\n    breaking our firewall for new instances.\n    \n    This adds a quick check after we've captured the lock to see if\n    the associated chain exists, and bails if it doesn't.\n    \n    Conflicts:\n    \tnova/virt/firewall.py\n    \n    Required changes:\n    - unit test was updated because in Havana, IptablesFirewallDriver has\n      .instances instead of .instance_infos, and a separate .network_infos\n      attribute.\n    \n    Change-Id: Ic75988939f82de49735d85fe99a9eecd4baf45c9\n    Related-bug: #1182131\n    (cherry picked from commit 6aa368b99249d01f8fd7183c15d11986ad6a6fb7)\n    (cherry picked from commit 132d5a2064cfdc579a2e51f07e10e8eafbdf6327)\n", 
+            "date_created": "2014-09-19 00:30:00.949158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/115267\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8e2d6963cafcead0fe61673ece354f646de0f630\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 8e2d6963cafcead0fe61673ece354f646de0f630\nAuthor: Dan Smith <email address hidden>\nDate:   Wed Jul 2 12:44:48 2014 -0700\n\n    Avoid referencing stale instance/network_info dicts in firewall\n    \n    This makes the virt.firewall code cleaner in terms of referencing\n    the cached instance and network_info code it stores. Before this\n    patch, concurrent instance operations could modify these two dicts\n    so that while we're iterating instances, the network_info dict\n    is suddenly missing information we need.\n    \n    The right fix for this is to use instance objects and their\n    associated info_cache objects, but that's a larger fix and one\n    not as well-suited to backporting to previous releases which\n    suffer from this as well.\n    \n    The approach taken here is that we store the instance and\n    network_info cache together in the same dict that we can pop()\n    from atomically (this is not really necessary, but helps to\n    prevent introducing more of these cases). When we iterate over\n    the contents, we iterate over a copy of the keys, being careful\n    not to let a suddenly-missing key break us, and passing the\n    details all the way down the stack instead of having deeper calls\n    hit the cache dicts again.\n    \n    Conflicts:\n    \tnova/virt/firewall.py\n    \n    Change-Id: Ib1cfd68fca7789ca4a3602c25e6b8a956303fff9\n    Closes-bug: #1182131\n    (cherry picked from commit 72dd81343e73baf838bc58d413413f0d57018f15)\n    (cherry picked from commit 9f5d2a6a65edb2a5862c7f07b29ac700cec61f84)\n", 
+            "date_created": "2014-09-19 13:52:02.370710+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

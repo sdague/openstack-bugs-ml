@@ -1,0 +1,86 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-08-01 16:49:34.006445+00:00", 
+    "description": "When we resize (change the flavor) of an instance that has a NUMA topology defined, the NUMA info from the new flavor will not be considered during scheduling. The instance will get re-scheduled based on the old NUMA information, but the claiming on the host will use the new flavor data. Once the instane sucessfully lands on a host, we will still use the old data when provisioning it on the new host.\n\nWe should be considering only the new flavor information in resizes.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 54, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1370390", 
+    "owner": "https://api.launchpad.net/1.0/~stephenfinucane", 
+    "id": 1370390, 
+    "index": 4046, 
+    "created": "2014-09-17 08:28:41.170887+00:00", 
+    "title": "Resize instace will not change the NUMA topology of a running instance to the one from the new flavor", 
+    "comments": [
+        {
+            "content": "When we resize (change the flavor) of an instance that has a NUMA topology defined, the NUMA info from the new flavor will not be considered during scheduling. The instance will get re-scheduled based on the old NUMA information, but the claiming on the host will use the new flavor data. Once the instane sucessfully lands on a host, we will still use the old data when provisioning it on the new host.\n\nWe should be considering only the new flavor information in resizes.", 
+            "date_created": "2014-09-17 08:28:41.170887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "This bug essentially means that resize is not usable for any instances that have a NUMA topology. Is anyone working on this?", 
+            "date_created": "2015-02-04 16:17:28.558809+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bartwensley"
+        }, 
+        {
+            "content": "This is basically the same as https://bugs.launchpad.net/nova/+bug/1417667 but this one is slightly more general, so I will mark the other one as a duplicate of this.\n\nSo after investigating this - it seems that there is really not that much work that needs to be done all the information is passed in to the filter, it's just that we mangle the request_spec and filter_properties dicts so much, and the keys are so generic, that it is really difficult to make sense of it without following the code all the way from the API.\n\nBecause of this it would probably be good to add a method that basically says - when inside a filter - give me a flavor I should be looking at right now.", 
+            "date_created": "2015-02-17 17:32:59.367504+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "While it's true that this bug would cover the resize case that I mentioned in note #1 of bug #1417667, I think that we still need to keep that bug open for the more general case of live-migration, evacuate, rebuild, etc.\n\nThe key different for that bug is that when using dedicated CPUs we need to recalculate which CPUs to use on the destination compute node (and claim those resources) before actually doing the migration/evacuation/rebuild.  As it stands, we'll continue to use the originally-specific vcpu/pcpu mapping, even though it may not be valid on the new host.", 
+            "date_created": "2015-02-20 18:51:37.378761+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/158245", 
+            "date_created": "2015-02-23 11:05:25.922815+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@Chris - well from the POV of the code, fixing this for the general case of CPU pinning is a sub-problem of fixing it for NUMA as such really, since CPU pinning uses the same code paths as NUMA does and relies on the same filter.\n\nFixing it for live migration with specified host likely requires a different bug anyway - so we might want to open that and leave this one closed?", 
+            "date_created": "2015-02-26 14:03:57.185626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "This is a big problem, I think that we need to think every features  related to NUMA.    Now, when using the feature of huge page, I meet the same problem.", 
+            "date_created": "2015-03-02 06:27:17.570265+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhangchunlong1"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/160484", 
+            "date_created": "2015-03-02 20:18:16.436634+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/160484\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-05-13 17:23:13.028794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Nikola Dipanov (<email address hidden>) on branch: master\nReview: https://review.openstack.org/158245", 
+            "date_created": "2015-05-29 20:36:08.571007+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I undertook some research into this. My findings are below, but tl;dr: it appears that this now works as expected and the bug can be closed.\n\n---\n\n\n# Problem\n\nThere were reports that resizing an instance from a pinned flavor to a unpinned\none not result in the pinning being removed. The opposite is also reportedly\ntrue.\n\n# Steps\n\n## Create the required flavors\n\n    $ openstack flavor create test.unpinned --id 100 --ram 2048 --disk 0 --vcpus 2\n    $ openstack flavor create test.pinned --id 101 --ram 2048 --disk 0 --vcpus 2\n    $ openstack flavor set test.pinned --property \"hw:cpu_policy=dedicated\"\n\n# Ensure this is available\n\n    $ openstack flavor list\n    +-----+---------------+-------+------+-----------+-------+-----------+\n    | ID  | Name          |   RAM | Disk | Ephemeral | VCPUs | Is Public |\n    +-----+---------------+-------+------+-----------+-------+-----------+\n    | 1   | m1.tiny       |   512 |    1 |         0 |     1 | True      |\n    | 101 | test.unpinned |  2048 |    0 |         0 |     2 | True      |\n    | 101 | test.pinned   |  2048 |    0 |         0 |     2 | True      |\n    | 2   | m1.small      |  2048 |   20 |         0 |     1 | True      |\n    | 3   | m1.medium     |  4096 |   40 |         0 |     2 | True      |\n    | 4   | m1.large      |  8192 |   80 |         0 |     4 | True      |\n    | 42  | m1.nano       |    64 |    0 |         0 |     1 | True      |\n    | 5   | m1.xlarge     | 16384 |  160 |         0 |     8 | True      |\n    | 84  | m1.micro      |   128 |    0 |         0 |     1 | True      |\n    +-----+---------------+-------+------+-----------+-------+-----------+\n\n    $ openstack image list\n    +--------------------------------------+---------------------------------+--------+\n    | ID                                   | Name                            | Status |\n    +--------------------------------------+---------------------------------+--------+\n    | c44bba29-653e-4ddf-963d-442af4c33a13 | cirros-0.3.4-x86_64-uec         | active |\n    | 8b0284ee-ae6c-4e80-b5ee-26895d574717 | cirros-0.3.4-x86_64-uec-ramdisk | active |\n    | 855c2971-aedc-4d5f-a366-73bb14707965 | cirros-0.3.4-x86_64-uec-kernel  | active |\n    +--------------------------------------+---------------------------------+--------+\n\n# Boot an instance\n\n    $ openstack server create --flavor=test.pinned \\\n        --image=cirros-0.3.4-x86_64-uec --wait test1\n\n# Validate that the instance is pinned\n\n    $ openstack server list\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n    | ID                                   | Name  | Status | Networks                                               |\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n    | 857597cb-266b-4032-8030-e3cc76ebf0e7 | test1 | ACTIVE | private=10.0.0.3, fd2a:ec16:99e1:0:f816:3eff:fe99:df9f |\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n\n    $ sudo virsh list\n     Id    Name                           State\n    ----------------------------------------------------\n     1     instance-00000001              running\n\n    $ sudo virsh dumpxml instance-00000001\n    <domain type='kvm' id='1'>\n      <name>instance-00000001</name>\n      ...\n      <vcpu placement='static'>2</vcpu>\n      <cputune>\n        <shares>2048</shares>\n        <vcpupin vcpu='0' cpuset='1'/>\n        <vcpupin vcpu='1' cpuset='21'/>\n        <emulatorpin cpuset='1,21'/>\n      </cputune>\n      <numatune>\n        <memory mode='strict' nodeset='0'/>\n        <memnode cellid='0' mode='strict' nodeset='0'/>\n      </numatune>\n      ...\n      <cpu>\n        <topology sockets='1' cores='1' threads='2'/>\n        <numa>\n          <cell id='0' cpus='0-1' memory='2097152' unit='KiB'/>\n        </numa>\n      </cpu>\n      ...\n    </domain>\n\n# Resize the instance to the unpinned flavor\n\n    $ openstack server resize test1 --flavor test.unpinned --wait\n    complete\n\n    $ openstack server list\n    +--------------------------------------+-------+---------------+--------------------------------------------------------+\n    | ID                                   | Name  | Status        | Networks                                               |\n    +--------------------------------------+-------+---------------+--------------------------------------------------------+\n    | 857597cb-266b-4032-8030-e3cc76ebf0e7 | test1 | VERIFY_RESIZE | private=10.0.0.3, fd2a:ec16:99e1:0:f816:3eff:fe99:df9f |\n    +--------------------------------------+-------+---------------+--------------------------------------------------------+\n\n    $ openstack server resize test1 --confirm\n\n# Validate that the instance is no longer pinned\n\n    $ openstack server list\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n    | ID                                   | Name  | Status | Networks                                               |\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n    | 857597cb-266b-4032-8030-e3cc76ebf0e7 | test1 | ACTIVE | private=10.0.0.3, fd2a:ec16:99e1:0:f816:3eff:fe99:df9f |\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n\n    $ sudo virsh list\n     Id    Name                           State\n    ----------------------------------------------------\n     2     instance-00000001              running\n\n    $ sudo virsh dumpxml instance-00000001\n    <domain type='kvm' id='2'>\n      <name>instance-00000002</name>\n      ...\n      <vcpu placement='static'>2</vcpu>\n      <cputune>\n        <shares>2048</shares>\n      </cputune>\n      ...\n    </domain>\n\n# Resize the instance back to the pinned flavor\n\n    $ openstack server resize test1 --flavor test.pinned --wait\n    complete\n\n    $ openstack server list\n    +--------------------------------------+-------+---------------+--------------------------------------------------------+\n    | ID                                   | Name  | Status        | Networks                                               |\n    +--------------------------------------+-------+---------------+--------------------------------------------------------+\n    | 857597cb-266b-4032-8030-e3cc76ebf0e7 | test1 | VERIFY_RESIZE | private=10.0.0.3, fd2a:ec16:99e1:0:f816:3eff:fe99:df9f |\n    +--------------------------------------+-------+---------------+--------------------------------------------------------+\n\n    $ openstack server resize test1 --confirm\n\n# Validate that the instance is pinned once more\n\n    $ openstack server list\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n    | ID                                   | Name  | Status | Networks                                               |\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n    | 857597cb-266b-4032-8030-e3cc76ebf0e7 | test1 | ACTIVE | private=10.0.0.3, fd2a:ec16:99e1:0:f816:3eff:fe99:df9f |\n    +--------------------------------------+-------+--------+--------------------------------------------------------+\n\n    $ sudo virsh list\n     Id    Name                           State\n    ----------------------------------------------------\n     3     instance-00000001              running\n\n    $ sudo virsh dumpxml instance-00000001\n    <domain type='kvm' id='3'>\n      <name>instance-00000001</name>\n      ...\n      <vcpu placement='static'>2</vcpu>\n      <cputune>\n        <shares>2048</shares>\n        <vcpupin vcpu='0' cpuset='1'/>\n        <vcpupin vcpu='1' cpuset='21'/>\n        <emulatorpin cpuset='1,21'/>\n      </cputune>\n      <numatune>\n        <memory mode='strict' nodeset='0'/>\n        <memnode cellid='0' mode='strict' nodeset='0'/>\n      </numatune>\n      ...\n      <cpu>\n        <topology sockets='1' cores='1' threads='2'/>\n        <numa>\n          <cell id='0' cpus='0-1' memory='2097152' unit='KiB'/>\n        </numa>\n      </cpu>\n      ...\n    </domain>\n", 
+            "date_created": "2016-02-23 09:55:04.613588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stephenfinucane"
+        }, 
+        {
+            "content": "I'm seeing this on Kilo @ 2015.1.0. I have 2 NUMA flavors - one double the size of the other in terms of CPU and memory.\nIf I boot a new instance of the large type, all is well. If I boot the small, and resize to the large, the cputune section gets the correct shares for the large, but the <vcpupin> entries for the old. To compound the issue, the <numa> section contains the memory size of the smaller flavor resulting in:\n\nqemu-system-x86_64: total memory for NUMA nodes (0x1c00000000) should equal RAM size (0x3800000000) \n\n@sfinucan - what version did you find this fixed on?", 
+            "date_created": "2016-06-27 18:50:32.325824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tony-walker-h"
+        }, 
+        {
+            "content": "@Stephen Finucane - This problem exists in master version. Do you have time to deal with this bug?  I wish to see your modification as soon as possible. Thank you.", 
+            "date_created": "2016-07-06 06:15:05.828978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liu-lixiu"
+        }, 
+        {
+            "content": "Change abandoned by Jay Pipes (<email address hidden>) on branch: master\nReview: https://review.openstack.org/160484\nReason: The bug appears to now be fixed and Nikola is no longer working on Nova. Abandoning...", 
+            "date_created": "2016-08-01 16:49:32.694838+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

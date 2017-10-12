@@ -1,0 +1,154 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-09-10 20:53:15.782089+00:00", 
+    "description": "Downstream bug report from Red Hat Bugzilla against Grizzly: https://bugzilla.redhat.com/show_bug.cgi?id=960644\n\nIn unit tests, db-archiving moves all 'deleted' rows to the shadow tables.  However, in the real-world test, some deleted rows got stuck in the instances table.\n\nI suspect a bug in the way we deal with foreign key constraints.", 
+    "tags": [
+        "db", 
+        "in-stable-mitaka"
+    ], 
+    "importance": "Medium", 
+    "heat": 86, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1183523", 
+    "owner": "https://api.launchpad.net/1.0/~cedric-lecomte", 
+    "id": 1183523, 
+    "index": 3404, 
+    "created": "2013-05-23 18:59:06.824544+00:00", 
+    "title": "db-archiving fails to clear some deleted rows from instances table", 
+    "comments": [
+        {
+            "content": "Downstream bug report from Red Hat Bugzilla against Grizzly: https://bugzilla.redhat.com/show_bug.cgi?id=960644\n\nIn unit tests, db-archiving moves all 'deleted' rows to the shadow tables.  However, in the real-world test, some deleted rows got stuck in the instances table.\n\nI suspect a bug in the way we deal with foreign key constraints.", 
+            "date_created": "2013-05-23 18:59:06.824544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "I ran into the same bug. It is because instance's uuid was used in some other tables as foreign key.\n\nNot sure if it is caused by an inconsistent database.", 
+            "date_created": "2013-06-09 08:38:17.509279+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhidong"
+        }, 
+        {
+            "content": "The bug is that when we \"soft-delete\" a row from instances (by setting deleted to nonzero), we do not also soft-delete the rows pointing to that instance's uuid from fixed_ips and instance_system_metadata.\n\ndb-archiving can't archive the instances row because the FK constraint forces it to archive the others first, and it can't archive the others because they haven't been deleted.", 
+            "date_created": "2013-06-11 19:03:54.783092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/32742", 
+            "date_created": "2013-06-12 15:16:13.978670+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "https://bugs.launchpad.net/nova/+bug/1190206 may be the root cause of this bug.  When its patch gets in, I will retest and see if it helped.", 
+            "date_created": "2013-06-14 17:44:10.436049+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "Won't https://github.com/openstack/nova/commit/4885aa28706a1858f4fc51a0d2c661eec05139c0 be a problem here?", 
+            "date_created": "2013-06-28 08:14:17.203918+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hanlind"
+        }, 
+        {
+            "content": "Hans, yes.  We're adding more things that pin the instances rows faster than we remove things that pin instances rows.  I'm afraid this bug will end up a WONTFIX.", 
+            "date_created": "2013-07-03 18:58:19.284228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "comstud thinks we can fix this but we need to do instance_type data differently.  Maybe embedded JSON blobs so we have all the information we need without a reference to the instances row.  (My opinion: yuck.)  So this bug is staying open for now, but it requires some significant redesign to fix.", 
+            "date_created": "2013-07-03 19:09:50.166901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dripton"
+        }, 
+        {
+            "content": "The patch was abandoned so resetting the state here.", 
+            "date_created": "2014-04-09 19:11:45.538478+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Note that nova doesn't do cascading deletes on it's foreign keys, when I asked about this in IRC no one had a good answer why, just that nova doesn't delete anything anyway so it wasn't a big deal, which I don't think is a very good answer.", 
+            "date_created": "2014-04-09 19:13:29.480764+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "here's the likely cause of this issue: https://bugs.launchpad.net/nova/+bug/1431571", 
+            "date_created": "2015-03-12 23:43:28.336274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "well part of it.  the routine also doesn't seem to try to be smart about foreign keys as well as mentioned here.   really needs a rewrite.", 
+            "date_created": "2015-03-12 23:51:15.048730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zzzeek"
+        }, 
+        {
+            "content": "On a master devstack (mitaka) I have 20 deleted instances:\n\nhttp://paste.openstack.org/show/475609/\n\nI tried archiving 10 of them and it didn't fail but it didn't archive anything either:\n\nhttp://paste.openstack.org/show/475610/\n\nResults after nova-manage db archive_deleted_rows 10:\n\nhttp://paste.openstack.org/show/475611/\n\nSo nothing was deleted.\n\nAs previously pointed out, it's really odd that the DB API doesn't attempt to sort the tables based on dependencies, like what the 267 migration does here:\n\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/migrate_repo/versions/267_instance_uuid_non_nullable.py#L73\n\nThat's sorting the tables based on dependency since we're deleting entries so we want to process tables that don't have foreign keys first.", 
+            "date_created": "2015-10-07 14:13:50.844767+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Maybe my problem is that I'm specifying max_rows as 10 and the code actually keeps track of how many rows it's deleted from each table, which seems weird.  For example, if I have 20 tables and I say delete max_rows=10, then is it only going to delete 10 rows from the first table it encounters?  Or one row in the first 10 tables it encounters?  Or up to 10 rows from all 20 tables?", 
+            "date_created": "2015-10-07 14:35:47.911981+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Heh, nope, the warning was lost in the debug log output:\n\n2015-10-07 14:18:39.265 WARNING nova.db.sqlalchemy.api [req-149506be-fbdd-452c-bd35-76f4ba269bc3 None None] IntegrityError detected when archiving table instances\n\nSo yeah, that's the foreign key constraint issue.", 
+            "date_created": "2015-10-07 14:40:12.713295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/232097", 
+            "date_created": "2015-10-07 16:39:16.544401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/232097\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9f880fc8f437a82782f5c5ef0ed21ccbfb20facb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9f880fc8f437a82782f5c5ef0ed21ccbfb20facb\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Oct 7 09:33:05 2015 -0700\n\n    Log DBReferenceError in archive_deleted_rows_for_table\n    \n    We should add the foreign key constraint integrity error to the warning\n    since it includes detailed information about the reference table that\n    caused the constraint failure, which is useful for knowing things are\n    out of order without having to check your database.\n    \n    You get something like this now:\n    \n    2015-10-07 15:29:38.238 WARNING nova.db.sqlalchemy.api\n    [req-6115aef5-2a82-4d42-bf67-eaab2e8eee63 None None] IntegrityError\n     detected when archiving table instances: (pymysql.err.IntegrityError)\n     (1451, u'Cannot delete or update a parent row: a foreign key constraint\n     fails (`nova`.`instance_actions`, CONSTRAINT\n     `fk_instance_actions_instance_uuid` FOREIGN KEY (`instance_uuid`)\n     REFERENCES `instances` (`uuid`))') [SQL: u'DELETE FROM instances WHERE\n     instances.id in (SELECT T1.id FROM (SELECT instances.id \\nFROM\n     instances \\nWHERE instances.deleted != %s ORDER BY instances.id \\n\n     LIMIT %s) as T1)'] [parameters: (0, 10)]\n    \n    Related-Bug: #1183523\n    \n    Change-Id: I41b10898c6e9cc48da58c4d2daf7df362fc9fc36\n", 
+            "date_created": "2015-10-08 11:29:55.892903+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/246635", 
+            "date_created": "2015-11-17 22:40:33.826873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So it looks like we aren't soft deleting instance_actions when we delete instances, that's what's currently tripping the archive code up:\n\nhttp://paste.openstack.org/show/479188/", 
+            "date_created": "2015-11-17 22:42:21.993846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/246635\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=91b989701d88ca4a223a172b05f978527d352dd3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 91b989701d88ca4a223a172b05f978527d352dd3\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Nov 17 14:38:32 2015 -0800\n\n    Reverse sort tables before archiving\n    \n    sqlalchemy metadata provides a way to sort tables based on foreign\n    key dependency relationships and then we can reverse sort those to\n    process leaf nodes first when archiving deleted records. Use this\n    to at least attempt to archive things in a sane order.\n    \n    Adds a functional test to cover this since the unit tests for archive\n    are setup in such a way that they don't stress many of the tables\n    related to a created instance record and thus miss some fundamental\n    referential constraint failures during archive.\n    \n    This does not completely fix archive_deleted_rows because of the issue\n    with instance_actions not being soft deleted when instances are deleted,\n    which we still need to sort out, but this at least gives us a functional\n    test that stresses a real usage of the DB API. And since the tables are\n    now sorted we can reliably assert the archive results.\n    \n    Partial-Bug: #1183523\n    \n    Change-Id: I948b149239f01cca2d4156611bb883580a216a83\n", 
+            "date_created": "2015-11-23 16:45:56.913780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/299474", 
+            "date_created": "2016-03-30 15:33:07.108744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "See the ML thread discussion here:\n\nhttp://lists.openstack.org/pipermail/openstack-dev/2015-November/079701.html\n\nThat talks about the blocking issues for making this work and suggestions for how to fix.", 
+            "date_created": "2016-03-30 18:54:56.207346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Change abandoned by C\u00e9dric LECOMTE (<email address hidden>) on branch: master\nReview: https://review.openstack.org/299474", 
+            "date_created": "2016-03-30 19:06:34.708950+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/299474\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=59439059ed818eb8476a8c61683a02770fe9f821\nSubmitter: Jenkins\nBranch:    master\n\ncommit 59439059ed818eb8476a8c61683a02770fe9f821\nAuthor: Cedric LECOMTE <email address hidden>\nDate:   Wed Mar 30 15:18:22 2016 +0000\n\n    Archive instance_actions and instance_actions_event\n    \n    This try to handle the soft-delete of instance_actions and\n    instance_actions_event before the archive of deleted rows. So in\n    this way theses tables will be archived like others.\n    \n    Change-Id: Ia0fe130a35a6c9bb16a940f3f4cea6b1aaee9668\n    Partial-Bug: #1183523\n", 
+            "date_created": "2016-05-09 11:42:15.679346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "As we use the \"direct-release\" model in Nova we don't use the\n\"Fix Comitted\" status for merged bug fixes anymore. I'm setting\nthis manually to \"Fix Released\" to be consistent.\n\n[1] \"[openstack-dev] [release][all] bugs will now close automatically\n    when patches merge\"; Doug Hellmann; 2015-12-07;\n    http://lists.openstack.org/pipermail/openstack-dev/2015-December/081612.html\n", 
+            "date_created": "2016-05-25 08:21:21.351770+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/326730", 
+            "date_created": "2016-06-07 21:16:34.240341+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/326730\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2787b39dc0a7e12ec83b70ca55027b4dc09243d8\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 2787b39dc0a7e12ec83b70ca55027b4dc09243d8\nAuthor: Cedric LECOMTE <email address hidden>\nDate:   Wed Mar 30 15:18:22 2016 +0000\n\n    Archive instance_actions and instance_actions_event\n    \n    This try to handle the soft-delete of instance_actions and\n    instance_actions_event before the archive of deleted rows. So in\n    this way theses tables will be archived like others.\n    \n    Change-Id: Ia0fe130a35a6c9bb16a940f3f4cea6b1aaee9668\n    Partial-Bug: #1183523\n    (cherry picked from commit 59439059ed818eb8476a8c61683a02770fe9f821)\n", 
+            "date_created": "2016-06-09 05:10:01.574723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

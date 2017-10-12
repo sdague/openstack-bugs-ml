@@ -1,0 +1,83 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-11-24 18:31:01.670702+00:00", 
+    "description": "1. Fire up a DevStack instance from the stable/havana, stable/icehouse, or master branches.\n2. Go into Horizon\n3. Launch an instance\n3.1 Instance Boot Source: Boot from image (creates a new volume)\n3.2 Image Name: cirros\n3.3 Device size (GB): 1\n\nWhen the instance finishes booting you\u2019ll see that the instance only has a \u2018-\u2018 in the Image Name column. If you click on the instance you\u2019ll see in the Overview Meta section \u201cImage Name (not found)\u201d.\n\nMy understanding of Boot from image (creates a new volume) is that it simply creates a instance and attaches a volume automatically. It\u2019s basically a convenience for the user. Is that right?\n\nSeems the bug is in Nova as the instance was created with the cirros image and Nova isn\u2019t reporting that fact back. The different responses from various clients.\n\nAPI\n    curl .../v2/tenant_id/servers/server_id\n    \"image\": \u201c\u201d\npython-novaclient\n    nova show server_id\n    \"Attempt to boot from volume - no image supplied\u201d\nHorizon\n    \"Image Name (not found)\"\n\nI suspect Horizon is making some bad calls but Nova shouldn\u2019t be allowing an instance to get into this state.", 
+    "tags": [
+        "api"
+    ], 
+    "importance": "Low", 
+    "heat": 46, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1317880", 
+    "owner": "https://api.launchpad.net/1.0/~liyingjun", 
+    "id": 1317880, 
+    "index": 6159, 
+    "created": "2014-05-09 12:12:46.288294+00:00", 
+    "title": "Boot from image (creates a new volume) starts an instance with no image", 
+    "comments": [
+        {
+            "content": "1. Fire up a DevStack instance from the stable/havana, stable/icehouse, or master branches.\n2. Go into Horizon\n3. Launch an instance\n3.1 Instance Boot Source: Boot from image (creates a new volume)\n3.2 Image Name: cirros\n3.3 Device size (GB): 1\n\nWhen the instance finishes booting you\u2019ll see that the instance only has a \u2018-\u2018 in the Image Name column. If you click on the instance you\u2019ll see in the Overview Meta section \u201cImage Name (not found)\u201d.\n\nMy understanding of Boot from image (creates a new volume) is that it simply creates a instance and attaches a volume automatically. It\u2019s basically a convenience for the user. Is that right?\n\nSeems the bug is in Nova as the instance was created with the cirros image and Nova isn\u2019t reporting that fact back. The different responses from various clients.\n\nAPI\n    curl .../v2/tenant_id/servers/server_id\n    \"image\": \u201c\u201d\npython-novaclient\n    nova show server_id\n    \"Attempt to boot from volume - no image supplied\u201d\nHorizon\n    \"Image Name (not found)\"\n\nI suspect Horizon is making some bad calls but Nova shouldn\u2019t be allowing an instance to get into this state.", 
+            "date_created": "2014-05-09 12:12:46.288294+00:00", 
+            "author": "https://api.launchpad.net/1.0/~everett-toews"
+        }, 
+        {
+            "content": "My guess this is a problem in the api.", 
+            "date_created": "2014-05-09 13:27:33.266954+00:00", 
+            "author": "https://api.launchpad.net/1.0/~timello"
+        }, 
+        {
+            "content": "This bug prevents jclouds from working with openstack: https://issues.apache.org/jira/browse/JCLOUDS-558\n\nIt is preventing me from making any progress in implementing an application using jclouds...", 
+            "date_created": "2014-05-10 22:38:27.747075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~awruef"
+        }, 
+        {
+            "content": "When an instance boots from a image, its 'image' param seems be equal to '', like boots from a volume/snapshot.\n\nIMO if you don't createVM using original '--image-id' method, Nova will always treat it as a volume-backend instance. So the 'image' will always be '' in the situation. \n\nIs the issue caused by the horizon or other portals use '' to query the image from Glance?\n\nI checked the codes in novaclient, the process is like this:\n#    if image:\n#        ...\n#    else:  # Booted from volume\n#        info['image'] = _(\"Attempt to boot from volume - no image supplied\")\n\n\n", 
+            "date_created": "2014-06-06 08:48:08.248422+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/98356", 
+            "date_created": "2014-06-06 10:24:53.606206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/98356\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c3191cf0ba5ad3dc2df8da2a2bf5c9d270fde9d9\nSubmitter: Jenkins\nBranch:    master\n\ncommit c3191cf0ba5ad3dc2df8da2a2bf5c9d270fde9d9\nAuthor: liyingjun <email address hidden>\nDate:   Tue Jun 24 19:20:50 2014 +0800\n\n    Add missing image to instance booted from volume\n    \n    When booting an instance from a volume, the image_ref for\n    the instance will be None. And the API do not get the image\n    information for the instance also. So when we calling the\n    related API, we get \"\" for instance.image.\n    \n    Change-Id: I3c35ab1d7c8bcec551fb5d67d0b44418266b32a4\n    Closes-bug: 1317880\n", 
+            "date_created": "2014-07-17 17:04:18.573142+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "All of this is by design - image field on the instance means that the instance was started with the particular image. If the volume was created from an image at any point, and instance was booted from that volume at a later stage - it may or may not have anything to do with the image, so setting it is wrong and probably breaks a bunch of assumptions Nova code makes about the empty image field for instances booted from volume.\n\nLuckily there is a revert for this commit that was merged by mistake here: https://review.openstack.org/#/c/107875/", 
+            "date_created": "2014-07-18 07:56:15.900120+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Nikola \u0110ipanov,\n\nIn #6 you say the issue raised above it by design, however I can't see how this can be... say for example someone wished to install a long running OS on a volume.\n\nThey would go to Instances, and attempt to launch an instance selecting \"Boot from image (creates new volume)\".  Select an ISO image and define the volume to attach.\n\nThe instance would then fail to boot with the error that the /image/ is not found.\n\nWhen booting from an image, vs booting from an image and attaching a volume there should be no difference to the handling of the image.... surely the only difference should be creating and attaching a volume in addition to booting from the image.", 
+            "date_created": "2014-07-18 14:27:49.182451+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-fsck"
+        }, 
+        {
+            "content": "There seems to be a disconnect between Nova and Horizon here, because what Nikola \u0110ipanov observed to be \"by design\" in Nova below in comment #6 appears to break functionality in Horizon.", 
+            "date_created": "2014-07-18 15:16:54.402505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-fsck"
+        }, 
+        {
+            "content": "Unless I'm missing something, this isn't breaking Horizon functionality (the instance launches and works) although it does mean we're showing less information to the user than we'd like. Looking at the JSON reply when calling to the server details though, at this point there doesn't seem to be anything that can be done in Horizon to improve this. The revert mentions an image_ref attribute but it doesn't look like this is returned.", 
+            "date_created": "2014-07-29 09:45:11.107342+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jpichon"
+        }, 
+        {
+            "content": "This seems to also make it impossible to resize instances that are created this way as well.  When I try to do that through Horizon, it seems to succeed, but the instance size never changes, and I have the following pair of messages in my nova-conductor.log:\n\n2014-08-05 11:31:32.530 25190 ERROR glanceclient.common.http [-] Request returned failure status.\n2014-08-05 11:31:32.530 25190 WARNING nova.compute.utils [req-8c7cdf64-495d-43f6-9b90-778fb5f39ddb eaa8a6534774472791a79d3b02ea3a18 4986c16a1f1b4de598a2e77f21685235] [instance: 48361913-f57f-41c7-b83b-84a779a9cda9] Can't access image : Image  could not be found.\n\nSimilarly, when trying to resize from the cli:\n\nroot@dwd-maas-1:/var/log/nova# nova flavor-list\n+--------------------------------------+--------------+-----------+------+-----------+------+-------+-------------+-----------+\n| ID                                   | Name         | Memory_MB | Disk | Ephemeral | Swap | VCPUs | RXTX_Factor | Is_Public |\n+--------------------------------------+--------------+-----------+------+-----------+------+-------+-------------+-----------+\n| 02ed8cd0-84c3-4731-8769-3bf77d752720 | m3.medium    | 4096      | 8    | 0         |      | 1     | 1.0         | True      |\n| 17ab5b0c-1839-482b-9998-024163413cb6 | m2.xlarge    | 20480     | 16   | 0         |      | 2     | 1.0         | True      |\n| 3df44567-ba32-45e4-b6ca-843b368cb86c | c3.xlarge    | 8192      | 16   | 0         |      | 4     | 1.0         | True      |\n| 51fb187f-5ef0-4a2b-bf31-e4fe1a0e971f | m3.large     | 8192      | 32   | 0         |      | 2     | 1.0         | True      |\n| 773e7b71-9fb9-4d30-aaa7-3609b14994fa | c3.large     | 4096      | 5    | 0         |      | 2     | 1.0         | True      |\n| 7b9b9d29-c724-46af-8d48-b3d9aeb65271 | r3.large     | 16384     | 16   | 0         |      | 2     | 1.0         | True      |\n| a200f0e0-ccc7-42d8-8119-84f304e9be61 | c1.medium    | 2048      | 8    | 0         |      | 2     | 1.0         | True      |\n| a4cd4480-c19f-4cdc-b2dd-b6cfc32e5bcd | c1.xlarge    | 8192      | 16   | 0         |      | 8     | 1.0         | True      |\n| af36a6ff-2215-41ae-9fad-a9871ea788ff | m1.small     | 2048      | 5    | 0         |      | 1     | 1.0         | True      |\n| d403462f-786f-40c3-b366-23d49c5827af | m1.xlarge    | 16384     | 16   | 0         |      | 4     | 1.0         | True      |\n| d54455f8-e6a7-4b45-9b9d-f149a464e7b4 | m3.2xlarge   | 30720     | 100  | 0         |      | 8     | 1.0         | True      |\n| f7844bd1-ad00-4969-9c1e-f0b5f7264090 | m1.tiny      | 512       | 5    | 0         |      | 1     | 1.0         | True      |\n+--------------------------------------+--------------+-----------+------+-----------+------+-------+-------------+-----------+\nroot@dwd-maas-1:/var/log/nova# nova show 48361913-f57f-41c7-b83b-84a779a9cda9 | grep flavor\n| flavor                               | m3.large (51fb187f-5ef0-4a2b-bf31-e4fe1a0e971f)          |\nroot@dwd-maas-1:/var/log/nova# nova resize --poll 48361913-f57f-41c7-b83b-84a779a9cda9 3df44567-ba32-45e4-b6ca-843b368cb86c\nServer resizing... 100% complete\nFinished\nroot@dwd-maas-1:/var/log/nova# nova show 48361913-f57f-41c7-b83b-84a779a9cda9 | grep flavor\n| flavor                               | m3.large (51fb187f-5ef0-4a2b-bf31-e4fe1a0e971f)          |\n", 
+            "date_created": "2014-08-05 17:53:22.269830+00:00", 
+            "author": "https://api.launchpad.net/1.0/~qhartman"
+        }, 
+        {
+            "content": "I've attached a short video showing the issue I see in Horizon due to this... \n\nFirst, Boot from image (creates a new volume) (fails)... \n\nThen, Boot from image (works fine).\n\nHope this makes it clearer.", 
+            "date_created": "2014-08-18 11:50:25.068084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-fsck"
+        }, 
+        {
+            "content": "This is an interesting one. So because of how Nova handles the response, Horizon doesn't know which image was used, or at least didn't when this code was originally implemented. If you boot from volume and create a new image, Horizon still shows '-' for the image. This isn't \"broken\" precisely, but it's a slightly poor UX. The Instance Details page also specifically says \"Image: None\", which doesn't help either.", 
+            "date_created": "2015-11-24 18:30:49.357457+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robcresswell"
+        }
+    ]
+}

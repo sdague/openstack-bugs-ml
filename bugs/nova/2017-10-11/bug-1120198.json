@@ -1,0 +1,38 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-02-11 23:05:50.951893+00:00", 
+    "description": "When deleting a baremetal node, the scheduler may continue to attempt to boot instances on that node. The compute manager will refuse these requests since the selected node is no longer valid. I have not found any mechanism to make the scheduler stop attempting to use the non-existent node.\n\nI suspect the cause of this is that ComputeManager.update_available_resource does not actively remove the resource because it is no longer returned from driver.get_available_nodes, but IMBW....\n\n\nThe error looks like this:\n\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp   File \"/opt/stack/nova/nova/compute/manager.py\", line 700, in _run_instance\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp     rt = self._get_resource_tracker(node)\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp   File \"/opt/stack/nova/nova/compute/manager.py\", line 346, in _get_resource_tracker\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp     raise exception.NovaException(msg)\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp NovaException: 2 is not a valid node managed by this compute host.", 
+    "tags": [
+        "baremetal"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1120198", 
+    "owner": "https://api.launchpad.net/1.0/~devananda", 
+    "id": 1120198, 
+    "index": 3395, 
+    "created": "2013-02-09 09:34:01.718784+00:00", 
+    "title": "scheduler may pick deleted baremetal nodes", 
+    "comments": [
+        {
+            "content": "When deleting a baremetal node, the scheduler may continue to attempt to boot instances on that node. The compute manager will refuse these requests since the selected node is no longer valid. I have not found any mechanism to make the scheduler stop attempting to use the non-existent node.\n\nI suspect the cause of this is that ComputeManager.update_available_resource does not actively remove the resource because it is no longer returned from driver.get_available_nodes, but IMBW....\n\n\nThe error looks like this:\n\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp   File \"/opt/stack/nova/nova/compute/manager.py\", line 700, in _run_instance\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp     rt = self._get_resource_tracker(node)\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp   File \"/opt/stack/nova/nova/compute/manager.py\", line 346, in _get_resource_tracker\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp     raise exception.NovaException(msg)\n2013-02-09 09:00:03.240 TRACE nova.openstack.common.rpc.amqp NovaException: 2 is not a valid node managed by this compute host.", 
+            "date_created": "2013-02-09 09:34:01.718784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Steps to reproduce this in devstack (with the baremetal driver).\n\n1. create a baremetal node\n\n2. wait for periodic task to update the nova-compute service, and observe the following (some messages removed for brevity)\n\n2013-02-11 04:37:36.475 DEBUG nova.manager [-] Running periodic task ComputeManager.update_available_resource from (pid=30217) periodic_tasks /opt/stack/nova/nova/manager.py:225\n2013-02-11 04:37:36.497 AUDIT nova.compute.resource_tracker [-] Auditing locally available compute resources\n2013-02-11 04:37:36.984 AUDIT nova.compute.resource_tracker [-] Free ram (MB): 512\n2013-02-11 04:37:36.985 AUDIT nova.compute.resource_tracker [-] Free disk (GB): 2\n2013-02-11 04:37:36.987 AUDIT nova.compute.resource_tracker [-] Free VCPUS: 1\n2013-02-11 04:37:37.344 INFO nova.compute.resource_tracker [-] Compute_service record created for localhost:1\n\n3. wait for another periodic task to update the nova-scheduler, and observe the following:\n\n2013-02-11 04:39:38.335 DEBUG nova.scheduler.host_manager [req-e437134e-4fdf-4128-bc88-44590403125a None None] Received compute service update from (u'localhost', u'1'). from (pid=30480) update_service_capabilities /opt/stack/nova/nova/scheduler/host_manager.py:358\n\n4. delete the baremetal node\n\n5. wait for periodic task to update the nova-compute service, and notice that it no longer displays compute_service updates for localhost:1\n\n6. wait for another periodic task to update nova-scheduler, until it stops displaying an update from (u'localhost', u'1') !\n\n7. check the database -- notice that the compute_node record is not marked deleted:\n\n$ mysql nova -e 'select created_at, updated_at, deleted_at, id, hypervisor_hostname, deleted from compute_nodes'\n+---------------------+------------+------------+----+---------------------+---------+\n| created_at          | updated_at | deleted_at | id | hypervisor_hostname | deleted |\n+---------------------+------------+------------+----+---------------------+---------+\n| 2013-02-11 04:37:37 | NULL       | NULL       |  1 | 1                   |       0 |\n+---------------------+------------+------------+----+---------------------+---------+\n\n8. attempt to start an instance, and watch it fail:\n\nScheduler shows:\n\n2013-02-11 04:45:24.401 DEBUG nova.scheduler.filter_scheduler [req-fb912457-147e-45b6-a67b-7e0725ce9c49 demo demo] Attempting to build 1 instance(s) from (pid=30480) schedule_run_instance /opt/stack/nova/nova/scheduler/filter_scheduler.py:57\n2013-02-11 04:45:24.412 DEBUG nova.scheduler.filter_scheduler [req-fb912457-147e-45b6-a67b-7e0725ce9c49 demo demo] Filtered [(localhost, 1) ram:512 disk:2048 io_ops:0 instances:0 vm_type:all] from (pid=30480) _schedule /opt/stack/nova/nova/scheduler/filter_scheduler.py:292\n2013-02-11 04:45:24.413 DEBUG nova.scheduler.filter_scheduler [req-fb912457-147e-45b6-a67b-7e0725ce9c49 demo demo] Choosing host WeighedHost [host: localhost, weight: 512.0] from (pid=30480) _schedule /opt/stack/nova/nova/scheduler/filter_scheduler.py:297\n\n\nCompute shows:\n\n2013-02-11 04:45:26.278 TRACE nova.openstack.common.rpc.amqp NovaException: 1 is not a valid node managed by this compute host.\n", 
+            "date_created": "2013-02-11 04:47:48.322381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/21628", 
+            "date_created": "2013-02-11 07:54:17.888598+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Just had a chat with Vish. Seems that this behavior only occurs when the compute_filter is disabled (which is true in my test environment). I am marking this as not-a-bug.\n\nEven though dead compute nodes should be getting filtered out by the compute filter,  the scheduler also shouldn't be caching them for ever.\n", 
+            "date_created": "2013-02-11 23:05:32.275670+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }
+    ]
+}

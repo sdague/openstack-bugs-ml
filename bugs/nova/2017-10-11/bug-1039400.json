@@ -1,0 +1,83 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:30:04.032157+00:00", 
+    "description": "The original plan for Folsom was that Quantum would manage security groups itself.  However, this work did not get done, so for Folsom we are going to use Nova's iptables-based security groups. \n\nWe will likely end up breaking these issues into multiple reviews, so we may want to split these issues off into separate bugs, but I'm using this to track support for quantum + nova security groups as a whole.   \n\nThere are a couple issues: \n\n- In Folsom, quantum implements its own version of the nova-network API.  This means that it must also make the security group RPC calls to compute when a VM fixed IP is allocated/deallocated.  Note: in this case, this essentially amounts to when a VM is created or destroyed, since the nova + quantum v2 integration does not implement any mechanism for allocating new fixed IPs after boot.  \n\n- We need to populate the DHCP-server attribute of a network object, otherwise, running with security groups enabled will drop DHCP traffic from the VM.  We've made the change in Quantum to set the device owner of the dhcp port to 'network:dhcp', so it should be pretty easy to query for the DHCP IP of a given network (note: this requires that the DHCP port is always created before any VMs are created on a network.  I believe that is the case already, but we should confirm).  Note: the nova data model will limit us to one v4 subnet per-network.  \n\n- Multiple NICs per VM.  Nova's security groups are per-instance, so there may be some issues with how they apply to a VM with multiple NICs.  We'll need to investigate.  \n\n- Open vSwitch by default is not compatible with iptables filtering on VIF devices.  We think there's a pretty straight-forward work around for this, where we have a new type of vif-plugging in nova that actually plugins each vif into its own instance of the linux bridge, which would then be \"uplinked\" to an OVS bridge that does the tunneling", 
+    "tags": [
+        "quantum"
+    ], 
+    "importance": "Critical", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1039400", 
+    "owner": "https://api.launchpad.net/1.0/~danwent", 
+    "id": 1039400, 
+    "index": 76, 
+    "created": "2012-08-21 07:27:02.588584+00:00", 
+    "title": "nova security groups issues with quantum-v2-api integration", 
+    "comments": [
+        {
+            "content": "otherwise, running with security groups enabled will drop DHCP traffic from the VM.  \n\nQuestion: do we also need to set the gateway IP address as well?  \n\nNote:  I think all of this will only work must assume there is only a single IP v4 subnet on a given port, but that will be the case as long as Nova allocated it.  However, if the user allocated their own port with multiple IPs, and passed it to nova, this may not work.  \n\nSimilarly, it will not work is the user later updates the dhcp-server IP address.", 
+            "date_created": "2012-08-21 07:27:02.588584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Note: a recent change to quantum made sure that ports created by DHCP have a particular device_owner, which should let us query them given a subnet-id.  However, there may be a race condition here, if we need the dhcp_server to be populated right after the port is created.  If its the first port on a subnet, the dhcp agent may not have created the corresponding port yet.  This could be an issue, as the DHCP server IP may be needed at VM boot time. ", 
+            "date_created": "2012-08-21 07:29:34.393690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Exploring trade-offs between different approaches to the problem", 
+            "date_created": "2012-08-28 12:53:37.942533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "for issue #1, I think this basically just amounts to replicating the code from from _do_trigger_security_group_members_refresh_for_instance() in nova/network/manager.py in nova/network/quantumv2/api.py \n\nI think this should be straightforward. ", 
+            "date_created": "2012-08-28 22:04:47.868456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "For issue #2: we're making sure there's a simple API call that can be made from nova/network/quantumv2/api.py to quantum to fetch the DHCP IP for a given network.  \n\nthis will not be able to handle more advanced DHCP use cases, such as if the DHCP IP address is changed after the VM boots.  ", 
+            "date_created": "2012-08-28 22:07:01.399164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "#3 is a hybrid of two existing vif drivers, so there shouldn't really be much in terms of net new code.  this code would only be enabled optionally.  I will try to whip this out today, as it should be very simple if it ends up working.  Otherwise, we'll drop it. ", 
+            "date_created": "2012-08-28 22:13:45.946012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "On Issue #1 I agree with Dan. The remaining hooks for setting up security group rules are already in place in the virt driver and there's no need to add more hooks or modify the existing ones for quantum.\nWe need to ensure network_info contains all the required information - and this is the goal of #2.\nOn issue #2, I agree we should not spend too much time trying to make it work with multiple dhcp agents.\n\nAs regards #3:\nDan, is this comment related to multi-NIC? If you can flesh it out today it would be great. In the meanwhile, I will work on fixing #1 and #2 on nova.network.quantumv2.api and quantum itself.", 
+            "date_created": "2012-08-29 12:09:18.595490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "After some \"hands on\" experience, it looks like the potential race condition is much less of an issue then what previously thought.\nThe dhcp agent indeed runs  enable_dhcp_helper and refresh_dhcp_helper every time a network or a subnet are created, updated, or deleted. These two methods will call 'enable' method on the dhcp driver.\nThe enable method, is the dhcp server is not yet active, will invoke the get_dhcp_port using the RPC interfaces. The latter method is responsible for querying or retrieving the port used by the dhcp server.\n\nThe race condition is therefore limited to the cases in which a script creates a subnet (and possibly a network) and then immediately spawns an instance.\nTo do so, we can either:\n1) add a sleep/retry mechanism in allocate_for_instance when retrieving the dhcp port (trivial but not extremely efficient)\n2) create an 'unbound' dhcp port when a subnet is created. This port will have the owner field set to 'network:dhcp' but no device_id. This will allow nova queries to work in any case. get_dhcp_port can be tweaked to look for such unbound port, and then update the device_id on the port itself with the device_id of a specific agent. This solution is not trivial, albeit not difficult at all, but will avoid having sleeps and loops in the nova/quantum integration code.\n", 
+            "date_created": "2012-08-29 14:02:48.117599+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "It seems we won't be able to support multiple DHCP agents, as the only a single dhcp_server entry per network is supported.\nSupporting multiple dhcp_server will require us to tweak _do_dhcp_rules in the firewall_driver classes, and I don't think this is the right time in the dev cycle for doing something like this.", 
+            "date_created": "2012-08-29 14:21:41.609357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "On another note, the firewall driver when multiple subnets are defined for a vif, considers the first subnet only.\nThis means that VIFs with multiple ips won't work when security groups are enabled - I guess this is fine and should be the expected behavior as the same already happens with nova.", 
+            "date_created": "2012-08-29 14:23:24.848133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "I have the three issues resolved.  Just need to run tests and deal with any resulting issues, then I should be able to push for a review", 
+            "date_created": "2012-08-30 01:50:50.343393+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/12173", 
+            "date_created": "2012-08-30 04:17:13.415854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/12173\nCommitted: http://github.com/openstack/nova/commit/5a470f89b6a508d578b89a1687d327efbc834346\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5a470f89b6a508d578b89a1687d327efbc834346\nAuthor: Dan Wendlandt <email address hidden>\nDate:   Thu Aug 30 22:21:51 2012 -0700\n\n    fix issues with Nova security groups and Quantum\n    \n    bug #1039400\n    \n    - make quantumv2/api.py fetch actual DHCP server address, which\n    is needed by firewall layer (otherwise, the gateway IP is\n    incorrectly used and all DHCP traffic is dropped).\n    - add missing call from quantumv2/api.py to the security\n    groups API when a VM is allocated/deallocated.\n    \n    - Add a vif-driver that is a hybrid of the existing Open vswitch +\n    linux bridge drivers, which allows OVS quantum plugins to\n    be compatible with iptables based filtering, in particular, nova\n    security groups.\n    \n    - Also clean-up some docstrings in virt/libvirt/vif.py\n    \n    Change-Id: I7cf5cf09583202a12785b616d18db3ee4bbffee0\n", 
+            "date_created": "2012-09-05 18:13:42.041876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

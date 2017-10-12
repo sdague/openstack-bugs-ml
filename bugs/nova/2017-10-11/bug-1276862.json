@@ -1,0 +1,136 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:47:29.355531+00:00", 
+    "description": "In nova, an administrator can specify the target host for a libvirt live migrate action.\n\nThis host is formatted into a base string (default=\"qemu+tcp://%s/system\")\nhttps://github.com/openstack/nova/blob/744fa6b7b88b131e0b9f5a1eca88b14a7351b540/nova/virt/libvirt/driver.py#L158\nand then passed directly to libvirt as a target URI:\nhttps://github.com/openstack/nova/blob/744fa6b7b88b131e0b9f5a1eca88b14a7351b540/nova/virt/libvirt/driver.py#L4270\ndom.migrateToURI(CONF.libvirt.live_migration_uri % dest,\n\nThe host does not appear to be validated, stripped, or otherwise checked to make sure that the value is reasonable. This allows an admin to attempt to migrate an instance out of a cloud (which may or may not be a security issue). Much more importantly, libvirt's URI format accepts many parameters in this URI, some of which allow execution of arbitrary commands at the same privilege level as libvirt.\nhttp://libvirt.org/remote.html#Remote_URI_reference\n\nDue to later checks it does not appear to be exploitable, but it should nevertheless be fixed to avoid future issues.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1276862", 
+    "owner": "https://api.launchpad.net/1.0/~knoel-9", 
+    "id": 1276862, 
+    "index": 3789, 
+    "created": "2014-02-05 23:39:22.678090+00:00", 
+    "title": "Nova libvirt driver live migration should sanitize target host", 
+    "comments": [
+        {
+            "content": "In nova, an administrator can specify the target host for a libvirt live migrate action.\n\nThis host is formatted into a base string (default=\"qemu+tcp://%s/system\")\nhttps://github.com/openstack/nova/blob/744fa6b7b88b131e0b9f5a1eca88b14a7351b540/nova/virt/libvirt/driver.py#L158\nand then passed directly to libvirt as a target URI:\nhttps://github.com/openstack/nova/blob/744fa6b7b88b131e0b9f5a1eca88b14a7351b540/nova/virt/libvirt/driver.py#L4270\ndom.migrateToURI(CONF.libvirt.live_migration_uri % dest,\n\nThe host does not appear to be validated, stripped, or otherwise checked to make sure that the value is reasonable. This allows an admin to attempt to migrate an instance out of a cloud (which may or may not be a security issue). Much more importantly, libvirt's URI format accepts many parameters in this URI, some of which allow execution of arbitrary commands at the same privilege level as libvirt.\nhttp://libvirt.org/remote.html#Remote_URI_reference\n\nFor example, a user might attempt to migrate to a destination of\ntarget_host/system?command=/sbin/reboot&no_verify=\n\nwhich could result (after substitution) in the URI:\nqemu+ssh://target_host/system?command=/sbin/reboot&no_verify=/system\n\nwhich would make libvirt call /sbin/reboot instead of ssh. If a user has write access to some part of the filesystem (uploads an image, or image metadata, mounted block storage, etc.) they are be able to execute an arbitrary code as libvirt.", 
+            "date_created": "2014-02-05 23:39:22.678090+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "Ouch. \n\nPaul -  Just to be clear for the remote code execution the % dest is a user controlled parameter?", 
+            "date_created": "2014-02-06 00:52:56.550771+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Yep, it's user controlled. Here's where it happens in novaclient.\n\nhttps://github.com/openstack/python-novaclient/blob/c8ad3157633b26ae324c352a73bb599eb084c115/novaclient/v3/servers.py#L300\n\nhttps://github.com/openstack/python-novaclient/blob/c8ad3157633b26ae324c352a73bb599eb084c115/novaclient/v3/servers.py#L909", 
+            "date_created": "2014-02-06 01:07:40.878246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "It's worth noting that this applies anywhere a user-influenced libvirt URI might be in use. I'm not aware of any other user-controlled places, but they might exist in rendered XML templates, etc.", 
+            "date_created": "2014-02-06 01:19:40.102930+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "(that is to say, the problem with URIs is not restricted to migration, that's just where it happened to occur)", 
+            "date_created": "2014-02-06 01:27:02.980743+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "And this is why code shouldn't just do string substitution / concatenation to create URIs, or XML documents, etc.  APIs exist for manipulating URIs, to ensure correct escaping rules are followed, precisely to avoid such flaws :-)", 
+            "date_created": "2014-02-06 13:53:54.575665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I suspect that affects grizzly and havana as well...", 
+            "date_created": "2014-02-06 14:05:00.186331+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I might have a quick look to see if there are other places where we are doing unsafe substitution like this. Assuming that I don't find anything does this sound reasonable for the impact description? \n\n-- \n\nTitle: Command Injection via Live Migration\nReporter: Paul McMillan (?)\nProducts: Nova\nAffects: All supported versions\n\nDescription:\nPaul McMillan of (?) reported a remote command injection vulnerability in Nova. By supplying specially crafted host destination for the migration it is possible for an authenticated user to execute commands as a privileged user on the Nova backend. Only setups using libvirt for migration are affected by this flaw. ", 
+            "date_created": "2014-02-07 07:01:32.649513+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Sounds ok to me.", 
+            "date_created": "2014-02-07 10:04:17.945075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Agreed, we should first check if there are other cases of user-controlled variables being injected in libvirt URLs. Then just plug that specific hole(s) using a basic patch, and publish OSSA quick. Then in a future version it might make sense to strengthen the whole thing by going through APIs instead of manipulating those ourselves.\n\nAbout impact desc: Paul works for Nebula. I would say \"specially-crafted host destination for *live* migration\". I would mention \"on Nova *compute nodes*\" (instead of Nova backend), maybe mention \"libvirt user\" instead of \"privileged user\". I wouldn't mention \"setups using libvirt for migration\", but \"setups using the libvirt driver\" (not mention \"for migration\" unless there is a way to disable live migration in configuration).", 
+            "date_created": "2014-02-07 14:22:45.398695+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+1 to Thierry's suggestions", 
+            "date_created": "2014-02-07 17:48:57.345271+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bdpayne"
+        }, 
+        {
+            "content": "\nThanks ttx. I've attempted to incorporate these suggestions. (Also note the 'Affects' tweak). Actually this is exactly the kind of thing the security fuzzing / testing work the OSSG are talking about would be good at detecting.  \n\n------\n\nTitle: Command Injection via Live Migration\nReporter: Paul McMillan (Nebula)\nProducts: Nova\nAffects: Essex to Icehouse\n\nDescription:\nPaul McMillan of Nebula reported a remote command injection vulnerability in Nova. By supplying specially crafted host destination for  live migration it is possible for an authenticated user to execute commands as the libvirt user on Nova compute nodes. Only setups using the libvirt driver are affected by this flaw.", 
+            "date_created": "2014-02-10 04:50:48.866836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Following proposed new rules, we'd replace the Affects line to look like this:\nVersions: 2012.1 to 2013.1.4, and 2013.2 versions up to 2013.2.1\n\n2013.2.2 shall be out this week, so depending on when we release this, that would even become:\nVersions: 2012.1 to 2013.1.4, and 2013.2 versions up to 2013.2.2\n\nMaybe mention \"Nova\" in the title (\"Nova command injection via live migration\"). I know it's redundant but that's how we did it so far. We also generally don't use capitalization.\n\nOtherwise the description looks good.", 
+            "date_created": "2014-02-10 15:36:43.987247+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Changing bug title to reflect fact that flaw is in nova libvirt driver, not libvirt itself.", 
+            "date_created": "2014-02-12 10:09:32.111062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I thought the scheduler code validates to see if the host is up and not the same as the current node, which might protect you a tiny bit. But maybe we bypass that on a user selected host?\n\nAlso just wondering if there are calls to check can live migrate to that fake host the timeout before this fails. It might only by Havana onwards though.\n\nEither way, from a denfense in depth point of view, we need to stop doing this kind of thing, and check were we are at.", 
+            "date_created": "2014-02-12 12:06:12.588143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I have to say that after looking at this I am not sure this is an exploitable issue as described in the bug.\n\nBasically the live migration code in the conductor (tasks) service will run the following code for the destination host:\n\n def _check_host_is_up(self, host):\n        try:\n            service = db.service_get_by_compute_host(self.context, host)\n        except exception.NotFound:\n            raise exception.ComputeServiceUnavailable(host=host)\n\n        if not self.servicegroup_api.service_is_up(service):\n            raise exception.ComputeServiceUnavailable(host=host)\n\nsee nova/conductor/tasks/live_migrate.py\n\nNow this will obviously fail, unless there is some way to tamper with the host value in the corresponding service row in the db as well. As far as I could tell this is not possible through the admin API. The host is set when the service is created to the value of the CONF.netconf.host option (result of socket.gethostname() call by default) which is done on service start, and I do not see an easy way to tamper with that without already having access to the machine which makes this whole exercise kind of pointless.\n\nFruther to this - I don't think that escaping the url or building it in a different way is the straightforward solution here. There is no easy way to white-list hostnames without actually doing the complete libvirt url parsing on Nova side and then white-listing what commands can be run. Confirm that the 'dest' is an actual hostname in the cluster seems like a more straightforward solution here, which we are already doing.\n\nThe code above was introduced in havana, so I will look into Grizzly now and see if it may be vulnerable.\n\nAnd of course - if I am missing something obvious here - please do point it out!", 
+            "date_created": "2014-02-18 14:17:35.333828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Ok so if it is not actually exploitable then we will have to retract the CVE and then fix this as security hardening (if at all?). \nYou could do something like this to ensure no bad input (e.g. command=) could make its way to the libvirt call. \n\ndef make_validator():\n  import re\n  whitelist = re.compile('^[\\w:.-]+$')\n  def check(dest):\n    return whitelist.match(dest) != None\n\n  return check\n\nvalid_destination = make_validator()\nif not valid_destination(dest): \n    die_a_horrible_death()\n\n\n\n", 
+            "date_created": "2014-02-19 04:55:07.887230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Let's wait for the original reporter (Paul) to confirm or deny John/Nikola's analysis. If this really is shallow (as an attack vector) then we can implement extra validation as a public bugfix.", 
+            "date_created": "2014-02-19 14:03:55.914158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Also we might want to hold off canceling the CVE, as grizzly may be vulnerable. I will check back later when I get a chance to look into it.", 
+            "date_created": "2014-02-19 14:12:52.338658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "After looking at the grizzly tree - it seems that the situation is more or less the same there except the check happens in the scheduler service in the scheduler driver base class. take a look at nova.shceduler.driver _live_migration_dest_check method.\n\nWe might want to harden it just in case - yes, tho I am not sure a regex is the best way to do it, but we can take that onto the public review.\n\nAnd of course - we definitely need a second opinion... at least!", 
+            "date_created": "2014-02-19 17:28:53.425865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "@Paul: any chance you could confirm or deny Nikola's analysis ?", 
+            "date_created": "2014-02-21 15:53:57.619652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Thierry: after looking it over carefully, I think I agree with Nikola's analysis. I don't think the code ends up getting called (at least in the standard workflow) without that check, so I agree we can make this public, and fix it using the standard flow.", 
+            "date_created": "2014-02-25 21:04:06.781276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/116707", 
+            "date_created": "2014-08-25 19:37:38.542190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/116707\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=e6f59d02ee56479bf13920867f921cd11c66948a\nSubmitter: Jenkins\nBranch:    master\n\ncommit e6f59d02ee56479bf13920867f921cd11c66948a\nAuthor: Karen Noel <email address hidden>\nDate:   Sat Aug 23 13:42:42 2014 -0400\n\n    libvirt: add validation of migration hostname\n    \n    The migration hostname is substituted into the libvirt migration\n    URI string. If the hostname contains special characters it might\n    be possible to construct a malicious migration URI causing libvirt\n    to execute arbitrary commands as root. Protect against such a risk\n    by validating the hostname characters.\n    \n    Change-Id: Ia3c53df1a842b5ef88f1f7ed5a3f4121df698161\n    Closes-bug: #1276862\n", 
+            "date_created": "2014-08-29 01:24:30.679794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

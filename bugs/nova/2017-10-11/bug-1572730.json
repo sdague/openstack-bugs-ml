@@ -1,0 +1,55 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2016-08-04 17:32:01.294515+00:00", 
+    "description": "The _sync_power_states periodic task queries all instances on the compute host:\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6164\n\nThen later it skips any that are in the middle of an operation:\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6269\n\nWe should avoid the roundtrip to the DB and RPC traffic to load up all of the instances on the compute host that are in the middle of a task and will just be skipped in code anyway and filter out the instance list by task_state in the initial DB query.", 
+    "tags": [
+        "compute", 
+        "low-hanging-fruit", 
+        "performance"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1572730", 
+    "owner": "https://api.launchpad.net/1.0/~sarafraj-singh", 
+    "id": 1572730, 
+    "index": 4519, 
+    "created": "2016-04-20 21:00:13.552738+00:00", 
+    "title": "The _sync_power_states task should filter out instances.task_state != None up front", 
+    "comments": [
+        {
+            "content": "The _sync_power_states periodic task queries all instances on the compute host:\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6164\n\nThen later it skips any that are in the middle of an operation:\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6269\n\nWe should avoid the roundtrip to the DB and RPC traffic to load up all of the instances on the compute host that are in the middle of a task and will just be skipped in code anyway and filter out the instance list by task_state in the initial DB query.", 
+            "date_created": "2016-04-20 21:00:13.552738+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Matt, the periodic task compares the numbers of instances in the db vs. the actual number of VMs.\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6180\n\nShould that warning be removed?", 
+            "date_created": "2016-04-21 20:35:26.488750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~chuckcarmack75"
+        }, 
+        {
+            "content": "I'll have to think about this. I guess the question is more about if we start filtering on the query to the database, then we might always get that warning, even though the numbers would otherwise be the same. That could be a problem yeah.", 
+            "date_created": "2016-04-21 21:37:46.477602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "There is handling later in the looping where the instance from the DB isn't on the hypervisor, and in that case we assume no power state:\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6223-L6227\n\nWhich actually makes this probably wrong:\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6282-L6294\n\nSo let's consider this scenario: we have 5 instances on the hypervisor and 5 in the database, that's all normal. However, we're currently taking snapshots of two of those instances. If we filter on task_state != None, then we'd get the warning in:\n\nhttps://github.com/openstack/nova/blob/4ad414f3b1216393301ef268a64e61ca1a3d5be9/nova/compute/manager.py#L6180\n\nEven though the instances are on the hypervisor.\n\nI think the thing we need to warn about is if there are more instances for that host in the DB than what's in the hypervisor, so change:\n\nif num_vm_instances != num_db_instances:\n\nto\n\nif num_vm_instances < num_db_instances:", 
+            "date_created": "2016-04-21 21:44:11.878072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/309970", 
+            "date_created": "2016-04-25 13:15:18.318418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is no longer valid if you exclude all the things that are not running a task.\nI think the cloud steady state will be no instances running a task, so I don't think we need to worry about the extra DB load of getting instances that are running a task. It should be tiny.", 
+            "date_created": "2016-07-11 15:53:04.213037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sarafraj-singh"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/309970", 
+            "date_created": "2016-08-04 17:32:00.394846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

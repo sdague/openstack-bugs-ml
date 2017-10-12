@@ -1,0 +1,45 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:37:27.117747+00:00", 
+    "description": "During compute manager startup init_host is called. One of the functions there is to delete instance data that doesn't belong to this host ie. _destroy_evacuated_instances. But this function only checks if the local instance belongs to the host or not. It doesn't check the task_state.\n\nSuppose a live-migration is in progress and the destination compute manager is restarted, it will find the migrating instance as not belonging to the host and destroy it. This can result in two outomes:\n\n1. If live-migration is in progress, then the source hypervisor would hang, so a rollback is possible to trigger by killing the job.\n2. However, if live-migration is completed and the post-live-migration-destination is messaged then by the time the compute manager gets to processing the message, the instance data would have been deleted. Subsequent periodic tasks would only get as far as defining the VM but there wouldn't be any disks left.\n\n014-05-08 20:42:33.058 16724 WARNING nova.virt.libvirt.driver [-] Periodic task is updating the host stat, it is trying to get disk instance-00000002, but disk file was removed by concurrent operations such as resize.\n2014-05-08 20:43:33.370 16724 WARNING nova.virt.libvirt.driver [-] Periodic task is updating the host stat, it is trying to get disk instance-00000002, but disk file was removed by concurrent operations such as resize.\n\nSteps to reproduce:\n\n1. Start live-migration\n2. Wait for pre-live-migration to define the destination VM\n3. Restart destination compute manager\n\nTo see what happens for case 2 (Live-migration having completed), put a breakpoint in init_host and delay till instance is running on the destination and then continue the nova-compute. In this case you'll end up with the instance directory like this:\n\n\nls -l 06ddbe13-577b-4f9f-ac52-0c038aec04d8\ntotal 8\n-rw-r--r-- 1 root root   89 May  8 19:59 disk.info\n-rw-r--r-- 1 root root 1548 May  8 19:59 libvirt.xml\n\nI verified this in a tripleo devtest environment.", 
+    "tags": [
+        "compute", 
+        "icehouse-backport-potential", 
+        "in-stable-icehouse"
+    ], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1319797", 
+    "owner": "https://api.launchpad.net/1.0/~dave-mcnally", 
+    "id": 1319797, 
+    "index": 1491, 
+    "created": "2014-05-15 12:03:19.667561+00:00", 
+    "title": "Restarting destination compute manager during live-migration can cause instance data loss", 
+    "comments": [
+        {
+            "content": "During compute manager startup init_host is called. One of the functions there is to delete instance data that doesn't belong to this host ie. _destroy_evacuated_instances. But this function only checks if the local instance belongs to the host or not. It doesn't check the task_state.\n\nSuppose a live-migration is in progress and the destination compute manager is restarted, it will find the migrating instance as not belonging to the host and destroy it. This can result in two outomes:\n\n1. If live-migration is in progress, then the source hypervisor would hang, so a rollback is possible to trigger by killing the job.\n2. However, if live-migration is completed and the post-live-migration-destination is messaged then by the time the compute manager gets to processing the message, the instance data would have been deleted. Subsequent periodic tasks would only get as far as defining the VM but there wouldn't be any disks left.\n\n014-05-08 20:42:33.058 16724 WARNING nova.virt.libvirt.driver [-] Periodic task is updating the host stat, it is trying to get disk instance-00000002, but disk file was removed by concurrent operations such as resize.\n2014-05-08 20:43:33.370 16724 WARNING nova.virt.libvirt.driver [-] Periodic task is updating the host stat, it is trying to get disk instance-00000002, but disk file was removed by concurrent operations such as resize.\n\nSteps to reproduce:\n\n1. Start live-migration\n2. Wait for pre-live-migration to define the destination VM\n3. Restart destination compute manager\n\nTo see what happens for case 2 (Live-migration having completed), put a breakpoint in init_host and delay till instance is running on the destination and then continue the nova-compute. In this case you'll end up with the instance directory like this:\n\n\nls -l 06ddbe13-577b-4f9f-ac52-0c038aec04d8\ntotal 8\n-rw-r--r-- 1 root root   89 May  8 19:59 disk.info\n-rw-r--r-- 1 root root 1548 May  8 19:59 libvirt.xml\n\nI verified this in a tripleo devtest environment.", 
+            "date_created": "2014-05-15 12:03:19.667561+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/93903", 
+            "date_created": "2014-05-16 12:41:04.795390+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/93903\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=340cae5466eaf5568c4f0eecb2a2fa7cdbcc0ba4\nSubmitter: Jenkins\nBranch:    master\n\ncommit 340cae5466eaf5568c4f0eecb2a2fa7cdbcc0ba4\nAuthor: David McNally <email address hidden>\nDate:   Fri May 16 13:21:26 2014 +0100\n\n    Prevent clean-up of migrating instances on compute init\n    \n    During compute manager startup init_host is called. One\n    of the functions this carries out is to delete instance\n    data that doesn't belong to this host this function only\n    checks if the local instance belongs to the host or not.\n    It doesn't check the task_state. This could result in the\n    loss of all instance data if it occured at the wrong\n    point during live migration.\n    \n    This change checks if the task_state of the instance to\n    be deleted is MIGRATING and if so it does not delete the\n    instance. Similarily for the task state RESIZE_MIGRATING.\n    \n    Change-Id: Ia8c67acf93d71af868907f0711dcc1dfe103560c\n    Closes-Bug: 1319797\n", 
+            "date_created": "2014-06-17 05:49:56.646307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/101832", 
+            "date_created": "2014-06-23 09:15:13.894176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/101832\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1469c8e14267e27ecc6ced29c91dc1506ce26633\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 1469c8e14267e27ecc6ced29c91dc1506ce26633\nAuthor: David McNally <email address hidden>\nDate:   Fri May 16 13:21:26 2014 +0100\n\n    Prevent clean-up of migrating instances on compute init\n    \n    During compute manager startup init_host is called. One\n    of the functions this carries out is to delete instance\n    data that doesn't belong to this host this function only\n    checks if the local instance belongs to the host or not.\n    It doesn't check the task_state. This could result in the\n    loss of all instance data if it occured at the wrong\n    point during live migration.\n    \n    This change checks if the task_state of the instance to\n    be deleted is MIGRATING and if so it does not delete the\n    instance. Similarily for the task state RESIZE_MIGRATING.\n    \n    This change adjust little about the unit test according to\n    actual code path in icehouse.\n    Conflicts:\n    \tnova/tests/compute/test_compute_mgr.py\n    \n    Change-Id: Ia8c67acf93d71af868907f0711dcc1dfe103560c\n    Closes-Bug: 1319797\n    (cherry picked from commit 340cae5466eaf5568c4f0eecb2a2fa7cdbcc0ba4)\n", 
+            "date_created": "2014-08-01 16:21:51.121171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

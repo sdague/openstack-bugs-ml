@@ -1,0 +1,228 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-06-04 23:23:58.809670+00:00", 
+    "description": "Originally found by Grant Murphy (<email address hidden>):\n\nThe signing directory is used to store the signing certificates\nand the default location for this directory is:\n\n    signing_dir = /tmp/keystone-signing-nova\n\nIn the file:\n\n   keystone/middleware/auth_token.py\n\nDuring the initialization of the AuthMiddleware the following operations are made for the signing directory:\n\n    IF the directory exists but cannot be written to a configuration error is raised.\n    ELSE IF the directory doesn't exist, create it.\n    NEXT chmod permisions(stat.S_IRWXU) to the signing_directory\n\nAFAICT The signing certificates used in validation will only be fetched from the keystone if the cms_verify action raises an exception because the certificate file is missing from the signing directory.\n\nThis means that if an attacker populated the /tmp/keystone-signing-nova\nwith the appropriate files for signautre verification they could potentially\nissue forged tokens which would be validated by the middleware. As:\n    - The directory location deterministic. (default for glance, nova)\n    - *If the directory already exists it is reused*", 
+    "tags": [
+        "security"
+    ], 
+    "importance": "High", 
+    "heat": 278, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1174608", 
+    "owner": "https://api.launchpad.net/1.0/~russellb", 
+    "id": 1174608, 
+    "index": 1065, 
+    "created": "2013-04-30 05:05:42.932322+00:00", 
+    "title": "[OSSA 2013-010] Insecure directory creation for signing", 
+    "comments": [
+        {
+            "content": "Originally found by Grant Murphy (<email address hidden>):\n\nThe signing directory is used to store the signing certificates\nand the default location for this directory is:\n\n    signing_dir = /tmp/keystone-signing-nova\n\nIn the file:\n\n   keystone/middleware/auth_token.py\n\nDuring the initialization of the AuthMiddleware the following operations are made for the signing directory:\n\n    IF the directory exists but cannot be written to a configuration error is raised.\n    ELSE IF the directory doesn't exist, create it.\n    NEXT chmod permisions(stat.S_IRWXU) to the signing_directory\n\nAFAICT The signing certificates used in validation will only be fetched from the keystone if the cms_verify action raises an exception because the certificate file is missing from the signing directory.\n\nThis means that if an attacker populated the /tmp/keystone-signing-nova\nwith the appropriate files for signautre verification they could potentially\nissue forged tokens which would be validated by the middleware. As:\n    - The directory location deterministic. (default for glance, nova)\n    - *If the directory already exists it is reused*", 
+            "date_created": "2013-04-30 05:05:42.932322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kseifried"
+        }, 
+        {
+            "content": "> and the default location for this directory is:\n>    signing_dir = /tmp/keystone-signing-nova\n\nIt is not, that happens to be default in Fedora's nova.conf\n  http://pkgs.fedoraproject.org/cgit/openstack-nova.git/tree/nova.conf#n27\n\nDefault in authtoken middleware code (now located in python-keystoneclient) is ~/keystone-signing and normally homedir of the user account running the application (where authtoken m/w is inserted) should not be world-writable.\n", 
+            "date_created": "2013-04-30 11:26:45.614105+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "ok, it's also in sample nova api-paste.ini\n\nhttps://github.com/openstack/nova/blob/master/etc/nova/api-paste.ini#L107\n\nThat line should be removed so that default in code applies.", 
+            "date_created": "2013-04-30 11:34:29.681253+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Ew. One would think that everyone knows that naming stuff under /tmp is bad, by now.\n\nAdding Dolph and Russell for further discussion.\n\nOn upgrade, removing the default value will not make those who copied api-paste.ini magically secure, so I'd rather (or in addition) fix the temporary directory creation.\n", 
+            "date_created": "2013-04-30 12:12:04.387147+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "(i.e. not just check that you can write to it, but check that you actually own it)", 
+            "date_created": "2013-04-30 12:15:16.090978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "FTR\n\ncinder: signing_dir = /var/lib/cinder\nquantum: signing_dir = /var/lib/quantum/keystone-signing\n\nEveryone else doesn't seem to have that option.", 
+            "date_created": "2013-04-30 12:19:38.169397+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The default needs to be fixed in nova, as well.  The etc/nova/api-paste.ini file we distribute has:\n\nsigning_dir = /tmp/keystone-signing-nova", 
+            "date_created": "2013-05-01 13:22:14.234901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Sorry, of course it needs to be fixed in nova.  That't this report.  Sorry, hadn't had enough coffee yet.", 
+            "date_created": "2013-05-01 13:31:48.453226+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Attached a patch for the nova side of this that we can push at the same time as the authtoken middleware changes discussed here.", 
+            "date_created": "2013-05-01 13:44:52.812364+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Two additional issues with the signing_dir code in keystoneclient:\n\n- there's a race condition when a new signing dir is created with default permissions before they're set to 0700\n- even if an existing directory is owned by the executing user, it may be globally writable before keystoneclient chmods it\n\nThe attached patch fixes these issues (including ttx's suggestion) but fails unit testing because they use a signing_dir w/ 0755. Feedback/review on the fix itself appreciated in the mean time.\n\nI also think this should move to oslo.fileutils eventually.", 
+            "date_created": "2013-05-01 18:47:41.570751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "So no patch yet, do we have an ETA on one? ", 
+            "date_created": "2013-05-02 05:48:20.442311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kseifried"
+        }, 
+        {
+            "content": "Kurt: I am not sure we nailed the correct way to fix that yet.\nDolph: I see two issues with the proposed patch\n\n(1) it can break existing setups on upgrade (for people using an open directory)\n(2) there is still a TOCTOU race that make it still potentially exploitable (even if unlikely)\n\nThe trick with creating directories in code in areas specified by the user and wanting to enforce permissions on that location is that it's actually quite difficult to do :) Alternatives include:\n\n* use a subdirectory of a directory that is assumed safe (/var/lib/nova)\n* rely on the packaging / deployer to create the directory they specify, with the right permissions (you can still issue a warning if they got the permissions wrong)\n* pure (but unpredictable) /tmp directory atomic creation using Python tempfile module\n\nKurt: any suggestion on how to do this right ?\n", 
+            "date_created": "2013-05-02 13:23:50.593805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Adding Rob Clark for suggestions", 
+            "date_created": "2013-05-02 13:26:13.282647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I think ttx describes the the issue with the fix quite well, TOCTOU is tricky.\n\nI'd be inclined to go with either the first option, subdir in a known-safe location - where known safe really seems to mean: 'if this is screwed, everything screwed anyway'. \n\nOr go with the second option, putting this in the hands of deployers. If the second option was preferable I'd be happy to cut an OSSN for the issue.", 
+            "date_created": "2013-05-02 13:36:08.154639+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "With Russel's patch to nova and defaulting signing_dir to ~/keystone-signing in keystoneclient, I think ttx's first suggestion is covered.\n\nChanging the keystoneclient patch to simply log warnings if the signing_dir's owner or permissions have unexpected values satisfies the second suggestion (see attached, which no longer needs any update to the test framework).", 
+            "date_created": "2013-05-02 15:21:41.838231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "I think that's the right trade-off. Changing the default will fix it for new users, printing the warning in the log will alert existing vulnerable users but won't break them on upgrade, and we suppose that the parameter given is a correctly-owned directory.\n\nEven the TOCTOU race seems closed since os.makedirs fails if the directory exists.", 
+            "date_created": "2013-05-02 15:46:21.985421+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Adding Keystone core and Nova core...\n\nPlease review proposed patches (comment #8 for Nova and comment #14 for python-keystoneclient) and +1 them on the bug if you're happy with them.", 
+            "date_created": "2013-05-03 12:48:44.200581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'd tend to consider this is a vulnerability in Nova, and the python-keystoneclient fix is more a strengthening thing (warn when the configuration is insecure)", 
+            "date_created": "2013-05-03 12:53:28.489058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "nova patch looks good to me.", 
+            "date_created": "2013-05-03 23:33:43.368253+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Please review proposed impact description:\n\n========================\nTitle: Nova uses insecure keystone middleware tmpdir by default\nReporter: Grant Murphy (Red Hat)\nProducts: Nova\nAffects: All versions\n\nDescription:\nGrant Murphy from Red Hat reported a vulnerability in Nova default location for the Keystone middleware signing directory (signing_dir). By previously setting up a malicious directory structure, an attacker with local shell access on the Nova node could potentially issue forged tokens that would be accepted by the middleware. Only setups that use the default value for signing_dir are affected. Note that future versions of the Keystone middleware will issue a warning if an insecure signing directory is used.\n=========================", 
+            "date_created": "2013-05-06 12:25:46.235373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Looks good to me.", 
+            "date_created": "2013-05-07 02:36:46.995148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "What do we want to set the embargo to on this one? Say May 13, 2013, 15:00 UTC?", 
+            "date_created": "2013-05-07 23:37:14.597821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kseifried"
+        }, 
+        {
+            "content": "description lgtm", 
+            "date_created": "2013-05-07 23:47:00.304236+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Hmm, looks like it was independently reported publicly at bug 1177681\n\nI propose we open this bug, push the patches publicly, and issue the OSSA as soon as possible. I'll send an early notice to downstream stakeholders today. Let me know if that worls for you all.", 
+            "date_created": "2013-05-08 08:27:37.812467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@glance-acc: Do you want to be credited for co-discovery ? Which name (and optionally company) would you want us to add to the advisory (see draft in comment #19)", 
+            "date_created": "2013-05-08 08:31:47.643584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "My name is Anton Lundin and this work was done independently. Credits are always nice.\n\nSorry for not clicking the \"Security\" button when reporting. I thought it was quite minor as access to nova hosts ain't that common for non-admin users anyway. ", 
+            "date_created": "2013-05-08 09:18:20.285713+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glance-acc"
+        }, 
+        {
+            "content": "OK, will add credit. FTR the issue was introduced in the Folsom cycle, so this doesn't affect Essex", 
+            "date_created": "2013-05-08 13:06:46.403355+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/28568", 
+            "date_created": "2013-05-08 15:43:41.438298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/28569", 
+            "date_created": "2013-05-08 15:44:52.553192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/28570", 
+            "date_created": "2013-05-08 15:46:36.190223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/28572", 
+            "date_created": "2013-05-08 15:50:24.183954+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Will push the OSSA tomorrow", 
+            "date_created": "2013-05-08 15:50:32.153909+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/28577", 
+            "date_created": "2013-05-08 16:39:14.025834+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28572\nCommitted: http://github.com/openstack/python-keystoneclient/commit/1736e2ffb12f70eeebed019448bc14def48aa036\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1736e2ffb12f70eeebed019448bc14def48aa036\nAuthor: Dolph Mathews <email address hidden>\nDate:   Wed May 8 10:49:20 2013 -0500\n\n    Securely create signing_dir (bug 1174608)\n    \n    Also verifies the security of an existing signing_dir.\n    \n    Change-Id: I0685b4274a94ad3974a2b2a7ab3f45830d3934bb\n", 
+            "date_created": "2013-05-08 16:42:51.038911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28570\nCommitted: http://github.com/openstack/nova/commit/74aa04e2ca7942cb1e1a86dcbaffeb72d260ccd7\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 74aa04e2ca7942cb1e1a86dcbaffeb72d260ccd7\nAuthor: Russell Bryant <email address hidden>\nDate:   Wed May 1 09:41:57 2013 -0400\n\n    Remove insecure default for signing_dir option.\n    \n    The sample api-paste.ini file included an insecure value for the\n    signing_dir option for the keystone authtoken middleware.  Comment out\n    the option so that we just rely on the default behavior by default.\n    \n    Fix bug 1174608.\n    \n    Conflicts:\n    \tetc/nova/api-paste.ini\n    \n    Change-Id: I6189788953d789c34456bbe150b8ed6ce6f68403\n    (cherry picked from commit 58d6879b1caaa750c39c8e452a0634c24ffef2ce)\n", 
+            "date_created": "2013-05-08 19:03:44.156604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28568\nCommitted: http://github.com/openstack/nova/commit/58d6879b1caaa750c39c8e452a0634c24ffef2ce\nSubmitter: Jenkins\nBranch:    master\n\ncommit 58d6879b1caaa750c39c8e452a0634c24ffef2ce\nAuthor: Russell Bryant <email address hidden>\nDate:   Wed May 1 09:41:57 2013 -0400\n\n    Remove insecure default for signing_dir option.\n    \n    The sample api-paste.ini file included an insecure value for the\n    signing_dir option for the keystone authtoken middleware.  Comment out\n    the option so that we just rely on the default behavior by default.\n    \n    Fix bug 1174608.\n    \n    Change-Id: I6189788953d789c34456bbe150b8ed6ce6f68403\n", 
+            "date_created": "2013-05-08 19:35:59.130056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28569\nCommitted: http://github.com/openstack/nova/commit/7bf3e8d3e254d817ff5ae7ef1f2884b10410ca60\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 7bf3e8d3e254d817ff5ae7ef1f2884b10410ca60\nAuthor: Russell Bryant <email address hidden>\nDate:   Wed May 1 09:41:57 2013 -0400\n\n    Remove insecure default for signing_dir option.\n    \n    The sample api-paste.ini file included an insecure value for the\n    signing_dir option for the keystone authtoken middleware.  Comment out\n    the option so that we just rely on the default behavior by default.\n    \n    Fix bug 1174608.\n    \n    Change-Id: I6189788953d789c34456bbe150b8ed6ce6f68403\n    (cherry picked from commit 58d6879b1caaa750c39c8e452a0634c24ffef2ce)\n", 
+            "date_created": "2013-05-09 12:00:39.529255+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi,\n\nIs there a backport for Essex prepared by the Ubuntu security team? Or should I work on the backport myself?\n\nThomas\n", 
+            "date_created": "2013-05-09 15:07:12.882149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thomas-goirand"
+        }, 
+        {
+            "content": "This does NOT affect Essex.", 
+            "date_created": "2013-05-09 15:09:53.374686+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "OSSA-2013-010", 
+            "date_created": "2013-05-09 15:15:54.428513+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28577\nCommitted: http://github.com/openstack/keystone/commit/24c25b38ed6fc95ed919ab34463cdb10bdcc57fd\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 24c25b38ed6fc95ed919ab34463cdb10bdcc57fd\nAuthor: Dolph Mathews <email address hidden>\nDate:   Wed May 8 10:49:20 2013 -0500\n\n    Securely create signing_dir (bug 1174608)\n    \n    Also verifies the security of an existing signing_dir.\n    \n    Change-Id: I0685b4274a94ad3974a2b2a7ab3f45830d3934bb\n    (cherry picked from python-keystoneclient 1736e2ffb12f70eeebed019448bc14def48aa036)\n", 
+            "date_created": "2013-05-09 17:54:52.663946+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "note regression introduced by the nova change: bug 1181157", 
+            "date_created": "2013-05-17 09:56:04.978197+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ubuntubmw"
+        }
+    ]
+}

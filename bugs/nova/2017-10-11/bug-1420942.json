@@ -1,0 +1,81 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-03-02 21:28:35.029095+00:00", 
+    "description": "This is a follow-on to https://bugs.launchpad.net/nova/+bug/1197459, where it was decided that the issues raised there were best practice hardening, but not practically exploitable.\n\nThe noVNC websocket token cookie is not set as secure-only. This is practically exploitable by an attacker who can read user traffic.\n\nThe setup is as follows:\n\nNova and horizon configured to serve from https. Nova is patched to resolve #1409142.\n\nUser is accessing the cloud through a man in the middle who controls all traffic to and from the user. [1]\n\nuser -> attacker -> cloud(https)\n\nHere's what happens:\n1) User logs into cloud securely via https://yourcloud.com/\n2) User securely accesses a server via websocket VNC and logs in. User (optionally) closes this window.\n3) User opens a new browser tab to an insecure site (it can be any insecure site at all)\n4) On receiving the request for the insecure site, the attacker fetches it from the source, and rewrites it to include an invisible attack iframe before serving it to the user. [2]\n5) The attack iframe directs the user's browser to open http://yourcloud.com:6080 inside the hidden iframe (even if you don't serve that site insecurely)\n6) When the user's browser requests http://yourcloud.com:6080, the attacker logs the request including the cookies, and responds with a blank page.\n7) The attacker now has access to the auth token used to open the VNC socket (since the most recent one is sent in a cookie), and can stay connected to that socket indefinitely in any browser.\n\nA clever attacker will cycle the iframe contents repeatedly, and steal every VNC socket a user opens as the token cookies change, rather than just the most recent one. As long as the attacker stays connected to the socket, the connection stays open indefinitely.\n\nNote that the above attack does not involve the user clicking through any TLS warnings, and does not involve them actively clicking phishing links or anything similar.\n\nFixing this is going to involve letting noVNC know when it is supposed to be behind TLS, and modifying cookie setting behavior accordingly. Django's documentation on this is a good starting place for a fairly standard approach to telling an application it is receiving HTTPS traffic:\nhttps://docs.djangoproject.com/en/1.7/ref/settings/#secure-proxy-ssl-header\n\n-Paul\n\n[1] As a practical aside, it is easy to become this mitm on most local network segments, so users who connect to any network with any untrusted users are vulnerable. An attacker who can only read user traffic (without the ability to block or modify it) can usually become a full mitm by spoofing DNS responses.\n[2] the attacker can actually do this step at any point in the process, even before step 1.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 270, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1420942", 
+    "owner": "None", 
+    "id": 1420942, 
+    "index": 5432, 
+    "created": "2015-02-11 20:01:34.269808+00:00", 
+    "title": "noVNC insecure cookie allows session hijacking", 
+    "comments": [
+        {
+            "content": "This is a follow-on to https://bugs.launchpad.net/nova/+bug/1197459, where it was decided that the issues raised there were best practice hardening, but not practically exploitable.\n\nThe noVNC websocket token cookie is not set as secure-only. This is practically exploitable by an attacker who can read user traffic.\n\nThe setup is as follows:\n\nNova and horizon configured to serve from https. Nova is patched to resolve #1409142.\n\nUser is accessing the cloud through a man in the middle who controls all traffic to and from the user. [1]\n\nuser -> attacker -> cloud(https)\n\nHere's what happens:\n1) User logs into cloud securely via https://yourcloud.com/\n2) User securely accesses a server via websocket VNC and logs in. User (optionally) closes this window.\n3) User opens a new browser tab to an insecure site (it can be any insecure site at all)\n4) On receiving the request for the insecure site, the attacker fetches it from the source, and rewrites it to include an invisible attack iframe before serving it to the user. [2]\n5) The attack iframe directs the user's browser to open http://yourcloud.com:6080 inside the hidden iframe (even if you don't serve that site insecurely)\n6) When the user's browser requests http://yourcloud.com:6080, the attacker logs the request including the cookies, and responds with a blank page.\n7) The attacker now has access to the auth token used to open the VNC socket (since the most recent one is sent in a cookie), and can stay connected to that socket indefinitely in any browser.\n\nA clever attacker will cycle the iframe contents repeatedly, and steal every VNC socket a user opens as the token cookies change, rather than just the most recent one. As long as the attacker stays connected to the socket, the connection stays open indefinitely.\n\nFixing this is going to involve letting noVNC know when it is supposed to be behind TLS, and modifying cookie setting behavior accordingly. Django's documentation on this is a good starting place for a fairly standard approach to telling an application it is receiving HTTPS traffic:\nhttps://docs.djangoproject.com/en/1.7/ref/settings/#secure-proxy-ssl-header\n\n-Paul\n\n[1] As a practical aside, it is easy to become this mitm on most local network segments, so users who connect to any network with any untrusted users are vulnerable. An attacker who can only read user traffic (without the ability to block or modify it) can usually become a full mitm by spoofing DNS responses.\n[2] the attacker can actually do this step at any point in the process, even before step 1.", 
+            "date_created": "2015-02-11 20:01:34.269808+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.", 
+            "date_created": "2015-02-11 20:46:21.026601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "This line of attack makes sense and it would appear that Nova is vulnerable here.  What's not clear to me is where the fix actually takes place.  Nova doesn't set the cookie here, it seems like this might fall into Horizons domain.  And if Nova is not setting the cookie, then does it still need to be aware of whether or not it is behind TLS?\n\nThough it seems like if would be good for Nova to have that option, regardless.", 
+            "date_created": "2015-02-16 21:21:52.672891+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Horizon isn't setting this cookie, it's set by the novnc script which usually listens on port 6080. After digging a bit more, it looks like it's getting set by noVNC here:\nhttps://github.com/kanaka/noVNC/blob/f675e03cccc5ac6a7f68e992331403ba557b0452/vnc_auto.html#L203\n\nIt looks like the issue is fixed in the latest release of noVNC, but Fedora and Ubuntu both ship a version earlier than the patch which fixed it:\nhttps://github.com/kanaka/noVNC/commit/ad941faddead705cd611921730054767a0b32dcd\n\nThat doesn't have a CVE or anything like it. Since this is an upstream bug, I'm going to report it to the packagers and see if we can get it fixed. Once there's a release in the pipes upstream, we should probably put out an OSSA.\n\nI would appreciate if we can keep this bug private until the packagers have had a chance to respond.", 
+            "date_created": "2015-02-16 23:58:18.890327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "We can almost certainly keep it embargoed until it's fixed upstream, but just for the record OpenStack's vulnerability management team doesn't issue security advisories for bugs fixed in other projects' software--we expect them to do so.\n\nHowever the OSSG periodically drafts security notes about things like that which do go out to OpenStack mailing lists and end up as addenda to the security hardening guide, so we can bring it to their attention at that point.", 
+            "date_created": "2015-02-17 01:46:44.980221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "It looks like Vasyl Kaigorodov reported this publicly today: http://www.openwall.com/lists/oss-security/2015/02/17/1\n\nAny objections to opening this bug now and bringing it to the attention of the OSSG in case they want to produce a security note about it?", 
+            "date_created": "2015-02-17 14:15:13.144354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "In that case, yes, lets make it public and get the OSSG to write it up.", 
+            "date_created": "2015-02-17 17:49:46.663334+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "I've subscribed the OSSG core security reviewers as a first step, in case they want the implications of this held back from publication until they have a corresponding note drafted. I'll leave it up to them to decide when to switch this bug report to public status.", 
+            "date_created": "2015-02-17 18:08:05.424575+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "This have already been disclosed here: \n  https://bugs.debian.org/cgi-bin/bugreport.cgi?archive=no&bug=778618\n  https://bugzilla.redhat.com/show_bug.cgi?id=1193451\n\n", 
+            "date_created": "2015-02-18 14:56:58.491429+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "As it's upstream and a fix is coming an OSSN would be appropriate.\n\n-Rob", 
+            "date_created": "2015-02-18 15:13:24.959073+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/157991/", 
+            "date_created": "2015-03-02 19:52:26.423890+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-mcmillan"
+        }, 
+        {
+            "content": "This should be marked as public now.  As Tritan mentioned in comment#8, it's already been disclosed (not to mention that we already wrote and published an OSSN).", 
+            "date_created": "2015-03-02 21:27:04.249872+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }, 
+        {
+            "content": "This has been published as OSSN-0044:\r\n\r\n  https://wiki.openstack.org/wiki/OSSN/OSSN-0044", 
+            "date_created": "2015-03-02 21:28:31.854759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }
+    ]
+}

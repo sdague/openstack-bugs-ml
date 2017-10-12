@@ -1,0 +1,50 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:59:46.448533+00:00", 
+    "description": "I am running with the ZooKeeper servicegroup driver on CentOS 6.4 (Python 2.6) with the RDO distro of Grizzly.\n\nAll nova services are successfully connecting to ZooKeeper, which I've verified using zkCli.\n\nHowever, when I run `nova service-list` I get an HTTP 500 error from nova-api.  The nova-api log (/var/log/nova/api.log) shows:\n\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack   File \"/usr/lib/python2.6/site-packages/nova/servicegroup/api.py\"\\\n, line 93, in service_is_up\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack     return self._driver.is_up(member)\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack   File \"/usr/lib/python2.6/site-packages/nova/servicegroup/drivers\\\n/zk.py\", line 116, in is_up\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack     all_members = self.get_all(group_id)\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack   File \"/usr/lib/python2.6/site-packages/nova/servicegroup/drivers\\\n/zk.py\", line 141, in get_all\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack     raise exception.ServiceGroupUnavailable(driver=\"ZooKeeperDrive\\\nr\")\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack ServiceGroupUnavailable: The service from servicegroup driver ZooK\\\neeperDriver is temporarily unavailable.\n\nThe problem seems to be around evzookeeper (using version 0.4.0).\n\nTo isolate the problem, I added some evzookeeper.ZKSession synchronous get() calls to test the roundtrip communication to ZooKeeper.  When I do a `self._session.get(CONF.zookeeper.sg_prefix)` in the zk.py ZooKeeperDriver __init__() method it works fine.  The logs show that this is immediately before the wsgi server starts up.\n\nWhen I do the get() operation from within the ZooKeeperDriver get_all() method, the web request hangs indefinitely.  However, if I recreate the evzookeeper.ZKSession within the get_all() method (after the wsgi server has started) the nova-api request is successful.\n\ndiff --git a/nova/servicegroup/drivers/zk.py b/nova/servicegroup/drivers/zk.py\nindex 2a3edae..7de2488 100644\n--- a/nova/servicegroup/drivers/zk.py\n+++ b/nova/servicegroup/drivers/zk.py\n@@ -122,7 +122,14 @@ class ZooKeeperDriver(api.ServiceGroupDriver):\n         monitor = self._monitors.get(group_id, None)\n         if monitor is None:\n             path = \"%s/%s\" % (CONF.zookeeper.sg_prefix, group_id)\n-            monitor = membership.MembershipMonitor(self._session, path)\n+\n+            null = open(os.devnull, \"w\")\n+            local_session = evzookeeper.ZKSession(CONF.zookeeper.address,\n+                                                  recv_timeout=\n+                                                    CONF.zookeeper.recv_timeout,\n+                                                  zklog_fd=null)\n+\n+            monitor = membership.MembershipMonitor(local_session, path)\n             self._monitors[group_id] = monitor\n             # Note(maoy): When initialized for the first time, it takes a\n             # while to retrieve all members from zookeeper. To prevent", 
+    "tags": [
+        "compute", 
+        "low-hanging-fruit", 
+        "zookeeper"
+    ], 
+    "importance": "Low", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1239864", 
+    "owner": "https://api.launchpad.net/1.0/~sdague", 
+    "id": 1239864, 
+    "index": 5925, 
+    "created": "2013-10-14 21:58:00.691132+00:00", 
+    "title": "nova-api fails to query ServiceGroup status from Zookeeper", 
+    "comments": [
+        {
+            "content": "I am running with the ZooKeeper servicegroup driver on CentOS 6.4 (Python 2.6) with the RDO distro of Grizzly.\n\nAll nova services are successfully connecting to ZooKeeper, which I've verified using zkCli.\n\nHowever, when I run `nova service-list` I get an HTTP 500 error from nova-api.  The nova-api log (/var/log/nova/api.log) shows:\n\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack   File \"/usr/lib/python2.6/site-packages/nova/servicegroup/api.py\"\\\n, line 93, in service_is_up\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack     return self._driver.is_up(member)\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack   File \"/usr/lib/python2.6/site-packages/nova/servicegroup/drivers\\\n/zk.py\", line 116, in is_up\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack     all_members = self.get_all(group_id)\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack   File \"/usr/lib/python2.6/site-packages/nova/servicegroup/drivers\\\n/zk.py\", line 141, in get_all\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack     raise exception.ServiceGroupUnavailable(driver=\"ZooKeeperDrive\\\nr\")\n2013-10-14 16:33:15.110 6748 TRACE nova.api.openstack ServiceGroupUnavailable: The service from servicegroup driver ZooK\\\neeperDriver is temporarily unavailable.\n\nThe problem seems to be around evzookeeper (using version 0.4.0).\n\nTo isolate the problem, I added some evzookeeper.ZKSession synchronous get() calls to test the roundtrip communication to ZooKeeper.  When I do a `self._session.get(CONF.zookeeper.sg_prefix)` in the zk.py ZooKeeperDriver __init__() method it works fine.  The logs show that this is immediately before the wsgi server starts up.\n\nWhen I do the get() operation from within the ZooKeeperDriver get_all() method, the web request hangs indefinitely.  However, if I recreate the evzookeeper.ZKSession within the get_all() method (after the wsgi server has started) the nova-api request is successful.\n\ndiff --git a/nova/servicegroup/drivers/zk.py b/nova/servicegroup/drivers/zk.py\nindex 2a3edae..7de2488 100644\n--- a/nova/servicegroup/drivers/zk.py\n+++ b/nova/servicegroup/drivers/zk.py\n@@ -122,7 +122,14 @@ class ZooKeeperDriver(api.ServiceGroupDriver):\n         monitor = self._monitors.get(group_id, None)\n         if monitor is None:\n             path = \"%s/%s\" % (CONF.zookeeper.sg_prefix, group_id)\n-            monitor = membership.MembershipMonitor(self._session, path)\n+\n+            null = open(os.devnull, \"w\")\n+            local_session = evzookeeper.ZKSession(CONF.zookeeper.address,\n+                                                  recv_timeout=\n+                                                    CONF.zookeeper.recv_timeout,\n+                                                  zklog_fd=null)\n+\n+            monitor = membership.MembershipMonitor(local_session, path)\n             self._monitors[group_id] = monitor\n             # Note(maoy): When initialized for the first time, it takes a\n             # while to retrieve all members from zookeeper. To prevent", 
+            "date_created": "2013-10-14 21:58:00.691132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdutton"
+        }, 
+        {
+            "content": "Update: I work for the same company that Jeff worked for when he entered this report. This problem still manifests itself in Havana and Icehouse. We have reproduced the issue using the following packages:\n\nCentOS 6.5\nPython 2.6\nevzookeeper 0.4.0\nzc-zookeeper-static 3.4.4\n\nThe stack trace of our current failures is similar to the original report.\n\nThe code change posted by Jeff and included with this report resolves the issue.\n\n", 
+            "date_created": "2014-06-09 17:30:30.559051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-green-u"
+        }, 
+        {
+            "content": "Posting the patch as a file attachment.", 
+            "date_created": "2014-06-11 17:56:15.618341+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-green-u"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/102639", 
+            "date_created": "2014-06-25 20:42:28.020821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/102639\nReason: Is this still active, the patch hasn't been updated in over a month. Feel free to restore this.", 
+            "date_created": "2014-09-03 19:50:57.551003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/102639\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f37905a3c1fd09597898c93a1cbc3050f335cf61\nSubmitter: Jenkins\nBranch:    master\n\ncommit f37905a3c1fd09597898c93a1cbc3050f335cf61\nAuthor: Paul Green <email address hidden>\nDate:   Mon Jun 23 18:31:20 2014 -0400\n\n    Fix service groups with zookeeper\n    \n    Service groups using zookeeper don't work due to apparently improper\n    handling of the zookeeper session creation.\n    \n    No additional unit tests as the mocking these interfaces probably\n    doesn't actually provide substantial future guaruntees. The correct\n    long term fix is to enable zk for unit testing upstream.\n    \n    Change-Id: I21691843cb4936d10a0b82df41aef3afe5bf2519\n    Closes-bug: #1239864\n", 
+            "date_created": "2014-09-12 05:26:32.499319+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

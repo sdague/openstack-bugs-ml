@@ -1,0 +1,64 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-08-05 14:37:03.800820+00:00", 
+    "description": "Steps to reproduce\n==================\nA chronological list of steps which will bring off the\nissue you noticed:\n* I had a compute node, set allow_resize_to_same_host=true.\n\n* I did boot a instance with flavor m1.tiny\n1   | m1.tiny       | 512       | 1    | 0         |      | 1     | 1.0         | True\n\n* then I did boot my instance, let free vcpus of this compute node is 3\n* then I did resize this instance use flavor 1-1 which vcpu number is 4.\n| 1-1 | hanrong_cpu_4 | 512       | 1    | 0         |      | 4     | 1.0         | True      |\n\n* then the instance was error.\n{\"message\": \"Insufficient compute resources: Free vcpu 3.00 VCPU < requested 4 VCPU.\", \"code\": 400, \"created\": \"2016-08-02T12:12:36Z\"}\n\nExpected result\n===============\n\nI hope this instance resize successfully and freen vcpus of this compute node is 0 after resize.\n\nActual result\n=============\ninstance error, and freen vcpus of this compute node is 3 after resize.\n\nEnvironment\n===========\n1.\n\u00a0\u00a0\u00a0If this is from git, please provide\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0$ git log -1\ncommit 2b0557e4ee6737f44cb6fa845d7f59446bca90bf\nMerge: 40913fe 15a9458\nAuthor: Jenkins <email address hidden>\nDate:   Thu Jun 16 01:51:48 2016 +0000\n\n\u00a0\u00a0\u00a0\u00a0Merge \"Added missed response to test_server_tags\"", 
+    "tags": [
+        "compute", 
+        "resize"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1609193", 
+    "owner": "None", 
+    "id": 1609193, 
+    "index": 1814, 
+    "created": "2016-08-03 00:43:37.017390+00:00", 
+    "title": "resize error on the same current host with enough vcpu resource", 
+    "comments": [
+        {
+            "content": "Steps to reproduce\n==================\nA chronological list of steps which will bring off the\nissue you noticed:\n* I had a compute node, set allow_resize_to_same_host=true.\n\n* I did boot a instance with flavor m1.tiny\n1   | m1.tiny       | 512       | 1    | 0         |      | 1     | 1.0         | True    \n\n* then I did boot many instance\n* then I did Z\nA list of openstack client commands (with correct argument value)\nwould be the most descriptive example. To get more information use:\n\n    $ nova --debug <command> <arg1> <arg2=value>\n    or\n    $ openstack --debug <command> <arg1> <arg2=value>\n\nExpected result\n===============\nAfter the execution of the steps above, what should have\nhappened if the issue wasn't present?\n\nActual result\n=============\nWhat happened instead of the expected result?\nHow did the issue look like?\n\nEnvironment\n===========\n1. Exact version of OpenStack you are running. See the following\n  list for all releases: http://docs.openstack.org/releases/\n\n   If this is from a distro please provide\n       $ dpkg -l | grep nova\n       or\n       $ rpm -ql | grep nova\n   If this is from git, please provide\n       $ git log -1\n\n2. Which hypervisor did you use?\n   (For example: Libvirt + KVM, Libvirt + XEN, Hyper-V, PowerKVM, ...)\n   What's the version of that?\n\n2. Which storage type did you use?\n   (For example: Ceph, LVM, GPFS, ...)\n   What's the version of that?\n\n3. Which networking type did you use?\n   (For example: nova-network, Neutron with OpenVSwitch, ...)\n\nLogs & Configs\n==============\nThe tool *sosreport* has support for some OpenStack projects.\nIt's worth having a look at it. For example, if you want to collect\nthe logs of a compute node you would execute:\n\n   $ sudo sosreport -o openstack_nova --batch\n\non that compute node. Attach the logs to this bug report. Please\nconsider that these logs need to be collected in \"DEBUG\" mode.\nThis bug contains information that is:\nPublicEdit", 
+            "date_created": "2016-08-03 00:43:37.017390+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hanrong"
+        }, 
+        {
+            "content": "what's probably happening is it's hitting ComputeResourcesUnavailable which triggers a reschedule, but since there is nowhere to reschedule to, it fails and is set to error.\n\nyeah it gets into rt.resize_claim which does the claim test and raises the ComputeResourcesUnavailable exception which can't reschedule b/c it's resize to same host / single node and that all happens within a _error_out_instance_on_exception context manager so the instance is put in error state.\n\nso i guess you'd have to handle ComputeResourcesUnavailable in _error_out_instance_on_exception and not set the instance to error state.", 
+            "date_created": "2016-08-04 20:35:18.327573+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "So this is not going to work in Nova as resources currently used by an instance are not considered free. But if instance goes to error that might qualify for a bug.\nAcc to Matt \"it gets into rt.resize_claim which does the claim test and raises the ComputeResourcesUnavailable exception\"", 
+            "date_created": "2016-08-04 20:39:08.043980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sarafraj-singh"
+        }, 
+        {
+            "content": "\nmriedem \"b/c it's resize to same host / single node\n\tand that all happens within a _error_out_instance_on_exception context manager\n\tso the instance is put in error state\t\n\tso i guess you'd have to handle ComputeResourcesUnavailable in _error_out_instance_on_exception and not set the instance to error state\"", 
+            "date_created": "2016-08-04 20:48:03.022274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sarafraj-singh"
+        }, 
+        {
+            "content": "Thank you.\n\nThe resize action of this instance failed because scheduler core_filter return 0 hosts. So I think this is a scheduler problem.\n\nOne host's free vpus is 3, a instance with 1 vcpus on this host. when this instance want to be resized to 4 vpus, I think this resize action should be successful, because host_free_vcpus + instance_current_used_vcpus == resized_instance_required_vcpus.(3 + 1 == 4)\n\n ", 
+            "date_created": "2016-08-05 02:18:36.041850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hanrong"
+        }, 
+        {
+            "content": "But this would mean that resize gets a special treatment. It was designed this way, I do not think of it as a bug, rather as an inconvenience. Plus, counting a difference between flavors leaves us with more things to reconsider, not only CPU, but also RAM and so on.", 
+            "date_created": "2016-08-05 04:31:13.105086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mszankin"
+        }, 
+        {
+            "content": "Yea, resize action was designed this way. But as a cloud user, I hope resource can be used as much possible, especially when I need it. So I think this is a bug, or any other api can resolve this problem?", 
+            "date_created": "2016-08-05 06:23:37.700436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hanrong"
+        }, 
+        {
+            "content": "So interestingly, we are going to hit this with live-resize as well, as that will always resize on the same host.\n\nThe problem here, is we are currently re-writing the scheduler. Once we are done, and instance will actually have a claim in the scheduler, so we should be able to tell the scheduler, increase the size of the claim, rather than just give me a new claim of the new size.\n\nIt feels like this is blocked until we get that scheduler work complete. It has been a priority feature for the last few cycle, we are making some progress.", 
+            "date_created": "2016-08-05 08:41:27.975574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Thank you\n\nI will wait for live-resize function, but I am worried about numa topology. For numa-topology change, resize a shutdown instance is more easily.", 
+            "date_created": "2016-08-05 09:19:05.678281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hanrong"
+        }
+    ]
+}

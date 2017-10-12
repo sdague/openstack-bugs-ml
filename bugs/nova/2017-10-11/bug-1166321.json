@@ -1,0 +1,120 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-03-29 15:39:03.859565+00:00", 
+    "description": "There is no way in the nova-manage commands to register an additional service node, e.g. I had to manually add the service through the database, which seems like the wrong way to do things. I would suggest:\n\nnova-manage service add --host compute123 --service nova-compute\n\nI would also suggest that any command that does this automatically sets the service to disabled.", 
+    "tags": [
+        "low-hanging-fruit", 
+        "nova-manage", 
+        "ux"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1166321", 
+    "owner": "None", 
+    "id": 1166321, 
+    "index": 1344, 
+    "created": "2013-04-08 17:14:18.214663+00:00", 
+    "title": "manually add a disabled service to nova-manage", 
+    "comments": [
+        {
+            "content": "There is no way in the nova-manage commands to register an additional service node, e.g. I had to manually add the service through the database, which seems like the wrong way to do things. I would suggest:\n\nnova-manage service add --host compute123 --service nova-compute\n\nI would also suggest that any command that does this automatically sets the service to disabled.", 
+            "date_created": "2013-04-08 17:14:18.214663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "If nova.conf is ok and then you run it on some host it will \nautomatically create DB entry for this compute node in services and compute_nodes tables.\n\nSo I don't understand why do you want to add it by hand with nova-manage?", 
+            "date_created": "2013-04-08 19:20:58.533175+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boris-42"
+        }, 
+        {
+            "content": "Oh, I didn't realize it did that when the node started. Then the issue is that it brings the node in as \"enabled\". In our PXE-boot case, we want to bring nodes in as \"disabled\" and manually switch them when they are ready.\n\nI suspect there are other operations folk who are in the same position: you bring a machine up with the basic OS but there may be firmware updates or performance checks before you're comfortable bringing a node into production.\n", 
+            "date_created": "2013-04-08 22:13:43.250788+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "Suggested usage:\nnova-manage service add --host=<hostname> --service=<service-name> --disabled\n\nUse case:\nTo pre-seed an existing system with disabled services and prevent nova-scheduler from using them until a later time.", 
+            "date_created": "2013-12-05 23:46:31.479990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "I can confirm that this is still an issue in Havana.", 
+            "date_created": "2013-12-06 23:32:01.730204+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "The use case is valid. If I bring-up an extra nova-compute node I would like to run some tests on it to ensure that it can properly spin-up instances before I allow user to schedule jobs on it. I'm just not sure that this is the right solution. Perhaps this should be a mailing list discussion?", 
+            "date_created": "2014-01-03 03:26:01.858660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mfisch"
+        }, 
+        {
+            "content": "Hi Matt, any advancements on this topic? Thanks", 
+            "date_created": "2014-02-25 19:04:11.945961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~facundo-farias"
+        }, 
+        {
+            "content": "How about adding option \"service_enabled=<True|False>\" in nova.conf which decides the state of service in DB?\nThis option will default to \"True\" making system work as it is now. ipxe case can be handled by setting the \"service_enabled\"\nto \"False\". We can update the DB accordingly on every \"nova\" restart. So, once we are sure about the setup we can\nchange \"service_enabled\" to \"True\" and restart \"nova\".", 
+            "date_created": "2014-04-15 12:28:39.994485+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vaibhav-bhatkar"
+        }, 
+        {
+            "content": "There are a few cases where that approach might work: all our nova.conf files are templates and managed with configuration management software. This would effectively punt the decision from OpenStack to the operator, and whatever software they are using to manage it--which I'm not opposed to.\n\nWould the switch work in the reverse direction? \"service_enabled=False\" && service nova restart when the database reports the host as up? Would it switch it to disabled? I worry that this could lead to inconsistent state. The more *dumb* config option name would be \"register_service_on_startup=<True|False>\".\n\nAt the end of the day though, I don't see why nova implements a service-tracking framework if you can't *add* services to it. There are also terms that make *no* sense. \"Host\" is almost never a FQDN, but it's used for the message queues. You can't delete hosts, even if you've already loaded the rack onto a pallet and sent it to the scrapper. And of course the \"status\" field only reports \"XXX\" in the most limited of cases.", 
+            "date_created": "2014-04-15 15:19:30.488224+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "If we try to support switch in reverse direction, i.e, changing from True to False then first \nquestions come is what will happen to running instances on compute. As you have rightly\nsaid this is inconsistent. I was thinking that we support \"service_enabled=False\" only if\nthere is no entry for the service in the DB. Following is rough algorithm (I am going\nto use your config as \"service_enabled\" has many implications :-) ),\n\nIF  There is no entry in the DB for the service THEN\n    IF register_service_on_startup == False THEN\n        make the entry in the DB for the service with status set to DISABLED\n    ELSE\n        make the entry in the DB for the service with status set to ENABLED\nELSE IF register_service_on_startup == TRUE AND status for the service in the DB is DISABLED\nTHEN\n    chagne the status for the service in the DB to ENABLED\nELSE IF register_service_on_startup == False AND There is entry in the DB for the service \nTHEN\n    log warning and do nothing\nEND IF\n", 
+            "date_created": "2014-04-16 12:42:49.615358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vaibhav-bhatkar"
+        }, 
+        {
+            "content": "Well, at least in Essex and Havana, when you disable the nova-compute service on a node that prevents new instances from being scheduled on the node, but it does not affect running instances on the node. So you don't have to worry about that.\n\n>     IF register_service_on_startup == False THEN\n        make the entry in the DB for the service with status set to DISABLED\n\nI would expect there to be no entry in the DB if register_service_on_startup = False.", 
+            "date_created": "2014-04-16 16:53:56.497966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "@vaibhav, are you still working on this issue? If so, can you link to a review so I can track it? If not, can you release the bug so someone else can take a look at it? Thanks!", 
+            "date_created": "2014-05-13 14:59:59.705269+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "nova-manage is deprecated, why not use the service API to add the service?", 
+            "date_created": "2014-07-01 15:12:44.629132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I guess there isn't an API extension to add a service, only list/update/delete:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/contrib/services.py", 
+            "date_created": "2014-07-01 15:15:55.551216+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm fine with using the nova service API endpoint, but we need a service-create command in the client and a create API endpoint.\n\nAdding to that, I see that there *is* a delete endpoint, but no service-delete subcommand or service-disable --delete flag. Should we add this? Should I file a separate bug for that against python-novaclient?", 
+            "date_created": "2014-07-01 15:39:05.280208+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "I can document one additional place where this feature would alleviate a pain point:\n\nWhen populating host-aggregates with nova-compute hosts, the host-aggregates API checks that the host exists in the services table with the nova-compute binary. This poses a problem, though if you are bringing new hardware online and only have a subset of the nova-compute services working (and therefore present in the database).\n\nIf you could manually add hosts, this would allow you to pre-populate the services and host-aggregates APIs with the hosts.", 
+            "date_created": "2014-07-07 23:24:27.211051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "I don't think we need a separate bug report for service delete and python-novaclient, but if you have time a nova-spec proposal for a create command for the service endpoint which could cover the delete and create novaclient functionality would be very helpful. \n\nScott - is this something you want to implement your self or is it just something you'd like to see added?", 
+            "date_created": "2014-07-14 08:09:19.283573+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "At the moment I do not have time to implement this myself.", 
+            "date_created": "2014-07-18 18:26:15.248839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-devoid"
+        }, 
+        {
+            "content": "Actually there's an existing config controlling whether or not to register service in enabled state.  CONF.enable_new_services for controller nova.conf, since Grizzly version\n\nI think it should be enough to address the original requirement described by Scott in #2", 
+            "date_created": "2015-07-07 22:25:53.316571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~unicell"
+        }, 
+        {
+            "content": "Looks like this is implemented with commit [1] (a new service gets \ncreated in \"disabled\" mode). This disabled service can then be enabled\nwith \"nova service-enable <hostname> <binary>\" [2].\n\nReferences:\n[1] https://git.openstack.org/cgit/openstack/nova/commit/?id=5a25de893f34cb9b05996406488188b6ed47fca1\n[2] http://docs.openstack.org/cli-reference/nova.html#nova-service-enable", 
+            "date_created": "2016-03-29 15:39:02.457540+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

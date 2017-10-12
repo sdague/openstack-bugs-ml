@@ -1,0 +1,64 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2015-11-09 12:50:30.687527+00:00", 
+    "description": "With the Ironic driver, if a baremetal node is added/deleted, it is not removed from pool of available resources until the next run of update_available_resource(). During this window, the scheduler may continue to attempt to schedule instances on it (when deleted), or report NoValidHosts (when added) leading to unnecessary failures and scheduling retries.\n\nIn compute manager, the update_available_resource() periodic task is responsible for updating the scheduler's knowledge of baremetal nodes:\n\n\u00a0\u00a0\u00a0\u00a0@periodic_task.periodic_task\n\u00a0\u00a0\u00a0\u00a0def update_available_resource(self, context):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0...\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0nodenames = set(self.driver.get_available_nodes())\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0for nodename in nodenames:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0rt = self._get_resource_tracker(nodename)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0rt.update_available_resource(context)\n\nupdate_available_resource() is also called at service startup\n\nThis means that you have to wait up to 60 seconds for a node to become available/no longer available.", 
+    "tags": [
+        "ironic", 
+        "nova-driver"
+    ], 
+    "importance": "Medium", 
+    "heat": 44, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1248022", 
+    "owner": "None", 
+    "id": 1248022, 
+    "index": 3688, 
+    "created": "2013-11-05 03:36:46.465061+00:00", 
+    "title": "Nova scheduler not updated immediately when a baremetal node is added or removed", 
+    "comments": [
+        {
+            "content": "In compute manager, the update_available_resource() periodic task is responsible for updating the scheduler's knowledge of baremetal nodes:\n\n    @periodic_task.periodic_task\n    def update_available_resource(self, context):\n        ...\n        nodenames = set(self.driver.get_available_nodes())\n        for nodename in nodenames:\n            rt = self._get_resource_tracker(nodename)\n            rt.update_available_resource(context)\n\nupdate_available_resource() is also called at service startup\n\nThis means that you have to wait up to 60 seconds for a node to become available", 
+            "date_created": "2013-11-05 03:36:46.465061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Evidence of this issue here:\n\n  https://github.com/openstack/tripleo-incubator/blob/e22a2b3/scripts/register-nodes#L27\n\n  echo \"Nodes will be available in 60 seconds from now.\"\n\n:)", 
+            "date_created": "2013-11-05 03:40:06.873444+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Confirming that this also affects Ironic.", 
+            "date_created": "2014-07-22 16:42:50.451050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Badly affects TripleO UI, would like it to be fixed in J", 
+            "date_created": "2014-09-05 09:06:21.856130+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }, 
+        {
+            "content": "Merged with duplicating bug. Also reposting a comment:\n\nDevananda van der Veen (devananda) wrote on 2014-03-22: \t#1\n\nI suspect that this is not solvable in the current nova-scheduler architecture, and will require a mechanism for Ironic to actively inform Nova upon resource availability changes (rather than passively wait for Nova to request a list of available resources).\n", 
+            "date_created": "2014-09-11 12:39:00.684087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }, 
+        {
+            "content": "Does this still need to be marked as \"High\"?", 
+            "date_created": "2015-03-23 12:00:53.659565+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This is a much bigger architecture issue to address.", 
+            "date_created": "2015-03-30 16:29:02.078022+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I'd like to suggest following solution draft, however, before I submit any pull requests I'd like to receive your feedback on the design.\n\nAs stated in the bug description, there's no direct update call from Ironic to Nova Compute Ironic Driver, rather, Nova polls info about available Ironic nodes periodically.\nThe issue is the delay with which node status updates are propagated to Nova Scheduler.\nA solution may be to update Nova directly instead, and for that purpose I would like to introduce Node state Watchdogs that would call back (to Nova) through registered Http Requests.\nWhile this can be implemented as a little change to Nova (add a refresh Rest Api Url to Post a Request to making nova call the Resources update method in turn) it is going to be a bigger change for Ironic. \n\nIn general, a Watchdog is configured to Fire an Action upon an Event matched Watchdog Conditions[1].\nFurthermore, a WatchdogManager[1] keeps track of Watchdog objects and provides an interface to add, remove, update watchdog objects as well as dispatch Events to particular Watchdog.\nSince the Events are emitted by Nodes changing state (and being added/removed), all Watchdog objects that might possibly Fire upon an Event should be available in all ConductorManager processes because ConductorManager[2] is where the Node-action emitting an Event is performed. \nTo make the Watchdog objects available in all ConductorManager instances (spread on multiple hosts), the WatchdogManager has to interface a global storage (database) to both keep the Watchdog objects persistent and to allow centralized Watchdog management.\nA Cache may be used to reduce the count of global storage accesses. Watchdog objects are expected to \"outlive\" the Nodes here.\nOn the other hand, Events are transient and local to the ConductorManager & Node. Therefore, one may assume Events related to a single Node are being handled \"close\" to (in the same process of) the Node's ConductorManager and need not be available in all ConductorManager instances.\nMoreover, to both keep the Event processing close to its source and to allow it to finish asynchronously, the Watchdog Action should Fire in context of the GreenThread emitting the Event as a result of a Node-action.\nTherefore, an \"emits\" decorator is introduced to wrap some ConductorManager async methods with an Event-processing function dispatching the Events to related Watchdogs.\n\nTo expose the Watchdog management, new Pecan Hook and Controller have to be introduced possibly reusing WatchdogManager.\nI haven't figured out this part yet but I've been thinking along these lines:\n\nCreate a watchdog; \"type\" here is a class to be imported and instantiated while assembling a watchdog:\nhttp://ironic.example.com/api/v1/watchdogs/ <- POST <- {\n    'type': 'ironic.watchdog.Watchdog',\n    'whitelist': [\n        { 'type': 'ironic.watchdog.condition.NodeStateCondition', 'state': 'ironic.states.DEPLOYFAIL' },\n    ],\n    'action': { \n        'type': 'ironic.watchdog.actions.RestRequest',\n        'url: 'http://nova.example.com/compute/refresh',\n        'method': 'post',\n        'auth': ['admin', 'admin'],\n        'body_hook':  'ironic.watchdog.hooks.NodeBody'\n   },\n}\n\nGet a watchdog, Delete, Update(put):\n/watchdogs/ or /watchdogs/<ID>/ <verb>\n\n\nIn conclusion, Nova Compute Ironic Driver registers a Watchdog at Ironic to be called-back in case a Node is added, deleted or changed state. This in turn allows Nova to keep its list of resources up-to-date asynchronously rather than by polling. \n\n\n[1] attached watchdog implementation model\n[2] https://github.com/openstack/ironic/blob/master/ironic/conductor/manager.py#L20\n", 
+            "date_created": "2015-11-07 14:28:18.170704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vetrisko"
+        }, 
+        {
+            "content": "There are already plans to rework the ironic nova driver to support multiple nova computes managing the ironic node pool and as part of this rework the way available resources are processed is going to change, so you may want to read up on these changes here: \n\nhttps://etherpad.openstack.org/p/summit-mitaka-ironic-nova-driver\nhttps://review.openstack.org/#/c/194453/11/specs/mitaka/approved/ironic-multiple-compute-hosts.rst\n\nIn regards to the watchdog idea, there is now work in progress plans to provide a notification bus from ironic on which events such as the ones you've described above will get published. This will run on top of the OpenStack messaging system, and will be a publish subscribe model. Information about these plans can be found here:\n\nhttps://etherpad.openstack.org/p/summit-mitaka-ironic-notifications-bus", 
+            "date_created": "2015-11-09 11:51:28.257896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sambetts"
+        }
+    ]
+}

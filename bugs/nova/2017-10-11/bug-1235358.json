@@ -1,0 +1,106 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-04-17 09:24:16.389427+00:00", 
+    "description": "I created a volume from an image and booted an instance from it \nwhen instance boots I get this: 'selected cylinder exceeds maximum supported by bios'\nIf I boot an instance from the same image I can boot with no issues so its just booting from the volume.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1235358", 
+    "owner": "None", 
+    "id": 1235358, 
+    "index": 4150, 
+    "created": "2013-10-04 16:51:20.983451+00:00", 
+    "title": "invalid volume when source image virtual size is bigger than the requested size", 
+    "comments": [
+        {
+            "content": "I created a volume from an image and booted an instance from it \nwhen instance boots I get this: 'selected cylinder exceeds maximum supported by bios'\nIf I boot an instance from the same image I can boot with no issues so its just booting from the volume.", 
+            "date_created": "2013-10-04 16:51:20.983451+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dron-3"
+        }, 
+        {
+            "content": "What driver are you using?  What Nova version?  Can you please provide more complete log output?", 
+            "date_created": "2013-10-04 19:20:26.341923+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "[root@cougar06 ~]# rpm -qa |grep nova\nopenstack-nova-scheduler-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-compute-2013.2-0.24.rc1.el6ost.noarch\npython-novaclient-2.15.0-1.el6ost.noarch\npython-nova-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-api-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-console-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-conductor-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-novncproxy-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-network-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-cert-2013.2-0.24.rc1.el6ost.noarch\nopenstack-nova-common-2013.2-0.24.rc1.el6ost.noarch\n[root@cougar06 ~]# rpm -qa |grep qeu\n[root@cougar06 ~]# rpm -qa |grep qemu\nqemu-img-rhev-0.12.1.2-2.408.el6.x86_64\ngpxe-roms-qemu-0.9.7-6.9.el6.noarch\nqemu-kvm-rhev-0.12.1.2-2.408.el6.x86_64\n[root@cougar06 ~]# \n\nthere was no errors in the logs. \nplease let me know what you would like added ", 
+            "date_created": "2013-10-07 08:53:23.424780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dron-3"
+        }, 
+        {
+            "content": "oh, and I am using gluster with following rpms: \n\n[root@cougar06 ~]# rpm -qa |grep fuse\nfuse-2.8.3-4.el6.x86_64\nglusterfs-fuse-3.4.0.33rhs-1.el6rhs.x86_64\nfuse-libs-2.8.3-4.el6.x86_64\n[root@cougar06 ~]# \n\n", 
+            "date_created": "2013-10-07 08:54:16.018011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dron-3"
+        }, 
+        {
+            "content": "Hi Dafna, I've tried to reproduce this using a fedora 20 image but it worked properly. Could you specify the image you used to create the volume so we can try to reproduce it?\n\nBesides, where do you get the error you mention if not in the logs? Does it appear in the instance's console-log? Can you provide the full console-log from this instance and the libvirt.xml nova creates under /var/lib/nova/instances ?\n\nThanks", 
+            "date_created": "2013-10-08 12:21:07.443016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "i am using a rhel image. \n\nthere is no console-log unfortunately. I see the error in the instance itself (screen shot attached). \n\ninstance log is also attached ", 
+            "date_created": "2013-10-08 16:51:19.990919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dron-3"
+        }, 
+        {
+            "content": "The problem appears to be in cinder when using the gluster or nfs drivers.\n\nIf the source image is bigger (considering the virtual size) than the target volume, those drivers will still copy the image into the volume and resize it to fit the requested size. The problem is with the resulting image after the resize, which won't look as a proper disk to the hypervisor.\n\nThose are the commands called by the gluster (and nfs) driver when creating a volume from an image:\n\n1. truncate -s <volume size>G <volume path>\n2. download the image to <image path>\n3. qemu-img convert -O raw <source image path> <volume path>\n  - After this we will have a volume as big as the original image\n4. qemu-img resize <volume path> <volume size>G\n  - After this, if the image was bigger than the volume we might end up with a truncated and unusable image.", 
+            "date_created": "2013-10-16 22:33:41.054161+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "The easiest solution that I can think of now is to make cinder fail when the image is bigger than the volume size (same as lvm does).", 
+            "date_created": "2013-10-16 22:35:21.975336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/52463", 
+            "date_created": "2013-10-17 18:10:08.102267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/52463\nCommitted: http://github.com/openstack/cinder/commit/6e287c0f2bb7d4994d50f1763f412277e4dac6f7\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6e287c0f2bb7d4994d50f1763f412277e4dac6f7\nAuthor: Xavier Queralt <email address hidden>\nDate:   Tue Oct 22 20:37:53 2013 +0200\n\n    Fail when image is bigger than the volume\n    \n    When creating a new volume from a qcow2 image stored in glance, we will\n    be given the physical size of the image instead of the virtual size.\n    Most drivers will convert that image to raw after downloading for\n    resizing it to the requested volume size afterwards.\n    \n    If the virtual size of the image is bigger than the requested one, the\n    resulting volume might end up being unusable after the resize even\n    though the creation went good.\n    \n    This patch will make the volume creation fail if the virtual size of\n    the image exceeds the one of the requested volume.\n    \n    Closes-Bug: #1235358\n    Change-Id: I254cd9e3acf5d9eb7eb913b37d27a14e97568dec\n", 
+            "date_created": "2013-11-13 06:51:03.796534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/56188", 
+            "date_created": "2013-11-13 11:00:22.865615+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Changing summary as this doesn't appear to be specific to glusterfs, based on the fix.", 
+            "date_created": "2013-11-13 20:16:22.756594+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/57879", 
+            "date_created": "2013-11-22 09:48:09.354553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/57879\nCommitted: http://github.com/openstack/cinder/commit/c4db75abddbb72ac5f717f6a9266e078b69206a8\nSubmitter: Jenkins\nBranch:    master\n\ncommit c4db75abddbb72ac5f717f6a9266e078b69206a8\nAuthor: Xavier Queralt <email address hidden>\nDate:   Fri Nov 22 10:39:37 2013 +0100\n\n    Pass the size when fetching image in xenapi driver\n    \n    In commit 6e287c0f2bb7d4994d50f1763f412277e4dac6f7 the fetch_to_raw\n    method was changed to accept the volume size so it can fail when the\n    image doesn't fit in the destination volume. In this commit we also\n    updated all the volume drivers to pass the volume size to that method so\n    it could perform the check. The xenapi driver missed that change.\n    \n    This commit updates the xenapi driver to pass the volume size when\n    fetching the image to enable the introduced check.\n    \n    Change-Id: I89bc4b3b1c1e6b06f5c529166cf9ffa1fe600c96\n    Related-Bug: #1235358\n", 
+            "date_created": "2013-11-25 05:31:23.550951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/havana\nReview: https://review.openstack.org/58785", 
+            "date_created": "2013-11-27 14:52:29.412792+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/56188\nCommitted: http://github.com/openstack/cinder/commit/c5cb131c5fbc8aa5c5992a81468dd30631d9c8e9\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit c5cb131c5fbc8aa5c5992a81468dd30631d9c8e9\nAuthor: Xavier Queralt <email address hidden>\nDate:   Tue Oct 22 20:37:53 2013 +0200\n\n    Fail when image is bigger than the volume\n    \n    When creating a new volume from a qcow2 image stored in glance, we will\n    be given the physical size of the image instead of the virtual size.\n    Most drivers will convert that image to raw after downloading for\n    resizing it to the requested volume size afterwards.\n    \n    If the virtual size of the image is bigger than the requested one, the\n    resulting volume might end up being unusable after the resize even\n    though the creation went good.\n    \n    This patch will make the volume creation fail if the virtual size of\n    the image exceeds the one of the requested volume.\n    \n    Closes-Bug: #1235358\n    Change-Id: I254cd9e3acf5d9eb7eb913b37d27a14e97568dec\n    (cherry picked from commit 6e287c0f2bb7d4994d50f1763f412277e4dac6f7)\n", 
+            "date_created": "2013-11-29 07:30:46.027907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/58785\nCommitted: http://github.com/openstack/cinder/commit/704b72c09f6ffce83f3adc0024f6ca22e26f60bc\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 704b72c09f6ffce83f3adc0024f6ca22e26f60bc\nAuthor: Xavier Queralt <email address hidden>\nDate:   Fri Nov 22 10:39:37 2013 +0100\n\n    Pass the size when fetching image in xenapi driver\n    \n    In commit 6e287c0f2bb7d4994d50f1763f412277e4dac6f7 the fetch_to_raw\n    method was changed to accept the volume size so it can fail when the\n    image doesn't fit in the destination volume. In this commit we also\n    updated all the volume drivers to pass the volume size to that method so\n    it could perform the check. The xenapi driver missed that change.\n    \n    This commit updates the xenapi driver to pass the volume size when\n    fetching the image to enable the introduced check.\n    \n    Change-Id: I89bc4b3b1c1e6b06f5c529166cf9ffa1fe600c96\n    Related-Bug: #1235358\n    (cherry picked from commit c4db75abddbb72ac5f717f6a9266e078b69206a8)\n", 
+            "date_created": "2013-11-29 07:30:53.067867+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is there anything left for Nova here?", 
+            "date_created": "2013-12-09 00:42:12.943582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }
+    ]
+}

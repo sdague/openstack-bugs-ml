@@ -1,0 +1,43 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-01-13 01:17:13.340605+00:00", 
+    "description": "\n\nIf a live migration fails during the post processing on the source (i.e. failure to disconnect volumes) it can lead to the instance being shutdown on the source node and left in a migrating task state. Also the copy of the instance on the target node will be left running although not usable because neutron networking has not yet been switch to target and nova stills records the instance as being on the source node.\n\nThis situation can be resolved as follows:\n\non target\nvirsh destroy <instance domain id>\nif the compute nodes are NOT using shared storage\nsudo rm -rf <instance uuid directory>\n\nThen use nova client as admin to restart the instance on the source node:\nnova reset-state --active <instance uuid>\nnova reboot --hard <instance uuid>\n\nI will investigate how to address this issue", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "Low", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1628606", 
+    "owner": "None", 
+    "id": 1628606, 
+    "index": 824, 
+    "created": "2016-09-28 16:39:04.390254+00:00", 
+    "title": "live migration does not clean up at target node if a failure occurs during post migration", 
+    "comments": [
+        {
+            "content": "\n\nIf a live migration fails during the post processing on the source (i.e. failure to disconnect volumes) it can lead to the instance being shutdown on the source node and left in a migrating task state. Also the copy of the instance on the target node will be left running although not usable because neutron networking has not yet been switch to target and nova stills records the instance as being on the source node.\n\nThis situation can be resolved as follows:\n\non target\nvirsh destroy <instance domain id>\nif the compute nodes are NOT using shared storage\nsudo rm -rf <instance uuid directory>\n\nThen use nova client as admin to restart the instance on the source node:\nnova reset-state --active <instance uuid>\nnova reboot --hard <instance uuid>\n\nI will investigate how to address this issue", 
+            "date_created": "2016-09-28 16:39:04.390254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-carlton2"
+        }, 
+        {
+            "content": "Thinking about this it is not that simple. Once the instance has been started on the target it could do work that would be lost if we destroy it and resurrect the instance on the source. As we found out when Matt Booth was fixing the post copy network bug with certain neutron providers the instance at the target becomes accessible to the network immediately it starts up (due to arp'ing) so effectively once libvirt has un-paused the instance on the target and destroyed the instance on the the source we are effective beyond the point of no return.\n\nTrouble is the instance host does not get updated until the end of the post migration processing so it still looks like it is on the source in a migrating state. If any step in post migration give rise to an exception it skips the rest of the post migration and updates the migration as failed but leaves the instance as is.\n\nThe best solution I can think of is to wrap the call to the post method in a try except that will set the instance to the target host if any exception occurs. Given that in some circumstances the source instance could still be present, i.e. not cleaned up and the networking to the target might not be setup correctly so I'm thinking maybe the instance on the target should be placed in error state to indicate that there may be an issue? Alternatively, is the fact that the migration status will be failed enough to indicate that some further operator action might be needed?", 
+            "date_created": "2016-09-29 14:06:00.735388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-carlton2"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/379491", 
+            "date_created": "2016-09-29 14:14:36.738050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Paul Carlton (<email address hidden>) on branch: master\nReview: https://review.openstack.org/379491\nReason: Leaving for someone else to fix as they see fit", 
+            "date_created": "2016-12-05 06:30:25.450910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Since Paul Carton abandoned his patch, removing him as assignee.", 
+            "date_created": "2017-01-13 01:16:53.750791+00:00", 
+            "author": "https://api.launchpad.net/1.0/~siva-radhakrishnan"
+        }
+    ]
+}

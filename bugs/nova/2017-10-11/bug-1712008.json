@@ -1,0 +1,126 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-15 22:21:57.073551+00:00", 
+    "description": "During force live live migrate nova doesn't claims the resources on the target host as expected, see the sequence:\n* Boot a VM.\n* Force live migrate the VM.\n* Check the allocations: \n** the claims are still on the source host.\n** on the destination there is no claim.\n\nThis situation doesn't change after running the periodics.\nThe test that contains the expected assertions (commented out now):\nhttps://review.openstack.org/495170\n\nnova commit: 08ec8a1ad3f3492b99db48d9e8fa132cb1bb3e8c", 
+    "tags": [
+        "in-stable-pike", 
+        "live-migration", 
+        "pike-rc-potential", 
+        "placement"
+    ], 
+    "importance": "Critical", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1712008", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1712008, 
+    "index": 293, 
+    "created": "2017-08-21 07:34:32.505581+00:00", 
+    "title": "Force live migrate doesn't claim resources on the target host", 
+    "comments": [
+        {
+            "content": "During force live live migrate nova doesn't claims the resources on the target host as expected, see the sequence:\n* Boot a VM.\n* Force live migrate the VM.\n* Check the allocations: \n** the claims are still on the source host.\n** on the destination there is no claim.\n\nThis situation doesn't change after running the periodics.\nThe test that contains the expected assertions (commented out now):\nhttps://review.openstack.org/495170\n\nnova commit: 08ec8a1ad3f3492b99db48d9e8fa132cb1bb3e8c", 
+            "date_created": "2017-08-21 07:34:32.505581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lajos-katona"
+        }, 
+        {
+            "content": "The problem is here:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/conductor/tasks/live_migrate.py#L51-L56\n\nWhen a host is forced, conductor bypasses the call to scheduler_client.select_destinations which is the code that eventually creates the allocation on the destination host:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/scheduler/client/report.py#L147\n\nAnd due to this change:\n\nhttps://review.openstack.org/#/c/491012/\n\nIf all of your computes are upgraded, the resource tracker isn't going to \"heal\" the allocations on the target host during it's update_available_resources periodic task.\n\nThinking of solutions:\n\n1. Both paths are going to eventually call check_can_live_migrate_destination on the destination compute host so we could create the allocation there, although that gets tricky since it could overwrite any allocations that the scheduler created via select_destinations if a host isn't forced.\n\n2. Just call placement from conductor when a host isn't forced, somewhere in this else block:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/conductor/tasks/live_migrate.py#L56\n\nThat's probably the cleanest since it wouldn't overwrite any allocations by the scheduler, since the scheduler isn't called, and it would actually make the destination host allocations correct before the RT could heal them, assuming not all compute nodes are upgraded yet.", 
+            "date_created": "2017-08-21 19:07:31.007414+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "After discussing this with Dan Smith a bit in IRC, solution #2 in comment 1 isn't great either since it would mean duplicating more of the allocation logic in multiple places, which is something we're already having to deal with between the compute service and the scheduler service right now, so we really want the scheduler to be responsible for this, so we should do something where conductor calls select_destinations with a target host and just make it do the claim, and I guess run the filters?", 
+            "date_created": "2017-08-21 19:13:30.746395+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Semi-related but another problem here is when forcing a host during live migration, we don't check that the source and destination hosts are within the same cell if you're running a multi-cell deployment with cells v2.", 
+            "date_created": "2017-08-21 19:33:17.856432+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/496031", 
+            "date_created": "2017-08-21 22:39:39.894186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/495170\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=52d732d6bdb78ca5c940112e8dff6eef7f6828e8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 52d732d6bdb78ca5c940112e8dff6eef7f6828e8\nAuthor: Lajos Katona <email address hidden>\nDate:   Fri Aug 18 13:02:48 2017 +0200\n\n    Add functional force live migrate test\n    \n    Forced live migration now seems to be failing, as after the movement of\n    the VM, the allocations are only present on the source host, and not on\n    the destination host.\n    The related assertions are commented out and replaced with wrong ones to\n    make the test pass.\n    \n    Related-Bug: #1712008\n    Change-Id: I6856f57426db6f2f49daea86679b50d5d019fe19\n", 
+            "date_created": "2017-08-22 14:13:09.735880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/496419", 
+            "date_created": "2017-08-22 20:58:54.081689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/pike\nReview: https://review.openstack.org/496725", 
+            "date_created": "2017-08-23 14:29:22.746108+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/pike\nReview: https://review.openstack.org/496727", 
+            "date_created": "2017-08-23 14:29:48.285647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/pike\nReview: https://review.openstack.org/496729", 
+            "date_created": "2017-08-23 14:30:16.456937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/496031\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5d3a11b9c9a6a5aecd46ad7ecc635215184d930e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5d3a11b9c9a6a5aecd46ad7ecc635215184d930e\nAuthor: Matt Riedemann <email address hidden>\nDate:   Mon Aug 21 18:35:07 2017 -0400\n\n    Allocate resources on forced dest host during live migration\n    \n    When forcing a host during live migration, conductor bypasses\n    the scheduler so the scheduler won't create an allocation in\n    Placement against the destination host.\n    \n    With change Ia93168b1560267178059284186fb2b7096c7e81f, once all\n    computes are upgraded to Pike, the computes won't auto-heal the\n    allocations for their respective nodes either, so we end up with\n    no allocation for the destination node during a live migration when\n    the host is forced.\n    \n    This change makes conductor use the source compute node allocations\n    for the instance to claim the same resource amounts on the forced\n    destination host in Placement. If the claim fails, a\n    MigrationPreCheckError is raised.\n    \n    This is a short-term fix for Pike. A longer-term fix to avoid this\n    duplication with the scheduler is to have conductor call the\n    scheduler even when force=True but pass a flag to the scheduler\n    so it skips the filters but still makes the claim on the destination\n    node.\n    \n    Finally, some comments are left in the live_migrate method in the\n    compute API code since this is all tightly-coupled between the\n    API and conductor when a host is specified in the request, and it's\n    easy to get lost on what the API is doing to the request spec which\n    changes how conductor behaves, i.e. if it calls the scheduler or not.\n    \n    Change-Id: I40b5af5e85b1266402a7e4bdeb3705e1b0bd6f3b\n    Closes-Bug: #1712008\n", 
+            "date_created": "2017-08-23 14:57:55.265873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/496419\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8fc789deb7c774bcc5b5128d638c6c7e30bf0a54\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8fc789deb7c774bcc5b5128d638c6c7e30bf0a54\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Aug 22 16:54:44 2017 -0400\n\n    Restrict live migration to same cell\n    \n    We do not yet support live migrating an instance\n    across cells. This change handles two cases for\n    live migration:\n    \n    1. The destination host is forced so the scheduler\n       is bypassed. In this case we directly compare the\n       source cell against the destination cell and fail\n       if they are not the same with a MigrationPreCheckError.\n    \n    2. If no destination host is specified, or it's not forced,\n       we update the RequestSpec sent to the scheduler so it\n       will restrict the compute nodes it pulls from the same\n       cell that the instance lives in. If a host is requested\n       in this case but it's in a different cell, it would result\n       in a NoValidHost error from the scheduler.\n    \n    Change-Id: I66fc72d402ac118270a835cf929fe1ea387d78cd\n    Closes-Bug: #1712008\n", 
+            "date_created": "2017-08-23 15:19:37.922986+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/496725\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c12446ecabd5987f0a3a9184691a1e42352e3070\nSubmitter: Jenkins\nBranch:    stable/pike\n\ncommit c12446ecabd5987f0a3a9184691a1e42352e3070\nAuthor: Lajos Katona <email address hidden>\nDate:   Fri Aug 18 13:02:48 2017 +0200\n\n    Add functional force live migrate test\n    \n    Forced live migration now seems to be failing, as after the movement of\n    the VM, the allocations are only present on the source host, and not on\n    the destination host.\n    The related assertions are commented out and replaced with wrong ones to\n    make the test pass.\n    \n    Related-Bug: #1712008\n    Change-Id: I6856f57426db6f2f49daea86679b50d5d019fe19\n    (cherry picked from commit 52d732d6bdb78ca5c940112e8dff6eef7f6828e8)\n", 
+            "date_created": "2017-08-23 16:19:02.614935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/496727\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7f282839911222223652245b2dd12ca26d42a9d3\nSubmitter: Jenkins\nBranch:    stable/pike\n\ncommit 7f282839911222223652245b2dd12ca26d42a9d3\nAuthor: Matt Riedemann <email address hidden>\nDate:   Mon Aug 21 18:35:07 2017 -0400\n\n    Allocate resources on forced dest host during live migration\n    \n    When forcing a host during live migration, conductor bypasses\n    the scheduler so the scheduler won't create an allocation in\n    Placement against the destination host.\n    \n    With change Ia93168b1560267178059284186fb2b7096c7e81f, once all\n    computes are upgraded to Pike, the computes won't auto-heal the\n    allocations for their respective nodes either, so we end up with\n    no allocation for the destination node during a live migration when\n    the host is forced.\n    \n    This change makes conductor use the source compute node allocations\n    for the instance to claim the same resource amounts on the forced\n    destination host in Placement. If the claim fails, a\n    MigrationPreCheckError is raised.\n    \n    This is a short-term fix for Pike. A longer-term fix to avoid this\n    duplication with the scheduler is to have conductor call the\n    scheduler even when force=True but pass a flag to the scheduler\n    so it skips the filters but still makes the claim on the destination\n    node.\n    \n    Finally, some comments are left in the live_migrate method in the\n    compute API code since this is all tightly-coupled between the\n    API and conductor when a host is specified in the request, and it's\n    easy to get lost on what the API is doing to the request spec which\n    changes how conductor behaves, i.e. if it calls the scheduler or not.\n    \n    Change-Id: I40b5af5e85b1266402a7e4bdeb3705e1b0bd6f3b\n    Closes-Bug: #1712008\n    (cherry picked from commit 5d3a11b9c9a6a5aecd46ad7ecc635215184d930e)\n", 
+            "date_created": "2017-08-23 17:42:31.655752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/496729\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b37411c1e3d167156b6e54f837fc291c9e61eeef\nSubmitter: Jenkins\nBranch:    stable/pike\n\ncommit b37411c1e3d167156b6e54f837fc291c9e61eeef\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Aug 22 16:54:44 2017 -0400\n\n    Restrict live migration to same cell\n    \n    We do not yet support live migrating an instance\n    across cells. This change handles two cases for\n    live migration:\n    \n    1. The destination host is forced so the scheduler\n       is bypassed. In this case we directly compare the\n       source cell against the destination cell and fail\n       if they are not the same with a MigrationPreCheckError.\n    \n    2. If no destination host is specified, or it's not forced,\n       we update the RequestSpec sent to the scheduler so it\n       will restrict the compute nodes it pulls from the same\n       cell that the instance lives in. If a host is requested\n       in this case but it's in a different cell, it would result\n       in a NoValidHost error from the scheduler.\n    \n    Change-Id: I66fc72d402ac118270a835cf929fe1ea387d78cd\n    Closes-Bug: #1712008\n    (cherry picked from commit 8fc789deb7c774bcc5b5128d638c6c7e30bf0a54)\n", 
+            "date_created": "2017-08-23 18:06:20.646352+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0rc2 release candidate.", 
+            "date_created": "2017-08-25 03:51:02.350401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0rc2 release candidate.", 
+            "date_created": "2017-08-25 03:51:05.480705+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/501314", 
+            "date_created": "2017-09-06 15:30:32.833953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/pike\nReview: https://review.openstack.org/501477", 
+            "date_created": "2017-09-06 21:56:00.804220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/501314\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=02a82c41f90a64f261d81cdc0bc57471d15a7c8e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 02a82c41f90a64f261d81cdc0bc57471d15a7c8e\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Sep 6 11:13:04 2017 -0400\n\n    Add release note for force live migration allocations\n    \n    When forcing a destination host during live migration, conductor\n    bypasses the scheduler, performs some pre-migration checks and then\n    casts to the specified destination compute host directly.\n    \n    With change I40b5af5e85b1266402a7e4bdeb3705e1b0bd6f3b we are still\n    bypassing the scheduler but conductor will attempt to allocate\n    resources against the specified destination host, which could fail\n    and result in the live migration failing even though the force flag\n    was specified in the API.\n    \n    This change simply adds a release note for the new behavior which\n    was missing from the original fix.\n    \n    Change-Id: I1811dfa59865c0a878522007e0070f0fde8344f0\n    Related-Bug: #1712008\n", 
+            "date_created": "2017-09-06 23:59:11.067343+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/501477\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7d220b3dd7f9a52773604eab8160503b05f586b3\nSubmitter: Jenkins\nBranch:    stable/pike\n\ncommit 7d220b3dd7f9a52773604eab8160503b05f586b3\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Sep 6 11:13:04 2017 -0400\n\n    Add release note for force live migration allocations\n    \n    When forcing a destination host during live migration, conductor\n    bypasses the scheduler, performs some pre-migration checks and then\n    casts to the specified destination compute host directly.\n    \n    With change I40b5af5e85b1266402a7e4bdeb3705e1b0bd6f3b we are still\n    bypassing the scheduler but conductor will attempt to allocate\n    resources against the specified destination host, which could fail\n    and result in the live migration failing even though the force flag\n    was specified in the API.\n    \n    This change simply adds a release note for the new behavior which\n    was missing from the original fix.\n    \n    Change-Id: I1811dfa59865c0a878522007e0070f0fde8344f0\n    Related-Bug: #1712008\n    (cherry picked from commit 02a82c41f90a64f261d81cdc0bc57471d15a7c8e)\n", 
+            "date_created": "2017-09-15 22:21:56.592232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

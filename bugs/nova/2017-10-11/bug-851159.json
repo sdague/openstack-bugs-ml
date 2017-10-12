@@ -1,0 +1,104 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 10:53:01.560826+00:00", 
+    "description": "$ time python -c 'import boto.utils; boto.utils.get_instance_metadata()'\n\nreal    0m5.740s\nuser    0m0.190s\nsys     0m0.110s\n\nI've not done a lot of digging on this, but I suspect that \nnova/api/ec2/cloud.py:get_metadata is doing some heavy queries.\n\ncloud-init does at least 2 separate hits of the metadata service on boot, this means we see something like this in cloud-init.log:\n\n2011-09-15 18:17:53,844 - cloud-init[INFO]: cloud-init start running: Thu, 15 Sep 2011 18:17:53 +0000. up 6.01 seconds \n2011-09-15 18:17:53,855 - __init__.py[DEBUG]: searching for data source in ['DataSourceNoCloudNet', 'DataSourceOVFNet', 'DataSourceEc2'] \n2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: removed the following from metadata urls: ['http://instance-data:8773'] \n2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: Searching the following metadata urls: ['http://169.254.169.254'] \n2011-09-15 18:17:54,350 - DataSourceEc2.py[DEBUG]: Using metadata source: 'http://169.254.169.254' \n2011-09-15 18:18:00,027 - __init__.py[DEBUG]: found data source DataSourceEc2 \n2011-09-15 18:18:00,050 - cloud-init[DEBUG]: found data source: DataSourceEc2 \n\n\nNote the 5 second time lapse between 'Using' and 'found'.  Using just indicated there the port was open.  found actually used data from it.", 
+    "tags": [
+        "canonistack", 
+        "ec2"
+    ], 
+    "importance": "High", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/851159", 
+    "owner": "https://api.launchpad.net/1.0/~anotherjesse", 
+    "id": 851159, 
+    "index": 486, 
+    "created": "2011-09-15 18:26:02.715524+00:00", 
+    "title": "ec2 metadata service is very slow", 
+    "comments": [
+        {
+            "content": "$ time python -c 'import boto.utils; boto.utils.get_instance_metadata()'\n\nreal    0m5.740s\nuser    0m0.190s\nsys     0m0.110s\n\nI've not done a lot of digging on this, but I suspect that \nnova/api/ec2/cloud.py:get_metadata is doing some heavy queries.\n\ncloud-init does at least 2 separate hits of the metadata service on boot, this means we see something like this in cloud-init.log:\n\n2011-09-15 18:17:53,844 - cloud-init[INFO]: cloud-init start running: Thu, 15 Sep 2011 18:17:53 +0000. up 6.01 seconds \n2011-09-15 18:17:53,855 - __init__.py[DEBUG]: searching for data source in ['DataSourceNoCloudNet', 'DataSourceOVFNet', 'DataSourceEc2'] \n2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: removed the following from metadata urls: ['http://instance-data:8773'] \n2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: Searching the following metadata urls: ['http://169.254.169.254'] \n2011-09-15 18:17:54,350 - DataSourceEc2.py[DEBUG]: Using metadata source: 'http://169.254.169.254' \n2011-09-15 18:18:00,027 - __init__.py[DEBUG]: found data source DataSourceEc2 \n2011-09-15 18:18:00,050 - cloud-init[DEBUG]: found data source: DataSourceEc2 \n\n\nNote the 5 second time lapse between 'Using' and 'found'.  Using just indicated there the port was open.  found actually used data from it.", 
+            "date_created": "2011-09-15 18:26:02.715524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Not only does it do heavy queries, but it rebuilds the entire metadata set for every single request that is made to the metadata server.  Horribly inefficient! I want to break the metadata code out into its own binary as well.  I will be filing a blueprint to that affect soon.  We definitely need some efficiency cleanup for the metadata server as well.\n\n\nOn Sep 15, 2011, at 11:26 AM, Scott Moser wrote:\n\n> Public bug reported:\n> \n> $ time python -c 'import boto.utils; boto.utils.get_instance_metadata()'\n> \n> real    0m5.740s\n> user    0m0.190s\n> sys     0m0.110s\n> \n> I've not done a lot of digging on this, but I suspect that \n> nova/api/ec2/cloud.py:get_metadata is doing some heavy queries.\n> \n> cloud-init does at least 2 separate hits of the metadata service on\n> boot, this means we see something like this in cloud-init.log:\n> \n> 2011-09-15 18:17:53,844 - cloud-init[INFO]: cloud-init start running: Thu, 15 Sep 2011 18:17:53 +0000. up 6.01 seconds \n> 2011-09-15 18:17:53,855 - __init__.py[DEBUG]: searching for data source in ['DataSourceNoCloudNet', 'DataSourceOVFNet', 'DataSourceEc2'] \n> 2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: removed the following from metadata urls: ['http://instance-data:8773'] \n> 2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: Searching the following metadata urls: ['http://169.254.169.254'] \n> 2011-09-15 18:17:54,350 - DataSourceEc2.py[DEBUG]: Using metadata source: 'http://169.254.169.254' \n> 2011-09-15 18:18:00,027 - __init__.py[DEBUG]: found data source DataSourceEc2 \n> 2011-09-15 18:18:00,050 - cloud-init[DEBUG]: found data source: DataSourceEc2 \n> \n> \n> Note the 5 second time lapse between 'Using' and 'found'.  Using just indicated there the port was open.  found actually used data from it.\n> \n> ** Affects: nova\n>     Importance: Undecided\n>         Status: New\n> \n> -- \n> You received this bug notification because you are a member of Nova Bug\n> Team, which is subscribed to OpenStack Compute (nova).\n> https://bugs.launchpad.net/bugs/851159\n> \n> Title:\n>  ec2 metadata service is very slow\n> \n> Status in OpenStack Compute (Nova):\n>  New\n> \n> Bug description:\n>  $ time python -c 'import boto.utils;\n>  boto.utils.get_instance_metadata()'\n> \n>  real    0m5.740s\n>  user    0m0.190s\n>  sys     0m0.110s\n> \n>  I've not done a lot of digging on this, but I suspect that \n>  nova/api/ec2/cloud.py:get_metadata is doing some heavy queries.\n> \n>  cloud-init does at least 2 separate hits of the metadata service on\n>  boot, this means we see something like this in cloud-init.log:\n> \n>  2011-09-15 18:17:53,844 - cloud-init[INFO]: cloud-init start running: Thu, 15 Sep 2011 18:17:53 +0000. up 6.01 seconds \n>  2011-09-15 18:17:53,855 - __init__.py[DEBUG]: searching for data source in ['DataSourceNoCloudNet', 'DataSourceOVFNet', 'DataSourceEc2'] \n>  2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: removed the following from metadata urls: ['http://instance-data:8773'] \n>  2011-09-15 18:17:53,989 - DataSourceEc2.py[DEBUG]: Searching the following metadata urls: ['http://169.254.169.254'] \n>  2011-09-15 18:17:54,350 - DataSourceEc2.py[DEBUG]: Using metadata source: 'http://169.254.169.254' \n>  2011-09-15 18:18:00,027 - __init__.py[DEBUG]: found data source DataSourceEc2 \n>  2011-09-15 18:18:00,050 - cloud-init[DEBUG]: found data source: DataSourceEc2 \n> \n> \n>  Note the 5 second time lapse between 'Using' and 'found'.  Using just indicated there the port was open.  found actually used data from it.\n> \n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/851159/+subscriptions\n\n", 
+            "date_created": "2011-09-15 19:24:06+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Note that at some point Soren proposed that the metadata server would be handled at compute node level rather than hit the API servers.", 
+            "date_created": "2011-09-16 09:34:34.913186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Confirming this.\n\nTiming a simple wget of metadata in EC2 and OpenStack:\n  ec2: 0m0.009s\n  openstack: 0m1.089s", 
+            "date_created": "2011-09-29 18:06:10.286472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kirkland"
+        }, 
+        {
+            "content": "ttx, even if it is handled at the compute layer (for instance cloudbuilder's deploys are putting nova-api server on each box and routing the metadata to the local api server) it is still wildly inefficient.\n\nit is creating a dictionary of all possible data and then return a subset of that hash.  \n\nThe code is very naive.", 
+            "date_created": "2011-09-29 18:45:05.993027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anotherjesse"
+        }, 
+        {
+            "content": "On Thu, 29 Sep 2011, anotherjesse wrote:\n\n> it is creating a dictionary of all possible data and then return a\n> subset of that hash.\n\nAnd it does it for every request. ie, no caching.\ncloud-init and others (boto.utils.get_instance_metadata()) crawl this\nservice, doing maybe a couple dozen hits in rapid succession.\n", 
+            "date_created": "2011-09-30 13:09:13+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Ugh. Sounds like there is room for improvement :)", 
+            "date_created": "2011-09-30 15:44:49.975591+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix is currently up for review: https://review.openstack.org/#change,809", 
+            "date_created": "2011-10-07 06:23:15.482571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtoddx"
+        }, 
+        {
+            "content": "Bug has been idle for a few months and the patch needs work/rebasing. Think it's safe to say it's not InProgress any more\n\n@todd: feel free to pick it up again, of course - just hoping de-assigning it might cause someone else to pick it up", 
+            "date_created": "2012-01-13 09:46:31.334363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "This week we had an oportunity to see this bug on our internal cloud:\nWe rebooted the whole cloud for maintenance purposes (200 vm hosted on 10 servers with a cloud controller)\nWhen servers are booting, the API node is such overloaded by cloud-init waiting meta-data that is was mostly unusable. We were unable to make more than 1 API call per 2 to 5 min during several hours!\n\nWe have also tried to do some tunning on the pool size of sqlachemy without a lot of success. The only solution was to drop the DNAT rules for redirecting the meta-data calls to makes things usable again.\n\nFor the record, the cloud controler is a Xeon Quad Core 2.5 Ghz with 8 GB of RAM. Now slow query have been seen on MySQL, so it's a pure python code that was taking time (and CPU, nova-api was taking all the time 100% of CPU).", 
+            "date_created": "2012-02-11 08:01:05.961494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lionel.porcheron"
+        }, 
+        {
+            "content": "On Sat, 11 Feb 2012, Lionel Porcheron wrote:\n\n> This week we had an oportunity to see this bug on our internal cloud:\n> We rebooted the whole cloud for maintenance purposes (200 vm hosted on 10 servers with a cloud controller)\n> When servers are booting, the API node is such overloaded by cloud-init waiting meta-data that is was mostly unusable. We were unable to make more than 1 API call per 2 to 5 min during several hours!\n>\n> We have also tried to do some tunning on the pool size of sqlachemy\n> without a lot of success. The only solution was to drop the DNAT rules\n> for redirecting the meta-data calls to makes things usable again.\n>\n> For the record, the cloud controler is a Xeon Quad Core 2.5 Ghz with 8\n> GB of RAM. Now slow query have been seen on MySQL, so it's a pure python\n> code that was taking time (and CPU, nova-api was taking all the time\n> 100% of CPU).\n\nWere you using something recent?  This is known to be terribly broken in\ndiablo.  However it should be at least better in essex.\n\nAdditionally, I've tested the HP public cloud, and their metadata service\nreturns from \"python -c 'import boto.utils;\nboto.utils.get_instance_metadata()' in < .2 seconds.\n\nI think what they've done is put something caching in the middle as the\nfirst request I did just now took maybe 4 seconds, but the second and\nsubsequent took < .2 seconds.\n", 
+            "date_created": "2012-02-11 15:32:11+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Scott,\n\nYes I confirm it is diabo. I did not get the oportunity to test on essex yet, but goot to know it should at least be better.\n", 
+            "date_created": "2012-02-12 22:11:48.509465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lionel.porcheron"
+        }, 
+        {
+            "content": "Based on last comments, please confirm it's still unbelievably slow (\"buggy\") in essex, or now falls into the \"could be faster\" wishlist category.", 
+            "date_created": "2012-03-06 14:14:05.534312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "it is still incredibly slow.  is this important enough to fix for essex?  \n\nthe code is probably incredibly easy to fix - it is a matter of breaking out https://github.com/openstack/nova/blob/master/nova/api/metadata/handler.py#L142 so we only load what is needed.", 
+            "date_created": "2012-03-07 05:01:55.248734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anotherjesse"
+        }, 
+        {
+            "content": "@Jesse: any progress on this ?", 
+            "date_created": "2012-03-12 16:20:09.078024+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "merge prop is here: https://review.openstack.org/#change,5042\n\nis ready for merge except where we put the in-memory cache - moving it to nova/common as per markmc's request", 
+            "date_created": "2012-03-12 17:57:03.562642+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anotherjesse"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5042\nCommitted: http://github.com/openstack/nova/commit/1bcf5f5431d3c9620596f5329d7654872235c7ee\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1bcf5f5431d3c9620596f5329d7654872235c7ee\nAuthor: Jesse Andrews <email address hidden>\nDate:   Wed Mar 7 13:05:28 2012 -0800\n\n    improve speed of metadata\n    \n     * don't load every possible answer, only do what is needed\n     * cache instance data for a given address for a 15 seconds\n       using either memcache or fake memcache (in-memory).\n       This means only a single queue/db lookup for multiple calls\n       to metadata service\n     * add cache expirey to fake memcache (don't grow forever)\n       and move it to nova.common.memorycache\n    \n    Addresses Bug #851159\n    \n    Change-Id: Icf794156e055b18915b8b5be9ba2ab97d2338bbe\n", 
+            "date_created": "2012-03-12 21:08:52.204932+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

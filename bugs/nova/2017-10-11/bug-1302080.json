@@ -1,0 +1,205 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-02-06 01:42:26.199049+00:00", 
+    "description": "Opening this as a security bug just in case - but I doubt it is.\n\nIf a compute node has enabled auto configuration for IPv6 addresses on all interfaces, then the Linux bridges used for connecting instances will get IPv6 addresses too. Then an instance can reach the host using the address of the bridge it is connected to.\n\nEg with the ovs-agent and hybrid VIF driver after booting an instance in devstack connected to the \"private\" network:\n\nvagrant@devstack:~$ brctl show\nbridge name\tbridge id\t\tSTP enabled\tinterfaces\nbr-ex\t\t0000.9619b7f0614b\tno\t\tqg-97601dc1-77\nbr-int\t\t0000.cad7ebe11e46\tno\t\tqr-edf68f52-f9\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0qvoe8eabd6a-46\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0tap09437e57-45\nqbre8eabd6a-46\t\t8000.0e8e27c7cdfa\tno\t\tqvbe8eabd6a-46\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0tape8eabd6a-46\n\nvagrant@devstack:~$ ip address show dev qbre8eabd6a-46\n15: qbre8eabd6a-46: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP\n\u00a0\u00a0\u00a0\u00a0link/ether 0e:8e:27:c7:cd:fa brd ff:ff:ff:ff:ff:ff\n\u00a0\u00a0\u00a0\u00a0inet6 fe80::dcc6:30ff:fe27:37a1/64 scope link\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0valid_lft forever preferred_lft forever\n\nNote: the address fe80::dcc6:30ff:fe27:37a1 and login to instance:\n\n$ ssh ubuntu@172.24.4.3\nubuntu@vm1:~$ ip address show dev eth0\n2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000\n\u00a0\u00a0\u00a0\u00a0link/ether fa:16:3e:d1:7e:fe brd ff:ff:ff:ff:ff:ff\n\u00a0\u00a0\u00a0\u00a0inet 10.0.0.9/24 brd 10.0.0.255 scope global eth0\n\u00a0\u00a0\u00a0\u00a0inet6 fe80::f816:3eff:fed1:7efe/64 scope link\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0valid_lft forever preferred_lft forever\n\nubuntu@vm1:~$ ping6 -c4 -I eth0 ff02::1\nPING ff02::1(ff02::1) from fe80::f816:3eff:fed1:7efe eth0: 56 data bytes\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=1 ttl=64 time=16.9 ms\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=1 ttl=64 time=38.4 ms (DUP!)\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=2 ttl=64 time=1.44 ms\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=2 ttl=64 time=3.88 ms (DUP!)\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=3 ttl=64 time=8.63 ms\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=3 ttl=64 time=14.0 ms (DUP!)\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=4 ttl=64 time=0.476 ms\n\nubuntu@vm1:~$ ping6 -c1 -I eth0 fe80::dcc6:30ff:fe27:37a1\nPING fe80::dcc6:30ff:fe27:37a1(fe80::dcc6:30ff:fe27:37a1) from fe80::f816:3eff:fed1:7efe eth0: 56 data bytes\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=1 ttl=64 time=2.86 ms\n\nubuntu@vm1:~$ ssh fe80::dcc6:30ff:fe27:37a1%eth0\nThe authenticity of host 'fe80::dcc6:30ff:fe27:37a1%eth0 (fe80::dcc6:30ff:fe27:37a1%eth0)' can't be established.\nECDSA key fingerprint is 11:5d:55:29:8a:77:d8:08:b4:00:9b:a3:61:93:fe:e5.\nAre you sure you want to continue connecting (yes/no)?\n\nI thought the anti-spoof rules should block packets from the fe80 address, but looking at the ip6tables-save (attached) the spoof chain and its default DROP rule are missing. That must be because there is no IPv6 subnet on the \"private\" network - maybe that's another problem. I inserted them manually, but that did not work becuase these packets hit the host's INPUT chain and the security group filters are on the FORWARD chain.\n\nSo maybe all that is needed is a note in the doc to say that auto config should be disabled by default and selectively enabled on interfaces if needed. E.g.:\n\nnet.ipv6.conf.all.autoconf=0\nnet.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n# enable on lo and eth1\nnet.ipv6.conf.lo.disable_ipv6=0\nnet.ipv6.conf.eth1.disable_ipv6=0\n\nOr maybe the VIF drivers should disable IPv6 on the bridge when creating it.", 
+    "tags": [
+        "in-stable-liberty", 
+        "ipv6", 
+        "network"
+    ], 
+    "importance": "Medium", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1302080", 
+    "owner": "https://api.launchpad.net/1.0/~brian-haley", 
+    "id": 1302080, 
+    "index": 3865, 
+    "created": "2014-04-03 17:29:14.003961+00:00", 
+    "title": "Host is accessible from instance using Linux bridge IPv6 address", 
+    "comments": [
+        {
+            "content": "Opening this as a security bug just in case - but I doubt it is.\n\nIf a compute node has enabled auto configuration for IPv6 addresses on all interfaces, then the Linux bridges used for connecting instances will get IPv6 addresses too. Then an instance can reach the host using the address of the bridge it is connected to.\n\nEg with the ovs-agent and hybrid VIF driver after booting an instance in devstack connected to the \"private\" network:\n\nvagrant@devstack:~$ brctl show\nbridge name\tbridge id\t\tSTP enabled\tinterfaces\nbr-ex\t\t0000.9619b7f0614b\tno\t\tqg-97601dc1-77\nbr-int\t\t0000.cad7ebe11e46\tno\t\tqr-edf68f52-f9\n\t\t\t\t\t\t\tqvoe8eabd6a-46\n\t\t\t\t\t\t\ttap09437e57-45\nqbre8eabd6a-46\t\t8000.0e8e27c7cdfa\tno\t\tqvbe8eabd6a-46\n\t\t\t\t\t\t\ttape8eabd6a-46\n\nvagrant@devstack:~$ ip address show dev qbre8eabd6a-46\n15: qbre8eabd6a-46: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP \n    link/ether 0e:8e:27:c7:cd:fa brd ff:ff:ff:ff:ff:ff\n    inet6 fe80::dcc6:30ff:fe27:37a1/64 scope link \n       valid_lft forever preferred_lft forever\n\n\nNote: the address fe80::dcc6:30ff:fe27:37a1 and login to instance:\n\n\n$ ssh ubuntu@172.24.4.3\nubuntu@vm1:~$ ip address show dev eth0\n2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000\n    link/ether fa:16:3e:d1:7e:fe brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.9/24 brd 10.0.0.255 scope global eth0\n    inet6 fe80::f816:3eff:fed1:7efe/64 scope link \n       valid_lft forever preferred_lft forever\n\nubuntu@vm1:~$ ping6 -c4 -I eth0 ff02::1\nPING ff02::1(ff02::1) from fe80::f816:3eff:fed1:7efe eth0: 56 data bytes\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=1 ttl=64 time=16.9 ms\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=1 ttl=64 time=38.4 ms (DUP!)\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=2 ttl=64 time=1.44 ms\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=2 ttl=64 time=3.88 ms (DUP!)\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=3 ttl=64 time=8.63 ms\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=3 ttl=64 time=14.0 ms (DUP!)\n64 bytes from fe80::f816:3eff:fed1:7efe: icmp_seq=4 ttl=64 time=0.476 ms\n\nubuntu@vm1:~$ ping6 -c1 -I eth0 fe80::dcc6:30ff:fe27:37a1\nPING fe80::dcc6:30ff:fe27:37a1(fe80::dcc6:30ff:fe27:37a1) from fe80::f816:3eff:fed1:7efe eth0: 56 data bytes\n64 bytes from fe80::dcc6:30ff:fe27:37a1: icmp_seq=1 ttl=64 time=2.86 ms\n\nubuntu@vm1:~$ ssh fe80::dcc6:30ff:fe27:37a1%eth0                           \nThe authenticity of host 'fe80::dcc6:30ff:fe27:37a1%eth0 (fe80::dcc6:30ff:fe27:37a1%eth0)' can't be established.\nECDSA key fingerprint is 11:5d:55:29:8a:77:d8:08:b4:00:9b:a3:61:93:fe:e5.\nAre you sure you want to continue connecting (yes/no)?\n\n\nI thought the anti-spoof rules should block packets from the fe80 address, but looking at the ip6tables-save (attached) the spoof chain and its default DROP rule are missing. That must be because there is no IPv6 subnet on the \"private\" network - maybe that's another problem. I inserted them manually, but that did not work becuase these packets hit the host's INPUT chain and the security group filters are on the FORWARD chain.\n\nSo maybe all that is needed is a note in the doc to say that auto config should be disabled by default and selectively enabled on interfaces if needed. E.g.:\n\nnet.ipv6.conf.all.autoconf=0\nnet.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n# enable on lo and eth1\nnet.ipv6.conf.lo.disable_ipv6=0\nnet.ipv6.conf.eth1.disable_ipv6=0", 
+            "date_created": "2014-04-03 17:29:14.003961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~darragh-oreilly"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-04-03 17:29:14.003961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~darragh-oreilly"
+        }, 
+        {
+            "content": "What releases of Neutron are affected by this bug?\n\nNeutron core security reviewers, any opinion on the scope and exploitability of this?", 
+            "date_created": "2014-04-07 14:23:06.020297+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Any releases that have instances plugged into Linux bridges. I have tried with master and the linuxbridge-agent and the ovs-agent. The ovs-agent needs to have Nova configured to use the hybrid VIF driver.\n\nI think it's something that should be documented in the security guide. You would not want tenants to be able to do this for the very same reason you don't give them access to a management network. I just opened it as security bug to be on the safe side.", 
+            "date_created": "2014-04-08 11:02:53.970218+00:00", 
+            "author": "https://api.launchpad.net/1.0/~darragh-oreilly"
+        }, 
+        {
+            "content": "Thanks--I agree this sounds more like a configuration mistake we should warn deployers/operators against making, possibly in the Security Guide or an OSSN. If there are no objections from the Neutron core security reviewers, we should switch this to a public bug and add the security tag to bring it to the attention of the OSSG in case they want to document it.", 
+            "date_created": "2014-04-08 15:58:50.295673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "neutron core-sec: please confirm we can open this one.", 
+            "date_created": "2014-04-14 14:16:32.059295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The host should never be reachable from an instance.\nThis is therefore a violation of tenant isolation principle.\n\nHowever if there is no way this can be exploited to access services running on the host (assuming the host has been secured properly) then I think it's ok to open this bug.\n\nUnder the assumption that he host is properly secured I don't think there's any possible exploit, but I'd wait for other people to comment.", 
+            "date_created": "2014-04-16 14:47:13.830977+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "this bug should be fixed openly as a strengthening measure.", 
+            "date_created": "2014-04-22 14:23:01.417099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "AFAIU the following patch in nova would address the issue reported in the bug - https://review.openstack.org/#/c/198054", 
+            "date_created": "2015-08-05 08:45:51.249822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sridhargaddam"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/241076", 
+            "date_created": "2015-11-03 03:08:45.823026+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/241076\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=404eaead793b3192982ae247685970973609be1f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 404eaead793b3192982ae247685970973609be1f\nAuthor: Brian Haley <email address hidden>\nDate:   Mon Nov 2 22:04:11 2015 -0500\n\n    Disable IPv6 on bridge devices in LinuxBridgeManager\n    \n    We don't want to create a bridge device with an IPv6 address because\n    it will see the Router Advertisement from Neutron.\n    \n    Change-Id: If59a823804d3477c5d8877f46fcc4c018af57a5a\n    Closes-bug: 1302080\n", 
+            "date_created": "2015-11-18 20:24:21.607916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/271373", 
+            "date_created": "2016-01-22 15:25:42.963357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/198054\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5ab1b1b1c456b8b43edbd1bddd74b96b56ab80e6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5ab1b1b1c456b8b43edbd1bddd74b96b56ab80e6\nAuthor: Adam Kacmarsky <email address hidden>\nDate:   Thu Jul 2 10:13:16 2015 -0600\n\n    Disable IPv6 on bridge devices\n    \n    The qbr bridge should not have any IPv6 addresses, either\n    link-local, or on the tenant's private network due to the\n    bridge processing Router Advertisements from Neutron and\n    auto-configuring addresses, since it will allow access to\n    the hypervisor from a tenant VM.\n    \n    The bridge only exists to allow the Neutron security group\n    code to work with OVS, so we can safely disable IPv6 on it.\n    \n    Closes-bug: 1470931\n    Partial-bug: 1302080\n    \n    Change-Id: Ideecab1c21b240bcca71973ed74b0374afb20e5e\n", 
+            "date_created": "2016-02-01 14:23:54.749231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/274796", 
+            "date_created": "2016-02-01 17:18:52.964158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/274796\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=44401727235c5a9736c4229f7fc581e6a970ff91\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 44401727235c5a9736c4229f7fc581e6a970ff91\nAuthor: Adam Kacmarsky <email address hidden>\nDate:   Thu Jul 2 10:13:16 2015 -0600\n\n    Disable IPv6 on bridge devices\n    \n    The qbr bridge should not have any IPv6 addresses, either\n    link-local, or on the tenant's private network due to the\n    bridge processing Router Advertisements from Neutron and\n    auto-configuring addresses, since it will allow access to\n    the hypervisor from a tenant VM.\n    \n    The bridge only exists to allow the Neutron security group\n    code to work with OVS, so we can safely disable IPv6 on it.\n    \n    Closes-bug: 1470931\n    Partial-bug: 1302080\n    \n    Conflicts:\n    \tnova/tests/unit/virt/libvirt/test_vif.py\n    \n    Change-Id: Ideecab1c21b240bcca71973ed74b0374afb20e5e\n    (cherry picked from commit 5ab1b1b1c456b8b43edbd1bddd74b96b56ab80e6)\n", 
+            "date_created": "2016-02-16 06:04:55.333787+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/271373\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=a381aa07d9c0ea586b649420643b4f91b65979d8\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit a381aa07d9c0ea586b649420643b4f91b65979d8\nAuthor: Brian Haley <email address hidden>\nDate:   Mon Nov 2 22:04:11 2015 -0500\n\n    Disable IPv6 on bridge devices in LinuxBridgeManager\n    \n    We don't want to create a bridge device with an IPv6 address because\n    it will see the Router Advertisement from Neutron.\n    \n    Conflicts:\n    \tneutron/agent/linux/bridge_lib.py\n    \n    Change-Id: If59a823804d3477c5d8877f46fcc4c018af57a5a\n    Closes-bug: 1302080\n    (cherry picked from commit 404eaead793b3192982ae247685970973609be1f)\n", 
+            "date_created": "2016-02-26 16:32:09.463590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The fix to nova has been released, but was tagged with \"partial-bug\" based on a review comment, it should have stayed \"closes-bug\" to automatically update this from the infra scripts.\n\nSo I will be marking this \"fix released\" accordingly.", 
+            "date_created": "2016-03-30 12:57:51.322753+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "It seems like we should fix this in kilo as well, but the fix depends on BridgeManager changes in I4b9d755677bba0d487a261004d9ba9b11116101f. Is it worth a new patch to explicitly disable IPv6 in ensure_bridge() for Kilo?", 
+            "date_created": "2016-04-14 20:58:11.939499+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dlundquist"
+        }, 
+        {
+            "content": "Is this bug really fixed? Running Mitaka, it seems not. Using linuxbridges in combination with vxlan, only the vxlan interface gets disable_ipv6=1 set, not the bridge one.\n\nThis is from the compute node when booting up an instance (first one on that particular network, so all the interfaces must be provisioned):\n\n# egrep 'brq3cd6a5c8-ec|disable_ipv6' linuxbridge-agent.log\n2016-04-18 13:08:41.701 5916 DEBUG neutron.agent.linux.utils [req-1926075e-555e-4363-ab24-4c93d0b5c989 - - - - -] Running command (rootwrap daemon): ['sysctl', '-w', 'net.ipv6.conf.vxlan-65601.disable_ipv6=1'] execute_rootwrap_daemon /usr/lib/python2.7/site-packages/neutron/agent/linux/utils.py:100\n2016-04-18 13:08:41.710 5916 DEBUG neutron.agent.linux.utils [req-1926075e-555e-4363-ab24-4c93d0b5c989 - - - - -] Running command (rootwrap daemon): ['ip', 'link', 'set', 'brq3cd6a5c8-ec', 'up'] execute_rootwrap_daemon /usr/lib/python2.7/site-packages/neutron/agent/linux/utils.py:100\n2016-04-18 13:08:41.714 5916 DEBUG neutron.agent.linux.utils [req-1926075e-555e-4363-ab24-4c93d0b5c989 - - - - -] Running command (rootwrap daemon): ['brctl', 'addif', 'brq3cd6a5c8-ec', 'vxlan-65601'] execute_rootwrap_daemon /usr/lib/python2.7/site-packages/neutron/agent/linux/utils.py:100\n2016-04-18 13:08:41.729 5916 DEBUG neutron.plugins.ml2.drivers.linuxbridge.agent.linuxbridge_neutron_agent [req-1926075e-555e-4363-ab24-4c93d0b5c989 - - - - -] Skip adding device tap323ae2d2-4b to brq3cd6a5c8-ec. It is owned by compute:None and thus added elsewhere. _add_tap_interface /usr/lib/python2.7/site-packages/neutron/plugins/ml2/drivers/linuxbridge/agent/linuxbridge_neutron_agent.py:472\n\nAs you can see, disable_ipv6 gets set on the vxlan interface, but not the bridge (nor the tap interface for that matter).\n\nAnd lo and behold, the bridge interface has acquired an global ipv6 address (because there's a neutron router/L3 agent attached to the network with ipv6-address-mode=slaac+ipv6-ra-mode=slaac):\n\n# ip address list dev brq3cd6a5c8-ec\n18: brq3cd6a5c8-ec: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 8950 qdisc noqueue state UP\n    link/ether b6:e4:c1:aa:90:70 brd ff:ff:ff:ff:ff:ff\n    inet6 2001:db8:123:456:b4e4:c1ff:feaa:9070/64 scope global mngtmpaddr dynamic\n       valid_lft 86365sec preferred_lft 14365sec\n    inet6 fe80::50b2:4bff:fe32:2a3c/64 scope link\n       valid_lft forever preferred_lft forever\n\nFurthermore, I'd like to stress that this IPv6 address is *GLOBALLY REACHABLE*! Yes, that means that anyone anywhere on the IPv6 Internet (including the instances themselves) can initiate, e.g., SSH connections *directly* to the compute node - even if it's behind a firewall or are using only private RFC1918 addresses or whatever. These packets will look just like normal VXLAN packets coming from the L3 agent, so they'll bypass any normal network-level protection.\n\nOne workaround is to set /proc/sys/net/ipv6/conf/default/disable_ipv6=1. That causes the kernel to ensure that all the relevant devices (vxlan, bridge, tap) gets created with IPv6 disabled by default. However, if you do want IPv6 on other unrelated interfaces (e.g., for management of the compute node itself or to carry vxlan traffic) this could be problematic if the sysctl gets set before those interfaces are plumbed into the kernel. So be careful...\n\nI'm running openstack-neutron-linuxbridge-8.0.0-1.el7.noarch FWIW.", 
+            "date_created": "2016-04-18 11:33:31.289394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "I've found that my suggested workaround to set /proc/sys/net/ipv6/conf/default/disable_ipv6=1 must only be run on the compute nodes. If it's run on the network nodes, then neutron-l3-agent flat out refuses to configure any IPv6 connectivity on the routers (even though the sysctl is set to 0 inside the qrouter network namespaces). See https://github.com/openstack/neutron/blob/master/neutron/common/ipv6_utils.py#L51-L64\n\nHowever it seems that the setting is not necessary on the network nodes in any case, disable_ipv6 does get set to 1 on the linuxbridge devices there by something (I have not attempted to figure out what, exactly). It is only on the compute nodes that I need to set disable_ipv6=1 to avoid the global IPv6 address from being configured on the linuxbridges.", 
+            "date_created": "2016-04-19 13:38:45.536583+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "Ok, so setting default/disable_ipv6=1 is *not* a viable solution, not even on the compute nodes. The reason: neutron-linuxbridge-agent will (just like neutron-l3-agent) end up believing that IPv6 is completely disabled on the system, and skip applying the IPv6 security group when plumbing an instance. The instance thus ends up being completely wide open from the global IPv6 Internet. Not good.\n\nSetting default/accept_ra=0 seems like a better solution, as this will at the very least stop the services running directly on the compute node from being globally reachable. However it will not prevent the Linux kernel from auto-configuring a link-local address on the bridge device, which in turn is directly reachable from the instances without any kind of firewalling. This bug is in other words *NOT* fixed in Mitaka, as far as I can tell.\n\n", 
+            "date_created": "2016-04-21 07:52:46.782729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "As I've mentioned in my previous three comments, this bug is *not* fixed. It has been erroneously marked as fixed. Can someone with the appropriate access please re-open it? Otherwise I suppose I'll just have to submit a new duplicate issue.", 
+            "date_created": "2016-05-04 08:13:08.346906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "Tore, so it looks like you're using linuxbridge, which I will admit I don't typically run.  I'll try and get a config with that up and running.\n\nFYI, I can't reproduce what you're seeing using OVS.\n\nConfig:\n- Ubuntu 16.04\n- single-node devstack\n- neutron w/OVS configured with OVSHybridIptablesFirewallDrive\n- DVR enabled\n\nBoot a single VM\n\nqbr bridge is created for hybrid plugging, which was where the IPv6 link-local address was being configured.\n\n$ sysctl net.ipv6.conf.qbr74767d3d-4a.disable_ipv6\nnet.ipv6.conf.qbr74767d3d-4a.disable_ipv6 = 1\n\n$ ip a s qbr74767d3d-4a\n15: qbr74767d3d-4a: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1450 qdisc noqueue state UP group default qlen 1000\n    link/ether ce:93:48:a0:42:c0 brd ff:ff:ff:ff:ff:ff\n\nSo there's no addresses there at all.\n\nFrom inside the VM I can ping the all-nodes multicast address:\n\n$ ping6 -I eth0 ff02::1\nPING ff02::1 (ff02::1): 56 data bytes\nping6: can't bind to interface eth0: Operation not permitted\n64 bytes from fe80::f816:3eff:fec0:a651: seq=0 ttl=64 time=2.408 ms\n64 bytes from fe80::f816:3eff:fe92:17e9: seq=0 ttl=64 time=5.795 ms (DUP!)\n64 bytes from fe80::f816:3eff:fe41:6efc: seq=0 ttl=64 time=7.924 ms (DUP!)\n64 bytes from fe80::f816:3eff:fe6b:f22: seq=0 ttl=64 time=8.231 ms (DUP!)\n64 bytes from fe80::f816:3eff:fe7d:2e94: seq=0 ttl=64 time=10.130 ms (DUP!)\n64 bytes from fe80::f816:3eff:fe5e:b721: seq=0 ttl=64 time=10.410 ms (DUP!)\n\nEach address is something that responded:\n\nfe80::f816:3eff:fec0:a651 - the VM itself\nfe80::f816:3eff:fe92:17e9 - dhcp server\nfe80::f816:3eff:fe41:6efc  - router (distributed interface - v4 subnet, it's local to the VM)\nfe80::f816:3eff:fe6b:f22 - router (centralized snat interface - v4 subnet)\nfe80::f816:3eff:fe7d:2e94 - router (distributed interface - v6 subnet)\nfe80::f816:3eff:fe5e:b721 - router (centralized snat interface - v6 subnet)\n\nI tried to ssh to all of those addresses from the neutron infrastructure and couldn't - connection refused.", 
+            "date_created": "2016-05-04 13:50:11.300743+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Hi Brian,\n\nI am fairly certain that using linuxbridge is a prerequisite for reproducing the issue I'm seeing. I'm not sure if multiple nodes are required (I'm not familiar with devstack), but that's what I have at least - compute nodes with nova separate from network nodes with neutron-l3-agent and neutron-dhcp-agent, with neutron-linuxbridge-agent on both terminating vxlan tunnels between them.", 
+            "date_created": "2016-05-04 14:08:04.058490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "Tore - things seem to work fine on a single-node devstack linuxbridge config, the VM can only \"see\" the router and dhcp agent addresses.  And I don't see any IPv6 addresses on the brq interfaces.  I also see disable_ipv6=1 being set on the brq devices, which you didn't see, I don't know why that is.\n\nI just don't know how quickly I'll get a mult-node setup running.", 
+            "date_created": "2016-05-04 14:44:02.961602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Hmm. Thinking a bit more about it, I think you'll probably need a multi-node setup. As I observed in comment #19, on the network nodes the disable_ipv6 sysctl *does* get set, it's only on the compute nodes where it does not. If you have everything running on a single node, I'm guessing that whatever it is that is responsible for setting disable_ipv6 correctly on my network nodes is saving the day for you on your hybrid network+compute node.", 
+            "date_created": "2016-05-04 15:01:28.647232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "The nova patch fixed it for ovs. But nova uses this with neutron linuxbridge (not sure if nova-network uses it too)\nhttps://github.com/openstack/nova/blob/stable/mitaka/nova/network/linux_net.py#L1616\n\nYou should be able to get nova to create the bridge on an all-in-one by booting a vm to a subnet with dhcp disabled and no attached routers.", 
+            "date_created": "2016-05-04 19:14:37.358816+00:00", 
+            "author": "https://api.launchpad.net/1.0/~darragh-oreilly"
+        }, 
+        {
+            "content": "Tore, I think I've found the code path, perhaps you could confirm based on the debug messages in your log files.\n\nThe nova vif driver (nova/virt/libvirt/vif.py) plug_bridge() method will be called, which will ensure the bridge exists.  For this it will call over to ensure_bridge() in nova/network/linux_net.py.  That code does not disable ipv6 :(\n\nThe hybrid case used when OVS is the bridge calls plug_ovs_hybrid(), which uses the code that was added to disable ipv6.\n\nThat's my guess without actually setting it up, so might just be a one-line change?", 
+            "date_created": "2016-05-05 00:39:44.970132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Attached are the results from when reproducing the bug with debugging output enabled. It's from a previously unused compute node (no instances nor any virtual networks running), and then I did \"nova boot\" to fire up an instance.\n\nAs you can see, the auto-created brq device on the compute node gets configured with a global IPv6 address and an IPv6 default route. This address is reachable from anywhere in the world, bypassing any network firewalls or anything else that would protect the compute node from unauthorised access. I've therefore chosen to anonymise the addresses in the output.\n\nFrom reading the previous comments on this issue, it seems that nobody realised that the brq devices would obtain global IPv6 connectivity if there is an IPv6 router on the network. In all likelihood this was the case for the fixed OVS part of the bug as well. This aspect significantly exposes the exposure to possible unauthorised access to the compute node, so it might be wise to reconsider whether or not this should be considered a security issue.\n\nAnyway. While the vxlan device does get disable_ipv6 set, the tap device does not. It therefore auto-configures a link-local IPv6 address, but not a global one or a default route. Presumably the Linux kernel will not process RAs on devices that are members of a bridge device. So while this might not be a problem per se, but I think that disable_ipv6 should be set on the tap device anyway as a precaution. There is no reason at all to retain active layer-3 configuration on any of these interfaces, as far as I can tell", 
+            "date_created": "2016-05-05 09:35:55.788450+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "Tore, the debug output from the nova logs (cpu) would be most helpful, as that is where the brq device is created and configured.\n\nAnd we did realize the qvb-* devices created on an OVS hybrid plug would auto-configure an IPv6 address since it would process the RA.  But if the prefix assigned is only tenant-scope (i.e. some 2001:db8 prefix they are testing with) then there is not Internet reachability, it is mainly that the VM has access to the compute node.\n\nI do not feel we need to worry about the tap devices, can the VM ping that address?  And my single-node has disable_ipv6=1 on the taps, I don't know why you are seeing different yet.", 
+            "date_created": "2016-05-05 13:33:29.225007+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Attaching debug log from nova-compute, as requested.\n\nWhile it's true that a 2001:db8 prefix used for testing wouldn't be globally available, that's kind of besides the point, I think. Nobody would use 2001:db8-prefixes in production - there's no NAT or floating IPs in IPv6, so any production deployment of IPv6 will necessarily use globally reachable prefixes and likely RAs with the A-flag set, and thus be vulnerable to unauthorised access to the compute node.\n\nI've tested briefly and I have not been successful in accessing the link-local address on the tap device from the instance or from bare-metal hosts outside of OpenStack residing on the same network. There's no response to ICMPv6 neighbour solicitations, and if I configure a static neighbour entry on the instance or the bare-metal host with the MAC address of the tap or brq device, the packets simply go unanswered. However, considering that the tap device is there only to provide forwarding at layer-2, it does strike me as wrong that there is active layer-3 configuration on it. For all I know, the fact that I cannot reach the link-local address from the instance is dependent on logic in the Linux kernel of the compute node which could change in the future. Therefore I think it would be prudent to set the disable_ipv6 sysctl on this device as well. Considering that disable_ipv6 does get set on the network node, it also seems more consistent that the same thing should happen on the compute nodes.", 
+            "date_created": "2016-05-05 16:17:22.630846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~toreanderson"
+        }, 
+        {
+            "content": "Thanks for the log, it shows the path I assumed from comment #27:\n\nDEBUG nova.virt.libvirt.vif Ensuring bridge brq30861ce7-0a plug_bridge\n\nDEBUG nova.network.linux_net Starting Bridge brq30861ce7-0a ensure_bridge\n\nDEBUG oslo_concurrency.processutils Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf brctl addbr brq30861ce7-0a execute\n\nDEBUG oslo_concurrency.processutils Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf brctl setfd brq30861ce7-0a 0 execute\n\nDEBUG oslo_concurrency.processutils Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf brctl stp brq30861ce7-0a off execute\n\nNo disable_ipv6 call.\n\nLet me send out a patch, hopefully you can give it a try.", 
+            "date_created": "2016-05-05 17:07:15.719221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Thanks for the log, it shows the path I assumed from comment #27:\n\nDEBUG nova.virt.libvirt.vif Ensuring bridge brq30861ce7-0a plug_bridge\n\nDEBUG nova.network.linux_net Starting Bridge brq30861ce7-0a ensure_bridge\n\nDEBUG oslo_concurrency.processutils Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf brctl addbr brq30861ce7-0a execute\n\nDEBUG oslo_concurrency.processutils Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf brctl setfd brq30861ce7-0a 0 execute\n\nDEBUG oslo_concurrency.processutils Running cmd (subprocess): sudo nova-rootwrap /etc/nova/rootwrap.conf brctl stp brq30861ce7-0a off execute\n\nNo disable_ipv6 call.\n\nLet me send out a patch, hopefully you can give it a try.", 
+            "date_created": "2016-05-05 17:11:00.501670+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/313070", 
+            "date_created": "2016-05-05 17:18:17.688150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/os-vif 1.2.0 release.", 
+            "date_created": "2016-08-30 17:23:32.139437+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Any progress with https://review.openstack.org/313070\nI think this still affects linuxbridge users if I'm not mistaken?", 
+            "date_created": "2016-10-06 11:52:09.473494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kalle-happonen"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/313070\nReason: This patch has been sitting unchanged for more than 12 weeks. I am therefore going to abandon it to keep the review queue sane. Please feel free to restore the change if you're still working on it.", 
+            "date_created": "2017-02-06 01:42:25.241853+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

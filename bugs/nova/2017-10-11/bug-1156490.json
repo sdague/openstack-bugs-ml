@@ -1,0 +1,51 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-05-10 00:08:30.372786+00:00", 
+    "description": "Many functions use self._compute.conductor_api  in class ComputeVirtAPI(virtapi.VirtAPI):\nso during the driver loading (or the function __init__() of the driver), the driver has the chance to call conductor_api.\nBut conductor_api is initialized later than the driver loading, there will be some issue :\n\"ComputeManager object has no attribute 'conductor_api' \"\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py\n\nclass ComputeManager(manager.SchedulerDependentManager):\n\u00a0\u00a0\u00a0\u00a0\"\"\"Manages the running instances from creation to destruction.\"\"\"\n\n\u00a0\u00a0\u00a0\u00a0RPC_API_VERSION = '2.27'\n\n\u00a0\u00a0\u00a0\u00a0def __init__(self, compute_driver=None, *args, **kwargs):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"\"\"Load configuration options and connect to the hypervisor.\"\"\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0self.virtapi = ComputeVirtAPI(self)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0self.driver = driver.load_compute_driver(self.virtapi, compute_driver)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0...\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0self.conductor_api = conductor.API()\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0...", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1156490", 
+    "owner": "https://api.launchpad.net/1.0/~russellb", 
+    "id": 1156490, 
+    "index": 1019, 
+    "created": "2013-03-18 08:04:09.696212+00:00", 
+    "title": "There is a chance to call conductor_api in the driver before the conductor_api is initialized", 
+    "comments": [
+        {
+            "content": "Many functions use self._compute.conductor_api  in class ComputeVirtAPI(virtapi.VirtAPI):\nso during the driver loading (or the function __init__() of the driver), the driver can call conductor_api.\nBut conductor_api is initialized later than the driver loading, there will be some issue : \n\"ComputeManager object has no attribute 'conductor_api' \"\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py\n\nclass ComputeManager(manager.SchedulerDependentManager):\n    \"\"\"Manages the running instances from creation to destruction.\"\"\"\n\n    RPC_API_VERSION = '2.27'\n\n    def __init__(self, compute_driver=None, *args, **kwargs):\n        \"\"\"Load configuration options and connect to the hypervisor.\"\"\"\n        self.virtapi = ComputeVirtAPI(self)\n        self.driver = driver.load_compute_driver(self.virtapi, compute_driver)\n        ...\n        self.conductor_api = conductor.API()\n        ...", 
+            "date_created": "2013-03-18 08:04:09.696212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yanglyy"
+        }, 
+        {
+            "content": "YangLei,\n\nCan you please upload some logs?", 
+            "date_created": "2013-03-18 13:02:50.782447+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "I just review the code in function __init__()  for classes ComputeManager and ComputeVirtAPI\n\nI find that\n        \"self.conductor_api = conductor.API()\"\nis later than \n        \"self.virtapi = ComputeVirtAPI(self)\n        self.driver = driver.load_compute_driver(self.virtapi, compute_driver)\"\n\nso the driver __init__() function has a chance to use conductor_api which is not initialized at this time.\n\nfunctions use conductor_api e.g. :\n\nclass ComputeVirtAPI(virtapi.VirtAPI):\n    def __init__(self, compute):\n        super(ComputeVirtAPI, self).__init__()\n        self._compute = compute\n\n    def instance_get_by_uuid(self, context, instance_uuid):\n        return self._compute.conductor_api.instance_get_by_uuid(\n            context, instance_uuid)\n\n    def instance_get_all_by_host(self, context, host):\n        return self._compute.conductor_api.instance_get_all_by_host(\n            context, host)\n\n", 
+            "date_created": "2013-03-19 09:11:37.989354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yanglyy"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/25044", 
+            "date_created": "2013-03-21 19:14:23.902929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/25044\nCommitted: http://github.com/openstack/nova/commit/9075069098e32b47bd5011e2653a23b61c18d4a3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9075069098e32b47bd5011e2653a23b61c18d4a3\nAuthor: Russell Bryant <email address hidden>\nDate:   Thu Mar 21 15:08:18 2013 -0400\n\n    Initialize compute manager before loading driver.\n    \n    The compute virt API uses the conductor API instance on the compute\n    manager.  Make sure the compute manager has been fully initialized\n    before loading the driver and passing it the virtapi instance.  This\n    prevents the possibility of the driver calling back into the compute\n    manager and using something not initialized yet, such as the conductor\n    API in the case of this bug.\n    \n    This patch also moves initialization of a member variable up above\n    super(), where the rest of the initialization is.  There doesn't appear\n    to be a reason for needing to have it at the end.\n    \n    Fix bug 1156490.\n    \n    Change-Id: I19684f24d590201d135336107425c2be2f74c83e\n", 
+            "date_created": "2013-03-22 17:08:30.429349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/25274", 
+            "date_created": "2013-03-25 14:31:43.849335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/25274\nCommitted: http://github.com/openstack/nova/commit/8cab8ed7294c776a18e560a0c89f4e1ae18c2d46\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit 8cab8ed7294c776a18e560a0c89f4e1ae18c2d46\nAuthor: Russell Bryant <email address hidden>\nDate:   Thu Mar 21 15:08:18 2013 -0400\n\n    Initialize compute manager before loading driver.\n    \n    The compute virt API uses the conductor API instance on the compute\n    manager.  Make sure the compute manager has been fully initialized\n    before loading the driver and passing it the virtapi instance.  This\n    prevents the possibility of the driver calling back into the compute\n    manager and using something not initialized yet, such as the conductor\n    API in the case of this bug.\n    \n    This patch also moves initialization of a member variable up above\n    super(), where the rest of the initialization is.  There doesn't appear\n    to be a reason for needing to have it at the end.\n    \n    Fix bug 1156490.\n    \n    Change-Id: I19684f24d590201d135336107425c2be2f74c83e\n    (cherry picked from commit 9075069098e32b47bd5011e2653a23b61c18d4a3)\n", 
+            "date_created": "2013-03-25 17:37:16.992950+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

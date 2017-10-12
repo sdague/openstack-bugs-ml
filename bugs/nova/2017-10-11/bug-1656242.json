@@ -1,0 +1,41 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-03-21 07:42:35.628997+00:00", 
+    "description": "Description:\nWe use a Mitaka environment with one control and three compute nodes (all running on openSUSE Leap 42.1), the compute nodes are xen hypervisors, our storage backend is ceph (for nova, glance and cinder).\n\nWhen we try to snapshot a running instance, it's always a cold snapshot, nova-compute reports:\n\n2017-01-12 12:55:51.919 [instance: 14b75237-7619-481f-9636-792b64d1be17] Beginning cold snapshot process\n2017-01-12 12:59:27.085 [instance: 14b75237-7619-481f-9636-792b64d1be17] Snapshot image upload complete\n\nOn rbd level the live snapshot process works as expected, without any downtime of the instance, we use it for our backup strategy for example.\n\nWith some additional log statements in /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py I found that nova always passes hard coded hypervisor-driver \"qemu\" into the function _host.has_min_version(), it always returns \"false\" so that \"live_snapshot\" is disabled. Replacing host.HV_DRIVER_QEMU with host.HV_DRIVER_XEN results in a working live snapshot:\n\n---cut here---\ncompute1:~ # diff -u /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py.mod\n--- /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py        2017-01-13 09:33:23.257525708 +0100\n+++ /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py.mod    2017-01-13 09:33:46.349105366 +0100\n@@ -1649,9 +1649,14 @@\n         #               redundant because LVM supports only cold snapshots.\n         #               It is necessary in case this situation changes in the\n         #               future.\n+        if CONF.libvirt.virt_type == 'xen':\n+            hv_driver = host.HV_DRIVER_XEN\n+        else:\n+            hv_driver = host.HV_DRIVER_QEMU\n+\n         if (self._host.has_min_version(MIN_LIBVIRT_LIVESNAPSHOT_VERSION,\n                                        MIN_QEMU_LIVESNAPSHOT_VERSION,\n-                                       host.HV_DRIVER_QEMU)\n+                                       hv_driver)\n              and source_type not in ('lvm')\n              and not CONF.ephemeral_storage_encryption.enabled\n              and not CONF.workarounds.disable_libvirt_livesnapshot):\n---cut here---\n\nnova-compute reports:\n\n2017-01-12 17:20:22.760 [instance: 14b75237-7619-481f-9636-792b64d1be17] instance snapshotting\n2017-01-12 17:20:24.049 [instance: 14b75237-7619-481f-9636-792b64d1be17] Beginning live snapshot process\n2017-01-12 17:24:38.997 [instance: 14b75237-7619-481f-9636-792b64d1be17] Snapshot image upload complete\n\nThe versions we use:\n\ncompute1:~ # nova --version\n3.3.0\n\ncompute1:~ # ceph --version\nceph version 0.94.7-84-g8e6f430 (8e6f430683e4d8293e31fd4eb6cb09be96960cfa)\n\ncompute1:~ # libvirtd --version\nlibvirtd (libvirt) 2.5.0\n\ncompute1:~ # qemu-img --version\nqemu-img version 2.7.0((SUSE Linux)), Copyright (c) 2003-2016 Fabrice Bellard and the QEMU Project developers\n\ncompute1:~ # rpm -qa | grep xen\nxen-4.7.0_12-461.1.x86_64", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1656242", 
+    "owner": "None", 
+    "id": 1656242, 
+    "index": 6620, 
+    "created": "2017-01-13 09:07:28.876849+00:00", 
+    "title": "nova live snapshot of rbd instance fails on xen hypervisor", 
+    "comments": [
+        {
+            "content": "Description:\nWe use a Mitaka environment with one control and three compute nodes (all running on openSUSE Leap 42.1), the compute nodes are xen hypervisors, our storage backend is ceph (for nova, glance and cinder).\n\nWhen we try to snapshot a running instance, it's always a cold snapshot, nova-compute reports:\n\n2017-01-12 12:55:51.919 [instance: 14b75237-7619-481f-9636-792b64d1be17] Beginning cold snapshot process\n2017-01-12 12:59:27.085 [instance: 14b75237-7619-481f-9636-792b64d1be17] Snapshot image upload complete\n\nOn rbd level the live snapshot process works as expected, without any downtime of the instance, we use it for our backup strategy for example.\n\nWith some additional log statements in /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py I found that nova always passes hard coded hypervisor-driver \"qemu\" into the function _host.has_min_version(), it always returns \"false\" so that \"live_snapshot\" is disabled. Replacing host.HV_DRIVER_QEMU with host.HV_DRIVER_XEN results in a working live snapshot:\n\n---cut here---\ncompute1:~ # diff -u /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py.mod\n--- /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py        2017-01-13 09:33:23.257525708 +0100\n+++ /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py.mod    2017-01-13 09:33:46.349105366 +0100\n@@ -1649,9 +1649,14 @@\n         #               redundant because LVM supports only cold snapshots.\n         #               It is necessary in case this situation changes in the\n         #               future.\n+        if CONF.libvirt.virt_type == 'xen':\n+            hv_driver = host.HV_DRIVER_XEN\n+        else:\n+            hv_driver = host.HV_DRIVER_QEMU\n+\n         if (self._host.has_min_version(MIN_LIBVIRT_LIVESNAPSHOT_VERSION,\n                                        MIN_QEMU_LIVESNAPSHOT_VERSION,\n-                                       host.HV_DRIVER_QEMU)\n+                                       hv_driver)\n              and source_type not in ('lvm')\n              and not CONF.ephemeral_storage_encryption.enabled\n              and not CONF.workarounds.disable_libvirt_livesnapshot):\n---cut here---\n\nnova-compute reports:\n\n2017-01-12 17:20:22.760 [instance: 14b75237-7619-481f-9636-792b64d1be17] instance snapshotting\n2017-01-12 17:20:24.049 [instance: 14b75237-7619-481f-9636-792b64d1be17] Beginning live snapshot process\n2017-01-12 17:24:38.997 [instance: 14b75237-7619-481f-9636-792b64d1be17] Snapshot image upload complete\n\nThe versions we use:\n\ncompute1:~ # nova --version\n3.3.0\n\ncompute1:~ # ceph --version\nceph version 0.94.7-84-g8e6f430 (8e6f430683e4d8293e31fd4eb6cb09be96960cfa)\n\ncompute1:~ # libvirtd --version\nlibvirtd (libvirt) 2.5.0\n\ncompute1:~ # qemu-img --version\nqemu-img version 2.7.0((SUSE Linux)), Copyright (c) 2003-2016 Fabrice Bellard and the QEMU Project developers\n\ncompute1:~ # rpm -qa | grep xen\nxen-4.7.0_12-461.1.x86_64", 
+            "date_created": "2017-01-13 09:07:28.876849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "What is the value of the \"virt_type\" config option in nova.conf on the compute? That defaults to 'kvm' for the libvirt driver, but if you're using xen with the libvirt driver then virt_type=xen in nova.conf in the [libvirt] group.", 
+            "date_created": "2017-01-18 23:06:08.310907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Yes, that's what we use:\n\ncompute1:~ # grep virt_type /etc/nova/nova.conf\nvirt_type = xen\n\nI just use the virt_type value as a workaround, there's probably a smarter way to enable live snapshots with xen, but this seems to work for me at the moment. ", 
+            "date_created": "2017-01-19 08:16:36.792248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-03-21 04:17:28.004242+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "There's still no improvement after upgrading to Leap 42.2. I still have to use my little patch to enable live snapshots on rbd based images.", 
+            "date_created": "2017-03-21 07:42:33.940377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eblock"
+        }
+    ]
+}

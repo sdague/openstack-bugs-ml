@@ -1,0 +1,104 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-02-11 01:22:59.112022+00:00", 
+    "description": "I \"accidentally\" upgraded from Mitaka to Newton a few days ago and I'm still cleaning up \"the mess\" that introduced (to used to Debian GNU/Linux packages takes care of all that for me).\n\nAnyway, I'm now getting\n\n    ValueError: Field `instance_uuid' cannot be None\n\nin the nova-api log.\n\nI've been looking at http://docs.openstack.org/releasenotes/nova/newton.html#upgrade-notes but I'm not sure what to do.\n\nI've run\n\n    nova-manage db online_data_migrations\n    => ERROR nova.db.sqlalchemy.api [req-c08dbccb-d841-4e38-a895-26768f24222b - - - - -] Data migrations for PciDevice are not safe, likely because not all services that access the DB directly are updated to the latest version\n\n    nova-manage db sync\n    => ERROR: could not access cell mapping database - has api db been created?\n\n    nova-manage api_db sync\n    => Seems to run ok\n\n    nova-manage cell_v2 discover_hosts\n    => error: 'module' object has no attribute 'session'\n\n    nova-manage cell_v2 map_cell0\n    => Seemed like it ran ok\n\n    nova-manage cell_v2 simple_cell_setup --transport-url rabbit://blabla/\n    => Seemed like it ran ok\n\n    nova-manage db null_instance_uuid_scan\n    => There were no records found where instance_uuid was NULL.\n\nOther than that, I'm not sure what the problem is.", 
+    "tags": [
+        "in-stable-newton", 
+        "upgrades"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1633734", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1633734, 
+    "index": 1999, 
+    "created": "2016-10-15 14:24:40.824733+00:00", 
+    "title": "ValueError: Field `instance_uuid' cannot be None", 
+    "comments": [
+        {
+            "content": "I \"accidentally\" upgraded from Mitaka to Newton a few days ago and I'm still cleaning up \"the mess\" that introduced (to used to Debian GNU/Linux packages takes care of all that for me).\n\nAnyway, I'm now getting\n\n    ValueError: Field `instance_uuid' cannot be None\n\nin the nova-api log.\n\nI've been looking at http://docs.openstack.org/releasenotes/nova/newton.html#upgrade-notes but I'm not sure what to do.\n\nI've run\n\n    nova-manage db online_data_migrations\n    => ERROR nova.db.sqlalchemy.api [req-c08dbccb-d841-4e38-a895-26768f24222b - - - - -] Data migrations for PciDevice are not safe, likely because not all services that access the DB directly are updated to the latest version\n\n    nova-manage db sync\n    => ERROR: could not access cell mapping database - has api db been created?\n\n    nova-manage api_db sync\n    => Seems to run ok\n\n    nova-manage cell_v2 discover_hosts\n    => error: 'module' object has no attribute 'session'\n\n    nova-manage cell_v2 map_cell0\n    => Seemed like it ran ok\n\n    nova-manage cell_v2 simple_cell_setup --transport-url rabbit://blabla/\n    => Seemed like it ran ok\n\n    nova-manage db null_instance_uuid_scan\n    => There were no records found where instance_uuid was NULL.\n\nOther than that, I'm not sure what the problem is.", 
+            "date_created": "2016-10-15 14:24:40.824733+00:00", 
+            "author": "https://api.launchpad.net/1.0/~turbo-bayour"
+        }, 
+        {
+            "content": "Looking through the code, it seems it's not the database that's at fault, but the fact that build_request.py:_from_db_object() is called with a 'None' value for \"db_req['instance_uuid']\", which means that the call by cls._get_all_from_db() in build_request.py:get_all() returns a bogus value somehow/somewhere.\n\nSince I'm admin, I'm assuming that the line in build_request.py:_get_all_from_db()\n\n  query = context.session.query(api_models.BuildRequest)\n\nis the problem.. ?", 
+            "date_created": "2016-10-15 17:02:42.197060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~turbo-bayour"
+        }, 
+        {
+            "content": "Btw, this is Nova v14.0.0.", 
+            "date_created": "2016-10-15 17:53:50.904976+00:00", 
+            "author": "https://api.launchpad.net/1.0/~turbo-bayour"
+        }, 
+        {
+            "content": "I hit this, and upon investigation I found that it appears to be stale records in nova_api_db.build_requests.\n\nIn my case, I think these are lost \"scheduling\" requests?\n\nMariaDB [nova_api]> select * from build_requests;\n+---------------------+------------+----+-----------------+----------------------------------+----------------------------------+--------------------------+-------------------+----------+----------+------------+--------------------------------------+--------------+--------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------+--------------+----------+-----------+---------------+----------+-----------------------+\n| created_at          | updated_at | id | request_spec_id | project_id                       | user_id                          | display_name             | instance_metadata | progress | vm_state | task_state | image_ref                            | access_ip_v4 | access_ip_v6 | info_cache                                                                                                                                                                                                                                                              | security_groups                                                                                                                               | config_drive | key_name | locked_by | instance_uuid | instance | block_device_mappings |\n+---------------------+------------+----+-----------------+----------------------------------+----------------------------------+--------------------------+-------------------+----------+----------+------------+--------------------------------------+--------------+--------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------+--------------+----------+-----------+---------------+----------+-----------------------+\n| 2016-08-10 14:54:33 | NULL       | 89 |             281 | a392bb9328fc43f4ae44fe14db3520fd | 0ea46d4298a5447f8e0b552c810b10bd | bp2_prod_1               | {}                |        0 | building | scheduling | b2a5a52c-4d39-459c-9001-4e49abfba593 | NULL         | NULL         | {\"nova_object.version\": \"1.5\", \"nova_object.changes\": [\"instance_uuid\", \"network_info\"], \"nova_object.name\": \"InstanceInfoCache\", \"nova_object.data\": {\"instance_uuid\": \"987e1a2f-c886-4f18-b798-60ce785e1056\", \"network_info\": \"[]\"}, \"nova_object.namespace\": \"nova\"} | {\"nova_object.version\": \"1.0\", \"nova_object.name\": \"SecurityGroupList\", \"nova_object.data\": {\"objects\": []}, \"nova_object.namespace\": \"nova\"} |            0 | NULL     | NULL      | NULL          | NULL     | NULL                  |\n| 2016-10-15 03:51:14 | NULL       | 90 |             689 | 8fca764a642842aeacbdff79a76e50c5 | 9e50cfdc5a524165ae2938acfd72f0a0 | bamboo-6500-repo-manager | {}                |        0 | building | scheduling |                                      | NULL         | NULL         | {\"nova_object.version\": \"1.5\", \"nova_object.changes\": [\"instance_uuid\", \"network_info\"], \"nova_object.name\": \"InstanceInfoCache\", \"nova_object.data\": {\"instance_uuid\": \"ea26bc22-1330-4752-8252-bf729ca9b286\", \"network_info\": \"[]\"}, \"nova_object.namespace\": \"nova\"} | {\"nova_object.version\": \"1.0\", \"nova_object.name\": \"SecurityGroupList\", \"nova_object.data\": {\"objects\": []}, \"nova_object.namespace\": \"nova\"} |            0 | NULL     | NULL      | NULL          | NULL     | NULL                  |\n+---------------------+------------+----+-----------------+----------------------------------+----------------------------------+--------------------------+-------------------+----------+----------+------------+--------------------------------------+--------------+--------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------+--------------+----------+-----------+---------------+----------+-----------------------+\n2 rows in set (0.00 sec)\n\nSince they looked old, and unnecessary, I went ahead and deleted them from the table. This cleared the issue and everything seems good now?\n", 
+            "date_created": "2016-10-17 05:51:48.233473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-mielke"
+        }, 
+        {
+            "content": "Yeah, I have a huge amounts (123) of those as well.\n\n*************************** 1. row ***************************\n           created_at: 2016-08-02 20:26:20\n           updated_at: NULL\n                   id: 265\n      request_spec_id: 415\n           project_id: 04ee0e71babe4fd7aa16c3f64a8fca89\n              user_id: 4b0e25c70d2b4ad6ba4c50250f2f0b0b\n         display_name: admin-auth\n    instance_metadata: {<redacted>}\n             progress: 0\n             vm_state: building\n           task_state: scheduling\n            image_ref: \n         access_ip_v4: NULL\n         access_ip_v6: NULL\n           info_cache: {\"nova_object.version\": \"1.5\", \"nova_object.changes\": [\"instance_uuid\", \"network_info\"], \"nova_object.name\": \"InstanceInfoCache\", \"nova_object.data\": {\"instan\n      security_groups: {\"nova_object.version\": \"1.0\", \"nova_object.name\": \"SecurityGroupList\", \"nova_object.data\": {\"objects\": []}, \"nova_object.namespace\": \"nova\"}\n         config_drive: 1\n             key_name: Turbo_Fredriksson\n            locked_by: NULL\n        instance_uuid: NULL\n             instance: NULL\nblock_device_mappings: NULL", 
+            "date_created": "2016-10-17 09:30:03.940803+00:00", 
+            "author": "https://api.launchpad.net/1.0/~turbo-bayour"
+        }, 
+        {
+            "content": "@MarkMiele Did you just clear the table?", 
+            "date_created": "2016-10-17 10:02:10.292577+00:00", 
+            "author": "https://api.launchpad.net/1.0/~turbo-bayour"
+        }, 
+        {
+            "content": "In looking at this with Melanie it appears that there is a code path in Mitaka that would allow this to happen. And it then becomes an issue in Newton because there is code that uses the build_requests table for instance list/show requests.\n\nI'm not sure it's worth trying to address the cause of this at this point since we'll want some proactive protection against these bad entries in Newton for deployments that already have these faulty entries. But something like https://review.openstack.org/#/c/357396/8 is what would address it, the cleanup in the 'except Exception' block.\n\nA good fix would be to have an online migration that looks for and cleans these up during upgrade, or to have Nova log these when found and then ignore them in the API response. They correspond to failed instance boots so it's okay to clean up. And there will most likely be an instance record that corresponds to the build request, and if not it's because the instance record could not be created in the db, so it's safe to clean up either way.", 
+            "date_created": "2016-10-17 16:09:29.160870+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "I'd be OK with adding a newton-only online database migration, which gets run when you upgrade to newton anyway, to sniff out build requests without an instance_uuid set and delete them.", 
+            "date_created": "2016-12-08 16:15:10.526194+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "If I'm reading this correctly too, the problem is the build requests aren't cleaned up from failed schedules in mitaka, and in mitaka the BuildRequest object didn't have an instance_uuid field (in the object or in the data model). That was added in newton here:\n\nhttps://github.com/openstack/nova/commit/d789f6eef9052a0f8ee1987e7e3ab895581f264f\n\nSo yeah if we get to newton with any build requests which don't have instance_uuid set they are going to fail to load, or be usable. So we should have a data migration in newton that deletes any build requests that don't have an instance_uuid set as those are an indication of failed schedules from mitaka and won't work with the newton code.", 
+            "date_created": "2016-12-08 16:25:12.443104+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "BTW, do you have a stacktrace of where the actual \"ValueError: Field `instance_uuid' cannot be None\" error occurs in the compute API code in Newton?", 
+            "date_created": "2016-12-08 16:40:16.769659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Ignore comment 9, I see it pointed out already when loading up the build request with the instance_uuid=None. I'm working on a test to recreate.", 
+            "date_created": "2016-12-08 17:08:22.658387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/newton\nReview: https://review.openstack.org/408725", 
+            "date_created": "2016-12-08 17:14:03.538921+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hmm, I guess people could skip upgrading from mitaka to ocata, and people do try to skip releases, so we should probably fix this in master (ocata) too, and then backport to newton.", 
+            "date_created": "2016-12-08 17:14:12.805857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/408727", 
+            "date_created": "2016-12-08 17:15:54.621966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/newton\nReview: https://review.openstack.org/408725\nReason: Abandon this for now, needs to be worked on master first for anyone upgrading from mitaka to ocata directly, which people try to do.", 
+            "date_created": "2016-12-08 17:16:14.409691+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/408727\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ab05b90295c64ff7e6925591dd87a467ef85c00f\nSubmitter: Jenkins\nBranch:    master\n\ncommit ab05b90295c64ff7e6925591dd87a467ef85c00f\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Dec 8 12:09:59 2016 -0500\n\n    Provide an online data migration to cleanup orphaned build requests\n    \n    This exhibits the failure reported in bug 1633734 when upgrading\n    from mitaka to newton with some bad build request records that\n    weren't cleaned up, and were created before API DB migration\n    013_build_request_extended_attrs when we didn't have the\n    instance_uuid or instance records in the database.\n    \n    After 013_build_request_extended_attrs and the object change to\n    BuildRequest in a5d3b57c3d4fb785c5f5eebf2559e495595a6b34 if we try\n    loading up a 'dirty' build request DB record without the\n    instance_uuid it fails with a ValueError, as shown in the functional\n    test in this change.\n    \n    This also provides an online data migration (which will be backported\n    to Newton for upgrades from Mitaka) that will query the API DB for\n    build requests where instance_uuid=NULL and delete them.\n    \n    Change-Id: I8a05ee01ec7f6a6f88b896f78414fb5487e0071e\n    Related-Bug: #1633734\n", 
+            "date_created": "2017-01-04 00:17:16.453901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/408725\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=608105a7c508ed48055dca6e2d327c944ecb18ea\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 608105a7c508ed48055dca6e2d327c944ecb18ea\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Dec 8 12:09:59 2016 -0500\n\n    Provide an online data migration to cleanup orphaned build requests\n    \n    This exhibits the failure reported in bug 1633734 when upgrading\n    from mitaka to newton with some bad build request records that\n    weren't cleaned up, and were created before API DB migration\n    013_build_request_extended_attrs when we didn't have the\n    instance_uuid or instance records in the database.\n    \n    After 013_build_request_extended_attrs and the object change to\n    BuildRequest in a5d3b57c3d4fb785c5f5eebf2559e495595a6b34 if we try\n    loading up a 'dirty' build request DB record without the\n    instance_uuid it fails with a ValueError, as shown in the functional\n    test in this change.\n    \n    This also provides an online data migration (which will be backported\n    to Newton for upgrades from Mitaka) that will query the API DB for\n    build requests where instance_uuid=NULL and delete them.\n    \n    Change-Id: I8a05ee01ec7f6a6f88b896f78414fb5487e0071e\n    Related-Bug: #1633734\n    (cherry picked from commit ab05b90295c64ff7e6925591dd87a467ef85c00f)\n", 
+            "date_created": "2017-02-11 01:22:57.791205+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

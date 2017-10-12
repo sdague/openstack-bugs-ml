@@ -1,0 +1,116 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2016-05-17 12:48:49.799156+00:00", 
+    "description": "Currently Nova will only hit any port quota limit in Quantum in the compute manager - as that's where the code to create ports exists - resulting in the instance going to an error state (after its bounced through three hosts).  \n\nSeems to me that for Quantum the ports should be created in the API call (so that the error can be sent back to the user), and the port then passed down to the compute manager.\n\n(Since a user can pass a port into the server create call I'm assuming this would be OK)", 
+    "tags": [], 
+    "importance": "Wishlist", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1172808", 
+    "owner": "None", 
+    "id": 1172808, 
+    "index": 1352, 
+    "created": "2013-04-25 17:31:05.626134+00:00", 
+    "title": "Nova fails on Quantum port quota too late", 
+    "comments": [
+        {
+            "content": "Currently Nova will only hit any port quota limit in Quantum in the compute manager - as that's where the code to create ports exists - resulting in the instance going to an error state (after its bounced through three hosts).  \n\nSeems to me that for Quantum the ports should be created in the API call (so that the error can be sent back to the user), and the port then passed down to the compute manager.\n\n(Since a user can pass a port into the server create call I'm assuming this would be OK)", 
+            "date_created": "2013-04-25 17:31:05.626134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "We'll continue to track this bug in Quantum to discuss the changes, but ultimately we'll have to update Nova.", 
+            "date_created": "2013-04-26 04:23:34.198581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmcclain"
+        }, 
+        {
+            "content": "Phil, what API call are you referring too? The Compute API call where the other quota checks take place? I would avoid creating the port because it may be unnecessary (what if there are no hosts available for scheduling? Then we need to clear the port). Perhaps it's more effective to query Quantum for quota levels and reserve the resource.\n\nNot sure how Nova handles quota limits that are under the responsibility of other projects; also currently Nova handles this Quota limits:\n\n+-----------------------------+-------+\n| Property                    | Value |\n+-----------------------------+-------+\n| metadata_items              | 128   |\n| injected_file_content_bytes | 10240 |\n| ram                         | 51200 |\n| floating_ips                | 10    |\n| key_pairs                   | 100   |\n| instances                   | 10    |\n| security_group_rules        | 20    |\n| injected_files              | 5     |\n| cores                       | 20    |\n| fixed_ips                   | -1    |\n| injected_file_path_bytes    | 255   |\n| security_groups             | 10    |\n+-----------------------------+-------+\n\nMay we need to add ports too?", 
+            "date_created": "2013-04-26 18:32:00.339942+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Yep, by \"API Call\" I mean that the port quota needs to be checked and ports created or reserved before a response is sent back to the user (as with all Nova quotas). \n\nI take you point about what happens if the request can't be scheduled (or fails) - but we already have to clear up resources within Nova so I don't see why we can't delete the quantum ports in the same way.      \n\nAt the moment i don;t think there is any case where quotas are checked between projects - introducing a reservation mechanism in the Quantum API for nova to use seems a bit heavy to me. ", 
+            "date_created": "2013-04-26 18:54:21.923737+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "To your 2nd point: you are right, but I tend to follow the principle of creating something right before I need it..I do the same with variable initialization ;) Creating a port just for the sake of checking that we hit the quota limit sounds wrong to me. I grant you that there should be a number of quota checks at the very beginning of the spawning process, and port quota is definitely one of them.\n\nTo your 3rd point: it looks like that there is no sync of quotas between projects, and I am not proposing anything heavy duty. However Nova Quotas already has a reservation mechanism; maybe a first step in this direction may be to pull Quotas from other projects and cache them in Nova. The reservation may happen on the cached copy (that could be refreshed on request or periodically); not ideal, but it's a start.", 
+            "date_created": "2013-04-26 21:58:02.443553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Hi Armando,\n\nI don't see it as creating a port just for the sake of checking the quota - I see it as creating the port earlier at the point where you can still meaningfully return an error to the user.   The port will then be kept and passed down with the request just as if the user had created it and passed it into Nova.\n\nWhether Nova holds a port from quantum through the create requests or a reservation on a port from quantum still comes down to Nova having to hold and manage an object from Quantum for a transaction that spans multiple Nova nodes, so I don't really see the need to introduce a reservation object.   Why not just hold the port ?\n\n\nI think centralizing quota management into Nova would be moving the wrong way - there is probably a need for a common external quota service that can be shared by all projects and that would be better that adding more integration into Nova itself.   There was a discussion about this in Portland, but the concerns were how to make it sufficiently robust and scale-able.   I think that's maybe a whole different topic (which also includes Domain level quotas, etc) than just addressing this issue", 
+            "date_created": "2013-04-26 23:00:12.793389+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Hi Phil,\n\nSorry, maybe I didn't explain myself properly. What I mean is that I feel that is wrong to create a port early in the process just to avoid a potential error down the line. It needlessly leak implementation details all the way to the API. Creating just a port is something that makes sense in Quantum, but with nova-network still lying around, moving the operation higher up in the stack may cause some serious refactoring (if I understand it correctly, the operation takes place when allocating the network). That said, I 100% agree with you that potential errors conditions should be checked before hopping on the compute node. That's where Quota validation comes in: quota levels should be checked at the very beginning, and that's when you can respond meaningfully to users who do not meet their requirements. The problem you have is a manifestation of the fact that port quota is not checked at all, unlike other quotas like core, ram etc. To me, addressing the above-mentioned issue by creating the port early enough does not feel like the right solution, but that's my personal opinion. \n\nI wasn't proposing to centralize quota management into Nova, and by all means I was not advocating for (yet another) -aaS project. Adding another potential bootleneck/dependency for all the other projects does not sound very wise to me, and having Nova pulling quotas from other projects (since it already initiates the communication with them) seemed like a reasonable first approach than not checking quota levels at all, and thus risking to run into the very issue you ran into.\n\nThanks,\nArmando", 
+            "date_created": "2013-04-29 22:17:15.134024+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Hi Armando,\n\nI don't agree with your  reasoning that its creating it early just to avoid a latter error - its creating it at the point where we can still report any errors to the user.   That's just good practice in validating as much as you can as early as possible.\n\nI don't consider it leaky as the user can see the ports that are allocated to them in the Quantum API  - much more transparent that the internal reservations in Nova.\n\nThere should be no need for a major refactor as a user can already pass a port into the API - and the fact that this is only meaningful for Quantum is already handled.\n\nQuota validation as early as possible is only meaningful if its backed up by reserving the resource in some way - for quantum as it stands that means allocating the port, for nova resources it means holding a reservation.   Without creating a resource reservation mechanism for Quantum (either in the Quantum API, or as an external service) then I still don't understand  how you're going to get around this.\n\nRegards,\nPhil\n ", 
+            "date_created": "2013-05-01 16:23:13.589970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "If we are talking about the quick fix, then I agree with you: creating the port will work and the user will avoid to have a VM in error because the limit on allowed ports has been reached. If we are talking about the right fix, then we must agree to disagree. \n\nIMHO, Nova API calls take a lot longer that they should, and that's also down to the fact that they make quite a number of remote calls to external services; sure...let's add another one, that'll speed them up.", 
+            "date_created": "2013-05-02 16:40:54.345682+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "And calling out to Quantum to just check & reserve the quota will be quicker that creating the port ?   Remember that the port can't be bound to a physical host at this stage (just like any port passed in by the user) - so I don't see why it would be a heavy processing load ?\n\nIts still not clear to me what you're proposing as an alternative that doesn't involve creating a central quota reservation service that all services can use", 
+            "date_created": "2013-05-02 17:01:03.450565+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Hi, \n\nSorry to jump into this late. \n\nCurrently when you launch an instance nova-api queries quantum to see if the network uuid is in quantum. In my opinon, I think it makes sense for nova-api to do a port-create() rather than a get-networks()) to fail early rather than later as Phil brings up. I also agree that we don't want to make nova-api the bottle neck here. That said, it's doing a get_networks() anyways that we could change to a create_port() which would solve the issue. \n\nMy 2 cents. \n", 
+            "date_created": "2013-05-14 22:47:54.841449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "In nova the Quota checks are done here - https://github.com/openstack/nova/blob/master/nova/compute/api.py#L528.\nWhy not do the Quantum checks for the ports here too?\n\nPersonally I think that the port allocation idea raised by Aaron is a nice idea. \nThanks\nGary", 
+            "date_created": "2013-05-15 05:42:22.496075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "The idea was acutally raised by Phil (but i'm happy to take credit.. : )  ). ", 
+            "date_created": "2013-05-15 17:39:03.559433+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "I think we should create the ports up front.  Failing fast is more beneficial to the user.", 
+            "date_created": "2013-05-15 18:48:13.385081+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmcclain"
+        }, 
+        {
+            "content": "This also allows quantum to make decisions if a port is part of a default security group or not. Currently it's just hardcoded to return default if no security group is passed in. ", 
+            "date_created": "2013-05-15 18:51:44.867405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Another thing that can fail the same way is Quantum running out of IP addresses on the network - that also only get's picked up in the  compute manager at the moment.\n\nSo when we create the port up front we should also allocate the IP address.  ", 
+            "date_created": "2013-06-13 15:08:38.174503+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49455\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1d9a0a620d78ab54f7a3da61b803a97cdbdd01f2\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1d9a0a620d78ab54f7a3da61b803a97cdbdd01f2\nAuthor: Phil Day <email address hidden>\nDate:   Wed Oct 2 23:14:35 2013 +0000\n\n    Check Neutron port quota during validate_networks in API\n    \n    Unless ports are passed into Nova it will create ports on the\n    requested networks as part of the network allocation in\n    the compute manager. However if the user exceeds their\n    port quota the instance will end up in an Error state, having\n    first been re-scheduled a number of times.\n    \n    It would be much better if the quota failure was detected as\n    part of the network validation in the API server, so that an\n    error can be reported to the user and the creation failed.\n    \n    A full fix would include reserving or creating the ports at\n    this stage, but there is no reservation mechanism in the\n    Neutron API, and port creation depends in some cases\n    on mac addresses only available on the compute manager.\n    \n    Instead this change just validates the quota and adjusts the\n    max_count to be consistent with that quota, which doesn't\n    guarantee that the create will work, but does catch the\n    majority of cases.\n    \n    Refs bug: 1172808\n    \n    Change-Id: Iaaee059a6746fad68049712f94b2f8cfea6ab8dc\n", 
+            "date_created": "2013-12-21 03:01:51.880050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Sync is wrong?\nI don't have a permission.\nAssigned to -> Phil Day", 
+            "date_created": "2014-07-14 07:27:34.639016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~h-tanizawa"
+        }, 
+        {
+            "content": "A patch that does a partial revert of  https://review.openstack.org/49455 from comment #16 and is under discussion at the time of writing so I am linking it here.\n\nhttps://review.openstack.org/#/c/175742/\n\nBasically - just checking quotas and not reserving them is a bit of a fool's errand. We should eithere have a reserve-rollback api in Neutron, or as has been suggested above - create the port quickly and then update it with additional information once we have it (when the request reaches the compute host)", 
+            "date_created": "2015-05-05 11:34:39.160066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "This wishlist bug has been open a year without any activity. I'm going to move it to \"Opinion / Wishlist\", which is an easily-obtainable queue of older requests that have come on. This bug can be reopened (set back to \"New\") if someone decides to work on this.\n\nFWIW, I guess this is also part of the bp \"get-me-a-network\": http://specs.openstack.org/openstack/neutron-specs/specs/liberty/get-me-a-network.html", 
+            "date_created": "2016-05-17 12:48:48.678571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

@@ -1,0 +1,58 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-07-16 11:55:41.996604+00:00", 
+    "description": "This is a weird issue that does not happen in our Juno setup, but happens in our Kilo setup. The configuration between the two setups is pretty much the same, with only kilo-specific changes done (namely, moving lines around to new sections).\n\nHere's how to reproduce:\n1.Provision an instance.\n2.Make a snapshot of this instance.\n3.Try to provision an instance with that snapshot.\n\nNova-compute will complain that it can't find the disk and the instance will fall in error.\n\nHere's what the default behavior is supposed to be from my observations:\n-When the image is uploaded into ceph, a snapshot is created automatically inside ceph (this is NOT an instance snapshot per say, but a ceph internal snapshot).\n-When an instance is booted from image in nova, this snapshot gets a clone in the nova ceph pool. Nova then uses that clone as the instance's disk. This is called copy-on-write cloning.\n\nHere's when things get funky: -When an instance is booted from a snapshot, the copy-on-write cloning does not happen. Nova looks for the disk and, of course, fails to find it in its pool, thus failing to provision the instance . There's no trace anywhere of the copy-on-write clone failing (In part because ceph doesn't log client commands, from what I see).\n\nThe compute logs I got are in this pastebin : http://pastebin.com/ADHTEnhn\n\nThere's a few things I notice here that I'd like to point out :\n\n-Nova create an ephemeral drive file, then proceeds to delete it before using rbd_utils instead. While strange, this may be the intended but somewhat dirty behavior, as nova consider it an ephemeral instance, before realizing that it's actually a ceph instance and doesn't need its ephemeral disk. Or maybe these conjectures are completely wrong and this is part of the issue.\n\n-Nova \"creates the image\" (I'm guessing it's the copy-on-write cloning happening here). What exactly happens here isn't very clear, but then it complains that it can't find the clone in its pool to use as block device.\n\nThis issue does not happen on ephemeral storage.", 
+    "tags": [
+        "ceph"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1467570", 
+    "owner": "None", 
+    "id": 1467570, 
+    "index": 5615, 
+    "created": "2015-06-22 15:25:46.345635+00:00", 
+    "title": "Nova can't provision instance from snapshot with a ceph backend", 
+    "comments": [
+        {
+            "content": "This is a weird issue that does not happen in our Juno setup, but happens in our Kilo setup. The configuration between the two setups is pretty much the same, with only kilo-specific changes done (namely, moving lines around to new sections).\n\nHere's how to reproduce: \n1.Provision an instance.\n2.Make a snapshot of this instance.\n3.Try to provision an instance with that snapshot.\n\nNova-compute will complain that it can't find the disk and the instance will fall in error.\n\nHere's what the default behavior is supposed to be from my observations: \n-When the image is uploaded into ceph, a snapshot is created automatically inside ceph (this is NOT an instance snapshot per say, but a ceph internal snapshot). \n-When an instance is booted from image in nova, this snapshot gets a clone in the nova ceph pool. Nova then uses that clone as the instance's disk. This is called copy-on-write cloning.\n\nHere's when things get funky: -When an instance is booted from a snapshot, the copy-on-write cloning does not happen. Nova looks for the disk and, of course, fails to find it in its pool, thus failing to provision the instance . There's no trace anywhere of the copy-on-write clone failing (In part because ceph doesn't log client commands, from what I see).\n\nThe compute logs I got are in this pastebin : http://pastebin.com/ADHTEnhn\n\nThere's a few things I notice here that I'd like to point out :\n\n-Nova create an ephemeral drive file, then proceeds to delete it before using rbd_utils instead. While strange, this may be the intended but somewhat dirty behavior, as nova consider it an ephemeral instance, before realizing that it's actually a ceph instance and doesn't need its ephemeral disk. Or maybe these conjectures are completely wrong and this is part of the issue.\n\n-Nova \"creates the image\" (I'm guessing it's the copy-on-write cloning happening here). What exactly happens here isn't very clear, but then it complains that it can't find the clone in its pool to use as block device.", 
+            "date_created": "2015-06-22 15:25:46.345635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jpmethot"
+        }, 
+        {
+            "content": "@Chung Chih, Hung (lyanchih):\n\nSince you are set as assignee, I switch the status to \"In Progress\".", 
+            "date_created": "2015-06-24 15:24:47.875116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Out of curiosity:  Anyone running Kilo and Ceph encounter the same issue?", 
+            "date_created": "2015-06-25 15:23:47.505302+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alevesque"
+        }, 
+        {
+            "content": "This bug was affect by horizon and it was not only occur in ceph backend. Because horizon will send volume source type instead of snapshot source type to nova. Therefore nova api will try to fetch volume tough volume id instead of snapshot. Nova create server request's data was incorrect at following link and line.\nhttps://github.com/openstack/horizon/blob/master/openstack_dashboard/dashboards/project/instances/workflows/create_instance.py#L874", 
+            "date_created": "2015-07-08 06:40:50.445999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyanchih"
+        }, 
+        {
+            "content": "Our issue was happening both in horizon and in command line. We fixed it at least temporarily on our setup as it was caused by some images not having ramdisk_id in their metadata because of glance v1 and glance v2 conflicts. See https://bugs.launchpad.net/glance/+bug/1447215 .\n\nIf you have an issue with Horizon, then it's possibly a completely different bug than what I reported.", 
+            "date_created": "2015-07-08 12:52:24.858906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jpmethot"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nhttps://review.openstack.org/#/c/199457/", 
+            "date_created": "2015-07-08 16:07:10.415842+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyanchih"
+        }, 
+        {
+            "content": "I originally can't reproduce this bug. Then I found provision instance failed by boot from volume snapshot.\nAnd it is only occur at non-ephemeral storage.\nI thought maybe this is your scenario.\nIf you said this bug is not same bug, I will set to invalid and open new bug at horizon.\nBut still hope you can offer more detail about your bug.", 
+            "date_created": "2015-07-14 09:30:22.487956+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyanchih"
+        }, 
+        {
+            "content": "Your bug and the bug I had are indeed different. My bug was because of glance-api v1 and v2 incompatibility. When using ceph as a backend storage, nova is forced to use glancev2 as the image provider api. Problem is, if you end up with images uploaded or modified through glancev1, they become unusable with glancev2 as an image provider, because of null database fields which are optional for glancev1, but mandatory for glancev2.\n\nAs you may know, nova glance and ceph have this issue going on where instance snapshots are downloaded from ceph and reuploaded into it. I believe what's happening is that they are uploaded through glancev1, thus causing the incompatibility issue. I can also tell you that modifying a json file to accept null values for database fields in glancev2 fixed the original bug for us.\n\nSo yes, this bug I reported should be marked as invalid since it ended up being already reported in https://bugs.launchpad.net/glance/+bug/1447215.", 
+            "date_created": "2015-07-14 16:24:10.622987+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jpmethot"
+        }
+    ]
+}

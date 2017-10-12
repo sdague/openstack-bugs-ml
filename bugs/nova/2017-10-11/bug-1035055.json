@@ -1,0 +1,73 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:40:28.960472+00:00", 
+    "description": "If I upload a user_data file of a certain size (the one I had was ~50k) with 'nova boot', then the following happens:\n\n- it is converted to base64\n- the base64 is truncated to 65535 bytes and inserted into the user_data field in the database (I didn't check where this happens but it's clear that 65535 is not the length of the base64-encoded file, see below).\n\nWhen I then attempt to fetch it from within the newly created VM, I get a 500 internal server error from the metadata server.  The log tells me about an incorrectly formed b64 string:\n\n2012-08-09 17:18:53 ERROR nova.api.metadata.handler [-] Failed to get metadata for ip: 10.0.0.13\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler Traceback (most recent call last):\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler   File \"/usr/lib/python2.7/dist-packages/nova/api/metadata/handler.py\", line 244, in __call__\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler     meta_data = self.get_metadata(remote_address)\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler   File \"/usr/lib/python2.7/dist-packages/nova/api/metadata/handler.py\", line 165, in get_metadata\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler     'user-data': base64.b64decode(instance_ref['user_data']),\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler   File \"/usr/lib/python2.7/base64.py\", line 76, in b64decode\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler     raise TypeError(msg)\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler TypeError: Incorrect padding\n\nThe cryptic error is because b64 strings should be a multiple of 4 bytes, which 65535 is not.\n\nI would suggest the following three things could be fixed:\n\n1. data of an inappropriate size should be rejected and the attempted boot failed; it should never be silently truncated\n2. data should not be measured in its base64 form in any case\n3. there's actually no point in storing the data encoded in the database - it's simply wasteful.  It can be decoded on entry rather than exit and stored in a blob column rather than a text one.", 
+    "tags": [
+        "ops"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1035055", 
+    "owner": "https://api.launchpad.net/1.0/~mikal", 
+    "id": 1035055, 
+    "index": 3002, 
+    "created": "2012-08-09 19:37:51.698560+00:00", 
+    "title": "user_data is silently truncated", 
+    "comments": [
+        {
+            "content": "If I upload a user_data file of a certain size (the one I had was ~50k) with 'nova boot', then the following happens:\n\n- it is converted to base64\n- the base64 is truncated to 65535 bytes and inserted into the user_data field in the database (I didn't check where this happens but it's clear that 65535 is not the length of the base64-encoded file, see below).\n\nWhen I then attempt to fetch it from within the newly created VM, I get a 500 internal server error from the metadata server.  The log tells me about an incorrectly formed b64 string:\n\n2012-08-09 17:18:53 ERROR nova.api.metadata.handler [-] Failed to get metadata for ip: 10.0.0.13\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler Traceback (most recent call last):\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler   File \"/usr/lib/python2.7/dist-packages/nova/api/metadata/handler.py\", line 244, in __call__\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler     meta_data = self.get_metadata(remote_address)\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler   File \"/usr/lib/python2.7/dist-packages/nova/api/metadata/handler.py\", line 165, in get_metadata\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler     'user-data': base64.b64decode(instance_ref['user_data']),\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler   File \"/usr/lib/python2.7/base64.py\", line 76, in b64decode\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler     raise TypeError(msg)\n2012-08-09 17:18:53 TRACE nova.api.metadata.handler TypeError: Incorrect padding\n\nThe cryptic error is because b64 strings should be a multiple of 4 bytes, which 65535 is not.\n\nI would suggest the following three things could be fixed:\n\n1. data of an inappropriate size should be rejected and the attempted boot failed; it should never be silently truncated\n2. data should not be measured in its base64 form in any case\n3. there's actually no point in storing the data encoded in the database - it's simply wasteful.  It can be decoded on entry rather than exit and stored in a blob column rather than a text one.", 
+            "date_created": "2012-08-09 19:37:51.698560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Thanks for reporting this. So a few things here:\n\n1. I agree.\n\n2. As of Essex schema 82, user_data is a Text field, which if you're using MySQL up to 2^16 characters (http://docs.sqlalchemy.org/en/latest/dialects/mysql.html). The limit being imposed here is by the database, not by nova, which is why it is the encoded size which matters -- that's what's in the column. We could potentially change to a different column type, but I'd want to understand what impact that would have on large deployments before I made such a change.\n\n3. The data needs to be encoded somehow, so that we can store potentially binary data.\n\nWhat's in your user_data that makes it so large? I'm asking mostly because I want to understand the use cases here. I imagine that user_data is mostly about boot strapping an instance. You wouldn't put your entire application and its data in user_data for example, just enough to boot the instance enough to go and fetch that stuff from somewhere else. Am I confused?", 
+            "date_created": "2012-08-11 09:04:46.100207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "One other thing that I noticed now that I start digging around for details here -- the user_data comes from the client base64 encoded, so that's happening outside of nova's direct control. If we wanted to store in some other format we'd have to base64 decode it first, as we can't break the API interface trivially.", 
+            "date_created": "2012-08-11 09:22:14.600875+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "2 and 3: the fault lies in using a text field to store the data.  There are fields appropriate for binary data (BLOB) and for data which is longer than 2^16-1 characters (LONGTEXT, LONGBLOB).  Is there a reason not to change the schema?\n\nAs for the size of my data, I used a tarfile for some text files and didn't compress it, so it was full of empty space, in the nature of tarfiles, and bigger than it should have been.  Discovering the bug was basically an accident on my part.  But I don't think it's unreasonable to put more data there than 64k.  We shouldn't exclude future use cases and we have quotas to prevent abuse - it's certainly not a terribly efficient method of creating an application but it's also not a crime.\n\nAnd obviously I would have expected an error on the upload - the CLI should have noticed, but far more importantly the API should not have accepted data it couldn't store, and also noticed that it couldn't store it (silent truncation is an odd way for a DB layer to react, errors on invalid data storage tend to reveal bugs earlier in my experience) rather than the error coming down the line at retrieval time.\n\nI would say: change the column type, implement a 64k limit on userdata in the API but make it configurable, and review the DB layer to ensure that errors of this nature cause an exception so that they're dealt with earlier in development.  I'm quite happy to do the work to make that happen, though I'd need a bit of advice on how DB version migration works.", 
+            "date_created": "2012-08-11 09:31:26.793493+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Yes, the data does come in b64-encoded, but that's essentially a part of the API functionality and not a part of the application design as a whole.  \n\nA for-instance: if the client's sending data which is not actually validly encoded then that also ought to be an API error - so the API receiving code needs to be b64-aware anyway.  Using b64 in the API and using b64 in the database are independent design choices.", 
+            "date_created": "2012-08-11 09:36:41.985538+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "My concern with arbitrarily increasing the size of this column is the potential impact on our large deployers. Its not clear to me if they care about the cost of having to store a potentially larger value for what might well be hundreds of thousands of instances. In fact, its possible that the schema change of the table is even hard for them to apply -- I just don't know enough about how they've deployed nova.\n\nI've already asked the openstack and openstack-operators mailing list for some thoughts here, so I'm not going to go and tweak the database schema on a Saturday night. I'm going to wait a few days to see what deployers think.\n\nI'm running the unit tests now on an API level check of the data that will at least warn people of truncation. I'll add a check for valid base64 data to that now.\n\nWhat database are you using? I'd need to know that to look into why the truncation silently occurs.", 
+            "date_created": "2012-08-11 10:34:38.141296+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "> Its not clear to me if they care about the cost of having to store a\n> potentially larger value for what might well be hundreds of thousands of instances.\n\nMy point with the schema change (to a LONGTEXT, at least) is that it only gives the *ability* to store a larger value.  If there's a limit in the API on values coming in (which you're adding as we speak), that larger value will not be stored for anyone who has a current setup and doesn't change the default limit.  But someone with a specific reason to do so could increase it.\n\n> In fact, its possible that the schema change of the table is even hard for them to apply\n\nThat's a totally reasonable concern, particularly if one were to change the actual data in the column as opposed to just lengthening it.  Even lengthening it might involve a slow upgrade process as I think you've be making a fairly significant change to the table structure in the DB files (rather depends how short-text fields are stored in MySQL, which I don't know).\n\n> What database are you using? I'd need to know that to look into why the truncation silently occurs.\n\nMySQL.  The install is stock Ubuntu Essex as of about a week ago.", 
+            "date_created": "2012-08-11 10:54:15.039320+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Um, in para 2 there I'm trying to emphasise the difference between now and a LONG datatype (as opposed to now and a BLOB datatype, which is an orthogonal change).", 
+            "date_created": "2012-08-11 10:55:32.220389+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/11220", 
+            "date_created": "2012-08-11 23:31:59.707614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/11220\nCommitted: http://github.com/openstack/nova/commit/4d350dc82ecfe1d272bfbd43445a78c69a32fc90\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4d350dc82ecfe1d272bfbd43445a78c69a32fc90\nAuthor: Michael Still <email address hidden>\nDate:   Sat Aug 11 20:51:27 2012 +1000\n\n    Simple checks for instance user data.\n    \n    Check that instance user data wont be truncated, and that it is\n    valid base64 data. This partially resolves bug 1035055. I don't\n    love the hard coded maximum length, but I haven't worked out how\n    to get sqlalchemy to tell me the maximum size of the data type.\n    \n    Change-Id: I045d6b4481563d01cae371cf61a91781cfed6f4b\n", 
+            "date_created": "2012-08-14 23:25:23.656225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is as far as this bug is going to get for Folsom. There isn't consensus among nova-core about if we should in fact go larger, and if we did, it would require reworking portions of the RPC layer as well as dealing with possible database changes. That's not impossible, but I'd like to see it go through the blueprint process (and possibly be presented at an ODS) if we're going to do that.", 
+            "date_created": "2012-08-15 01:06:11.375575+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }
+    ]
+}

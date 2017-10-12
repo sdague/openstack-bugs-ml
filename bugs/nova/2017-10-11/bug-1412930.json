@@ -1,0 +1,73 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-03-17 02:49:13.558708+00:00", 
+    "description": "When creating a VM requiring some specific CPU features, although the guest will be scheduled to a host with the capability, but such information is not  always exposed to guest.\n\n\ta) started devstack by default, (means nova configuration libvirt.cpu_mode=none), the compute node has the SSE4.1 support\n        b) create flavor with {\"capabilities:cpu_info:features\": \"<in> sse4.1\"} extra spec, i.e. requiring SSE4.1.\n\tc) launch an instance with the flavor.\n        d) ssh to instance and 'cat /proc/cpuinfo'.\n\nThe SSE4.1 is not presented in guest.\n\nI think the reason is because when libvirt.cpu_mode is none, libvirt will not specify the feature request in the guest  vcpu config.", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1412930", 
+    "owner": "https://api.launchpad.net/1.0/~jianlonghei", 
+    "id": 1412930, 
+    "index": 229, 
+    "created": "2015-01-20 19:20:52.617044+00:00", 
+    "title": "CPU feature request is not respected when create VM", 
+    "comments": [
+        {
+            "content": "When creating a VM requiring some specific CPU features, although the guest will be scheduled to a host with the capability, but such information is not  always exposed to guest.\n\n\ta) started devstack by default, (means nova configuration libvirt.cpu_mode=none), the compute node has the SSE4.1 support\n        b) create flavor with {\"capabilities:cpu_info:features\": \"<in> sse4.1\"} extra spec, i.e. requiring SSE4.1.\n\tc) launch an instance with the flavor.\n        d) ssh to instance and 'cat /proc/cpuinfo'.\n\nThe SSE4.1 is not presented in guest.\n\nI think the reason is because when libvirt.cpu_mode is none, libvirt will not specify the feature request in the guest  vcpu config.", 
+            "date_created": "2015-01-20 19:20:52.617044+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "More detailed information:\n\n1) I use \"nova flavor-key m1.small set \"capabilities:cpu_info:features\"=\"<in> sse4.1\" to create the flavor.\n\n2) Then I create the VM with :\nnova boot --image cirros-0.3.2-x86_64-uec --flavor m1.small 123\n\n3) login into the guest and check the cpuinfo:\n$ cat /proc/cpuinfo\nprocessor    : 0\nvendor_id    : GenuineIntel\ncpu family   : 6\nmodel        : 6\nmodel name   : QEMU Virtual CPU version 2.0.0\nstepping     : 3\nmicrocode    : 0x1\ncpu MHz      : 2693.508\ncache size   : 4096 KB\nfpu          : yes\nfpu_exception   : yes\ncpuid level  : 4\nwp           : yes\nflags        : fpu de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pse36 clflush mmx fxsr sse sse2 syscall nx lm up rep_good nopl pni vmx cx16 x2apic popcnt hypervisor lahf_lm vnmi ept\nbogomips     : 5387.01\nclflush size : 64\ncache_alignment : 64\naddress sizes   : 40 bits physical, 48 bits virtual\npower management:\n\n\nResult:\nThe SSE4.1 is not presented.\n\nThe reason is because the feature request is not put into the guest config when create the virtual machine.\n\nThanks\n--jyh", 
+            "date_created": "2015-01-28 01:25:53.695008+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Hi jiang yunhong,\n\nCompute host's cpu info is stored in nova database irrespective of cpu_mode. Even when we set cpu_mode='none', compute node still passing cpu feature info in to database which is later used in scheduler filter to check capabilities/features.\n\nIf we create new instance type with extra cpu feature request, scheduler will get this info from database and will create the vm if these extra cpu features are supported on our compute host. If cpu feature added in new instance type is not supported on compute host, scheduler will not assign any host to VM (even if cpu_mode is set to none).\n\nIf you want to see all the cpu features under guest cpu info, you'll need to configure cpu_mode to its default value (In case of virt_type=kvm, it will default to host-model). It is defined in libvirt.driver under libvirt_opts that \"set cpu_mode to none to not set any CPU model\".", 
+            "date_created": "2015-03-11 10:51:21.206658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ankitagrawal"
+        }, 
+        {
+            "content": "Hello, Ankit\n    Thanks for your detailed description.\n    Yes, this bug exists only when the cpu_mode is set to be custom. For 'host-model' or 'host-passthrough', it's ok.\n\nThanks\n--jyh", 
+            "date_created": "2015-03-11 16:14:29.211125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Hi jiang yunhong,\n\nAs per my analysis cpu features are not shown in guest cpu info only when cpu_mode is set to 'none'.\n\nIf cpu_mode is set to 'custom' you need to define a valid cpu_mdel name in nova.conf. In my case I use cpu_model = Nehalem when cpu_mode is set to 'custom'.  Now if I login to vm, I am able to see all the cpu features under guest cpu info.\n\n$ cat /proc/cpuinfo\nprocessor       : 0\nvendor_id       : GenuineIntel\ncpu family      : 6\nmodel           : 26\nmodel name      : Intel Core i7 9xx (Nehalem Class Core i7)\nstepping        : 3\nmicrocode       : 0x1\ncpu MHz         : 2393.980\ncache size      : 4096 KB\nfpu             : yes\nfpu_exception   : yes\ncpuid level     : 4\nwp              : yes\nflags           : fpu de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 syscall nx lm constant_tsc up rep_good nopl pni ssse3 cx16 sse4_1 sse4_2 x2apic popcnt hypervisor lahf_lm\nbogomips        : 4787.96\nclflush size    : 64\ncache_alignment : 64\naddress sizes   : 40 bits physical, 48 bits virtual\npower management:\n\nThanks,\nAnkit\n", 
+            "date_created": "2015-03-12 12:57:04.675844+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ankitagrawal"
+        }, 
+        {
+            "content": "hello Ankit\nI agree with you that\n1. If cpu_mode is set to 'custom' you need to define a valid cpu_model name in nova.conf.\n2. cpu features are not shown in guest cpu info only when cpu_mode is set to 'none'.\n-----------------------------------------------------------------------------------------\npark@park-ThinkPad-T420:~$vim /etc/nova/nova.conf\n[libvirt]\n...\ncpu_mode = custom\ncpu_model = SandyBridge\nvirt_type = kvm\n-----------------------------------------------------------------------------------------\npark@park-ThinkPad-T420:~$ virsh capabilities\n<capabilities>\n\n  <host>\n    <uuid>81919514-4951-cb11-89b8-b5bb3be9bea3</uuid>\n    <cpu>\n      <arch>x86_64</arch>\n      <model>SandyBridge</model>\n      <vendor>Intel</vendor>\n      <topology sockets='1' cores='2' threads='2'/>\n      <feature name='osxsave'/>\n      <feature name='pcid'/>\n      <feature name='pdcm'/>\n      <feature name='xtpr'/>\n      <feature name='tm2'/>\n      <feature name='est'/>\n      <feature name='smx'/>\n      <feature name='vmx'/>\n      <feature name='ds_cpl'/>\n      <feature name='monitor'/>\n      <feature name='dtes64'/>\n      <feature name='pbe'/>\n      <feature name='tm'/>\n      <feature name='ht'/>\n      <feature name='ss'/>\n      <feature name='acpi'/>\n      <feature name='ds'/>\n      <feature name='vme'/>\n    </cpu>\n-----------------------------------------------------------------------------------------\nthe xml cpu info from libvirt when create the instance\n  <cpu mode=\"custom\" match=\"exact\">\n    <model>SandyBridge</model>\n    <topology sockets=\"1\" cores=\"1\" threads=\"1\"/>\n  </cpu>\n-----------------------------------------------------------------------------------------\nthe result in guest\n$ cat /proc/cpuinfo \n...\nflags\t\t: fpu de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 syscall nx rdtscp lm constant_tsc up rep_good nopl pni pclmulqdq ssse3 cx16 sse4_1 sse4_2 x2apic popcnt tsc_deadline_timer aes xsave avx hypervisor \n\n\n\n", 
+            "date_created": "2015-03-13 02:01:22.461371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jianlonghei"
+        }, 
+        {
+            "content": "so I think the problem is \nwhen cpu mode = none, nova should prompt errors when user set \"nova flavor-key m1.small set \"capabilities:cpu_info:features\"=\"<in> sse4.1\"\n\nalso, I noticed that the result of \"cpu_info_features\" from \"virsh capabilities\" and \"nova hypervisor-show *\" is different, still need some more investigation\n\nplease notify the feature \"pcid\"\n----------------------------------------------------------------------\npark@park-ThinkPad-T420:~$ virsh capabilities\n<capabilities>\n\n  <host>\n    <uuid>81919514-4951-cb11-89b8-b5bb3be9bea3</uuid>\n    <cpu>\n      <arch>x86_64</arch>\n      <model>SandyBridge</model>\n      <vendor>Intel</vendor>\n      <topology sockets='1' cores='2' threads='2'/>\n      <feature name='osxsave'/>\n      <feature name='pcid'/>\n      <feature name='pdcm'/>\n      <feature name='xtpr'/>\n      <feature name='tm2'/>\n      <feature name='est'/>\n      <feature name='smx'/>\n      <feature name='vmx'/>\n      <feature name='ds_cpl'/>\n      <feature name='monitor'/>\n      <feature name='dtes64'/>\n      <feature name='pbe'/>\n      <feature name='tm'/>\n      <feature name='ht'/>\n      <feature name='ss'/>\n      <feature name='acpi'/>\n      <feature name='ds'/>\n      <feature name='vme'/>\n    </cpu>\n----------------------------------------------------------------------\npark@park-ThinkPad-T420:~$ nova hypervisor-show 1\n| cpu_info_features         | [\"ssse3\", \"pge\", \"avx\", \"clflush\", \"sep\", \"syscall\", \"vme\", \"dtes64\", \"tsc\", \"xsave\", \"vmx\", \"xtpr\", \"cmov\", \"pcid\", \"est\", \"pat\", \"monitor\", \"smx\", \"lm\", \"msr\", \"nx\", \"fxsr\", \"tm\", \"sse4.1\", \"pae\", \"sse4.2\", \"pclmuldq\", \"acpi\", \"tsc-deadline\", \"mmx\", \"osxsave\", \"cx8\", \"mce\", \"mtrr\", \"rdtscp\", \"ht\", \"pse\", \"lahf_lm\", \"pdcm\", \"mca\", \"apic\", \"sse\", \"ds\", \"pni\", \"tm2\", \"aes\", \"sse2\", \"ss\", \"pbe\", \"de\", \"fpu\", \"cx16\", \"pse36\", \"ds_cpl\", \"popcnt\", \"x2apic\"] |\n| cpu_info_model            | SandyBridge ", 
+            "date_created": "2015-03-13 02:08:32.486962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jianlonghei"
+        }, 
+        {
+            "content": "oops, sorry my comment #6 has some errors, please ignore this section...\n\n\"\"\"\nso I think the problem is\nwhen cpu mode = none, nova should prompt errors when user set \"nova flavor-key m1.small set \"capabilities:cpu_info:features\"=\"<in> sse4.1\"\n\"\"\"", 
+            "date_created": "2015-03-13 02:11:22.874319+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jianlonghei"
+        }, 
+        {
+            "content": "from Daniel P.Berrange(<email address hidden>)\n\nIf you set  'cpu_mode=host-model' or 'cpu_mode=host-passthrough'\nthen it will take effect, as the guest will see the full CPU model\nof the host that is picked. IMHO the capabilities:cpu_info:features\nfilter only makes sense when using those two cpu modes. If you\nleft the default cpu_mode=None or set cpu_mode=custom, then this\ncapabilities feature is meaningless from a conceptual POV. So the\nfact that it has no effect on the guest CPU is not a bug it is\nby design.\n-----------------------\nso this  is not a bug it is by design. I will close it...", 
+            "date_created": "2015-03-16 01:49:10.867421+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jianlonghei"
+        }, 
+        {
+            "content": "I'm not sure if it is really invalid.\n\nCurrently nova scheduler has no idea of cpu_mode in the host, thus will blindly find the host with the CPU feature exposed.\n\n--jyh", 
+            "date_created": "2015-03-16 17:23:31.752480+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "hello jyh\nas designed, you could set cpu_mode=host-model/host-passthrough to get all the capabilities of host cpu...\nthus base on your configuration from host.", 
+            "date_created": "2015-03-17 02:49:12.980343+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jianlonghei"
+        }
+    ]
+}

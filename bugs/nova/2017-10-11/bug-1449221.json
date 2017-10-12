@@ -1,0 +1,83 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-23 16:29:45.749647+00:00", 
+    "description": "Cinder volumes can get stuck in a state of 'attaching' or 'detaching' and they need to be cleaned up or they will be incapable of being used. This is not possible at the moment as Nova doesn't allow any actions on volumes in 'ing' status.\nFor detaching a volume nova should do 3 things: \n1 Detach the volume from the instance\n2 inform cinder about the detach \n3 delete the record in the nova BDM table\n\nAt the moment if 1 fails we do a roll back, if 2 fails we are stuck with a volume in detaching status. Nova shouldn't stop to complete the detach from its side if it gets some errors from cinder. \nWhat we can do is to modify the nova code in order to manage a potential error coming from cinder, log it and go ahead with the deletion of the BDM record, then an operator can try to fix the cinder side calling the appropriate cinder call, like force-delete. \nBasically, if there is a BDM record in nova, we allow the user to call the detach volume as many time as he/she likes. \nNova will delete the BDM record only if the call to cinder \"terminate_connection\" will success.\n\nThis bug has been discussed in a spec: https://review.openstack.org/84048\nwhere we agreed that a spec is not required but we consider this change as a bug fix.", 
+    "tags": [
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 48, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1449221", 
+    "owner": "None", 
+    "id": 1449221, 
+    "index": 1738, 
+    "created": "2015-04-27 19:19:44.658822+00:00", 
+    "title": "Nova doesn't allow cleanup of volumes stuck in 'attaching' or 'detaching' status", 
+    "comments": [
+        {
+            "content": "Cinder volumes can get stuck in a state of 'attaching' or 'detaching' and they need to be cleaned up or they will be incapable of being used. This is not possible because python-novaclient  'nova volume-detach' lacks a '--force' option.\nNova will need to call Cinder force_detach. Cinder already has a force_detach API that should also be called to  ask the storage driver to terminate_connection and detach the volume from the backend.  The Nova BlockDeviceMapping table can have an entry indicating that a volume is attached. Changes to nova to allow a force_detach are needed to remove an entry for a given volume in the case where the volume gets stuck in 'attaching' or 'detaching'.", 
+            "date_created": "2015-04-27 19:19:44.658822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-dangelo"
+        }, 
+        {
+            "content": "I am wonder if this should be marked as \"Wishlist\", what do you think?", 
+            "date_created": "2015-04-30 15:59:12.699027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "To reproduce the issue:\n- nova boot --image <image_id> --flavor <flavor_id> test\n- cinder create 1 \n- nova volume-attach <server_id> <volume_id> /dev/vdb\n- kill/stop cinder volume\n- nova volume-detach <server_id> <volume_id>\n- restart cinder volume\n\nAt this point the volume is reported in \"detaching\" status and it is no possible to recover from this situation.\nIf you try to delete the volume you get:\n\nDelete for volume <volume_id> failed: Volume <volume_id> is still attached, detach volume first. (HTTP 400) \n\nand it fails the detach as well:\n\nERROR (BadRequest): Invalid input received: Invalid volume: Unable to detach volume. Volume status must be 'in-use' and attach_status must be 'attached' to detach. Currently: status: 'detaching', attach_status: 'attached.' (HTTP 400) \n\n\n\n\n", 
+            "date_created": "2015-05-01 12:42:19.159638+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/184537", 
+            "date_created": "2015-05-20 16:29:48.167930+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "About this \"Nova will delete the BDM record only if the call to cinder \"terminate_connection\" will success\".\n\nThere is other option IMO: Nova will clean up BDM no matter terminated_connection exception, and then admin/user call force-detach API in cinder side to ensure not exported volume and detach it.\n\nWhat's your guys suggestion about this option? ", 
+            "date_created": "2015-07-17 10:26:05.407858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wanghao749"
+        }, 
+        {
+            "content": "wanghao, I think the problem with ignoring the success of cinder's terminate_connection was pointed out by Walt_Boring:\n\n\" If Nova only calls libvirt volume's disconnect_volume, without Cinder's terminate_connection being called, then volumes may show back up on the nova host. Specifically for iSCSI volumes.\n\nIf an iSCSI session from the compute host to the storage backend still exists (because other volumes are connected), then the volume you just removed will show back up on the next scsi bus rescan.\"\n\nSo, the user should not think that the detach succeeded until the terminate_connection succeeds. Since terminate_connection is asynchronous, the Nova volume-detach will have to verify this somehow.", 
+            "date_created": "2015-07-17 13:48:21.604620+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-dangelo"
+        }, 
+        {
+            "content": "wanghao the problem is what Scott said in comment #5.\n\n@scott you raised an interesting point about the fact that terminate_connection is async.\nAt the moment Nova considers the call succeeded if can send the requests without any errors, but it doesn't check if the connection has been actually terminated on the cinder side.\nIs  there a cinder call we can make to get the status of the connection from cinder?\nIf so we could check the status in a small fixedInternalLoop before deleting the BDM device, even if I do not like this solution it seems a bit hacky.\nAny other ideas?", 
+            "date_created": "2015-07-20 10:42:10.848578+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "Proposed fix:\nhttps://review.openstack.org/#/c/184537/9\n\nI think that the proposed fix should be automatically linked to this bug, but was not for some reason.", 
+            "date_created": "2015-10-05 17:04:14.114199+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scott-dangelo"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/184537\nReason: This code hasn't been updated in a long time, and is in merge conflict. I am going to abandon this review, but feel free to restore it if you're still working on this.", 
+            "date_created": "2016-07-19 18:45:18.251316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi, \n\nIs anyone still working on this bug ? And do we still need this patch ?  If we need, I'd like to go on with it if you don't mind.\n\nThanks.", 
+            "date_created": "2016-07-22 03:22:11.463025+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tangchen"
+        }, 
+        {
+            "content": "Hi,\n\nIs anyone still working on this bug ? And do we still need this patch ? If we need, I'd like to go on with it if you don't mind.\n\nThanks.", 
+            "date_created": "2017-01-03 06:58:14.560835+00:00", 
+            "author": "https://api.launchpad.net/1.0/~srividya"
+        }, 
+        {
+            "content": "\n\nHi,\n\nIs anyone still working on this bug ? And do we still need this patch ? If we need, I'd like to go on with it if you don't mind.\n\nThanks.\n\n", 
+            "date_created": "2017-01-09 08:15:42.401028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nazeema123"
+        }, 
+        {
+            "content": "I request the bug reporter to close the bug as this bug is already fixed in mitaka version and here is my analysis on this bug and the delta between liberty and the mitaka\n\nAnalysis:\n\nIn Liberty:\nThere is no proper volume attach/detach handling in compute/api.py in liberty. Also, there is no local cleanup of the bdm table.\n\nFix in Mitaka:\nHere, 3 new methods are included to handle volume attach/detach in /compute/api.py.\n1) _attach_volume_shelved_offloaded - This method handles attaching volumes in shelved offloaded state.\n2) _detach_volume_shelved_offloaded - This method handles detaching volumes in shelved offloaded state on terminate_connection call.\n3) _local_cleanup_bdm_volumes - This method deletes the bdm record and takes care of cleanup of volumes\n\nThe same as above is even mentioned in the latest release notes of Mitaka version in new features list:\n'''It is possible to call attach and detach volume API operations for instances which are in shelved and shelved_offloaded state. For an instance in shelved_offloaded state Nova will set to None the value for the device_name field, the right value for that field will be set once the instance will be unshelved as it will be managed by a specific compute manager.'''\n\nREFFERED FILES: \n\t \n\t/opt/stack/nova/nova/compute/api.py \n\t/opt/stack/nova/nova/compute/manager.py \n\t/opt/stack/nova/nova/test/unit/compute/test_compute.py", 
+            "date_created": "2017-01-25 06:29:10.976541+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nazeema123"
+        }
+    ]
+}

@@ -1,0 +1,98 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:42:02.375611+00:00", 
+    "description": "When performing a list for 'all-tenants' by an admin (or someone with a policy that can run this command), or when a single user has a large amount of vms, the command itself can block a whole nova-api process for a long time, this can make it easy for said users to DOS the whole system. This is more evident as you add more users and more tenants or a user makes a lot of vms. Likely some kind of pagination should be used (?) or the queries being performed should be analyzed to make sure they are optimal (and not repeated many times in for loops...)", 
+    "tags": [
+        "ops"
+    ], 
+    "importance": "Undecided", 
+    "heat": 74, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1160487", 
+    "owner": "None", 
+    "id": 1160487, 
+    "index": 3545, 
+    "created": "2013-03-26 17:15:42.540938+00:00", 
+    "title": "Nova list is extremely slow with lots of vms", 
+    "comments": [
+        {
+            "content": "When performing a list for 'all tenants' by an admin (or someone with a policy that can run this command) the command itself can block a whole nova-api process for a long time, this can make it easy for said users to DOS the whole system. This is more evident as you add more users and more tenants. Likely some kind of pagination should be used (?) or the queries being performed should be analyzed to make sure they are optimal (and not repeated many times in for loops...)", 
+            "date_created": "2013-03-26 17:15:42.540938+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "To give me a sense of scale, how many instances is \"a lot\"? Hundreds? Thousands?", 
+            "date_created": "2013-03-28 06:26:31.732525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "I'll get u a good number, but in the thousands I think was when this started.", 
+            "date_created": "2013-03-28 07:13:14.013092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Get servers slowness...\n\nPart #1: Form big 'single' query to get all instances Y\n\nPart #2:\n\nIf detailed:\n    - Iterate for each instance in Y:\n      - Check policy to get fault\n    - Make big 'single' query to get all instances faults (called this Z)\n      - Iterate over result set Z, attach to appropriate instance in Y\n    - Form detail view:\n      - Call view function show() on each instance in Y to get the basic\n        information about an instance (note it appears no extra calls are made\n        here) and results in list X\n\n*Now here is the iffy part*\n\nExtensions cause iterations & alterations on/to the resultant 'view' X.\n\n- ExtendedServerAttributesController\n  - for server in servers:\n- ExtendedIpsController\n  - for server in servers:\n- ServerDiskConfigController\n  - for server in servers:\n- config_drive.Controller\n  - for server in servers:\n- ExtendedStatusController\n  - for server in servers:\n- ... others?\n\n\nNow if that server list is in the 1000+ the process of doing those iterations\nand adjusting the views via this extension chain (and reiteration) actually takes\nmore time than the initial DB call to begin with. Hopefully there are ways this\ncan be improved (as a cloud will just get bigger and not smaller). Especially in\nthe 'admin' case where it is useful to view all instances these operations can\nbe especially slow (don't piss off the admins, haha).\n\nSome ideas:\n\nIt would be interesting to alter the extension mechanism to provide\na central controller that can iterate over the server list once, and let\neach extension locally accumulate its additions, and then at the end of\neach the overall iteration the locally accumulated results can then be\nattached to the response by this central controller (instead of having each\nextension do this itself). \n\nAnother idea and possible future work is that extensions are limited by the initial DB query \nand its cached entries via req.get_db_instance, it might instead be useful to have this central controller\nform the initial 'detail/show' calls SQL query with 'input' from the extensions\nthat will be activated. This way extensions can guarantee that there needed\nbacking source query is added to the larger query and said DB query will be\nexact for the extensions and root 'view' instead of being very generic (as it is\nright now, since it is impossible to predict what field an extension will need from\nthe underlying instance).\n", 
+            "date_created": "2013-04-02 21:47:26.377945+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Am sure this has something to do with inefficiency in nova (due to code or configuration) that is causing the overall response time getting sluggish. And, this being factor of no. of active VM instances within a project. 40 seconds response time was with 100 VM instances. Now, I launched around 500, and the reponse time bumped up to 190 seconds:\n \n2013-06-03 13:57:07.481 DEBUG nova.api.openstack.wsgi [req-3da658aa-6a39-4995-8e6f-2d5c7912549e ac5e4da2c17e4f669f8d3e82d7b751dd 5a19956a849542869ce710b9e51439e0] No Content-Type provided in request get_body /usr/lib/python2.7/dist-packages/nova/api/openstack/wsgi.py:791\n 2013-06-03 13:57:07.482 DEBUG nova.api.openstack.wsgi [req-3da658aa-6a39-4995-8e6f-2d5c7912549e ac5e4da2c17e4f669f8d3e82d7b751dd 5a19956a849542869ce710b9e51439e0] Calling method <bound method Controller.detail of <nova.api.openstack.compute.servers.Controller object at 0x4132850>> _process_stack /usr/lib/python2.7/dist-packages/nova/api/openstack/wsgi.py:911\n 2013-06-03 13:57:07.483 DEBUG nova.compute.api [req-3da658aa-6a39-4995-8e6f-2d5c7912549e ac5e4da2c17e4f669f8d3e82d7b751dd 5a19956a849542869ce710b9e51439e0] Searching by: {'deleted': False, u'project_id': u'5a19956a849542869ce710b9e51439e0'} get_all /usr/lib/python2.7/dist-packages/nova/compute/api.py:1373\n 2013-06-03 14:00:15.336 INFO nova.osapi_compute.wsgi.server [req-3da658aa-6a39-4995-8e6f-2d5c7912549e ac5e4da2c17e4f669f8d3e82d7b751dd 5a19956a849542869ce710b9e51439e0] 10.1.56.12 \"GET /v2/5a19956a849542869ce710b9e51439e0/servers/detail?project_id=5a19956a849542869ce710b9e51439e0 HTTP/1.1\" status: 200 len: 536479 time: 187.857266\n \nAnd, this was not the case in Essex. If I can get someone to help me out on profiling what it does during this API call, we can get to some conclusion. As this can go worst after I have 10,00 instances.\n", 
+            "date_created": "2013-06-04 00:40:17.915718+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hrushikesh-gangur"
+        }, 
+        {
+            "content": "I've tested this and it takes 4.5s to list 377 instances.\n\nAre you using Neutron?", 
+            "date_created": "2014-05-08 00:47:04.598597+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "This has been significantly improved in Icehouse. To list 550 Active instances across 15 projects, it takes 5.8 seconds.  \n\n2014-05-08 11:51:29.229 19815 INFO nova.osapi_compute.wsgi.server [req-c2e215c4-2fb9-4b66-be6f-b962b054d8e9 70c8e4a9473f4f2bae79f18605cbc664 87f209614f5144cd904c27b8f04b7d40] 10.1.56.79 \"GET /v2/87f209614f5144cd904c27b8f04b7d40/servers/detail?all_tenants=1 HTTP/1.1\" status: 200 len: 1102272 time: 5.7907159\n\nYes, I am using Neutron. ", 
+            "date_created": "2014-05-08 15:55:03.821519+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hrushikesh-gangur"
+        }, 
+        {
+            "content": "$ time nova list --all-tenants | wc -l\n1004\n\nreal\t0m21.856s\nuser\t0m0.472s\nsys\t0m0.056s\n\n\nNote we have over 10k instances but nova only returns 1000 at a time, the client isn't smart enough to get them all", 
+            "date_created": "2014-05-27 23:51:38.622935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "Do we have any criteria for success to close this bug?", 
+            "date_created": "2014-07-09 21:32:43.347256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~christopher-lefelhoc"
+        }, 
+        {
+            "content": "I did a bit of research on this issue this week.  For testing in a large cloud I'm seeing similar results of 11-15 seconds to download 1000 instances .  Hacking curls and using the limits/marker options I was able to determine the following...\n\nAt least in our case the limit ~1000 instances seems to be upper bound on how many in a single request.  New markers do take longer than load (instead of 11 seconds, it took between 15-22 seconds when the marker changed), but this wasn't proportional where it was in the list.  \n\nHaving detail/no detail didn't affect the timing of loading either.  \n\nRight now the suspects are the DB itself (though it is odd that we are seeing similar numbers with varying clouds), the building of the response based on the db data, or the caching of db instances (as part of the list).  \n\n\n\n", 
+            "date_created": "2014-07-11 19:16:47.967929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~christopher-lefelhoc"
+        }, 
+        {
+            "content": "I think your 1000 per 'page' seems like a good criteria. As for how fast, I'd be nice to have ~5 second. The amount of data that this requires and produces shouldn't take more than 5 seconds IMHO (and that's pretty high). If it does then it seems like its taking to long and there either needs to be better caching or something fixed.", 
+            "date_created": "2014-07-12 02:32:26.677991+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "I was facing the same issue, it used to take a long time when I do \"nova list\". But when I removed unnecessary servers in\nresolv.conf and cleaned my etc/hosts, it was resolved.", 
+            "date_created": "2014-07-16 11:25:19.716893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sonam-soni"
+        }, 
+        {
+            "content": "I'm not convinced that nova-list for all servers being slow is really high priority bug. We have paging mechanisms for a reason. ", 
+            "date_created": "2014-09-09 14:26:59.839692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "In my case the mose time consuming extensions are below, and I made some changeset.\n\n- ExtendedVolumesController: https://review.openstack.org/#/c/211258/\nbecase it execute query every instance to reterive block device mapping. for perforamce I use big single query with IN operator.\n\n- ExtendedAZController: https://review.openstack.org/#/c/211250/\nIt reterive hos availability zone information with memcache for every host on by on with memcache.get operation. for performance I use get_multi() instead of get()\n\n- SecurityGroupsOutputController\nIt's poor performace caused by neutron api call.. So I just disable this extension :D", 
+            "date_created": "2015-08-11 13:05:33.863582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~whitekid"
+        }, 
+        {
+            "content": "Bug 1359808 is related to this for listing block device mappings per instance.", 
+            "date_created": "2015-10-01 20:12:39.845703+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:42:01.324800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

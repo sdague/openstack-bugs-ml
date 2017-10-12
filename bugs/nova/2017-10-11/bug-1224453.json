@@ -1,0 +1,99 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 08:49:29.884633+00:00", 
+    "description": "The server create API takes min_count and max_count values for the number of instances to  be created, where the actual number to be created should be the highest value allowed by quota between these limits.\n\nHowever the code in compute/api.py does a single check against max_count and then treats the exeception as a failure - resulting in messages such as:  \n\nmin_count=1\nmax_count= (quota+1)\n\n\"Quota exceeded for instances: Requested 1, but already used 13 of 40 instances\"\n\n\n\nThe code in _check_num_instances_quota() looks like it has most of the logic for adjusting the values when it gets an OverQuota exception from the initial reservation request based on max_count - but always ends up raising TooManyInstances .", 
+    "tags": [
+        "api", 
+        "quotas"
+    ], 
+    "importance": "Medium", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1224453", 
+    "owner": "https://api.launchpad.net/1.0/~k5-openstack", 
+    "id": 1224453, 
+    "index": 3579, 
+    "created": "2013-09-12 12:28:36.554212+00:00", 
+    "title": "min_count ignored for instance create", 
+    "comments": [
+        {
+            "content": "The server create API takes min_count and max_count values for the number of instances to  be created, where the actual number to be created should be the highest value allowed by quota between these limits.\n\nHowever the code in compute/api.py does a single check against max_count and then treats the exeception as a failure - resulting in messages such as:  \n\nmin_count=1\nmax_count= (quota+1)\n\n\"Quota exceeded for instances: Requested 1, but already used 13 of 40 instances\"\n\n\n\nThe code in _check_num_instances_quota() looks like it has most of the logic for adjusting the values when it gets an OverQuota exception from the initial reservation request based on max_count - but always ends up raising TooManyInstances .", 
+            "date_created": "2013-09-12 12:28:36.554212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Did you see this problem with Havana? Do you have a testcase?\n\nIt looks like _check_num_instances_quota does adjust the number of instances if the quota reserveration fails and then recursively call itself with the lower number.", 
+            "date_created": "2013-09-17 00:26:07.362749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "I was not able to recreate the problem using DevStack (so current trunk).\n\nIt would be useful if the submitter could tell us how to reproduce.\n\n", 
+            "date_created": "2013-09-17 15:57:46.916818+00:00", 
+            "author": "https://api.launchpad.net/1.0/~k5-openstack"
+        }, 
+        {
+            "content": "Point taken - let me see if I can reproduce in DevStack.     We hit the problem in our production system and I thought I'd spotted the flaw in the code, but I'd missed the recurrsion Chris has pointed out.", 
+            "date_created": "2013-09-17 16:21:49.361338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "To reproduce in DevStack:\n\ni) Set the default cores quota to -1 (unlimited).  i.e add  \"quota_cores=-1\"  to nova.conf\nii) Restart the Nova API server\niii) Request a number of instances that spans the allowed quota of instances (default 10)\n\nubuntu@list-all:/mnt/devstack$ nova list\n +----+------+--------+------------+-------------+----------+\n | ID | Name | Status | Task State | Power State | Networks |\n +----+------+--------+------------+-------------+----------+\n +----+------+--------+------------+-------------+----------+\n\nubuntu@list-all:/mnt/devstack$ nova boot --image cd4e2b6c-8df9-4f31-a553-b83082dc6977 --num-instances 12 --flavor 1 philx\nERROR: Quota exceeded for instances: Requested 1-12, but already used 0 of 10 instances (HTTP 413) (Request-ID: req-42d0f729-c360-452b-b92f-ff02e673e9d4)\n\nThe issue seems to be that the code in compute/api.py  _check_num_instances_quota()  when it detects an over quota request doesn't correctly handle \"-1\" values for quotas.\n\nBy contrast the code in quota.py limit_check has specific checks for  quota values to be >=0  when making checks.\n\n  \n\n ", 
+            "date_created": "2013-09-25 16:15:09.099518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Cool I got a bug to fix!\n\nThanks Phil, I'll have a look.\n\n\nOn 25 September 2013 18:15, Phil Day <email address hidden> wrote:\n\n> To reproduce in DevStack:\n>\n> i) Set the default cores quota to -1 (unlimited).  i.e add\n>  \"quota_cores=-1\"  to nova.conf\n> ii) Restart the Nova API server\n> iii) Request a number of instances that spans the allowed quota of\n> instances (default 10)\n>\n> ubuntu@list-all:/mnt/devstack$ nova list\n>  +----+------+--------+------------+-------------+----------+\n>  | ID | Name | Status | Task State | Power State | Networks |\n>  +----+------+--------+------------+-------------+----------+\n>  +----+------+--------+------------+-------------+----------+\n>\n> ubuntu@list-all:/mnt/devstack$ nova boot --image\n> cd4e2b6c-8df9-4f31-a553-b83082dc6977 --num-instances 12 --flavor 1 philx\n> ERROR: Quota exceeded for instances: Requested 1-12, but already used 0 of\n> 10 instances (HTTP 413) (Request-ID:\n> req-42d0f729-c360-452b-b92f-ff02e673e9d4)\n>\n> The issue seems to be that the code in compute/api.py\n> _check_num_instances_quota()  when it detects an over quota request\n> doesn't correctly handle \"-1\" values for quotas.\n>\n> By contrast the code in quota.py limit_check has specific checks for\n> quota values to be >=0  when making checks.\n>\n> --\n> You received this bug notification because you are a bug assignee.\n> https://bugs.launchpad.net/bugs/1224453\n>\n> Title:\n>   min_count ignored for instance create\n>\n> Status in OpenStack Compute (Nova):\n>   Incomplete\n>\n> Bug description:\n>   The server create API takes min_count and max_count values for the\n>   number of instances to  be created, where the actual number to be\n>   created should be the highest value allowed by quota between these\n>   limits.\n>\n>   However the code in compute/api.py does a single check against\n>   max_count and then treats the exeception as a failure - resulting in\n>   messages such as:\n>\n>   min_count=1\n>   max_count= (quota+1)\n>\n>   \"Quota exceeded for instances: Requested 1, but already used 13 of 40\n>   instances\"\n>\n>\n>   The code in _check_num_instances_quota() looks like it has most of the\n>   logic for adjusting the values when it gets an OverQuota exception\n>   from the initial reservation request based on max_count - but always\n>   ends up raising TooManyInstances .\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1224453/+subscriptions\n>\n", 
+            "date_created": "2013-09-25 17:19:46+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjbrightfr"
+        }, 
+        {
+            "content": "Instead of trying to fix OverQuota logic in _check_num_instances_quota(), why not just repeatedly call QUOTAS.reserve with a decrementing valued until it works ?     That would leave all of the quota checking logic inside the quota class - which is better from an abstraction perspective. ", 
+            "date_created": "2013-09-26 11:37:39.181040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "\nOK, I can see the value of having the OverQuota logic completely in QUOTAS.reserve, but that seems incongruent to me with the idea of calling QUOTAS.reserve more than once as done at the moment, and more times as you suggest.\n(Maybe I just need to get with the program and accept that call/Exception is a nice way of doing things)\n\nI note that very similar logic is employed in compute/api.py for the resize function.\n\nIt seems to me that currently when quota_cores or quota_ram is set to unlimited (-1) headroom doesn't reflect this.\nWouldn't it be better to preserve the semantics of headroom and make it aware of unlimited quotas?\n\nHow about creating a headroom function something like:\n\n    def _calculate_headroom(quotas, instance_type):\n            headroom = dict((res, quotas[res] -\n                             (usages[res]['in_use'] + usages[res]['reserved']))\n                            for res in quotas.keys())\n\n            # If quota_cores is unlimited, set cores headroom based on instances headroom:\n            if (quotas['cores'] == -1):\n                if instance_type['vcpus']:\n                    headroom['cores'] = headroom['instances'] * instance_type['vcpus']\n                 else:\n                    headroom['cores'] = headroom['instances'] # or just 0?\n                    \n            # If quota_ram is unlimited, set ram headroom based on instances headroom:\n            if (quotas['ram'] == -1):\n                if instance_type['memory_mb']:\n                    headroom['ram'] = headroom['instances'] * instance_type['memory_mb']        \n                else:\n                    headroom['ram'] = headroom['instances'] # or just 0?\n\n            return headroom\n\nWhich would be called by _check_num_instances_quota() and also resize().\n\n\nI\u2019m not sure if headroom should be set to zero or not if the associated instance type is not set.\nIt would only really matter if resource is set to \u2018ram\u2019 or \u2018cores\u2019 in the line(s):\n                 used = quotas[resource] - headroom[resource]\n\n\nThoughts?", 
+            "date_created": "2013-10-02 03:54:02.644602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~k5-openstack"
+        }, 
+        {
+            "content": "Unless I'm misunderstanding the \"repeatedly call QUOTAS.reserve with a decrementing valued until it works\" - wouldn't that enable DoS scenarios where user requests between 1 and 5738219047392 instances?\n\nSince the db layer doesn't know anything about instance flavors, only resources, it looks like it still requires some logic in the calling site to translate OverQuota back into the number of instances that didn't fit. Although I do agree that trying to reserve the max first and then only adjusting on error may be a good idea. Hopefully the user is reasonable and most of the requests will be fulfilled.", 
+            "date_created": "2013-10-02 14:19:49.040067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "\nIt's a good point about DoS, if repeatedly calling QUOTAS.reserve then it would be necessary to apply some reasonable limits to prevent DoS.\n\nBut what about what I proposed which would not require more than the current 2nd call to QUOTAS.reserve?\n\nDoes it make sense?\n", 
+            "date_created": "2013-10-02 15:42:50.382669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~k5-openstack"
+        }, 
+        {
+            "content": "Stan's point about DoS is valid  - I guess we could always start from min(max_count, quota_value), but for a user with a high quota that might still be quite a lot of iterations.\n\nMy main concern with the current approach is the way the logic for interpreting quota values is split between the Quota class and the headroom calculation in _check_num_instances_quota() - which is of course the source of this bug.   \n\nWhat about if the headroom information was returned as part of the OverQuota exception (quotas. usage, and overs already are) - and a lack of a specific value in headroom means unlimited for that resource ?\n\nThen the headroom calculation could be encapsulated in the Quota class   ", 
+            "date_created": "2013-10-03 10:01:44.691474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "\nI've been looking at this in the debugger and I see that it's in quota.py: quota_reserve() that the OverQuota exception is thrown.\nI could add the current headroom calculation code in that function and return headroom as one of the \"exc.kwargs\" arguments.\n\nHOWEVER, as we don't have instance_type available in that function, headroom would still require to be corrected for the case of quota_vcpus == -1, from outside the function (at two places in compute/api.py).\nBecause if quota_vcpus is -1 and instance_type['vcpus'] is set then we should set headroom as:\n    headroom['cores'] = headroom['instances'] * instance_type['vcpus']\n\nSo can someone advise here?\nIs there a way of passing instance_type into QUOTAS.reserve ... down to quota_reserve() ?\nI'm unsure of the plumbing.\n\nOr should I correct headroom (yuk!) after receiving the OverQuota exception (in 2 places in compute/api.py).\nIn that case I still suggest the _calculate_headroom() function previously proposed here.\n\nNOTE: As a separate issue, I have not understood Phils' suggestion that QUOTAS.reserve be called several times ...\n", 
+            "date_created": "2013-10-07 20:06:43.724911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~k5-openstack"
+        }, 
+        {
+            "content": "I don't really see why you need instance type passed in, you can calculate the number of vcps that are being requested for each instance as    \"req_cores/instances\" can't you ? \n\n\nIgnore my earlier suggestion about calling Quote.reserve multiple times - doing the headroom calculation inside reserve would avoid that.\n\n", 
+            "date_created": "2013-10-08 09:16:10.665242+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Yes, you're right - thanks for pointing this out.\n\n\n\nOn 8 October 2013 11:16, Phil Day <email address hidden> wrote:\n\n> I don't really see why you need instance type passed in, you can\n> calculate the number of vcps that are being requested for each instance\n> as    \"req_cores/instances\" can't you ?\n>\n>\n> Ignore my earlier suggestion about calling Quote.reserve multiple times -\n> doing the headroom calculation inside reserve would avoid that.\n>\n> --\n> You received this bug notification because you are a bug assignee.\n> https://bugs.launchpad.net/bugs/1224453\n>\n> Title:\n>   min_count ignored for instance create\n>\n> Status in OpenStack Compute (Nova):\n>   Confirmed\n>\n> Bug description:\n>   The server create API takes min_count and max_count values for the\n>   number of instances to  be created, where the actual number to be\n>   created should be the highest value allowed by quota between these\n>   limits.\n>\n>   However the code in compute/api.py does a single check against\n>   max_count and then treats the exeception as a failure - resulting in\n>   messages such as:\n>\n>   min_count=1\n>   max_count= (quota+1)\n>\n>   \"Quota exceeded for instances: Requested 1, but already used 13 of 40\n>   instances\"\n>\n>\n>   The code in _check_num_instances_quota() looks like it has most of the\n>   logic for adjusting the values when it gets an OverQuota exception\n>   from the initial reservation request based on max_count - but always\n>   ends up raising TooManyInstances .\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1224453/+subscriptions\n>\n", 
+            "date_created": "2013-10-08 10:55:00+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjbrightfr"
+        }, 
+        {
+            "content": "@Mike: could you add a link to the review/change that fixed it ?", 
+            "date_created": "2013-11-18 13:07:03.175550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "\nHere are links to the review/changes:\n\non master              - https://review.openstack.org/#/c/51263/\n\non stable/havana - https://review.openstack.org/#/c/56202/\n", 
+            "date_created": "2013-11-18 21:29:20.722673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~k5-openstack"
+        }
+    ]
+}

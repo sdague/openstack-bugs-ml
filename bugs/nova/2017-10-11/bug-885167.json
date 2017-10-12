@@ -1,0 +1,153 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 09:48:11.259087+00:00", 
+    "description": "Because of  #885165, it maybe possible for a remote attacker who can perform a man in the middle attack to provide a bucket with an image file-name which includes \"/\" and or \"..\". The path for the image file which is taken from the desired destination directory joined with the filename found in the bucket. This occurs in the static method _download_file. The _download_file method, as the name indicates also downloads the image to the respective file path.\nThe actual downloading of the image occurs via the  key.get_contents_to_filename call. The get_contents_to_filename method will open a file at the 'local_filename' location through the following code( as found in boto/s3/key.py):\n\n\u00a0\u00a0def get_contents_to_filename(self, filename, headers=None,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0...\n\u00a0\u00a0\u00a0\u00a0\u00a0fp = open(filename, 'wb')\n\n\nWhich opens a new file object at the location provided. The _download_file method should ensure that the file-name is safe to use before calling the get_contents_to_filename method.\n\n\n\n\n\n[0]\n\u00a0\u00a0\u00a0\u00a0@staticmethod\n\u00a0\u00a0\u00a0\u00a0def _download_file(bucket, filename, local_dir):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0key = bucket.get_key(filename)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0local_filename = os.path.join(local_dir, filename)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0key.get_contents_to_filename(local_filename)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0return local_filename", 
+    "tags": [
+        "in-stable-diablo"
+    ], 
+    "importance": "High", 
+    "heat": 258, 
+    "link": "https://bugs.launchpad.net/nova/+bug/885167", 
+    "owner": "https://api.launchpad.net/1.0/~ttx", 
+    "id": 885167, 
+    "index": 513, 
+    "created": "2011-11-02 11:40:01.059548+00:00", 
+    "title": "Path Traversal possible when downloading an image", 
+    "comments": [
+        {
+            "content": "Because of  #885165, it maybe possible for a remote attacker to man in the middle the connection and provide back a bucket with a filename which includes \"/\" and or \"..\" in the file-name. The 'local' file-name for a downloaded image is determined by the static method _download_file. [0] The _download_file method will not block directory traversal and will download the image file to the 'local_filename' location through the  key.get_contents_to_filename call. The get_contents_to_filename method will open a file at the 'local_filename' location through the following code(which is found in boto/s3/key.py):\n\n  def get_contents_to_filename(self, filename, headers=None,\n      ...\n     fp = open(filename, 'wb')\n\n\n\n\n\n\n[0]\n    @staticmethod\n    def _download_file(bucket, filename, local_dir):\n        key = bucket.get_key(filename)\n        local_filename = os.path.join(local_dir, filename)\n        key.get_contents_to_filename(local_filename)\n        return local_filename", 
+            "date_created": "2011-11-02 11:40:01.059548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~d--"
+        }, 
+        {
+            "content": "One more possible bug (I don't know if this is reachable) is that the tarfile.extractall method is used in the \n static method _untarzip_image. This method is also vulnerable to path traversal (as per the warning in the tarfile module documentation).\n\n\n", 
+            "date_created": "2011-11-02 11:53:03.427208+00:00", 
+            "author": "https://api.launchpad.net/1.0/~d--"
+        }, 
+        {
+            "content": "This isn't because of the other bug although the fact that it can be exploited when traffic is in the clear is significant.\n\nIt would seem to me that the main issue is that an attacker making this call (either a malicious user or a man-in-the-middle) can perform a path traversal because get_contents_to_filename doesn't validate strings correctly.", 
+            "date_created": "2011-11-14 15:18:21.523623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "At the very least the filename retrieved from the manifest should be filtered through basename ?\r\nThat said I wonder if that code is even used since it contains a typo on line 215 (use of \"ec2_utils\") that should be hit with every manifest with a kernel id, and various other strange things (unused image_id and image_type fields). Vish ?\r\n\r\nDavid: could you open a separate security bug so that we investigate the tarfile thing separately ?\r\n", 
+            "date_created": "2011-11-14 15:26:41.580873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Oops, concurrent change", 
+            "date_created": "2011-11-14 15:27:44.143057+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Well I don't know if the tarfile bug is reachable. From what I saw the image would need to be signed? \n(I can open another issue but I wasn't even sure if this code was actually used ...).", 
+            "date_created": "2011-11-14 16:47:23.720386+00:00", 
+            "author": "https://api.launchpad.net/1.0/~d--"
+        }, 
+        {
+            "content": "Thierry: The ec2_utils thing is definitely a bug.  Not sure about the image_id.  Checking with waldon", 
+            "date_created": "2011-11-14 17:26:41+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "@DavidB: please open a bug about it, just in case, so that we can investigate further.\n@Robert: Are you going to propose a change to Gerrit for this ?\n@VMT:  I suggest VMT Level = Medium, looks like it could be exploited by uploading a crafted manifest\n", 
+            "date_created": "2011-11-17 14:49:38.497417+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The tarfile bug was filed separately as bug 894755.", 
+            "date_created": "2011-11-25 13:46:04.520876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Vish, Please can you take a look at this.\n\nThanks \n", 
+            "date_created": "2011-11-25 14:49:41.237228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Robert: what specifically do you want me to look at?  This is definitely a bug.  Were you going to propose a fix?", 
+            "date_created": "2011-11-28 18:39:13.840141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I think Robert is deferring to you for advice on who could do it. If nobody else picks it up, I can propose a fix.", 
+            "date_created": "2011-11-29 10:54:40.876746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I don't have someone specific in mind, but it looks like a pretty simple change.\n\nVish\n\nOn Nov 29, 2011, at 2:54 AM, Thierry Carrez wrote:\n\n> I think Robert is deferring to you for advice on who could do it. If\n> nobody else picks it up, I can propose a fix.\n> \n> -- \n> You received this bug notification because you are a member of Nova\n> Core, which is subscribed to the bug report.\n> https://bugs.launchpad.net/bugs/885167\n> \n> Title:\n>  Path Traversal possible when downloading an image\n> \n> Status in OpenStack Compute (Nova):\n>  Triaged\n> \n> Bug description:\n>  Because of  #885165, it maybe possible for a remote attacker who can perform a man in the middle attack to provide a bucket with an image file-name which includes \"/\" and or \"..\". The path for the image file which is taken from the desired destination directory joined with the filename found in the bucket. This occurs in the static method _download_file. The _download_file method, as the name indicates also downloads the image to the respective file path.\n>  The actual downloading of the image occurs via the  key.get_contents_to_filename call. The get_contents_to_filename method will open a file at the 'local_filename' location through the following code( as found in boto/s3/key.py):\n> \n>    def get_contents_to_filename(self, filename, headers=None,\n>        ...\n>       fp = open(filename, 'wb')\n> \n> \n>  Which opens a new file object at the location provided. The _download_file method should ensure that the file-name is safe to use before calling the get_contents_to_filename method.\n> \n> \n> \n>  [0]\n>      @staticmethod\n>      def _download_file(bucket, filename, local_dir):\n>          key = bucket.get_key(filename)\n>          local_filename = os.path.join(local_dir, filename)\n>          key.get_contents_to_filename(local_filename)\n>          return local_filename\n> \n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/885167/+subscriptions\n\n", 
+            "date_created": "2011-11-29 18:40:42+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Proposed fix, nova-core please pre-review before we make it public.\nAdding stable maintainers. Once this is pre-approved we'll coordinate disclosure.\n", 
+            "date_created": "2011-12-01 16:26:18.094922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Patch lgtm.", 
+            "date_created": "2011-12-06 13:09:49.894092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "Proposed advisory (merged with bug 894755):\n\nTitle: Path traversal issues registering malicious images using EC2 API\nImpact: High\nAnnounced: ...\nReporter: David Black\nProducts: Nova\n\nDescription:\nDavid Black reported two issues in OpenStack Nova's support for EC2 RegisterImage action. By registering images from malicious tarballs or manifests, an attacker could potentially traverse directories and overwrite files with the rights of the user Nova runs under. Only setups allowing the EC2 API and the S3/RegisterImage method for registering images are affected.\n", 
+            "date_created": "2011-12-06 14:31:03.589411+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Issue looks valid here too - user-uploaded image manifest can't be trusted\n\nThe patch is fine, I think. But it might be worth considering an even safer option - use image.part.N as the filename, since we're downloading to a temporary directory we've just created", 
+            "date_created": "2011-12-06 15:56:29.007163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "markmc: Your patch is better -- though for security patches the idea is to simplify the fix as much as you can (here you don't just weed out malicious filenames, you also change filenames for non-malicious files, which I suppose is OK, but maybe not).", 
+            "date_created": "2011-12-06 16:47:27.331064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I think marks patch is fine.  It is a little bigger, but I do like ignoring the passed in name completely.", 
+            "date_created": "2011-12-07 17:55:48.140008+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I don't have any particular preference about either approach, but only  Thierry's patch comes with unit tests proving that it actually fixes the problem, so that has my vote so far.", 
+            "date_created": "2011-12-08 09:50:21.682407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "Hmm, I don't see unit tests? Am I missing something? I expect any unit test for this would work with my variant too anyway\n\nI don't mind either way - we can go with the one-liner patch and add my version later", 
+            "date_created": "2011-12-08 10:10:29.846061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Mark, sorry, I was confused. I was thinking of Thierry's patch for bug 894755.\n\nI think I prefer ttx's approach for the quick fix, and then we can go with yours from Essex and onwards.", 
+            "date_created": "2011-12-08 12:23:35.151190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "Notification sent to downstream distros / public users.\nProposed disclosure date set to Tuesday, December 13, 2011, 1500UTC", 
+            "date_created": "2011-12-08 14:50:17.812673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Assigned CVE-2011-4596", 
+            "date_created": "2011-12-09 12:33:41.601796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/2283\nCommitted: http://github.com/openstack/nova/commit/ad3241929ea00569c74505ed002208ce360c667e\nSubmitter: Jenkins\nBranch:    master\n\n status fixcommitted\n done\n\ncommit ad3241929ea00569c74505ed002208ce360c667e\nAuthor: Thierry Carrez <email address hidden>\nDate:   Thu Dec 1 17:54:16 2011 +0100\n\n    Sanitize EC2 manifests and image tarballs\n    \n    Prevent potential directory traversal with malicious EC2 image tarballs,\n    by making sure the tarfile is safe before unpacking it. Fixes bug 894755\n    \n    Prevent potential directory traversal with malicious file names in\n    EC2 image manifests. Fixes bug 885167\n    \n    Change-Id: If6109047307bd6e654ee9d1254f0d7f31cf741c1\n", 
+            "date_created": "2011-12-13 15:11:21+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/2284\nCommitted: http://github.com/openstack/nova/commit/76363226bd8533256f7795bba358d7f4b8a6c9e6\nSubmitter: James E. Blair (<email address hidden>)\nBranch:    stable/diablo\n\n tag in-stable-diablo\n done\n\ncommit 76363226bd8533256f7795bba358d7f4b8a6c9e6\nAuthor: Thierry Carrez <email address hidden>\nDate:   Thu Dec 1 17:54:16 2011 +0100\n\n    Sanitize EC2 manifests and image tarballs\n    \n    Prevent potential directory traversal with malicious EC2 image tarballs,\n    by making sure the tarfile is safe before unpacking it. Fixes bug 894755\n    \n    Prevent potential directory traversal with malicious file names in\n    EC2 image manifests. Fixes bug 885167\n    \n    (cherry picked from commit ad3241929ea00569c74505ed002208ce360c667e)\n    \n    Change-Id: If6109047307bd6e654ee9d1254f0d7f31cf741c1\n", 
+            "date_created": "2011-12-13 15:35:32+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Released as OSSA 2011-001", 
+            "date_created": "2011-12-13 15:41:34.040102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }
+    ]
+}

@@ -1,0 +1,114 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2017-02-06 20:16:17.194619+00:00", 
+    "description": "After merge of commit [1] command \"nova list --all-\" started returning list of servers that are assigned to some cell only. Revert of this change makes API return ALL servers including scheduled ones without assigned cells. In case server failed on scheduling step and hasn't been assigned to any cell, then we will never see it using \"list servers\" API.\n\nBut, \"list\" operation should always show ALL servers.\n\nSteps to reproduce:\n1) install latest nova that contains commit [1], not configuring cell service and not creating default cell.\n2) create VM\n3) run any of following commands:\n$ nova list --all-\n$ openstack server list --all\n$ openstack server show %name-of-server%\n$ nova show %name-of-server%\n\nExpected: we see data of server we created on second step.\nActual: our server is absent in \"list\" command results or \"NotFound\" error on \"show\" command using \"name\" of server.\n\nThere can be other approach for reproducing it, but we need to use \"pdb\" before step where we assign cell to server.\n\n[1] https://review.openstack.org/#/c/396775/", 
+    "tags": [
+        "cells", 
+        "ocata-rc-potential"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1659391", 
+    "owner": "None", 
+    "id": 1659391, 
+    "index": 6640, 
+    "created": "2017-01-25 19:07:57.613863+00:00", 
+    "title": "Server list API does not show scheduled servers that are not assigned to any cell", 
+    "comments": [
+        {
+            "content": "After merge of commit [1] command \"nova list --all-\" started returning empty list when servers exist. Revert of this change makes API work again.\n\n[1] https://review.openstack.org/#/c/396775/", 
+            "date_created": "2017-01-25 19:07:57.613863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "I'm not able to reproduce the bug. It works fine. I installed latest nova code, created vm and able to list using nova list.", 
+            "date_created": "2017-02-01 18:30:15.785587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sujitha-neti"
+        }, 
+        {
+            "content": "Sujitha,\n\nthis bug was discovered in manila devstack plugin that tries to create Nova VMs during devstack run. It can be seen when cell feature and services are disabled and default cell hasn't been created yet. In this case all Nova VMs hang in scheduled state and cannot be viewed. So, even considering incomplete Nova configuration, it should ALWAYS list servers, no matter how many cells are created.\n\n[1] https://review.openstack.org/#/c/396775/", 
+            "date_created": "2017-02-02 11:26:34.526270+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Updated description. Bug is valid.", 
+            "date_created": "2017-02-02 11:29:16.200544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Is Manila running with cells v1 to still use nova-network (which only runs with cells v1 in Ocata now)?", 
+            "date_created": "2017-02-05 20:29:00.765238+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Wait a minute, the recreate steps say \"not configuring cell service and not creating default cell.\" - is this in a recreate with the nova-cells service enabled? That is cells v1, which is optional. So are you running with the nova-cells service but have CONF.cells.enabled=False in nova.conf in the API node? Or are you not running with cells v1 at all (note that cells v2 is not optional and is not related to the [cells] options in nova.conf and doesn't run via the nova-cells service).", 
+            "date_created": "2017-02-05 20:31:41.112080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Matt,\n\n\"not configuring cell service\" means do nothing about it at all. Not even enabled.\n\nManila does nothing about Nova config, at all. Manila just was creating VMs in the middle of devstack run, but after Nova services started. So, you need to consider current logic of devstack and Nova.\n\nManila has never been using nova-network in CI. Same about Nova cells.\n\nWhat else could be \"incomplete\"? Just try create server in, for example, \"extra\" section of devstack run and you will see what is this bugreport about by \"not seeing\" server you scheduled for creation in \"list\" command.", 
+            "date_created": "2017-02-06 11:34:24.348553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Matt,\n\ncomplete configuration can be found here:\n\nhttp://logs.openstack.org/37/426737/12/check/gate-manila-tempest-dsvm-generic-no-share-servers-ubuntu-xenial-nv/064f0da/logs/\n\nAnd little clarification of one of previous statements:\n\n\"\"\"\nSo, you need to consider current DEFAULT logic of devstack and Nova.\n\"\"\"", 
+            "date_created": "2017-02-06 11:39:49.400146+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Matt,\n\nalso, logic of mentioned change [1] directly says following:\n\n\"\"\"\nIf no cells are configured then we will not look for server records in DB and will return you just empty list.\n\"\"\"\n\nSo, I really do not see what else is \"incomplete\" here.\n\n[1] https://review.openstack.org/#/c/396775/42/nova/compute/api.py", 
+            "date_created": "2017-02-06 11:45:49.931226+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "This bug was work-arounded in Manila devstack plugin with following change:\n\nhttps://review.openstack.org/#/c/425716/2/devstack/plugin.sh\n\nthat uses direct \"get\" by server ID instead of \"list\" and look for server with our name that has been broken by https://review.openstack.org/#/c/396775", 
+            "date_created": "2017-02-06 11:49:04.463556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Do you have a link to a failed manila CI job which has the server list operation returning nothing before the workaround?", 
+            "date_created": "2017-02-06 14:30:54.715179+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "What does \"and default cell hasn't been created yet\" mean? I see in the linked CI run that simple_cell_setup is run here:\n\nhttp://logs.openstack.org/37/426737/12/check/gate-manila-tempest-dsvm-generic-no-share-servers-ubuntu-xenial-nv/064f0da/logs/devstacklog.txt.gz#_2017-02-02_13_41_26_166\n\nThat runs the db schema migration for the cell0 database, maps the existing compute node(s) to the existing cell (which is taken from the main nova database connection), and then maps the instances running on those hosts to the main cell.\n\nDoes the server that manila creates in it's devstack run happen before simple_cell_setup is run? Because if so, it's doing things with nova before nova is fully setup.", 
+            "date_created": "2017-02-06 14:39:38.986630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I've reverted the workaround here:\n\nhttps://review.openstack.org/#/c/429729/\n\nto see if this is still and issue and if so, I'd like to recreate it and debug it.", 
+            "date_created": "2017-02-06 14:46:45.109313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Matt,\n\n\"Does the server that manila creates in it's devstack run happen before simple_cell_setup is run\"\n\nyes, it is exactly how it was reproduced in Manila's devstack run. \n\nThen\n\n\"Because if so, it's doing things with nova before nova is fully setup.\"\n\nRight, nova is not fully setup yet in this case, BUT it should not matter for \"list\" API. Bug description says that we cannot see servers that are not assigned to cells. Never can see.", 
+            "date_created": "2017-02-06 14:58:40.864438+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Cells are not optional in Nova as of Ocata. Since cells are required, you should not see instances that are not assigned to a cell, because such a thing is not possible (post-scheduling).\n\nCreating an instance before nova is fully setup is not valid either.\n\nThese two things combined are doubly invalid.", 
+            "date_created": "2017-02-06 15:34:39.577195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Dan,\n\nListing ALL resources I expect to see exactly ALL of them, not some kind of filtered list like only cell-related servers. I consider such behavior as bug speaking from Nova-user point of view.\nAnd I completely disagree to have such behavior as \"feature\". I, as user/admin, should be able to see error'ed servers that could not be scheduled correctly and not assigned to any of cells.", 
+            "date_created": "2017-02-06 15:54:36.443547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Dan,\n\nMoreover, you agree that Nova has such behavior. It means, status should be \"won't fix\" in case you disagree with statement that it is bug, not \"invalid\" which really means other kind of stuff.", 
+            "date_created": "2017-02-06 15:57:31.600997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Valeriy, you can list the instances as long as the proper upgrade steps are performed when upgrading nova from newton to ocata, including mapping the cell for the main nova database (where the existing instances live). The nova-api code in Ocata is pulling from the cell mapping now, which is a required upgrade step for nova to upgrade to Ocata, and if that hasn't been performed, then that's an issue on the deployer, which makes this invalid.\n\nAlso, the revert of the workaround in the manila devstack plugin is passing CI:\n\nhttps://review.openstack.org/#/c/429729/\n\nThere are no related changes to devstack or the manila devstack plugin after that workaround which would change things. There were some fixes in Nova last week before RC1 which might be related to this, which might have fixed this indirectly, but without a proper recreate at this time I'm considering this invalid.", 
+            "date_created": "2017-02-06 17:13:24.314010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Valeriy,\n\nYou can see all servers, even error'd ones. Even error'd servers are in a cell, because as I said, no servers are not in a cell anymore. It's not possible.\n\nTo your second comment, I definitely agree that \"if you don't set up nova completely or properly, things won't work\". It is not valid to expect nova to work if I don't set it up properly. It would be like expecting my car to drive without wheels. Wheels are required on a car. So are cells in Nova.\n\nComplaining to your car maker that your car won't drive without wheels is \"invalid\" as is this bug for the same reason.", 
+            "date_created": "2017-02-06 20:16:16.574811+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }
+    ]
+}

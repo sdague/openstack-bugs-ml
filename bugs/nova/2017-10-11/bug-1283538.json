@@ -1,0 +1,63 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2014-09-22 13:24:53.792622+00:00", 
+    "description": "nova version 2.15.0\n\nMy openstack deployment is relatively simple.  It uses FlatDHCPManager and a single vlan. Multiple tenants exist and all are on the same vlan. Now consider the following situation:\n\n1. tenant A and tenant B exist.\n2. tenant A logs into horizon dashboard and launches an instance into vlan 192.168.50.X.\n3. tenant A gives the instance a display name of \"test\". As a result, the DHCP server assigns the hostname \"test\" to the VM and an IP address of 192.168.50.2.\n4. tenent B sometime later logs into the horizon dashboard.\n5. tenant B has no visibility and consequently does not know that tenant A has a machine with a hostname of test in the 192.168.50 vlan.\n6. tenant B launches an instance into vlan 192.168.50.X.\n7. tenant B gives the instance a display name of \"test\". As a result, the DHCP server assigns the hostname \"test\" to the VM and an IP address of 192.168.50.3. \n\nAs a result, now when a nslookup is done on the hostname, two A records are returned instead of one. This situation would be far worse if each tenant launched multiple instances instead of just one.  I don't know of a situation where anyone would want to automatically assign the same hostname to multiple IP addresses, especially when this behavior would be unknown to the tenants and would result in all kinds of bizarre networking behavior depending on the applications deployed in the vlan.\n\nMy expectation is that at a minimum if tenant B attempts to launch an instance with a hostname that already exists in the DHCP server's records, then that launch should fail and the tenant should be forced to change the display they tried to give the VM before a launch would be successful.", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1283538", 
+    "owner": "None", 
+    "id": 1283538, 
+    "index": 1401, 
+    "created": "2014-02-22 19:59:35.988629+00:00", 
+    "title": "Different tenants can assign the same hostname to different machines without an error", 
+    "comments": [
+        {
+            "content": "nova version 2.15.0\n\nMy openstack deployment is relatively simple.  It uses FlatDHCPManager and a single vlan. Multiple tenants exist and all are on the same vlan. Now consider the following situation:\n\n1. tenant A and tenant B exist.\n2. tenant A logs into horizon dashboard and launches an instance into vlan 192.168.50.X.\n3. tenant A gives the instance a display name of \"test\". As a result, the DHCP server assigns the hostname \"test\" to the VM and an IP address of 192.168.50.2.\n4. tenent B sometime later logs into the horizon dashboard.\n5. tenant B has no visibility and consequently does not know that tenant A has a machine with a hostname of test in the 192.168.50 vlan.\n6. tenant B launches an instance into vlan 192.168.50.X.\n7. tenant B gives the instance a display name of \"test\". As a result, the DHCP server assigns the hostname \"test\" to the VM and an IP address of 192.168.50.3. \n\nAs a result, now when a nslookup is done on the hostname, two A records are returned instead of one. This situation would be far worse if each tenant launched multiple instances instead of just one.  I don't know of a situation where anyone would want to automatically assign the same hostname to multiple IP addresses, especially when this behavior would be unknown to the tenants and would result in all kinds of bizarre networking behavior depending on the applications deployed in the vlan.\n\nMy expectation is that at a minimum if tenant B attempts to launch an instance with a hostname that already exists in the DHCP server's records, then that launch should fail and the tenant should be forced to change the display they tried to give the VM before a launch would be successful.", 
+            "date_created": "2014-02-22 19:59:35.988629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joseph-lorenzini"
+        }, 
+        {
+            "content": "Classes that inherit from NetworkManager, e.g. FlatDHCPManager, use the attribute instance_dns_manager to handle DNS service operations, such as creating new DNS entries.\n\nThis attribute is an instance of the class defined at CONF.instance_dns_manager, that is, by default, 'nova.network.noop_dns_driver.NoopDNSDriver'.\n\nNoopDNSDriver, as suggested, does not do anything. However, other DNSDriver implementations like MiniDNS do. They verify if a DNS entry name is unique into the domain before adding the new DNS entry.\n\nChanging this default configuration to 'nova.network.minidns.MiniDNS' at nova/network/floating_ips.py solved this issue:\n\n    cfg.StrOpt('instance_dns_manager',\n               default='nova.network.minidns.MiniDNS',\n               help='Full class name for the DNS Manager for instance IPs'),\n\nWhen trying to reproduce the bug after the modifications through Horizon, I got: \n\nError: Failed to launch instance \"instance-name\": Please try again later [Error: No valid host was found. ].\n\nWhat do you think about this approach?", 
+            "date_created": "2014-05-14 18:17:54.391220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~samueldmq"
+        }, 
+        {
+            "content": "Overall, that looks good however could the exception be modified so that it tells the user the actual problem:\n\nIn other words, this:\n\n[Error: No valid host was found. ].\n\nWould be clearer if it was this instead:\n\n[Error: An instance already exists with the hostname \"instance name\"].", 
+            "date_created": "2014-05-14 18:34:30.725547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joseph-lorenzini"
+        }, 
+        {
+            "content": "When using the MiniDNS driver, an exception of type exception.FloatingIpDNSExists is thrown.\nThis exception has the following message format:  \"The DNS entry %(name)s already exists in domain %(domain)s.\"\n\nHowever, this message is changed at any point between Nova and Horizon; so I think this is out of the scope of this bug.\nI think other bug should be created to make this message arrive correctly to the calling component, in this case, Horizon.", 
+            "date_created": "2014-05-19 15:10:46.399370+00:00", 
+            "author": "https://api.launchpad.net/1.0/~samueldmq"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/94252", 
+            "date_created": "2014-05-19 19:36:22.921806+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "In order to treat the wrong error that is being thrown, the following bug was created.\nhttps://bugs.launchpad.net/nova/+bug/1321774", 
+            "date_created": "2014-05-21 14:01:50.584001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~samueldmq"
+        }, 
+        {
+            "content": "moving out of inprogress", 
+            "date_created": "2014-09-08 14:03:25.738029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Honestly, I don't think this is going to be fixed in the current scheme. Until we have a more solid dns management stack integrated this is going to be hard to really address.", 
+            "date_created": "2014-09-12 15:19:04.591165+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Change abandoned by Samuel de Medeiros Queiroz (<email address hidden>) on branch: master\nReview: https://review.openstack.org/94252", 
+            "date_created": "2014-09-22 13:24:52.979068+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

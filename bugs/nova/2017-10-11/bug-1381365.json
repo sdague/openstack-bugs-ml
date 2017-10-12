@@ -1,0 +1,154 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2016-09-29 02:40:09.718817+00:00", 
+    "description": "We configure keystone to use SSL always. Due to the poodle issue, I was trying to configure keystone to disable SSLv3 completely. \nhttp://googleonlinesecurity.blogspot.fi/2014/10/this-poodle-bites-exploiting-ssl-30.html\nhttps://www.openssl.org/~bodo/ssl-poodle.pdf\n\nIt seems that keystone has no support for configring SSL versions, nor ciphers.\n\nIf I'm not mistaken the relevant code is in the start function in\ncommon/environment/eventlet_server.py\n\nIt calls \neventlet.wrap_ssl\nbut with no SSL version nor cipher options. Since the interface is identical, I assume it uses ssl.wrap_socket. The default here seems to be  PROTOCOL_SSLv23 (SSL2 disabled), which would make this vulnerable to the poodle issue.\n\nSSL conifgs should probably be possible to be set in the config file (with sane defaults), so that current and newly detected weak ciphers can be disabled without code changes.", 
+    "tags": [
+        "security", 
+        "ssl"
+    ], 
+    "importance": "Undecided", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1381365", 
+    "owner": "None", 
+    "id": 1381365, 
+    "index": 5215, 
+    "created": "2014-10-15 07:22:33.416064+00:00", 
+    "title": "SSL Version and cipher selection not possible", 
+    "comments": [
+        {
+            "content": "We configure keystone to use SSL always. Due to the poodle issue, I was trying to configure keystone to disable SSLv3 completely. \nhttp://googleonlinesecurity.blogspot.fi/2014/10/this-poodle-bites-exploiting-ssl-30.html\nhttps://www.openssl.org/~bodo/ssl-poodle.pdf\n\nIt seems that keystone has no support for configring SSL versions, nor ciphers.\n\nIf I'm not mistaken the relevant code is in the start function in\ncommon/environment/eventlet_server.py\n\nIt calls \neventlet.wrap_ssl\nbut with no SSL version nor cipher options. Since the interface is identical, I assume it uses ssl.wrap_socket. The default here seems to be  PROTOCOL_SSLv23 (SSL2 disabled), which would make this vulnerable to the poodle issue.\n\nSSL conifgs should probably be possible to be set in the config file (with sane defaults), so that current and newly detected weak ciphers can be disabled without code changes.", 
+            "date_created": "2014-10-15 07:22:33.416064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kalle-happonen"
+        }, 
+        {
+            "content": "Thanks for the report! The OSSA task is set to Incomplete pending additional security detail.\n\nThis may not constitute a vulnerability as is but more a lack of a security hardening mechanism (which could be implemented publicly).\nAlso I believe this is also the case for most (if not all) OpenStack projects...", 
+            "date_created": "2014-10-15 12:02:07.305313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Note that this applies when you run Keystone under eventlet. If you run Keystone under Apache httpd or a more featureful wsgi container you can configure the SSL algorithms. You can also run Keystone behind an SSL terminator. In short, I don't think you should be running an eventlet server on a network you don't trust.", 
+            "date_created": "2014-10-15 14:26:52.003937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "While I agree with Brant regarding Keystone (and thankfully Keystone is flexible in it's support for non-eventlet deployments), is this not an issue against every other OpenStack service?", 
+            "date_created": "2014-10-15 14:52:48.111869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "I think all the API servers use eventlet... I'll check around. At the same time, all the API servers can be run behind an SSL terminator.", 
+            "date_created": "2014-10-15 17:41:23.074704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "My stab at a patch for keystone master.", 
+            "date_created": "2014-10-15 22:07:42.526879+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "An alternative solution to the same issue was suggested in https://bugs.launchpad.net/keystone/+bug/1382141", 
+            "date_created": "2014-10-16 18:23:55.452571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Thankfully this is minimally impactful to most services (most deployers, afaik, are using SSL terminators instead of eventlet's direct SSL capabilities). \n\nIt's highly encouraged to *not* deploy Keystone under eventlet, but we should still provide a fix for this (as we haven't deprecated/removed the eventlet support).\n\nI'm looking over brant's patch in #5. We should also consider this for backport to Juno and Icehouse.", 
+            "date_created": "2014-10-17 00:12:12.036318+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }, 
+        {
+            "content": "I also agree running OpenStack services + SSL on an untrusted network is likely going to expose other issues. This *probably* doesn't need to be under embargo. ", 
+            "date_created": "2014-10-17 00:15:14.765702+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }, 
+        {
+            "content": "Added cinder, glance and nova to this issue as reported by Dirk Mueller in bug 1382141.", 
+            "date_created": "2014-10-17 02:35:01.874314+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "I personally don' tthink that making the SSL version to be configurable makes a lot of sense, especialyl with an insecure default (SSLv23), as the 'sensible' default depends a lot on the python version (and security fixes backported in there). \n\nI like the cipher configurability, but the SSL protocol version needs to be hardcoded with no way to screw it up for an administrator in my opinion. ", 
+            "date_created": "2014-10-17 08:13:09.849826+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dmllr"
+        }, 
+        {
+            "content": "Dirk, PROTOCOL_SSLv23 is not insecure. Actually in Python that negotiates the highest possible protocol level it can. That depends entirely on the version of Python and openssl it's compiled against. For example any Python whose version is < 2.7.9 (unreleased) will be at best able to negotiate TLSv1.0 at best (which is better than SSLv3 but still not good). This includes 2.6. Further in these versions of Python there's no way to tell the SSL module to not use SSLv2 or SSLv3 (in Python 3 constructing an SSLContext and using the OP_NO_SSLv{version_number} allows for this). That said, I have no problem disabling these protocols by default, but do we really want to cause administrators to stay on older potentially (less secure) versions of openstack to keep this behaviour? At least for now, it should be configurable so that administrators can upgrade without a headache. I have no problems with moving towards disallowing configuration in the future though.", 
+            "date_created": "2014-10-17 15:17:16.225403+00:00", 
+            "author": "https://api.launchpad.net/1.0/~icordasc"
+        }, 
+        {
+            "content": "Ian, I understand the points you're making. The insecurity doesn't come from python negotiating the highest possible version of the protocol but from the fact that it doesn't disallow a downgrade to insecure protocols. There are subtle differences other than what you said already. Python has disabled SSLv2 by default in the 2.7 series, leaving 2.6 affected.\n\nMy argument is that the default should be secure, and that is \nPROTOCOL_SSLv23 with OP_NO_SSLv3 | OP_NO_SSLv2 where available, and enforcing TLSv1 otherwise.see the patch that I posted in the duplicated bug report.\n\nTLSv1 has been standardized 18 years ago, many more years than what OpenStack is in existence. All OpenStack APIs are.usually accessed by the python clients, which are running on the same or a newer version of python. I would not veto a config option to restore the insecure fallback, but the default needs to be secure without requiring a configuration change on update. I personally don't think it's worth such a config option.\n\nPlease note that I do welcome the option about choosing the ciphers, as this is a very complex.topic that cloud operators need to be able to tune.\n\nWhen I'm back in the office I'll be creating a patch based on Brant's which includes my proposal.\n\n\n\n", 
+            "date_created": "2014-10-17 20:41:55.136262+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dmllr"
+        }, 
+        {
+            "content": "Dirk - I agree that the SSL version supported in the eventlet server doesn't have to be configurable to fix the poodle issue. It wasn't configurable before and it doesn't have to be configurable to fix this issue. If the deployer needs to use a different configuration then then run in Apache or use an SSL terminator.", 
+            "date_created": "2014-10-18 22:17:54.076736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "I tried the sample patch in bug 1382141 and wasn't able to connect using ssl3 anymore, so I think it's adequate.\n\nI tried this on my dev system which is still ubuntu 12.04.\n\nThis is with master (ssl_version=ssl.PROTOCOL_SSLv23):\n\n-ssl3    SSLv3 / AES256-SHA\n-tls1_2  TLSv1.2 / AES256-GCM-SHA384\n-tls1_1  TLSv1.1 / AES256-SHA\n-tls1    TLSv1 / AES256-SHA\n\nWith the change in 1382141 (ssl_version=ssl.PROTOCOL_TLSv1):\n\n-ssl3    sslv3 alert handshake failure\n-tls1_2  wrong version number\n-tls1_1  wrong version number\n-tls1    TLSv1 / AES256-SHA\n\nNot only does it disable ssl3 it also disables tls1_2 and tls1_1. I tried different combos of ssl.PROTOCOL_* (I only have SSLv23, SSLv3, and TLSv1 available) and TLSv1 is the only one that disables ssl3. I also tried using the ciphers argument and it had no effect as if it was ignored.\n\nSo I think TLSv1 is the only option available to this old version of Python and OpenSSL. As I said before, I'm fine with this change since the SSL version wasn't configurable before and it essentially fixes the problem for folks that took the easy route and are using eventlet with SSL.\n", 
+            "date_created": "2014-10-19 15:06:39.876708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "It's worth noting that the \"POODLE\" vulnerability should not actually weigh on the discussion here. The currently-known downgrade attacks needed to trick a client into using older protocol versions rely on Web-browser-specific fallback behaviors which are not part of the standard protocol negotiation. https://www.imperialviolet.org/2014/10/14/poodle.html http://blog.erratasec.com/2014/10/some-poodle-notes.html http://www.openwall.com/lists/oss-security/2014/10/18/4 (Thunderbird is called out as a counterexample there because it actually reuses parts of Mozilla's browser code to handle SSL version detection.)\n\nThat said, I don't disagree at all with the proposed hardening measures/options, I just don't think it needs to be solved under embargo, nor should any hardening around this warrant a security advisory. If you can demonstrate a viable downgrade attack against the current implementation, then that would be newsworthy well outside of OpenStack circles.", 
+            "date_created": "2014-10-19 16:25:27.988086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Here's some discussion on Python SSL implementation: http://bugs.python.org/issue22638 'ssl module: the SSLv3 protocol is vulnerable (\"POODLE\" attack)'\n", 
+            "date_created": "2014-10-19 23:08:20.683016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "I'm concerned about the change to switch to specifying ssl_version=ssl.PROTOCOL_TLSv1 since it might not be considered security hardening to disable TLS 1.1 and 1.2. I can't think of a better suggestion for what we should do if someone really feels they need to disable SSLv3. They can handle it themselves by building openssl or python without sslv3 support. Their linux distribution might be planning to provide these soon enough.\n", 
+            "date_created": "2014-10-19 23:16:26.886190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "Yes, SSL v3 _protocol_ is vulnerable no matter what implements it.\nHowever how do you propose for an attacker to coax the client to use\nSSL v3 in the course of TLS negotiation?\n", 
+            "date_created": "2014-10-20 00:21:03+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Brant, I would hope that if a linux distribution decides to disable SSLv3 by default then they would also backport the OP_NO_SSLv3 option. \n\nWe could also change the patch to only select TLSv1 if PROTOCOL_TLSv1_1 is not available (which is the case for all the platforms I'm interested in). \n\n", 
+            "date_created": "2014-10-20 09:58:01.945754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dmllr"
+        }, 
+        {
+            "content": "Okay, rereading the implementation of python's ssl and python requests, there is indeed no automatic downgrade, so we don't need to force turning off SSLv3. \n\nI guess that leaves us with the patch from Brant then. I agree this doesn't need to be embargoed anymore. ", 
+            "date_created": "2014-10-20 10:24:10.481471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dmllr"
+        }, 
+        {
+            "content": "There's no automatic downgrade if there's no attacker. Correct. The reality is that the TLS handshake takes place almost entirely in plain text which would allow an attacker to modify the list of protocols that requests could claim to support. Right now we're also trying to determine the best way to mitigate this but older versions of python are severely limited in their functionality. ", 
+            "date_created": "2014-10-20 13:04:40.654950+00:00", 
+            "author": "https://api.launchpad.net/1.0/~icordasc"
+        }, 
+        {
+            "content": "Ian, I don't follow your reasoning here. The client_version field (advertising its highest supported version) is included in the ClientHello message all of which is used as input to the hash function for the Finished messages at the end of the handshake. Can you rephrase your concern relative to the already standardized protections against this as outlined in IETF RFC 2246?\n\nI assert that this is not anything for which the OpenStack Vulnerability Management Team can issue an OpenStack Security Advisory, so unless anyone can point to a specific proof-of-concept exploit involving a non-contrived OpenStack service configuration I will switch this bug report to public and tag it as a security hardening measure on Thursday.", 
+            "date_created": "2014-10-20 23:37:00.295393+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Just as a follow-up on TLS downgrade attacks, note that for example CVE-2014-3511 describes a flaw in the SSL/TLS server implementation in OpenSSL 1.0.1 versions prior to 1.0.1i where severely fragmenting the ClientHello message enables a man-in-the-middle attacker to downgrade the client and server to TLS 1.0 regardless of whether they both support TLS 1.1 and later. Even that flaw did _not_ make it possible to downgrade a handshake to SSL v3. In the current literature you really need a fallback mechanism outside the TLS handshake's version negotiation to exploit SSL v3, akin to what Web browsers implement (or you need to somehow convince someone to use a client/server which lack TLS support entirely).", 
+            "date_created": "2014-10-20 23:51:06.704836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "The distro fix for this issue was a patched python that removes the bad SSL versions. I'm not convinced we should be in the business of working around that at the openstack layer.", 
+            "date_created": "2014-12-10 20:08:22.753972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/171001", 
+            "date_created": "2015-04-06 22:44:53.419254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/171001\nCommitted: https://git.openstack.org/cgit/openstack/keystone/commit/?id=1d4a6db158e3118181ae9d96a03832c49ff8998f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1d4a6db158e3118181ae9d96a03832c49ff8998f\nAuthor: Morgan Fainberg <email address hidden>\nDate:   Mon Apr 6 15:41:29 2015 -0700\n\n    Skip SSL tests because some platforms do not enable SSLv3\n    \n    For \"damned good security reasons\" (POODLE) some platforms have\n    patched out SSLv3 from OpenSSL. Because Evenetlet cannot be configured\n    for specific versions (or ciphers) and httplib is extremely limited,\n    the tests for SSL have been explicitly skipped. These tests should\n    be potentially re-enabled in the functional suite for SSL terminated\n    endpoints.\n    \n    This comes back to \"do not terminate SSL in the eventlet wsgi\" that\n    was determined in bug 1381365.\n    \n    Change-Id: Ic4b446ceee9034de5b6530c2d79d798a903fcbbf\n    Related-Bug: #1381365\n    Closes-Bug: #1435174\n", 
+            "date_created": "2015-04-07 14:05:18.249507+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

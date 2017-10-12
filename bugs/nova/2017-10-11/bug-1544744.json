@@ -1,0 +1,63 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-06-02 19:32:37.862917+00:00", 
+    "description": "During live migration with attached volume, instance is moved to ERROR state and stuck in task state Migrating when cinder client exception is thrown.\n\nSteps:\n\u00a0\u00a0\u00a01. Create a nova instance\n\u00a0\u00a0\u00a02. Attach a cinder volume\n   3. Change the nova code to raise cinderclient exception in\n      initialize_connection(). Add the below line in  initialize_connection() \n      in nova/volume/cinder.py.\n         raise cinder_exception.ClientException(\"test\",\"cinder client exception\") \n\u00a0\u00a0\u00a04. Live migrate instance to other compute node (on a shared storage setup)\n\nResult:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0* ERROR (ClientException): Unexpected API Error. Please report this at http://bugs.launchpad.net/nova/ and attach the Nova API              log if possible.\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0* And instance changes to unrecoverable ERROR state and stuck in migrating task state.\n\nError message is expected but instance changing into unrecoverable ERROR state should be fixed in my opinion. It has to roll back instead of moving to ERROR state.", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1544744", 
+    "owner": "https://api.launchpad.net/1.0/~sujitha-neti", 
+    "id": 1544744, 
+    "index": 6035, 
+    "created": "2016-02-11 21:47:59.137865+00:00", 
+    "title": "Live migration with attached volume results in ERROR state and fails to rollback when cinder client exception is thrown", 
+    "comments": [
+        {
+            "content": "During live migration with attached volume, instance is moved to ERROR state and stuck in task state Migrating when cinder client exception is thrown.\n\nSteps:\n   1. Create a nova instance\n   2. Attach a cinder volume\n   3. Raise cinderclient exception in initialize_connection() in nova/volume/cinder.py \n   4. Live migrate instance to other compute node (on a shared storage setup)\n\nResult:\n       * ERROR (ClientException): Unexpected API Error. Please report this at http://bugs.launchpad.net/nova/ and attach the Nova API              log if possible. \n       * And instance changes to unrecoverable ERROR state and stuck in migrating task state.\n\nError message is expected but instance changing into unrecoverable ERROR state should be fixed in my opinion. It has to roll back instead of moving to ERROR state.", 
+            "date_created": "2016-02-11 21:47:59.137865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sujitha-neti"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-02-11 21:47:59.137865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sujitha-neti"
+        }, 
+        {
+            "content": "Sujitha,\nThis is what I gather from your bug report. \nEssentially, are you suggesting that an instance should move back to ACTIVE state in the event of an error during live migrate?\nI think the possibility of reverting the vm state depends, at least partly, on where and when the error occurred. If the error occurs say during the pre-checks, it is probably safe to revert the vm state. \nHowever, if the error occurs after the live migrate process has commenced, we can't be sure of the changes that may have happened to the instance and whether it'd be appropriate to revert the vm state.\n\nTalking more specifically about what you reported here:\nIt looks like the failing method is 'check_can_live_migrate_source', which is one of the pre-checks for live migrate.\nSo, maybe it's safe in this case to reset the vm state?\n\nLooking more closely, it appears that 'initialize_connection' is wrapped with 'translate_volume_exception', where cinder's ClientExceptions, specifically, 'NotFound' and 'BadRequest' are being handled and transformed into either 'VolumeNotFound' or 'InvalidInput' exceptions [1] that Nova understands. However, since the exception in this case is neither of the above mentioned types, so it is re-raised. It eventually bubbles up the stack and gets caught at [2], where the vm state is set to ERROR.\n\nSo, maybe we can catch the unexpected exceptions at [3] and raise a MigrationPreCheckError that is expected and handled appropriately at [2]? This would leave the instance in whatever state it was earlier. \nAlthough doing this means all the unexpected error would now show up as MigrationPreCheckErrors. I'm not sure if that's desirable or not.\n\nI'm not entirely sure if this is the correct approach or not. Let's see what other nova folks have to say.\n\n\n[1] https://github.com/openstack/nova/blob/836180bcdb799a06deb0ad62f6bfb06930e20e3a/nova/volume/cinder.py#L235-L241\n[2] https://github.com/openstack/nova/blob/58dafee0d931e2330e9ee6012d5558e022fc26fe/nova/conductor/manager.py#L308-L336\n[3] https://github.com/openstack/nova/blob/137ddac8ef23bb0c4c8572f10a5066f34c9e8b20/nova/compute/manager.py#L5079-L5107", 
+            "date_created": "2016-02-17 00:01:45.590929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hemanth-makkapati"
+        }, 
+        {
+            "content": "I wasn't able to reproduce this issue using provided steps. Here is what I observed:\n\n1. I have an instance up and running\n2. I try to attach volume to my instance, according to your suggestion I changed code to raise cinderclient exception during initialize_connection\n2a. Exception is raised, volume is not attached to the VM, VM is in ACTIVE state\n2b . Removed exception from initialize_connection as per description it should happen during volume-attach, not during live migration\n3. I try to live migrate VM, everything works fine, VM moved to destination, state is ACTIVE\n\nIf you wanted to write that cinderclient exception should be raised during live migration then this bug is a duplicate of https://bugs.launchpad.net/nova/+bug/1405294", 
+            "date_created": "2016-02-17 09:17:27.353231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "@pawel, I think the idea here is to add an exception into that line of code.\n\n@hemanth, you are right. If this problem happening post live-migrate, going into the ERROR state is correct, because the admin needs to clean up, and there is no sensible way to revert the operation. If this happens during the pre-live-migrate setup/checks, we probably should go back to ACTIVE, if we can do a full revert.\n\nSo I think incomplete is a valid state, while we narrow down the issue we are talking about here.", 
+            "date_created": "2016-02-19 10:20:27.094749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Changing the status to confirmed as I was able to reproduce this bug in the manner described by the author.\nIt does make sense to reset the instance state if one of the pre-checks fail, which is the case in this scenario.\n\nAlthough the bug description suggests an explicit code change to reproduce the error, it still represents a possible scenario where cinder client may throw an exception while trying to initiate the connection.\n\n", 
+            "date_created": "2016-03-03 16:55:10.593308+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hemanth-makkapati"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/290156", 
+            "date_created": "2016-03-08 22:00:32.007997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/290156\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2c52aca7965bf3c9dd4c17b4f7706bdef401463f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2c52aca7965bf3c9dd4c17b4f7706bdef401463f\nAuthor: Sujitha <email address hidden>\nDate:   Tue Mar 8 20:57:36 2016 +0000\n\n    Added new exception to handle CinderClientException\n    \n    When Cinder client exception is thrown in initialize_connection\n    (which is called during prechecks for Live migration),\n    instance is moved to ERROR state. It is not sensible\n    to move the instance to ERROR state when the precheck fails.\n    Adding new exception changes this behavior. Instance will be reset\n    to Active state when the precheck fails.\n    \n    Closes bug: #1544744\n    \n    Change-Id: I7a5fcc070ff53086f37417f12e2b9f383e220747\n", 
+            "date_created": "2016-05-11 19:25:49.870078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:32:37.215812+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ]
+}

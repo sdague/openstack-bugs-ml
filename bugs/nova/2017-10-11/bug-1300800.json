@@ -1,0 +1,93 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-11-12 06:27:37.623518+00:00", 
+    "description": "In a fresh install of devstack I see an error in the nova-compute log when I try to start an instance. I tracked this down to coming from nova/linux_net.py where sysctl is called in _enable_ipv4_forwarding().\n\nIf I add /sbin to my path the error goes away. However some distros, e.g.: debian, don't include sbin in the standard path rather they restrict it to root users only.\n\nI think the call to sysctl (and possibly other similar calls) should be moved to use rootwrap, along with preventing issues like this it would have the added benifit of making the code slightly more OS agnostic.", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "High", 
+    "heat": 32, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1300800", 
+    "owner": "https://api.launchpad.net/1.0/~gus", 
+    "id": 1300800, 
+    "index": 1457, 
+    "created": "2014-04-01 13:45:33.860944+00:00", 
+    "title": "Nova boot fails if sbin not in path", 
+    "comments": [
+        {
+            "content": "In a fresh install of devstack I see an error in the nova-compute log when I try to start an instance. I tracked this down to coming from nova/linux_net.py where sysctl is called in _enable_ipv4_forwarding().\n\nIf I add /sbin to my path the error goes away. However some distros, e.g.: debian, don't include sbin in the standard path rather they restrict it to root users only.\n\nI think the call to sysctl (and possibly other similar calls) should be moved to use rootwrap, along with preventing issues like this it would have the added benifit of making the code slightly more OS agnostic.", 
+            "date_created": "2014-04-01 13:45:33.860944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dave-mcnally"
+        }, 
+        {
+            "content": "Also the use of sysctl to read as non-privileged user might not work with some security models.", 
+            "date_created": "2014-04-01 14:11:47.203115+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "IMHO before implementation it would be good to step back take a look at the implications especially security and see if it is possible to use a python sysctl binding.\n\nFor instance, it's a good practice to do things as the least privileged user possible. If sysctl read is possible as non-root, please do so. That's what is currently done in Nova and the bug is that the error is handled wrong if executable is not found as dave-mcnally had found. All this could be refactored into a sysctl module so that it would do the right thing depending on the OS and security model.", 
+            "date_created": "2014-04-04 04:50:23.844568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "I figure we have these options, without a larger re-architect:\n\nA. Invoke sysctl via sudo always\nB. Invoke sysctl via a full path (/sbin/sysctl)\nC. Add /usr/sbin:/sbin to PATH in nova\nD. Require PATH to already include sysctl\n\nD is the current situation and delaying while we discuss it further is a vote for D ;)\nIf we want to stay with this we need to fix PATH in devstack before invoking nova.\n\n(I can see downsides with each option.  I'm personally weakly in favour of A or D since they leave sysctl location up to the sysadmin/distro.  I'm happy to do the patch for any of these, just want to know which choice is likely to be accepted.)", 
+            "date_created": "2014-05-07 00:43:04.504164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gus"
+        }, 
+        {
+            "content": "Hmm, we have a review for this but this bug did not get updated:\nhttps://review.openstack.org/#/c/99820/", 
+            "date_created": "2014-07-01 23:16:33.070182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "I initially went with A for simplicity.   Early review comments pushed for B.  Later review comments quite conclusively pushed for D.   So I'm abandoning the above change and writing a new change against devstack.\n\nReview comments on https://review.openstack.org/#/c/99820/ for posterity:\n\nSean Dague:\nI feel like we should just force a more extensive path. Or discover once somewhere where sysctl is. Working around path issues on distros seems weird.\n\nRussell Bryant:\nAgree with Sean. I don't think hardcoding the path makes a lot of sense. Perhaps this is something the debian openstack package maintainer can deal with to make sure sysctl is available to the user running nova.\n\nDan Prince:\nIf we follow this pattern here I feel like it might get replicated all over the place. Why not just fix the PATH (outside of nova) in the distro?", 
+            "date_created": "2014-07-21 05:52:30.172414+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gus"
+        }, 
+        {
+            "content": "Change abandoned by Angus Lees (<email address hidden>) on branch: master\nReview: https://review.openstack.org/99820\nReason: Abandoning in favour of devstack fix to ensure sbin is in PATH before invoking nova:\nhttps://review.openstack.org/108274", 
+            "date_created": "2014-07-21 05:55:59.090951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Added openstack-manuals to find/fix anywhere where we talk about nova runtime requirements.\n\nWonderful docs people:  Nova needs to be run with /sbin in PATH, so it can find sysctl.  Presumably at least one other OpenStack service makes the same assumption, so it might be reasonable/easier to describe it as a requirement for all OpenStack services.  If we talk about that anywhere, it should be updated to ensure operators are aware of this.", 
+            "date_created": "2014-07-21 06:17:05.563884+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gus"
+        }, 
+        {
+            "content": "See also https://bugs.launchpad.net/devstack/+bug/1207227", 
+            "date_created": "2014-07-29 17:28:49.152732+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rharwood"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/108274\nCommitted: https://git.openstack.org/cgit/openstack-dev/devstack/commit/?id=7df9d1be17162feabeaba35faa87baf09debe590\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7df9d1be17162feabeaba35faa87baf09debe590\nAuthor: Angus Lees <email address hidden>\nDate:   Mon Jul 21 15:35:34 2014 +1000\n\n    Ensure sbin is in PATH.\n    \n    Some distros (Debian) don't have sbin in PATH for non-root users.\n    \n    Nova (and possibly other services) assumes that it can invoke \"sysctl\"\n    without sudo.\n    \n    Change-Id: Iced21fc1378af309fb49688f9b63f2cd8383e304\n    Closes-Bug: #1300800\n", 
+            "date_created": "2014-10-02 16:11:49.360985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is not an issue in the install guide - the packages appear to set this up correctly.", 
+            "date_created": "2014-10-08 14:07:14.219798+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }, 
+        {
+            "content": "Thomas, can you have a quick look to see if this is an issue in debian?", 
+            "date_created": "2014-11-11 14:52:09.677536+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }, 
+        {
+            "content": "(I don't think it is, but since debian was specifically mentioned, just thought it was worth checking)", 
+            "date_created": "2014-11-11 14:52:40.975232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }, 
+        {
+            "content": "Hi. As much as I can tell, this isn't an issue in Debian. At least, I never noticed it.", 
+            "date_created": "2014-11-11 21:59:23.533462+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thomas-goirand"
+        }, 
+        {
+            "content": "Thanks Thomas, marking as invalid for manuals.", 
+            "date_created": "2014-11-12 06:27:22.988183+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }
+    ]
+}

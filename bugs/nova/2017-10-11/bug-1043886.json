@@ -1,0 +1,36 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-03-03 02:48:17.552750+00:00", 
+    "description": "IptablesFirewallDriver from nova/virt/firewall.py keeps a list of instances in self.instances.\n\nWhen nova-compute starts this is empty. It is not loaded at start in some way, instead\nit is filled using the prepare_instance_filter method.\n\nThis method is called from the virt drivers in a few scenarios that are different on \nlibvirt and xenapi (these are the ones I checked).\n\nOn xenapi it only happens during spawn, on libvirt it also happens during hard reboot.\n\nThis means that if you have some running instances using some security group, and then for\nsome reason restart the nova-compute service - updates to the security group (i.e.\nadding/removing some rule) will not be propagated to iptables correctly. On libvirt\nyou can \"fix\" this by rebooting an instance hard. On xenapi you can't fix it.\n\nI added an ugly hack to make xenapi work like I want it to (but I can see that it is\nnot fit for inclusion).  I would be happy to fix this in some less ugly way if someone \ngave me a helpful hint of what the core devs would consider be a good way to solve it.\n\nTo me perhaps the reasonable thing would be for IptablesFirewallDriver to treat\nself.instances as a cache and if some instance is not there, then check if it is running\nand if so - fetch the network_info + do prepare_instance_filter.\n\nAnyway, here is my ugly hack patch, perhaps it helps someone or gives more insight into \nwhat I mean :-):\n\n--- /home/atomia/jma_backup/nova/virt/xenapi/vmops.py   2012-06-12 15:04:56.000000000 +0200\n+++ /usr/lib/python2.7/dist-packages/nova/virt/xenapi/vmops.py  2012-08-30 16:37:58.226715150 +0200\n@@ -32,6 +32,7 @@\n\n from nova.compute import api as compute\n from nova.compute import power_state\n+from nova.compute import utils as compute_utils\n from nova import context as nova_context\n from nova import db\n from nova import exception\n@@ -1749,6 +1750,16 @@\n\n     def refresh_security_group_rules(self, security_group_id):\n         \"\"\" recreates security group rules for every instance \"\"\"\n+        LOG.debug(\"JMA: refresh_security_group_rules for \" + str(security_group_id) + \", the firewall driver is of type \" + self.firewall_driver.__class__.__name__)\n+\n+        import nova.network\n+        nw_api = nova.network.API()\n+        context = nova_context.get_admin_context()\n+        security_group = db.security_group_get(context, security_group_id)\n+        for instance in security_group['instances']:\n+            nw_info = compute_utils.legacy_network_info(nw_api.get_instance_nw_info(context, instance))\n+            self.firewall_driver.prepare_instance_filter(instance, nw_info)\n+\n         self.firewall_driver.refresh_security_group_rules(security_group_id)\n\n     def refresh_security_group_members(self, security_group_id):", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1043886", 
+    "owner": "None", 
+    "id": 1043886, 
+    "index": 3028, 
+    "created": "2012-08-30 15:01:24.937472+00:00", 
+    "title": "Firewall rules are not updated if you restart nova-compute", 
+    "comments": [
+        {
+            "content": "IptablesFirewallDriver from nova/virt/firewall.py keeps a list of instances in self.instances.\n\nWhen nova-compute starts this is empty. It is not loaded at start in some way, instead\nit is filled using the prepare_instance_filter method.\n\nThis method is called from the virt drivers in a few scenarios that are different on \nlibvirt and xenapi (these are the ones I checked).\n\nOn xenapi it only happens during spawn, on libvirt it also happens during hard reboot.\n\nThis means that if you have some running instances using some security group, and then for\nsome reason restart the nova-compute service - updates to the security group (i.e.\nadding/removing some rule) will not be propagated to iptables correctly. On libvirt\nyou can \"fix\" this by rebooting an instance hard. On xenapi you can't fix it.\n\nI added an ugly hack to make xenapi work like I want it to (but I can see that it is\nnot fit for inclusion).  I would be happy to fix this in some less ugly way if someone \ngave me a helpful hint of what the core devs would consider be a good way to solve it.\n\nTo me perhaps the reasonable thing would be for IptablesFirewallDriver to treat\nself.instances as a cache and if some instance is not there, then check if it is running\nand if so - fetch the network_info + do prepare_instance_filter.\n\nAnyway, here is my ugly hack patch, perhaps it helps someone or gives more insight into \nwhat I mean :-):\n\n--- /home/atomia/jma_backup/nova/virt/xenapi/vmops.py   2012-06-12 15:04:56.000000000 +0200\n+++ /usr/lib/python2.7/dist-packages/nova/virt/xenapi/vmops.py  2012-08-30 16:37:58.226715150 +0200\n@@ -32,6 +32,7 @@\n\n from nova.compute import api as compute\n from nova.compute import power_state\n+from nova.compute import utils as compute_utils\n from nova import context as nova_context\n from nova import db\n from nova import exception\n@@ -1749,6 +1750,16 @@\n\n     def refresh_security_group_rules(self, security_group_id):\n         \"\"\" recreates security group rules for every instance \"\"\"\n+        LOG.debug(\"JMA: refresh_security_group_rules for \" + str(security_group_id) + \", the firewall driver is of type \" + self.firewall_driver.__class__.__name__)\n+\n+        import nova.network\n+        nw_api = nova.network.API()\n+        context = nova_context.get_admin_context()\n+        security_group = db.security_group_get(context, security_group_id)\n+        for instance in security_group['instances']:\n+            nw_info = compute_utils.legacy_network_info(nw_api.get_instance_nw_info(context, instance))\n+            self.firewall_driver.prepare_instance_filter(instance, nw_info)\n+\n         self.firewall_driver.refresh_security_group_rules(security_group_id)\n\n     def refresh_security_group_members(self, security_group_id):", 
+            "date_created": "2012-08-30 15:01:24.937472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jimmy-sigint"
+        }, 
+        {
+            "content": "Seems like iptables rules should be refreshed on restart of nova-compute.", 
+            "date_created": "2012-09-12 05:10:24.487758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "FYI you can also fix it by adding or removing a rule from the group, which will trigger a refresh.", 
+            "date_created": "2012-09-12 05:11:06.066804+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Actually this didn't happen at least on the xenapi driver (essex).\n\nI was also expecting it to happen since it calls self.driver.refresh_provider_fw_rules(), but that wouldn't\ndo anything since self.instances in the IptablesFirewallDriver from nova/virt/firewall.py was empty.\n\nPossibly HEAD is different.", 
+            "date_created": "2012-09-12 08:28:47.152873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jimmy-sigint"
+        }
+    ]
+}

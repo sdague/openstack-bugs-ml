@@ -1,0 +1,113 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-03-13 18:41:59.012412+00:00", 
+    "description": "There is a problem in nova code in nova/virt/libvirt/driver.py:\n            dev = guest.get_block_device(rebase_disk)\n            if guest.is_active():\n                result = dev.rebase(rebase_base, relative=relative)\n                if result == 0:\n                    LOG.debug('blockRebase started successfully',\n                              instance=instance)\n\n                while dev.wait_for_job(abort_on_error=True):\n                    LOG.debug('waiting for blockRebase job completion',\n                              instance=instance)\n                    time.sleep(0.5)\n\nIt expects that libvirt block job stays for some period in 'cur == end' state, with end != 0 (wait_for_job logic). But in fact, at least for libvirt 1.3.3.2 and libvirt-python-1.2.17, we are not guaranteed to catch a job in such a state, before it dissapears and libvirt call returns empty result. Which is represented in get_job_info() by BlockDeviceJobInfo(job=0,bandwidth=0,cur=0,end=0).\nSuch result doesn't match wait_for_job finish criteria (effective since I45ac06eae0b1949f746dae305469718649bfcf23 is merged).\n\n\nThis bug started to occur in our third-party CI:\nhttp://openstack-3rd-party-storage-ci-logs.virtuozzo.com/28/314928/13/check/dsvm-tempest-kvm/5aae7aa\n\nn-cpu.log:\n2016-08-17 15:47:04.856 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] volume_snapshot_delete: delete_info: {u'type': u'qcow2', u'merge_target_file': None, u'file_to_merge': None, u'volume_id': u'3e64cef0-03e3-407e-b6c5-fac873a7c98a'} _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2054\n2016-08-17 15:47:04.864 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] found device at vda _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2098\n2016-08-17 15:47:04.864 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] disk: vda, base: None, bw: 0, relative: False _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2171\n2016-08-17 15:47:04.868 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] blockRebase started successfully _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2178\n2016-08-17 15:47:04.889 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:05.396 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:05.951 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:06.456 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:06.968 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:07.594 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n\nBTW, I didn't found tests checking this in gate.", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "High", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1627134", 
+    "owner": "https://api.launchpad.net/1.0/~mbooth-9", 
+    "id": 1627134, 
+    "index": 1992, 
+    "created": "2016-09-23 17:58:41.659230+00:00", 
+    "title": "libvirt driver stuck deleting online snapshot", 
+    "comments": [
+        {
+            "content": "There is a problem in nova code in nova/virt/libvirt/driver.py:\n            dev = guest.get_block_device(rebase_disk)\n            if guest.is_active():\n                result = dev.rebase(rebase_base, relative=relative)\n                if result == 0:\n                    LOG.debug('blockRebase started successfully',\n                              instance=instance)\n\n                while dev.wait_for_job(abort_on_error=True):\n                    LOG.debug('waiting for blockRebase job completion',\n                              instance=instance)\n                    time.sleep(0.5)\n\nIt expects that libvirt block job stays for some period in 'cur == end' state, with end != 0 (wait_for_job logic). But in fact, at least for libvirt 1.3.3.2 and libvirt-python-1.2.17, we are not guaranteed to catch a job in such a state, before it dissapears and libvirt call returns empty result. Which is represented in get_job_info() by BlockDeviceJobInfo(job=0,bandwidth=0,cur=0,end=0).\nSuch result doesn't match wait_for_job finish criteria (effective since I45ac06eae0b1949f746dae305469718649bfcf23 is merged).\n\n\nThis bug started to occur in our third-party CI:\nhttp://openstack-3rd-party-storage-ci-logs.virtuozzo.com/28/314928/13/check/dsvm-tempest-kvm/5aae7aa\n\nn-cpu.log:\n2016-08-17 15:47:04.856 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] volume_snapshot_delete: delete_info: {u'type': u'qcow2', u'merge_target_file': None, u'file_to_merge': None, u'volume_id': u'3e64cef0-03e3-407e-b6c5-fac873a7c98a'} _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2054\n2016-08-17 15:47:04.864 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] found device at vda _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2098\n2016-08-17 15:47:04.864 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] disk: vda, base: None, bw: 0, relative: False _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2171\n2016-08-17 15:47:04.868 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] blockRebase started successfully _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2178\n2016-08-17 15:47:04.889 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:05.396 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:05.951 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:06.456 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:06.968 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n2016-08-17 15:47:07.594 42835 DEBUG nova.virt.libvirt.driver [req-81ae5279-0750-4745-839f-6d92f9ab3dc9 nova service] [instance: 018e566a-916b-4b76-9971-b4d4c12ea0b6] waiting for blockRebase job completion _volume_snapshot_delete /opt/stack/new/nova/nova/virt/libvirt/driver.py:2182\n\nBTW, I didn't found tests checking this in gate.", 
+            "date_created": "2016-09-23 17:58:41.659230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eantyshev"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/375652/", 
+            "date_created": "2016-09-23 18:08:12.333442+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think this probably only hits certain volume backends, someone else was reporting the same thing using NFS, and I think virtuozzo is using a RemoteFS style driver too.", 
+            "date_created": "2016-09-23 18:19:21.597314+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think libvirt method virDomainGetBlockJobInfo shouldn't return empty dict. Please check my patch: https://review.openstack.org/#/c/365756/ which tries to clean this code littlebit. Maybe it would help somehow?", 
+            "date_created": "2016-09-26 13:23:25.995807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slaweq"
+        }, 
+        {
+            "content": "This code won't work: blockJobInfo() returns {} after rebase job is complete.\nThe proposed code will fail any matching in wait_for_job() when {} is passed.\n\nI've checked this on my third-party CI (for Virtuozzo Storage volume backend). I also discovered that this code isn't checked in upstream gate, but only with unit tests.", 
+            "date_created": "2016-09-26 13:44:04.068772+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eantyshev"
+        }, 
+        {
+            "content": "Currently Virtuozzo driver doesn't log libvirt debug log filters\nhttp://openstack-3rd-party-storage-ci-logs.virtuozzo.com/28/314928/13/check/dsvm-tempest-kvm/5aae7aa/logs/libvirt/libvirtd.txt.gz\n\nCan you also please add libvirt debug logs with log filters enabled, so libvirt folks could take a look:\n\n(1) In /etc/libvirt/libvirtd.conf:\n\n  log_filters=\"1:libvirt.c 1:qemu 1:conf 1:security 3:object 3:event 3:json 3:file 1:util 1:cpu\"\n  log_outputs=\"1:file:/var/log/libvirt/libvirtd.log\"\n\n(2) Restart libvirtd\n\n(3) Repeat the test\n\n(4) Attach the libvirtd.log file here.", 
+            "date_created": "2016-09-28 12:26:43.392456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Here's a libvirtd log for the period since rebase job creation till its termination\n\nhttp://paste.openstack.org/show/583277/", 
+            "date_created": "2016-09-28 12:34:20.315229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eantyshev"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-09-28 14:43:51.001043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Looking at the log...\n\nHere we can the libvirt blockRebase() (QEMU 'block-stream') job has started:\n\n-----\nSep 20 15:10:39 localhost libvirtd: 85852: info : qemuMonitorSend:1007 : QEMU_MONITOR_SEND_MSG: mon=0x7f64f8010bc0 msg={\"execute\":\"block-stream\",\"arguments\":{\"device\":\"drive-virtio-disk1\",\"base\":\"/opt/stack/data/nova/mnt/530180c6e38955fc032f76c2c0b8b443/volume-0a1fd4cf-643b-4077-943d-69a6647ccf9b.8ffec8b3-fba4-4b41-969f-640dc7ea792a\",\"backing-file\":\"volume-0a1fd4cf-643b-4077-943d-69a6647ccf9b.8ffec8b3-fba4-4b41-969f-640dc7ea792a\"},\"id\":\"libvirt-109\"}#015#012 fd=-1\n-----\n\n\nlibvirt queries QEMU for block job status:\n\n-----\nSep 20 15:10:39 localhost libvirtd: 85849: info : qemuMonitorIOWrite:531 : QEMU_MONITOR_IO_WRITE: mon=0x7f64f8010bc0 buf={\"execute\":\"query-block-jobs\",\"id\":\"libvirt-110\"}#015#012 len=51 ret=51 errno=11\n-----\n\n\nQEMU responds, saying that it is busy (and you can see, that len != offset; so it is still copying):\n\n-----\nSep 20 15:10:39 localhost libvirtd: 85849: info : qemuMonitorJSONIOProcessLine:209 : QEMU_MONITOR_RECV_REPLY: mon=0x7f64f8010bc0 reply={\"return\": [{\"io-status\": \"ok\", \"device\": \"drive-virtio-disk1\", \"busy\": false, \"len\": 1073741824, \"offset\": 613941248, \"paused\": false, \"speed\": 0, \"ready\": false, \"type\": \"stream\"}], \"id\": \"libvirt-110\"}\n-----\n\n\nShortly after that, we can see that the \"len == offset\", meaning copy job (type \"stream\") is finished, and QEMU has emitted the event BLOCK_JOB_COMPLETED:\n\n-----\nSep 20 15:10:39 localhost libvirtd: 85849: info : qemuMonitorEmitEvent:1272 : mon=0x7f64f8010bc0 event=BLOCK_JOB_COMPLETED data={\"device\":\"drive-virtio-disk1\",\"len\":1073741824,\"offset\":1073741824,\"speed\":0,\"type\":\"stream\"}\n-----\n\n\nNow libvirt queries QEMU for job status (line-148) once again:\n\n-----\nSep 20 15:10:39 localhost libvirtd: 85854: info : qemuMonitorSend:1007 : QEMU_MONITOR_SEND_MSG: mon=0x7f64f8010bc0 msg={\"execute\":\"query-block-jobs\",\"id\":\"libvirt-111\"}#015#012 fd=-1\n-----\n\n\nResponse (notice the ID 'libvirt-111' matches the above query), is an empty dict:\n\n-----\nSep 20 15:10:39 localhost libvirtd: 85849: info : qemuMonitorIOProcess:426 : QEMU_MONITOR_IO_PROCESS: mon=0x7f64f8010bc0 buf={\"return\": [], \"id\": \"libvirt-111\"}#015#012 len=37\n-----\n\nThe above response from QEMU means: no jobs are active; so libvirt should _not_ be reporting a job status, with current libvirt versions.  \n\nUpstream libvirt says that maybe future libvirt could track that a job has finished and provide state even when QEMU didn't report any.  (I'll file an upstream libvirt bug to track this).\n", 
+            "date_created": "2016-09-28 15:47:17.656843+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/378746", 
+            "date_created": "2016-09-28 16:00:51.671136+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I did some tests using the NFS snapshots around 30 days ago and this issue was not happening. I did the same tests again and indeed the snapshots are stucking. Do you know what added the problem?", 
+            "date_created": "2016-09-30 18:05:54.698734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sombrafam"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/378746\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0f4bd241665c287e49f2d30ca79be96298217b7e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0f4bd241665c287e49f2d30ca79be96298217b7e\nAuthor: Matthew Booth <email address hidden>\nDate:   Wed Sep 28 16:44:41 2016 +0100\n\n    libvirt: Fix BlockDevice.wait_for_job when qemu reports no job\n    \n    We were misinterpreting the return value of blockJobInfo. Most\n    immediately we were expecting it to return an integer, which has never\n    been the case. blockJobInfo also raises an exception on error. Note\n    that the implementation of abort_on_error has always expected an\n    integer return value, and exceptions have never been handled, which\n    means that abort_on_error has always been a no-op, and exceptions have\n    never been swallowed. As this is also the most intuitive behaviour, we\n    make it explicit by removing abort_on_error. Any exception raised by\n    blockJobInfo will continue to propagate unhandled.\n    \n    We were obfuscating the return value indicating that the job did not\n    exist, {}, by populating a BlockDeviceJobInfo with fake values. We\n    de-obfuscate this by returning None instead, which is unambiguous.\n    \n    wait_for_job() was misnamed, as it does not wait. This is renamed to\n    is_job_complete() to be less confusing. Note that the logic is\n    reversed.\n    \n    After discussion with Eric Blake of the libvirt team (see review\n    comments: https://review.openstack.org/#/c/375652/), we are now\n    confident asserting that if no job exists then it has completed\n    (although we are still not sure that it succeeded). Consequently we\n    remove the wait_for_job_clean parameter, and always assume that no job\n    means it has completed. Previously this was implicit because no job\n    meant a defaulted BlockDeviceJobInfo.job value of 0.\n    \n    Co-authored-by: S\u0142awek Kap\u0142o\u0144ski <email address hidden>\n    Closes-Bug: #1627134\n    Change-Id: I2d0daa32b1d37fa60412ad7a374ee38cebdeb579\n", 
+            "date_created": "2016-10-05 11:12:19.775222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Evgeny Antyshev (<email address hidden>) on branch: master\nReview: https://review.openstack.org/375652", 
+            "date_created": "2016-10-06 12:27:57.603413+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/387292", 
+            "date_created": "2016-10-17 09:20:02.483610+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:13:07.204944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/387292\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a021a72ddaea0e1eb6e3f4b934870fd5f2a05485\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit a021a72ddaea0e1eb6e3f4b934870fd5f2a05485\nAuthor: Matthew Booth <email address hidden>\nDate:   Wed Sep 28 16:44:41 2016 +0100\n\n    libvirt: Fix BlockDevice.wait_for_job when qemu reports no job\n    \n    We were misinterpreting the return value of blockJobInfo. Most\n    immediately we were expecting it to return an integer, which has never\n    been the case. blockJobInfo also raises an exception on error. Note\n    that the implementation of abort_on_error has always expected an\n    integer return value, and exceptions have never been handled, which\n    means that abort_on_error has always been a no-op, and exceptions have\n    never been swallowed. As this is also the most intuitive behaviour, we\n    make it explicit by removing abort_on_error. Any exception raised by\n    blockJobInfo will continue to propagate unhandled.\n    \n    We were obfuscating the return value indicating that the job did not\n    exist, {}, by populating a BlockDeviceJobInfo with fake values. We\n    de-obfuscate this by returning None instead, which is unambiguous.\n    \n    wait_for_job() was misnamed, as it does not wait. This is renamed to\n    is_job_complete() to be less confusing. Note that the logic is\n    reversed.\n    \n    After discussion with Eric Blake of the libvirt team (see review\n    comments: https://review.openstack.org/#/c/375652/), we are now\n    confident asserting that if no job exists then it has completed\n    (although we are still not sure that it succeeded). Consequently we\n    remove the wait_for_job_clean parameter, and always assume that no job\n    means it has completed. Previously this was implicit because no job\n    meant a defaulted BlockDeviceJobInfo.job value of 0.\n    \n    Co-authored-by: S\u0142awek Kap\u0142o\u0144ski <email address hidden>\n    Closes-Bug: #1627134\n    Change-Id: I2d0daa32b1d37fa60412ad7a374ee38cebdeb579\n    (cherry picked from commit 0f4bd241665c287e49f2d30ca79be96298217b7e)\n", 
+            "date_created": "2017-02-11 01:27:24.228379+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/433772", 
+            "date_created": "2017-02-14 16:50:39.039019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.4 release.", 
+            "date_created": "2017-02-27 20:29:05.275044+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/433772", 
+            "date_created": "2017-03-13 18:41:56.937865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

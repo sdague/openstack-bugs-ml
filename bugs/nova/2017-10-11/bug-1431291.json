@@ -1,0 +1,138 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-03-15 15:15:34.911413+00:00", 
+    "description": "After the move of the scheduler dispatch into conductor all the logging changed. The impact is that the scheduler no longer logs scheduled failures at WARN in the scheduler log with the instance id in question. (This apparently also somehow slipped back into Juno)\n\nThis is a notable regression from an ops perspective, and has required everyone to start running debug and doing lots of log searching to figure out whats going on.\n\nThe ops community asked that we log at a high level (WARN seems appropriate here) with reason, context, and instance id which makes their problem determination loop on \"nova didn't boot my thing\" from users much quicker.", 
+    "tags": [
+        "scheduler"
+    ], 
+    "importance": "High", 
+    "heat": 34, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1431291", 
+    "owner": "https://api.launchpad.net/1.0/~dguitarbite", 
+    "id": 1431291, 
+    "index": 1697, 
+    "created": "2015-03-12 11:20:39.090980+00:00", 
+    "title": "Scheduler Failures are no longer logged with enough detail for a site admin to do problem determination", 
+    "comments": [
+        {
+            "content": "After the move of the scheduler dispatch into conductor all the logging changed. The impact is that the scheduler no longer logs scheduled failures at WARN in the scheduler log with the instance id in question. (This apparently also somehow slipped back into Juno)\n\nThis is a notable regression from an ops perspective, and has required everyone to start running debug and doing lots of log searching to figure out whats going on.\n\nThe ops community asked that we log at a high level (WARN seems appropriate here) with reason, context, and instance id which makes their problem determination loop on \"nova didn't boot my thing\" from users much quicker.", 
+            "date_created": "2015-03-12 11:20:39.090980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/163771", 
+            "date_created": "2015-03-12 11:22:34.556013+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "As per the move to the conductor, it was also agreed on not leaving the scheduler know the list of instance_uuids\nConsequently, the recent Scheduler RPC API version bump (4.0) removed that field from the request_spec which was passed in because it was no longer needed.\n\nIf we want to backtrack which instance was failing with the logs, we then only have 2 possibilities :\n #1 request_spec still continues to provide a full information of the first instance being requested, including its uuid - so we can show this up but it would only be accurate for the first one\n #2 that instance information still includes an EC2-compatible field called reservation_id which is set even for OpenStack API and describe the request by itself. We can show it up too.\n", 
+            "date_created": "2015-03-12 11:42:24.862203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Here is where the reservation_id is set at the API level :\nhttps://github.com/openstack/nova/blob/95eaeb072d3dec25b7b50766140eb378c45b9b69/nova/compute/api.py#L1072-L1073", 
+            "date_created": "2015-03-12 11:45:27.044547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "We have request-id, is it enough?", 
+            "date_created": "2015-03-18 05:43:53.488623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "request-id is not enough, that's not persistent", 
+            "date_created": "2015-03-18 20:55:50.957604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "ok, so I've spent some time staring at the filter scheduler, and because the entire thing is written in this generator reduce model, we never have enough information flowing back. I thought this might be an easier issue to solve, but I'm not seeing a way through this.\n\nThe UX I think we want is:\n\non Schedule:\n\nnova.scheduler INFO \"Instance UUID scheduled to host X\"\n\non fail to schedule\n\nnova.scheduler WARN \"Instance UUID failed to schedule due to Not Enough Y on hosts A(Y=x), B(Y=z)...\"\n\nBasically provide the closest match hosts. \n\nAll of the information is sitting in the DEBUG logs, but there is a lot of filtering and assembly to get back to a global answer there.", 
+            "date_created": "2015-03-18 21:04:37.561410+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Another think is we should warn log when the filters return too few hosts.\n\nAnd there should be an option which operator can config to when filter return how many host will trigger that warn log.\nFor example:  the default value of that option is 10%.  If we have 10 hosts, after go through a filter, only return <=1 host, we should log that to warn the admin some resource are close to exhaustion or already exhaustion.", 
+            "date_created": "2015-03-19 07:54:36.677358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "Emm... sorry above thinking is still based on request-id. if based on request-id, that log can be helpful.", 
+            "date_created": "2015-03-19 08:01:26.294924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "Just to be clear, while I'm OK with the UX, we only have the first instance details passed in the request_spec (incl. the instance_uuid field) and the number of instances being requested, so the message could only be :\n\n\"Instance <# of num_instances> triggered at the same boot time with instance <instance_uuid> [scheduled to | failed to schedule to] ...\"\n\n", 
+            "date_created": "2015-03-20 16:23:42.185061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Still planning to work on the bugfix but struggling with other bugs for RC1 so freeing up the ticket until me or someone else provides a patch", 
+            "date_created": "2015-03-30 14:46:48.111571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "As Alex said, sounds like we can take request_id from the context. So, we could say that \"instance # from request_id <req_id> failed to boot\"\n\nThat sounds a bit cleaner.", 
+            "date_created": "2015-03-31 22:18:25.498711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Assigning it back to me as I should provide a change by tomorrow.", 
+            "date_created": "2015-04-01 16:53:02.795408+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/170421", 
+            "date_created": "2015-04-03 10:17:29.409989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/170472", 
+            "date_created": "2015-04-03 12:18:48.304431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/163771\nReason: bauzas said this could be abandoned, there are two other changes up for review as WIP/POC.", 
+            "date_created": "2015-04-03 21:38:01.768232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Downgrading the milestone to kilo-rc-potential as by implementing it, I think we need change the behaviour of select_destinations() by returning something to the conductor when it's unsuccessful instead of raising a NoValidHost.", 
+            "date_created": "2015-04-09 08:00:18.729797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "As a summary, the current efforts are here:\n* https://review.openstack.org/#/c/170421/\n* https://review.openstack.org/#/c/170472/", 
+            "date_created": "2015-04-09 09:01:20.423877+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/170472\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-05-13 17:21:38.977576+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/170421\nReason: I'm going to abandon this one because its been idle for a fair while, but I do agree we need to do _something_ here.", 
+            "date_created": "2015-08-12 05:30:11.731255+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There has been some work done here in liberty:\n\nhttps://review.openstack.org/#/q/status:merged+project:openstack/nova+branch:master+topic:bp/no-valid-host-reporting,n,z\n\nThere is some more work that could be done, see the discussion in https://review.openstack.org/#/c/194780/ - but so far this is better than what we had.", 
+            "date_created": "2015-08-31 20:50:43.343482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "dguitarbite, can you confirm whether you are still working on this or not?\n\nIf not, or if I don't hear anything, I'll take this on next week.", 
+            "date_created": "2016-01-08 17:37:39.593294+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "Given what has been merged by Liberty and given how the current status is pretty unclear about what needs to be fixed, the scheduler subteam agreed on closing that bug.\n\nFeel free to open another bug with substantial information about what's missing if you feel so, and we'd be glad to look at it.", 
+            "date_created": "2016-01-11 14:27:43.405844+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Switching to invalid as incomplete is not a closed state.", 
+            "date_created": "2016-03-15 15:15:23.758545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }
+    ]
+}

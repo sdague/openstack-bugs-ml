@@ -1,0 +1,85 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-23 12:58:36.473267+00:00", 
+    "description": "Nova while monitoring live migration progress bases on what libvirt reports under data_remaining property\n\nhttps://github.com/openstack/nova/blob/54482fde22742bc852414c58552fe64ea59d61d5/nova/virt/libvirt/driver.py#L6189-L6193\n\nHowever, data_remaining does not reflect any valuable information that nova can use to track live migration progress. It's just an information how many data needs to be transferred in current iteration to finish current iteration and check whether VM can be switched to destination, nothing more.\n\nAs an example let's assume we have VM with 4 GBs of memory. In the very fist iteration libvirt will report that there is still 4GB of data to be transferred. During the first iteration this number will go down to 0 bytes (or almost 0) and this will end the first iteration. Let's say that during the first iteration VM has dirtied 3 GBs of memory. At the beginning of subsequent iteration QEMU will calculate number of dirty pages * page size and libvirt will report 3 GBs of data to be transferred in the second iteration. However, during second iteration data_remaining will again go down to zero at the end of second iteration.\n\nGiven that nova makes snapshot of all those information once every 0.5 second and that data remaining reported by libvirt reflects only data remaining in particular iteration, we can't say whether LM is progressing or not. Therefore live migration progress timeout does not make sense as nova can take a snapshot from libvirt in the first iteration that will say that there is only 150 MB to be transferred to destination and very likely in every subsequent iteration nova will not take a snapshot with less amount of data to be transferred and will think that LM is not progressing.\n\nThis affects all releases starting from Liberty.", 
+    "tags": [
+        "in-stable-newton", 
+        "in-stable-ocata", 
+        "live-migration"
+    ], 
+    "importance": "High", 
+    "heat": 34, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1644248", 
+    "owner": "None", 
+    "id": 1644248, 
+    "index": 2007, 
+    "created": "2016-11-23 14:30:26.405648+00:00", 
+    "title": "Nova incorrectly tracks live migration progress", 
+    "comments": [
+        {
+            "content": "Nova while monitoring live migration progress bases on what libvirt reports under data_remaining property\n\nhttps://github.com/openstack/nova/blob/54482fde22742bc852414c58552fe64ea59d61d5/nova/virt/libvirt/driver.py#L6189-L6193\n\nHowever, data_remaining does not reflect any valuable information that nova can use to track live migration progress. It's just an information how many data needs to be transferred in current iteration to finish current iteration and check whether VM can be switched to destination, nothing more.\n\nAs an example let's assume we have VM with 4 GBs of memory. In the very fist iteration libvirt will report that there is still 4GB of data to be transferred. During the first iteration this number will go down to 0 bytes (or almost 0) and this will end the first iteration. Let's say that during the first iteration VM has dirtied 3 GBs of memory. At the beginning of subsequent iteration QEMU will calculate number of dirty pages * page size and libvirt will report 3 GBs of data to be transferred in the second iteration. However, during second iteration data_remaining will again go down to zero at the end of second iteration.\n\nGiven that nova makes snapshot of all those information once every 0.5 second and that data remaining reported by libvirt reflects only data remaining in particular iteration, we can't say whether LM is progressing or not. Therefore live migration progress timeout does not make sense as nova can take a snapshot from libvirt in the first iteration that will say that there is only 150 MB to be transferred to destination and very likely in every subsequent iteration nova will not take a snapshot with less amount of data to be transferred and will think that LM is not progressing.", 
+            "date_created": "2016-11-23 14:30:26.405648+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "Is there any path forward on this, or are we just in a state of \"doesn't work, never will work\"?", 
+            "date_created": "2016-12-07 20:49:51.685394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I'm thinking about changing the default of live_migration_progress_timeout to 0 and communicate somehow that this might not work as expected. The solution to solve the issue would be to add another metric to QEMU/libvirt and use this new metric in nova.", 
+            "date_created": "2016-12-08 06:53:01.389819+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "https://bugs.launchpad.net/nova/+bug/1583145 and https://bugs.launchpad.net/nova/+bug/1639091 both feel like duplicates of this bug. Due to these bug reports marking this as confirmed.", 
+            "date_created": "2017-02-06 17:39:12.136449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/429798", 
+            "date_created": "2017-02-06 17:46:25.078033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is the current fix patch idea:\nhttps://review.openstack.org/#/c/430218", 
+            "date_created": "2017-02-07 12:30:06.452471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/431635", 
+            "date_created": "2017-02-09 16:31:07.928059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/429798\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=510fe1353d25affc3eee72e10b7756904f8748e9\nSubmitter: Jenkins\nBranch:    master\n\ncommit 510fe1353d25affc3eee72e10b7756904f8748e9\nAuthor: John Garbutt <email address hidden>\nDate:   Mon Feb 6 17:42:59 2017 +0000\n\n    Default live_migration_progress_timeout to off\n    \n    live_migration_progress_timeout aims to timeout a live-migration well\n    before the live_migration_completion_timeout limit, by looking for when\n    it appears that no progress has been made copying the memory between the\n    hosts. However, it turns out there are several problems with the way we\n    monitor progress. In production, and stress testing, having\n    live_migration_progress_timeout > 0 has caused random timeout failures\n    for live-migrations that take longer than live_migration_progress_timeout\n    \n    One problem is that block_migrations appear to show no progress, as it\n    seems we only look for progress in copying memory. Also the way we query\n    QEMU via libvirt breaks when there are multiple iterations of memory\n    copying.\n    \n    We need to revisit this bug and either fix the progress mechanism or\n    remove the all the code that checks for the progress (including the\n    automatic trigger for post-copy). But in the mean time, lets default to\n    having no timeout, and warn users that have overridden this\n    configuration by deprecating the live_migration_progress_timeout\n    configuration option.\n    \n    For users concerned about live-migration timeout errors, I have\n    cleaned up the configuration option descriptions, so they have a better\n    chance of stopping the live-migration timeout errors they may come\n    across.\n    \n    Related-Bug: #1644248\n    \n    Change-Id: I1a1143ddf8da5fb9706cf53dbfd6cbe84e606ae1\n", 
+            "date_created": "2017-02-09 17:36:25.710353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/431635\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=679d78ab2baaf934dc6912096882613d55f2ea0c\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 679d78ab2baaf934dc6912096882613d55f2ea0c\nAuthor: John Garbutt <email address hidden>\nDate:   Mon Feb 6 17:42:59 2017 +0000\n\n    Default live_migration_progress_timeout to off\n    \n    live_migration_progress_timeout aims to timeout a live-migration well\n    before the live_migration_completion_timeout limit, by looking for when\n    it appears that no progress has been made copying the memory between the\n    hosts. However, it turns out there are several problems with the way we\n    monitor progress. In production, and stress testing, having\n    live_migration_progress_timeout > 0 has caused random timeout failures\n    for live-migrations that take longer than live_migration_progress_timeout\n    \n    One problem is that block_migrations appear to show no progress, as it\n    seems we only look for progress in copying memory. Also the way we query\n    QEMU via libvirt breaks when there are multiple iterations of memory\n    copying.\n    \n    We need to revisit this bug and either fix the progress mechanism or\n    remove the all the code that checks for the progress (including the\n    automatic trigger for post-copy). But in the mean time, lets default to\n    having no timeout, and warn users that have overridden this\n    configuration by deprecating the live_migration_progress_timeout\n    configuration option.\n    \n    For users concerned about live-migration timeout errors, I have\n    cleaned up the configuration option descriptions, so they have a better\n    chance of stopping the live-migration timeout errors they may come\n    across.\n    \n    Related-Bug: #1644248\n    \n    Change-Id: I1a1143ddf8da5fb9706cf53dbfd6cbe84e606ae1\n    (cherry picked from commit 510fe1353d25affc3eee72e10b7756904f8748e9)\n", 
+            "date_created": "2017-02-15 00:33:14.449480+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/newton\nReview: https://review.openstack.org/438650", 
+            "date_created": "2017-02-27 17:58:37.498965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/438650\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=64a482c24d4dfc2aae42672de160ea38e948304c\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 64a482c24d4dfc2aae42672de160ea38e948304c\nAuthor: Chris Friesen <email address hidden>\nDate:   Mon Feb 27 11:51:03 2017 -0600\n\n    Add release note for live_migration_progress_timeout issue\n    \n    live_migration_progress_timeout aims to timeout a live-migration well\n    before the live_migration_completion_timeout limit, by looking for when\n    it appears that no progress has been made copying the memory between the\n    hosts. However, it turns out there are several problems with the way we\n    monitor progress. In production, and stress testing, having\n    live_migration_progress_timeout > 0 has caused random timeout failures\n    for live-migrations that take longer than live_migration_progress_timeout\n    \n    One problem is that block_migrations appear to show no progress, as it\n    seems we only look for progress in copying memory. Also the way we query\n    QEMU via libvirt breaks when there are multiple iterations of memory\n    copying.\n    \n    We need to revisit this bug and either fix the progress mechanism or\n    remove all the code that checks for the progress (including the\n    automatic trigger for post-copy). But in the mean time we recommend\n    disabling the timeout, and in Ocata and Pike we have already deprecated\n    the live_migration_progress_timeout configuration option.\n    \n    Co-Authored-By: John Garbutt <email address hidden>\n    Change-Id: Ib86ee25f2ccf841a8cc9e70acf7d9d1de359e671\n    Related-Bug: #1644248\n", 
+            "date_created": "2017-03-01 09:26:29.621342+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/430218", 
+            "date_created": "2017-06-22 21:37:00.045004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:58:31.358972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

@@ -1,0 +1,58 @@
+{
+    "status": "Expired", 
+    "last_updated": "2015-07-08 04:17:55.155943+00:00", 
+    "description": "When creating a cold snapshot, LibvirtDriver.snapshot() creates a local copy of the VM image before uploading from that copy into a new image in Glance.\n\nIn case of snapshotting a local file backed VM to Swift, that's one copy too many:  if the target format matches the source format, the local file can be uploaded directly, halving the time it takes to create a snapshot. In case of snapshotting an RBD backed VM to RBD backed Glance, that's two copies too many: a copy-on-write clone of the VM drive could obviate the need to copy any data at all.\n\nI think that instead of passing the target location as a temporary file path under snapshots_directory, LibvirtDriver.snapshot() should pass image metadata to Image.snapshot_extract() and let the image backend figure out and return the target location.", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 38, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1262914", 
+    "owner": "None", 
+    "id": 1262914, 
+    "index": 3751, 
+    "created": "2013-12-19 23:21:40.141839+00:00", 
+    "title": "Unnecessary data copy during cold snapshot", 
+    "comments": [
+        {
+            "content": "When creating a cold snapshot, LibvirtDriver.snapshot() creates a local copy of the VM image before uploading from that copy into a new image in Glance.\n\nIn case of snapshotting a local file backed VM to Swift, that's one copy too many:  if the target format matches the source format, the local file can be uploaded directly, halving the time it takes to create a snapshot. In case of snapshotting an RBD backed VM to RBD backed Glance, that's two copies too many: a copy-on-write clone of the VM drive could obviate the need to copy any data at all.\n\nI think that instead of passing the target location as a temporary file path under snapshots_directory, LibvirtDriver.snapshot() should pass image metadata to Image.snapshot_extract() and let the image backend figure out and return the target location.", 
+            "date_created": "2013-12-19 23:21:40.141839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~angdraug"
+        }, 
+        {
+            "content": "Personally, the VM could be turned on at any time, so this seems like the safest thing to do.\n\nI will let the libvirt experts take a look at this.", 
+            "date_created": "2014-02-07 19:04:00.437832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "If VM is turned on while snapshot is being taken, local copy can be affected just the same as upload to Swift, all you'd gain is possibly a smaller time window, and that only if your Swift is significantly slower than local storage on your compute nodes.\n\nIn case of RBD, cloning the image is an atomic operation so it eliminates the time window when creating a snapshot can race with starting the VM altogether.", 
+            "date_created": "2014-04-28 15:46:26.327260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~angdraug"
+        }, 
+        {
+            "content": "I think this needs a priority beyond wishlist. An operation being twice as slow as it should is buggy, in the RBD case we aren't even doing it right. I've added a separate bug for just the RBD case: https://bugs.launchpad.net/nova/+bug/1346525", 
+            "date_created": "2014-07-21 20:22:17.949317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~geekinutah"
+        }, 
+        {
+            "content": "Dmitry,\n\nIs this what you're referring to? : when creating an offline Nova\nsnapshot, the Nova instance's (that's being snapshotted) disk is copied\ninto a temporary location before uploading it to the the Glance.\n\n\nTested with a week's old Nova git and a qcow2 CirrOS image:\n\n    $ git describe\n    2015.1.0rc1-300-g39bbc0d\n\nTest\n----\n\nWhen you run an `image-create` on an offline Nova instance:\n\n    $ nova boot --flavor 1 --key_name oskey1 \\\n        --image cirros-0.3.3-x86_64-disk cirrvm\n    $ nova shutdown cirrvm\n    $ nova image-create cirrvm snap --poll\n\nA copy of the Nova instance being snapshotted is placed in a temporary\ndirectory (before it is uploaded to Glance):\n\n    \"qemu-img convert -f qcow2 -O qcow2  \\\n      /home/kashyapc/src/cloud/data/nova/instances/aa20be6e-de39-4a15-9f95-9844ec9af5a9/disk \\\n      /home/kashyapc/src/cloud/data/nova/instances/snapshots/tmp2h6al2/1e00639002e2420ba3747145f06511d8\"\n\nNOTE: In this case, the above 'convert' command essentially just means\nthe file called 'disk' is just copied to the \"snapshots/tmp2h6al2\"\ndirectory,  because both the source _and_ destination formats are qcow2\n-- so no format conversion is going on.\n\nWhere the 'snapshot()' function from nova/virt/libvirt/driver.py is\ncalling 'snapshot_extract()' from libvirt/imagebackend.py:\n\n    . . .\n    1363         snapshot_backend = self.image_backend.snapshot(instance,\n    1364                 disk_path,\n    1365                 image_type=source_format)\n    . . .\n    1380                 if live_snapshot:\n    \n    . . .                . . .\n\n    1385                 else:\n    1386                     snapshot_backend.snapshot_extract(out_path, image_format)\n    . . .\n\nWhere the 'snapshot_extract()' calls the 'extract_snapshot()' from\nlibvirt/utils.py:\n\n    . . .\n    510     def snapshot_extract(self, target, out_format):\n    511         libvirt_utils.extract_snapshot(self.path, 'qcow2',\n    512                                        target,\n    513                                        out_format)\n    . . .\n\nWhere the 'extract_snapshot()' from libvirt/utils.py, finally executes\nthe `qemu-img convert` command: \n\n    . . .\n    387     qemu_img_cmd = ('qemu-img', 'convert', '-f', source_fmt, '-O', dest_fmt)\n    . . .\n\nAfter this, the converted (i.e. copied) image is uploaded to Glance.", 
+            "date_created": "2015-05-08 16:45:18.279182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Agree with this being Opinion/Wishlist. Making the copy is flattening the image as fast as possible so that the instance can be restarted. We could further complicate this code by trying to optimize something, but that's definitely wishlist-level stuff, IMHO.", 
+            "date_created": "2015-05-08 16:57:04.091153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Please note that the case Dmitry is talking about when you are using the same backend storage for both images and ephemeral (for example, ceph's RBD).\n\nIn such a case it is a HUGE waste of resources (bandwidth, temporary space), and IMHO a genuine bug.", 
+            "date_created": "2015-05-08 18:11:59.710032+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zoltan"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2015-07-08 04:17:51.656158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ]
+}

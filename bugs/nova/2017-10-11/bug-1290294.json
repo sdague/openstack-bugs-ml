@@ -1,0 +1,48 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:42:17.363370+00:00", 
+    "description": "reproduce steps:\n1. create an instance under Folsom\n2. update nova to Havana\n3. resize the instance to another host\n4. confirm the resize\n5. examine the instance dir on source host\n\nyou will find the instance-0000xxxx_resize dir exists there which was not deleted while confirming resize.\n\nthe reason is that:\nin the _cleanup_resize in libvirt driver:\ndef _cleanup_resize(self, instance, network_info):\n        target = libvirt_utils.get_instance_path(instance) + \"_resize\"\n\nwe get the instance path by using get_instance_path method in libvirt utils,\nbut we check the original instance dir of pre-grizzly instances' before we return it,\nif this instance is a resized one which original instance dir exists on another host(the dest host),\nthe wrong instance path with uuid will be returned, and then the `target` existing check will be failed,\nthen the instance-xxxx_resize dir will never be deleted.\n\ndef get_instance_path(instance, forceold=False, relative=False):\n    \"\"\"Determine the correct path for instance storage.\n\n    This method determines the directory name for instance storage, while\n    handling the fact that we changed the naming style to something more\n    unique in the grizzly release.\n\n    :param instance: the instance we want a path for\n    :param forceold: force the use of the pre-grizzly format\n    :param relative: if True, just the relative path is returned\n\n    :returns: a path to store information about that instance\n    \"\"\"\n    pre_grizzly_name = os.path.join(CONF.instances_path, instance['name'])\n    if forceold or os.path.exists(pre_grizzly_name):                  ############### here we check the original instance dir, but if we have resized the instance to another host, this check will be failed, and a wrong dir with instance uuid will be returned.\n        if relative:\n            return instance['name']\n        return pre_grizzly_name\n\n    if relative:\n        return instance['uuid']\n    return os.path.join(CONF.instances_path, instance['uuid'])", 
+    "tags": [
+        "in-stable-icehouse"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1290294", 
+    "owner": "https://api.launchpad.net/1.0/~hzwangpan", 
+    "id": 1290294, 
+    "index": 4634, 
+    "created": "2014-03-10 09:53:12.546012+00:00", 
+    "title": "Instance's XXX_resize dir never be deleted if we resize a pre-grizzly instance in havana", 
+    "comments": [
+        {
+            "content": "reproduce steps:\n1. create an instance under Folsom\n2. update nova to Havana\n3. resize the instance to another host\n4. confirm the resize\n5. examine the instance dir on source host\n\nyou will find the instance-0000xxxx_resize dir exists there which was not deleted while confirming resize.\n\nthe reason is that:\nin the _cleanup_resize in libvirt driver:\ndef _cleanup_resize(self, instance, network_info):\n        target = libvirt_utils.get_instance_path(instance) + \"_resize\"\n\nwe get the instance path by using get_instance_path method in libvirt utils,\nbut we check the original instance dir of pre-grizzly instances' before we return it,\nif this instance is a resized one which original instance dir exists on another host(the dest host),\nthe wrong instance path with uuid will be returned, and then the `target` existing check will be failed,\nthen the instance-xxxx_resize dir will never be deleted.\n\ndef get_instance_path(instance, forceold=False, relative=False):\n    \"\"\"Determine the correct path for instance storage.\n\n    This method determines the directory name for instance storage, while\n    handling the fact that we changed the naming style to something more\n    unique in the grizzly release.\n\n    :param instance: the instance we want a path for\n    :param forceold: force the use of the pre-grizzly format\n    :param relative: if True, just the relative path is returned\n\n    :returns: a path to store information about that instance\n    \"\"\"\n    pre_grizzly_name = os.path.join(CONF.instances_path, instance['name'])\n    if forceold or os.path.exists(pre_grizzly_name):                  ############### here we check the original instance dir, but if we have resized the instance to another host, this check will be failed, and a wrong dir with instance uuid will be returned.\n        if relative:\n            return instance['name']\n        return pre_grizzly_name\n\n    if relative:\n        return instance['uuid']\n    return os.path.join(CONF.instances_path, instance['uuid'])", 
+            "date_created": "2014-03-10 09:53:12.546012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "This is a terrible bug because if we resize this instance several times between two hosts, the qcow2 converted operation will not be implemented, and the remote disk copied by ssh/rsync is a qcow2 with backing file one.\nyou can think that:\n1. hostA has an instance-a_resize dir(which is the residual dir after the first resize)\n2. hostA also has instance-a dir, the running instance's dir, and the disk file is a whole qcow2 one without backing file\n3. if we resize instance-a to hostB, we firstly mv instance-a to instance-a_resize, but if the instance-a_resize dir is exists there, we just mv instance-a to it(under the instance-a_resize we have an instance-a dir now), then the instance's dir is wrong\n4. nova believe the instance-a's disk is whole qcow2 file without backing file(checking this before we mv the instance dir), so nova copy a wrong disk with backing file(the wrong residual disk file), and then the instance will become ERROR if the backing file is not exist on the dest hostB.", 
+            "date_created": "2014-03-10 10:10:13.063669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/79288", 
+            "date_created": "2014-03-10 10:26:22.952070+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/79288\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b4964eb6a570e290545f95d45411dc8441985cd5\nSubmitter: Jenkins\nBranch:    master\n\ncommit b4964eb6a570e290545f95d45411dc8441985cd5\nAuthor: Wangpan <email address hidden>\nDate:   Mon Mar 10 18:19:40 2014 +0800\n\n    libvirt: return the correct instance path while cleanup_resize\n    \n    If we resized a pre-grizzly instance with grizzly or later nova\n    to another host, while the resize confirmation process,\n    _cleanup_resize will find the instance resize backup dir and\n    delete it, but a wrong xxx_resize dir like ${uuid}_resize,\n    instead of the correct ${name}_resize will be found.\n    This is because the instance is a resized one which original\n    instance dir exists on another host(the dest host),\n    get_instance_path method could not find the original instance\n    dir on the source host, so the path with uuid will be returned,\n    and the `target` existing check in _cleanup_resize is failed,\n    then the ${name}_resize dir will never be deleted.\n    \n    Closes-bug: #1290294\n    Change-Id: I904b6751dec740e001f5ec29f637ef456528746f\n", 
+            "date_created": "2014-06-20 05:31:30.982547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/104050", 
+            "date_created": "2014-07-02 01:29:00.349157+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/104050\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=aeb71a88ae8d05ff6f5f3f092965f12369fec07a\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit aeb71a88ae8d05ff6f5f3f092965f12369fec07a\nAuthor: Wangpan <email address hidden>\nDate:   Mon Mar 10 18:19:40 2014 +0800\n\n    libvirt: return the correct instance path while cleanup_resize\n    \n    If we resized a pre-grizzly instance with grizzly or later nova\n    to another host, while the resize confirmation process,\n    _cleanup_resize will find the instance resize backup dir and\n    delete it, but a wrong xxx_resize dir like ${uuid}_resize,\n    instead of the correct ${name}_resize will be found.\n    This is because the instance is a resized one which original\n    instance dir exists on another host(the dest host),\n    get_instance_path method could not find the original instance\n    dir on the source host, so the path with uuid will be returned,\n    and the `target` existing check in _cleanup_resize is failed,\n    then the ${name}_resize dir will never be deleted.\n    \n    Closes-bug: #1290294\n    Change-Id: I904b6751dec740e001f5ec29f637ef456528746f\n    (cherry picked from b4964eb6a570e290545f95d45411dc8441985cd5)\n", 
+            "date_created": "2014-09-27 01:39:12.509209+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

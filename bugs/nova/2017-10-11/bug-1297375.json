@@ -1,0 +1,74 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:56:48.600210+00:00", 
+    "description": "Take, for example, resize_instance(). In manager.py, we assert that the instance is in RESIZE_PREP state with:\n\n  instance.save(expected_task_state=task_states.RESIZE_PREP)\n\nThis should mean that the first resize will succeed, and any subsequent will fail. However, the underlying db implementation does not lock the instance during the update, and therefore doesn't guarantee this.\n\nSpecifically, _instance_update() in db/sqlalchemy/apy.py starts a session, and reads task_state from the instance. However, it does not use a 'select ... for update', meaning the row is not locked. 2 concurrent calls to this method can both read the same state, then race to the update. The last writer will win. Without 'select ... for update', the db transaction is only ensuring that all writes are atomic, not reads with dependent writes.\n\nSQLAlchemy seems to support select ... for update, as do MySQL and PostgreSQL, although MySQL will fall back to whole table locks for non-InnoDB tables, which would likely be a significant performance hit.", 
+    "tags": [
+        "compute", 
+        "db"
+    ], 
+    "importance": "High", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1297375", 
+    "owner": "https://api.launchpad.net/1.0/~mbooth-9", 
+    "id": 1297375, 
+    "index": 1451, 
+    "created": "2014-03-25 15:55:47.994423+00:00", 
+    "title": "All nova apis relying on Instance.save(expected_*_state) for safety contain a race condition", 
+    "comments": [
+        {
+            "content": "Take, for example, resize_instance(). In manager.py, we assert that the instance is in RESIZE_PREP state with:\n\n  instance.save(expected_task_state=task_states.RESIZE_PREP)\n\nThis should mean that the first resize will succeed, and any subsequent will fail. However, the underlying db implementation does not lock the instance during the update, and therefore doesn't guarantee this.\n\nSpecifically, _instance_update() in db/sqlalchemy/apy.py starts a session, and reads task_state from the instance. However, it does not use a 'select ... for update', meaning the row is not locked. 2 concurrent calls to this method can both read the same state, then race to the update. The last writer will win. Without 'select ... for update', the db transaction is only ensuring that all writes are atomic, not reads with dependent writes.\n\nSQLAlchemy seems to support select ... for update, as do MySQL and PostgreSQL, although MySQL will fall back to whole table locks for non-InnoDB tables, which would likely be a significant performance hit.", 
+            "date_created": "2014-03-25 15:55:47.994423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "https://bugs.launchpad.net/nova/+bug/1268569\n\nlooks like this was also caused by multiple API call concurrently", 
+            "date_created": "2014-04-14 03:26:30.401649+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "looks to me we have several alternatives\n1) use row level lock when we try to do instance status update\n2) use table level lock and accept the possible performance impact\n3) ignore the issue since we did resize the instance, only 1st caller get error notification \n\n", 
+            "date_created": "2014-04-14 03:35:03.108084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "While a SELECT FOR UPDATE would solve this particular race condition, it would introduce a write-intent lock at a potentially very contentious place in the DB API. I'm gonna take this bug on and implement a compare-and-swap loop to issue a lock-free update that does not have a race condition.", 
+            "date_created": "2014-07-25 16:22:04.883886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/109837", 
+            "date_created": "2014-07-27 03:53:56.563607+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/141115\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5b4083f8cbbcca18ea5896f06b371e29b244d0e2\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5b4083f8cbbcca18ea5896f06b371e29b244d0e2\nAuthor: Matthew Booth <email address hidden>\nDate:   Thu Dec 11 17:52:08 2014 +0000\n\n    Implement compare-and-swap for instance update\n    \n    This patch reworks nova.db.sqlalchemy.api._instance_update to remove a\n    race condition that exists in a critical section of code that\n    retrieves the instance record from the database, does some checks of\n    both the new values and existing values of instance fields, and then\n    tries to update the database with the new values.\n    \n    We update the value using update_on_match, which does an optimistic,\n    atomic, lock-free, compare-and-swap on the object. If the update\n    fails, we do some additional checks to determine the specific error,\n    which maintains the previous behaviour. There's an exceptionally\n    small chance of a race when checking for an error if the expected\n    update conditions were not met when we tried the UPDATE, but were met\n    when we fetch the instance for error checking. We handle this by\n    raising a new error, InstanceUpdateConflict.\n    \n    _instance_update() is simplified by having it return only the updated\n    instance_ref. instance_update_and_get_original() is updated to fetch\n    the old value itself before calling _instance_update().\n    \n    Closes-bug: #1297375\n    Change-Id: I9cd0f4b620e639b238555983bf6d58deafbaefeb\n", 
+            "date_created": "2015-07-14 12:01:43.775053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/202593", 
+            "date_created": "2015-07-16 14:35:58.855055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This was reverted, but now has a patch open for review again", 
+            "date_created": "2015-08-05 15:36:38.418913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/202593/", 
+            "date_created": "2015-08-05 15:36:45.629879+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/202593\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2a875644ccb4071758234a2a9837fdb6b4ad915e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2a875644ccb4071758234a2a9837fdb6b4ad915e\nAuthor: Matthew Booth <email address hidden>\nDate:   Thu Dec 11 17:52:08 2014 +0000\n\n    Implement compare-and-swap for instance update\n    \n    This patch reworks nova.db.sqlalchemy.api._instance_update to remove a\n    race condition that exists in a critical section of code that\n    retrieves the instance record from the database, does some checks of\n    both the new values and existing values of instance fields, and then\n    tries to update the database with the new values.\n    \n    We update the value using update_on_match, which does an optimistic,\n    atomic, lock-free, compare-and-swap on the object. If the update\n    fails, we do some additional checks to determine the specific error,\n    which maintains the previous behaviour.\n    \n    _instance_update() is simplified by having it return only the updated\n    instance_ref. instance_update_and_get_original() is updated to fetch\n    the old value itself before calling _instance_update().\n    \n    This patch was originally submitted as change\n    I9cd0f4b620e639b238555983bf6d58deafbaefeb, but that was reverted. The\n    original version was optimistic about not racing in\n    instance_update_and_get_original between fetching an instance and\n    updating it, in which case it raised a different exception to the\n    previous behaviour. In practice we were hit that race frequently in\n    the gate, and the unexpectedly different exception was causing gate\n    failures. This new version adds a retry in this case, and raises the\n    expected exception. The frequency of hitting that race highlights the\n    importance of this patch, as it is otherwise unhandled.\n    \n    This new version also updates the exception hierarchy so that all\n    exceptions raised by _instance_update inherit from a single exception:\n    InstanceUpdateConflict. UnexpectedVMStateError is removed, as it had no\n    users. An InstanceUpdateConflict is now raised instead.\n    \n    The new code trivially allows the caller to check any property when\n    updating an instance, not just the two prescribed. This new version\n    enables this by allowing the 'expected' dict to be passed in, as well\n    as maintaining the behaviour of pulling expected values from the\n    update dict. This has numerous potential applications, for example\n    atomically changing the host of an instance during evacuation.\n    \n    The new version adds numerous additional tests.\n    \n    Closes-bug: #1297375\n    Change-Id: I293da6f320dd8f3474ce2a9c907298e1fb348181\n", 
+            "date_created": "2015-08-07 18:28:33.487177+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/109837\nReason: Matt's patch merged, so I am going to abandon this one.", 
+            "date_created": "2015-08-10 06:02:45.756351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

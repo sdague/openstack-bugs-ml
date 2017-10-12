@@ -1,0 +1,63 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2016-02-20 10:13:12.012480+00:00", 
+    "description": "The nova virt driver has a scale issue in that it makes way too many API calls, especially on behalf of spawn. I have submitted a review to remove at least 2 API calls by not having to re-query the node when plugging vifs.  But after that, we are still left with for spawn:\n\nspawn() gets node from Ironic\nspawn() updates node\nspawn() -> _add_driver_fields() updates node 'n' times where 'n' is # of required pxe fields\nspawn() makes a node validate call\nspawn() -> _plug_vifs() -> _unplug_vifs() lists ports.\nspawn() -> _plug_vifs() -> _unplug_vifs() makes 'n' calls to update ports where 'n' is number of ports.\nspawn() -> _plug_vifs() lists ports.\nspawn() -> _plug_vifs() makes 'n' calls to update ports where 'n' is number of ports.\nspawn() updates node to set 'active' provision state\n\nWe need to figure out a way to make batch calls for some of these, IMO.", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1289048", 
+    "owner": "None", 
+    "id": 1289048, 
+    "index": 1503, 
+    "created": "2014-03-06 23:05:04.479890+00:00", 
+    "title": "Ironic nova driver spawn() makes too many redundant calls", 
+    "comments": [
+        {
+            "content": "The nova virt driver has a scale issue in that it makes way too many API calls, especially on behalf of spawn. I have submitted a review to remove at least 2 API calls by not having to re-query the node when plugging vifs.  But after that, we are still left with for spawn:\n\nspawn() gets node from Ironic\nspawn() updates node\nspawn() -> _add_driver_fields() makes updates node 'n' times where 'n' is # of required pxe fields\nspawn() makes a node validate call\nspawn() -> _plug_vifs() -> _unplug_vifs() lists ports.\nspawn() -> _plug_vifs() -> _unplug_vifs() makes 'n' calls to update ports where 'n' is number of ports.\nspawn() -> _plug_vifs() lists ports.\nspawn() -> _plug_vifs() makes 'n' calls to update ports where 'n' is number of ports.\nspawn() updates node to set 'active' provision state\n\nWe need to figure out a way to make batch calls for some of these, IMO.", 
+            "date_created": "2014-03-06 23:05:04.479890+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Yes. The following is what it should look like:\n\n- update node to set instance_uuid (this should return the node obj)\n- set 'n' driver fields in one call (rather than 'n' separate calls)\n- one call to validate\n- one call to list ports\n- one call per port that is plugged in (rather than one call for every port)\n- one call for every port (since they all need to be plugged in)\n- one call to set provision_state to active\n\n\nThis should result in a total of:\n1 + 1 + 1 + 1 + p + P + 1 \n= 5 + p + P\ncalls, where p is \"number of already plugged in ports\" (often zero) and P is number of ports that need to be plugged in (often the actual number of physical ports).\n", 
+            "date_created": "2014-03-06 23:43:26.452547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "At minimum I'd like to see p and P reduced to 1 each as well. That would still be 7 API calls which seems a little crazy just to tell Ironic to provision an instance. I don't know if all of these must hit the conductor before the API returns, but each API call has some set of latency associated with it, and having to wait on RPC to conductor in Ironic API contributes more to that. If 'p' and 'P' absolutely cannot be reduced (though I don't see why they couldn't be), there's at least another solution to possible latency by making these calls in greenthreads. That really doesn't completely address my concerns, though.\n\nA little background: We (Rackspace) have gotten bitten by this \"API call explosion\" issue before in other areas of OpenStack (in neutron plugins -- before it was called neutron), which is why I'd like to reduce this as much as possible. I see it becoming an issue and would rather fix this as early as we can.\n\nI understand the desire to have API calls that do single specific tasks and I agree. But I start arguing with myself when I want things to perform the best. I guess balance is key.\n", 
+            "date_created": "2014-03-07 00:10:16.957650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/78760/    fixed what we can for now.  The rest requires API changes of some sort, which we'll have to do after Juno opens or whatever.", 
+            "date_created": "2014-03-24 19:09:12.311499+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Untargeting from Icehouse as any further improvements will require API changes, which should be deferred to Juno at this point.", 
+            "date_created": "2014-03-24 19:11:37.156190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Hi Chris! Are you still working on it or intend to work? If not, please unassign youself.", 
+            "date_created": "2014-06-04 12:02:06.112354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }, 
+        {
+            "content": "Hi! As there was no new activity on this bug for a while, I'm unassigning it. Feel free to assign yourself, if you're still working on this bug.", 
+            "date_created": "2014-06-17 15:19:19.049240+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }, 
+        {
+            "content": "This bug should now be fixed in Nova, as Ironic driver now lives there", 
+            "date_created": "2014-09-09 07:58:59.232885+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }, 
+        {
+            "content": "This was raised in http://eavesdrop.openstack.org/meetings/ironic/2015/ironic.2015-06-15-17.02.log.html and the ironic team don't see this as a major concern for now.  Updating the priority back to wishlist.", 
+            "date_created": "2015-06-16 23:27:53.283801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mrda"
+        }
+    ]
+}

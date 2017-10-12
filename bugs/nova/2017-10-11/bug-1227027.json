@@ -1,0 +1,173 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 08:57:41.399272+00:00", 
+    "description": "In the following commit:\n\ncommit 46de2d1e2d0abd6fdcd4da13facaf3225c721f5e\nAuthor: Rafi Khardalian <email address hidden>\nDate:   Sat Jan 26 09:02:19 2013 +0000\n\n    Libvirt: Add support for live snapshots\n    \n    blueprint libvirt-live-snapshots\n    \n\nThere was the following chunk of code\n\n         snapshot_directory = CONF.libvirt_snapshots_directory\n         fileutils.ensure_tree(snapshot_directory)\n         with utils.tempdir(dir=snapshot_directory) as tmpdir:\n             try:\n                 out_path = os.path.join(tmpdir, snapshot_name)\n-                snapshot.extract(out_path, image_format)\n+                if live_snapshot:\n+                    # NOTE (rmk): libvirt needs to be able to write to the\n+                    #             temp directory, which is owned nova.\n+                    utils.execute('chmod', '777', tmpdir, run_as_root=True)\n+                    self._live_snapshot(virt_dom, disk_path, out_path,\n+                                        image_format)\n+                else:\n+                    snapshot.extract(out_path, image_format)\n\nMaking the temporary directory 777 does indeed give QEMU and libvirt permission to write there, because it gives every user on the whole system permission to write there. Yes, the directory name is unpredictable since it uses 'tempdir', this does not eliminate the security risk of making it world writable though.\n\nThis flaw is highlighted by the following public commit which makes the mode configurable, but still defaults to insecure 777.\n\nhttps://review.openstack.org/#/c/46645/", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "High", 
+    "heat": 270, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1227027", 
+    "owner": "None", 
+    "id": 1227027, 
+    "index": 1239, 
+    "created": "2013-09-18 09:39:15.151337+00:00", 
+    "title": "[OSSA 2014-001] Insecure directory permissions with snapshot code (CVE-2013-7048)", 
+    "comments": [
+        {
+            "content": "In the following commit:\n\ncommit 46de2d1e2d0abd6fdcd4da13facaf3225c721f5e\nAuthor: Rafi Khardalian <email address hidden>\nDate:   Sat Jan 26 09:02:19 2013 +0000\n\n    Libvirt: Add support for live snapshots\n    \n    blueprint libvirt-live-snapshots\n    \n\nThere was the following chunk of code\n\n         snapshot_directory = CONF.libvirt_snapshots_directory\n         fileutils.ensure_tree(snapshot_directory)\n         with utils.tempdir(dir=snapshot_directory) as tmpdir:\n             try:\n                 out_path = os.path.join(tmpdir, snapshot_name)\n-                snapshot.extract(out_path, image_format)\n+                if live_snapshot:\n+                    # NOTE (rmk): libvirt needs to be able to write to the\n+                    #             temp directory, which is owned nova.\n+                    utils.execute('chmod', '777', tmpdir, run_as_root=True)\n+                    self._live_snapshot(virt_dom, disk_path, out_path,\n+                                        image_format)\n+                else:\n+                    snapshot.extract(out_path, image_format)\n\nMaking the temporary directory 777 does indeed give QEMU and libvirt permission to write there, because it gives every user on the whole system permission to write there. Yes, the directory name is unpredictable since it uses 'tempdir', this does not eliminate the security risk of making it world writable though.\n\nThis flaw is highlighted by the following public commit which makes the mode configurable, but still defaults to insecure 777.\n\nhttps://review.openstack.org/#/c/46645/", 
+            "date_created": "2013-09-18 09:39:15.151337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Given that you've commented publically in that review \"Setting console world readable/writable is a security flaw\" I'm not sure there's much point to keeping this bug report private/embargoed. Do you concur?", 
+            "date_created": "2013-09-18 14:35:04.541992+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Yep, unfortunately, when i commented to that effect I was thinking the code was only related to Michal's new console code, not realizing he was also touching this pre-existing code. So you're right that the cat is pretty much out of its bag by now.", 
+            "date_created": "2013-09-18 14:58:06.336706+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Switched to public security based on the above confirmation.", 
+            "date_created": "2013-09-19 16:59:51.781055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/47634", 
+            "date_created": "2013-09-20 21:07:12.096079+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I think it makes sense to have an OSSA on this (for Grizzly/havana). Thoughts ?", 
+            "date_created": "2013-09-23 15:46:23.755364+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "If we have hard-coded an expectation that libvirt and nova will run as separate users but both need to write to the same directory, the obvious solution is to use a group-writeable directory with a specific group to which only those two users belong (and optionally setgid if they'll be making subdirectories within it which they also need to share), though this may not be portable to non-POSIX filesystems (does libvirt run on those sorts of platforms?).\n\nI think the approach attempted in https://review.openstack.org/46645 is on the right track, but instead of defaulting to an insecure behavior we should instead enlist the help of downstream packagers to see that an appropriate group gets created for this purpose and provide similar mitigation recommendations in an OSSA corresponding to introduction of the fixes in all affected branches.", 
+            "date_created": "2013-09-25 16:03:24.097785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "The issue isn't sharing between libvirt & nova, it is sharing between QEMU & nova.\n\nHaving a the directory be group writable shared between Nova & QEMU is really not a good idea, because it opens up an avenue for a compromised QEMU to attack Nova.\n\nIMHO, if Nova needs to access files that are owned by the QEMU user, then it should be using rootwrap or some other kind of helper, not try to make them writable by two different user accounts which are intended to be privilege separated.", 
+            "date_created": "2013-09-25 16:18:50.729716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I'll leave it up to the nova devs to decide whether the account separation at play there is intended to guard against symlink attacks launched between these roles, but regardless I agree it deserves an advisory once addressed.", 
+            "date_created": "2013-09-26 00:38:16.030617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Looks like a tricky backport again: both solutions (specific group and new rootwrap commands) rely on distros handling more than just a code update... a painful upgrade, and the impact of this vulnerability might make it a bad trade-off.\n\nUnless nova can reuse existing rootwrap filters to achieve this, so that we don't actually need to update the rootwrap filters config files !", 
+            "date_created": "2013-09-27 09:05:49.561904+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I've isolated the fix for this bug from the patch I was working on for bug 1129748 so it doesn't depend on any new rootwrap rule. With it the temporary directory is created with the correct permissions (751) and its contents (the images) are made only readable to the owner of the process by changing the file-creation mask for the whole snapshot method.\n\nI think it should be easily backportable now.", 
+            "date_created": "2013-11-27 20:56:55.246570+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "Does this issue need a CVE?", 
+            "date_created": "2013-11-28 21:06:20.238576+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kseifried"
+        }, 
+        {
+            "content": "Kurt: Probably. We don't usually request a CVE until we have a clear impact description and the patches which correct it in supported releases are mostly complete/ready to be reviewed, so that we don't have to go back later with revisions or retractions. If you're okay with us requesting CVEs before we're clear on the direction we're taking, we can probably see about revising our workflow ask for them earlier in the process.", 
+            "date_created": "2013-11-29 00:25:07.045710+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "@Xavier: do you have a master fix proposed somewhere already ?", 
+            "date_created": "2013-11-29 12:41:15.312953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposed impact description:\r\n\r\n--------------------------------\r\nTitle: Nova live snapshots use an insecure local directory\r\nReporter: Daniel Berrange (Red Hat)\r\nProducts: Nova\r\nAffects: Grizzly and later\r\n\r\nDescription:\r\nDaniel Berrange from Red Hat reported that the directories used to temporarily store live snapshots on Nova compute nodes were writeable to all local users. A local attacker with shell access on compute nodes could therefore read and modify the contents of live snapshots before those are uploaded to the image service.", 
+            "date_created": "2013-11-29 16:53:30.465931+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This impact description looks accurate to me.", 
+            "date_created": "2013-11-30 01:29:41.755626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "@Thierry: I've the patch in gerrit, I don't know why the bug was not updated (I should have checked probably).\n\nUpstream change is here: https://review.openstack.org/#/c/58852/\n\nIn the end is just about changing the directory's mode from 777 to 701, because libvirt only needs o+x for it to read/write on it. ", 
+            "date_created": "2013-12-06 15:04:35.303001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "Kurt: all confirmed, yes we need a CVE for this one. I suspect I should post it to oss-security since it's public already ?", 
+            "date_created": "2013-12-06 15:54:57.068732+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Patch shall be backported once it hits the master branch.\n\n@Xavier: feel free to propose backports yourself\nSee https://wiki.openstack.org/wiki/StableBranch#Proposing_Fixes", 
+            "date_created": "2013-12-06 15:58:14.523880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: havana\nReview: https://review.openstack.org/60548\n\nFix proposed to branch: grizzly\nReview: https://review.openstack.org/60550", 
+            "date_created": "2013-12-06 16:14:18.813675+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "CVE requested", 
+            "date_created": "2013-12-11 14:43:48.099801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "http://openwall.com/lists/oss-security/2013/12/11/6", 
+            "date_created": "2013-12-11 14:44:07.625594+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "CVE-2013-7048", 
+            "date_created": "2013-12-12 08:56:09.818996+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "We need to get the reviews restored, they got auto-abandoned over the holidays", 
+            "date_created": "2014-01-06 13:34:19.140819+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Restored:\nhttps://review.openstack.org/58852\nhttps://review.openstack.org/60548\nhttps://review.openstack.org/60550", 
+            "date_created": "2014-01-06 15:05:10.446465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/58852\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8a34fc3d48c467aa196f65eed444ccdc7c02f19f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8a34fc3d48c467aa196f65eed444ccdc7c02f19f\nAuthor: Xavier Queralt <email address hidden>\nDate:   Wed Nov 27 20:44:36 2013 +0100\n\n    Enforce permissions in snapshots temporary dir\n    \n    Live snapshots creates a temporary directory where libvirt driver\n    creates a new image from the instance's disk using blockRebase.\n    Currently this directory is created with 777 permissions making this\n    directory accessible by all the users in the system.\n    \n    This patch changes the tempdir permissions so they have the o+x\n    flag set, which is what libvirt needs to be able to write in it and\n    \n    Closes-Bug: #1227027\n    Change-Id: I767ff5247b4452821727e92b668276004fc0f84d\n", 
+            "date_created": "2014-01-10 05:37:46.345709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "stable/grizzly and stable/havana (grenade job running grizzly) look a bit borked right now, so I feel like we should publish advisory pointing to the reviews.", 
+            "date_created": "2014-01-10 15:41:21.657855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Agreed, until someone gets to the root of the grizzly breakage in bug 1266094 we're not going to have any hope of landing backports for grizzly or havana.", 
+            "date_created": "2014-01-10 15:53:56.496105+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "OSSA 2014-001", 
+            "date_created": "2014-01-13 13:45:08.382699+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/60548\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=75be5abd6b3fa0f7f27fe9c805f832cd41d44a5d\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 75be5abd6b3fa0f7f27fe9c805f832cd41d44a5d\nAuthor: Xavier Queralt <email address hidden>\nDate:   Wed Nov 27 20:44:36 2013 +0100\n\n    Enforce permissions in snapshots temporary dir\n    \n    Live snapshots creates a temporary directory where libvirt driver\n    creates a new image from the instance's disk using blockRebase.\n    Currently this directory is created with 777 permissions making this\n    directory accessible by all the users in the system.\n    \n    This patch changes the tempdir permissions so they have the o+x\n    flag set, which is what libvirt needs to be able to write in it and\n    \n    Closes-Bug: #1227027\n    Change-Id: I767ff5247b4452821727e92b668276004fc0f84d\n    (cherry picked from commit 8a34fc3d48c467aa196f65eed444ccdc7c02f19f)\n", 
+            "date_created": "2014-01-24 13:58:54.896449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/60550\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9bd7fff8c0160057643cfc37c5e2b1cd3337d6aa\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 9bd7fff8c0160057643cfc37c5e2b1cd3337d6aa\nAuthor: Xavier Queralt <email address hidden>\nDate:   Wed Nov 27 20:44:36 2013 +0100\n\n    Enforce permissions in snapshots temporary dir\n    \n    Live snapshots creates a temporary directory where libvirt driver\n    creates a new image from the instance's disk using blockRebase.\n    Currently this directory is created with 777 permissions making this\n    directory accessible by all the users in the system.\n    \n    This patch changes the tempdir permissions so they have the o+x\n    flag set, which is what libvirt needs to be able to write in it and\n    \n    Closes-Bug: #1227027\n    Change-Id: I767ff5247b4452821727e92b668276004fc0f84d\n    (cherry picked from commit 8a34fc3d48c467aa196f65eed444ccdc7c02f19f)\n", 
+            "date_created": "2014-01-25 12:20:16.516962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

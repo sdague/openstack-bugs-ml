@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 09:32:17.654223+00:00", 
+    "description": "On instance provision, if an exception is generated which stops the build, and then the failed build is deleted, the files pulled from Glance are not cleaned up at all.  \n\nOver time, this can stack up and become a very large problem since there is a lot of junk disks.  From what I observed, the disk image is brought down to the host machine, and has been scanned in to the SR as there is a VDI record.  It's just not removed.  We should also add the instance id into the VDI name-description so that we can track which VDIs are associated with what instances.  At this point, there's not a good way to track and clean this cruft from the failed builds.\n\nFor example:\n\nuuid ( RO)                : 205b5447-e87a-46a5-8f4a-bbc7e8434677\n          name-label ( RW): 0\n    name-description ( RW): \n             sr-uuid ( RO): 65ccc1a6-335d-92fe-72df-1b09a8f483a6\n        virtual-size ( RO): 20401094656\n            sharable ( RO): false\n           read-only ( RO): false\n\nFor reference I'm running rev 1265.  The exception I ran into was (nova): TRACE: RemoteError: FixedIpNotFoundForInstance Instance 1 has zero fixed ips.  This was due to not having added IPs yet to the DB.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/809614", 
+    "owner": "https://api.launchpad.net/1.0/~jk0", 
+    "id": 809614, 
+    "index": 432, 
+    "created": "2011-07-12 22:31:31.298700+00:00", 
+    "title": "Locate and clean up orphaned VDIs in XenServer", 
+    "comments": [
+        {
+            "content": "On instance provision, if an exception is generated which stops the build, and then the failed build is deleted, the files pulled from Glance are not cleaned up at all.  \n\nOver time, this can stack up and become a very large problem since there is a lot of junk disks.  From what I observed, the disk image is brought down to the host machine, and has been scanned in to the SR as there is a VDI record.  It's just not removed.  We should also add the instance id into the VDI name-description so that we can track which VDIs are associated with what instances.  At this point, there's not a good way to track and clean this cruft from the failed builds.\n\nFor example:\n\nuuid ( RO)                : 205b5447-e87a-46a5-8f4a-bbc7e8434677\n          name-label ( RW): 0\n    name-description ( RW): \n             sr-uuid ( RO): 65ccc1a6-335d-92fe-72df-1b09a8f483a6\n        virtual-size ( RO): 20401094656\n            sharable ( RO): false\n           read-only ( RO): false\n\nFor reference I'm running rev 1265.  The exception I ran into was (nova): TRACE: RemoteError: FixedIpNotFoundForInstance Instance 1 has zero fixed ips.  This was due to not having added IPs yet to the DB.", 
+            "date_created": "2011-07-12 22:31:31.298700+00:00", 
+            "author": "https://api.launchpad.net/1.0/~antonym"
+        }, 
+        {
+            "content": "The way I see this we have a couple of options:\n\n1) Clean up all orphaned disks periodically.\n2) Provide Admin API calls to list orphaned disks and delete said disks.\n\nI'm a fan of providing this via the Admin API because then any operational team can decide what to do with that information. We don't have an admin API client (something we need?) \n\nI don't love the periodic task strategy (feels like bailing out water when you could be finding the leak) but it might be prudent to make a task and then a blueprint for conversion to admin API and having an admin API client which could be run in a cron job?\n\n", 
+            "date_created": "2011-07-18 14:30:15.253958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blamar"
+        }, 
+        {
+            "content": "At a first glance this looks a duplicate of bug #723301, which addresses the issue of removing VDIs and kernel/ramdisk files when instances fails to spawn.\n", 
+            "date_created": "2011-07-18 15:45:42.078003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "I'm not certain why I didn't think about this before, but the cleanup method you used in your fix won't work for situation where the cause of VM spawn failure is loss of connectivity with the hypervisor. How I was testing this was by killing XenAPI on the hypervisor, and while this is a more specific/rare case...it might be worth looking at.", 
+            "date_created": "2011-07-19 18:29:26.251304+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blamar"
+        }, 
+        {
+            "content": "You're right. \nI'm not a great fan of periodic tasks either; ideally, an operation admin API would allow clients such as the dashboard to perform mainteinance operations on hypervisors. However, I'm not sure whether there is a place in the OS API for this kind of operations.\n\nAt least for the xenapi backend it would also worth tagging VDIs created by nova, maybe with a parameter in other-config. This way the cleanup operation, whichever way it is implemented, will remove only orphaned disk created by nova (there might be some orphaned VDIs on the SR used for other purposes).", 
+            "date_created": "2011-07-21 16:05:32.491499+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "Also related to bug 814561", 
+            "date_created": "2011-07-22 13:37:45.800810+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "There is already error handling in place for cleaning up VDIs on spawn failures. This feels more like a side-effect of another bug that should be treated separately. I'd vote for invalidating this.", 
+            "date_created": "2011-08-11 15:19:35.873956+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/693\nCommitted: http://github.com/openstack/nova/commit/04548b067c7c79602332fe2bc2dc89ed77cee7ac\nSubmitter: Jenkins\nBranch:    master\n\n status fixcommitted\n done\n\ncommit 04548b067c7c79602332fe2bc2dc89ed77cee7ac\nAuthor: Josh Kearney <email address hidden>\nDate:   Tue Sep 27 15:21:42 2011 -0500\n\n    Adds a script that can automatically delete orphaned VDIs. Also had to move some flags around to avoid circular imports.\n    \n    Fixes bug 809614.\n    \n    Change-Id: I635f7eef9ede45bee1ee4a62a3882b55d4222ee3\n", 
+            "date_created": "2011-10-01 17:22:44+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }
+    ]
+}

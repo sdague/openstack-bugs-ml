@@ -1,0 +1,38 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-07-10 17:20:04.960905+00:00", 
+    "description": "compute_node_get_all() joins compute_node_stats and with a large number of compute nodes and a moderate number of stats entries per compute node, this is extremely slow.\n\nhttp://paste.openstack.org/show/44162/\nhttp://paste.openstack.org/show/44143/\n\nI believe the problem stems from the fact that each compute node stat is contained in its own row.  With 16K compute nodes and 'x' stats being kept per node, that translates into 16*x rows being returned from sql server.", 
+    "tags": [
+        "db"
+    ], 
+    "importance": "Undecided", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1212428", 
+    "owner": "https://api.launchpad.net/1.0/~msdubov", 
+    "id": 1212428, 
+    "index": 3963, 
+    "created": "2013-08-14 20:40:19.245728+00:00", 
+    "title": "compute_node_get_all slow as molasses", 
+    "comments": [
+        {
+            "content": "compute_node_get_all() joins compute_node_stats and with a large number of compute nodes and a moderate number of stats entries per compute node, this is extremely slow.\n\nhttp://paste.openstack.org/show/44162/\nhttp://paste.openstack.org/show/44143/\n\nI believe the problem stems from the fact that each compute node stat is contained in its own row.  With 16K compute nodes and 'x' stats being kept per node, that translates into 16*x rows being returned from sql server.", 
+            "date_created": "2013-08-14 20:40:19.245728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "One possible fix could be to convert the stats table to simply contain 'compute_node_id' and 'stats' fields.  The stats field could be a JSON-ified dictionary containing all of the stats we track.  There isn't a need to query for the stats individually... so accessing and updating them as 1 big blob should work fine.\n\nKeeping them in their own table allows us to skip returning them when we don't need them.  (Although if we used sqlalchemy differently, we wouldn't necessarily need to have them in their own table to achieve this either.  Ie, just don't select the stats column.)", 
+            "date_created": "2013-08-14 20:43:00.950759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/43151", 
+            "date_created": "2013-08-21 15:44:08.022415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/43151\nCommitted: http://github.com/openstack/nova/commit/1e90eb66ae999201a0b3d2e7409734c3e2f452d7\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1e90eb66ae999201a0b3d2e7409734c3e2f452d7\nAuthor: msdubov <email address hidden>\nDate:   Wed Aug 21 16:30:14 2013 +0400\n\n    Safe db.api.compute_node_get_all() performance improvement\n    \n    Scheduler stores the essential information for its work in DB in 3\n    tables: 'services', 'compute_nodes' and 'compute_node_stats'. For\n    each compute node, there is 1 record in 'services', 1 record in\n    'compute_nodes' and about 10 records in 'compute_node_stats'.\n    \n    Each user request to scheduler to schedule an instance results\n    in a call to the db.api.compute_node_get_all() method which fetches\n    the information about all the compute nodes, their services and\n    corresponding stats in a single list.\n    \n    There were 2 problems with the previous implementation of this\n    method. The first one was connected with network traffic: the\n    use of JOIN operation resulted in redundant informaion\n    returned from the DB in the resulting denormalized table. The\n    second one was a performance problem in the SQLAlchemy ORM's\n    implementation of data processing (slow model mappings in JOINs).\n    \n    As we are just returning all the data from these 3 tables, we\n    have implemented a lower-level approach to solve these problems:\n    to reduce the network traffic, the new implementation of this\n    method fetches all the necessary data from 3 tables separately,\n    querying only for those columns that will be actually needed by\n    the scheduler ('created_at', 'deleted_at', 'updated_at' and\n    'deleted' columns get removed if the 'no_date_fields' parameter is\n    set to True). It then joins these tables manually, which allows\n    to avoid using the slow SQLAlchemy ORM's model mapping and thus\n    enables to speed up the whole process significantly.\n    \n    We have tested the new implementation against the old one (with\n    the 'no_date_fields' parameter set to True). In our test example,\n    we have 10k services, 10k compute_nodes and 100k records in the\n    compute_node_stats (each key and each value is 15 characters in\n    length) database. The results are as follows:\n    \n    +---------------------------------------+-----------+---------+---------------+\n    | Approach                              | Time      | Traffic | Python memory |\n    +---------------------------------------+-----------+---------+---------------+\n    | ORM joinedload (all columns)          | 15.58 sec | 26.8 MB | 579.9 MB      |\n    +---------------------------------------+-----------+---------+---------------+\n    | ORM joinedload (filtered columns)     | n/a       | 17.2 MB | n/a           |\n    +---------------------------------------+-----------+---------+---------------+\n    | core + manual join (all columns)      | 7.67 sec  | 9.4 MB  | 223.6 MB      |\n    +---------------------------------------+-----------+---------+---------------+\n    | core + manual join (filtered columns) | 5.15 sec  | 5.6 MB  | 112.5 MB      |\n    +---------------------------------------+-----------+---------+---------------+\n    \n    So our new implementation has 3 times better performance, uses 5 times\n    less traffic and yields 5 times less memory usage than the old one.\n    \n    Test data was edited slightly here to reflect the real-world system\n    behaviour (services corresponding to compute nodes come with\n    binary='nova-compute').\n    \n    Change-Id: Ie5ef00c974b810336787e88c78c93c15ca2890d3\n    Partial-Bug: #1212428\n", 
+            "date_created": "2013-09-05 05:56:47.175568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

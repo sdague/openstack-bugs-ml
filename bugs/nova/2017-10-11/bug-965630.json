@@ -1,0 +1,41 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:23:01.562728+00:00", 
+    "description": "Resizing an instance is a two-step process. First the instance is resized and the task_state ends up set to RESIZE_VERIFY. Then a second step is required to confirm or revert the resize, eventually cleaning up one instance and clearing the task_state.\n\nHowever, a variety of commands are allowed in RESIZE_VERIFY that will end up clearing the task_state without cleaning up one of the instances (the original since the new instance is the one running at that time).\n\nThese operations appear to result in this scenario happening:\n\nstop\nreboot\nrebuild\npause\nsuspend\nrescue\nchangePassword\ncreateImage\n\n(I've personally seen it and tested it with rescue and changePassword, the others I found from reading the code, there may be more too).\n\nI'm not sure if the API intended for any of these operations to occur when in RESIZE_VERIFY. If not, the simplest fix would be to prevent any of these from executing while in RESIZE_VERIFY.\n\nIf it is intended, some redesigning of how states are tracked is necessary to avoid task_state being cleared.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/965630", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 965630, 
+    "index": 2828, 
+    "created": "2012-03-26 19:46:29.726955+00:00", 
+    "title": "Allowing operations during RESIZE_VERIFY leaks original instance", 
+    "comments": [
+        {
+            "content": "If an instance is in RESIZE_VERIFY state, a rescue is currently allowed. This resets the task_state, causing nova-compute to forget about the original instance since it's in the middle of a resize.\n\nEither the original instance should be deleted during a rescue (similar to confirm resize), or rescue should be disallowed during RESIZE_VERIFY state.\n\n\njohannes@compute1:~/openstack/nova/trunk$ nova list\n+--------------------------------------+------+--------+----------------------+\n|                  ID                  | Name | Status |       Networks       |\n+--------------------------------------+------+--------+----------------------+\n| 4865d9d7-346d-469a-9786-55a4b4127b5d | test | ACTIVE | public=192.168.128.3 |\n+--------------------------------------+------+--------+----------------------+\n\njohannes@compute1:~/openstack/nova/trunk$ nova resize 4865d9d7-346d-469a-9786-55a4b4127b5d 1\njohannes@compute1:~/openstack/nova/trunk$ nova list\n+--------------------------------------+------+---------------+----------------------+\n|                  ID                  | Name |     Status    |       Networks       |\n+--------------------------------------+------+---------------+----------------------+\n| 4865d9d7-346d-469a-9786-55a4b4127b5d | test | VERIFY_RESIZE | public=192.168.128.3 |\n+--------------------------------------+------+---------------+----------------------+\njohannes@compute1:~/openstack/nova/trunk$ nova rescue 4865d9d7-346d-469a-9786-55a4b4127b5d\n[...]\njohannes@compute1:~/openstack/nova/trunk$ nova list\n+--------------------------------------+------+--------+----------------------+\n|                  ID                  | Name | Status |       Networks       |\n+--------------------------------------+------+--------+----------------------+\n| 4865d9d7-346d-469a-9786-55a4b4127b5d | test | RESCUE | public=192.168.128.3 |\n+--------------------------------------+------+--------+----------------------+\njohannes@compute1:~/openstack/nova/trunk$ nova unrescue 4865d9d7-346d-469a-9786-55a4b4127b5d\njohannes@compute1:~/openstack/nova/trunk$ nova list\n+--------------------------------------+------+--------+----------------------+\n|                  ID                  | Name | Status |       Networks       |\n+--------------------------------------+------+--------+----------------------+\n| 4865d9d7-346d-469a-9786-55a4b4127b5d | test | ACTIVE | public=192.168.128.3 |\n+--------------------------------------+------+--------+----------------------+", 
+            "date_created": "2012-03-26 19:46:29.726955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "I'd vote that we prevent any of these actions until the migration is either verified or reverted.", 
+            "date_created": "2012-04-09 21:50:48.305997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rconradharris"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/6391", 
+            "date_created": "2012-04-09 22:31:19.509747+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/7976", 
+            "date_created": "2012-05-31 15:42:12.527683+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/7976\nCommitted: http://github.com/openstack/nova/commit/cc87be923ff83fed349c0da4b285a180d0644db8\nSubmitter: Jenkins\nBranch:    master\n\ncommit cc87be923ff83fed349c0da4b285a180d0644db8\nAuthor: Dan Prince <email address hidden>\nDate:   Thu May 31 11:40:27 2012 -0400\n\n    Prevent task_state changes during VERIFY_RESIZE.\n    \n    Don't allow operations that cause task_state to change\n    when an instance is in VERIFY_RESIZE.\n    \n    Fixes LP Bug #965630.\n    \n    Change-Id: I7e222985c199d619c5cb248c04e1670c92d5587b\n", 
+            "date_created": "2012-05-31 16:26:49.169885+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

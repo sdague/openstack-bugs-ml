@@ -1,0 +1,44 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-18 07:39:23.730364+00:00", 
+    "description": "Recently while I was refactoring the smoke tests, I found that attach volume is reporting success even when the operation fails.  I was able to work around this in the smoke tests by waiting longer before attaching.  My initial sense is that the volume is reporting its state as \"available\" some small amount of time (5-15 seconds?) before it is really available.\n\nHere is a snippet from the volume smoke tests that show how I was forced to work around the issue:\n\nhttp://paste.openstack.org/show/100/", 
+    "tags": [
+        "attach", 
+        "volume"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/673756", 
+    "owner": "None", 
+    "id": 673756, 
+    "index": 2208, 
+    "created": "2010-11-10 22:04:10.728248+00:00", 
+    "title": "Attach volume sometimes incorrectly reports success", 
+    "comments": [
+        {
+            "content": "Recently while I was refactoring the smoke tests, I found that attach volume is reporting success even when the operation fails.  I was able to work around this in the smoke tests by waiting longer before attaching.  My initial sense is that the volume is reporting its state as \"available\" some small amount of time (5-15 seconds?) before it is really available.\n\nHere is a snippet from the volume smoke tests that show how I was forced to work around the issue:\n\nhttp://paste.openstack.org/show/100/", 
+            "date_created": "2010-11-10 22:04:10.728248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devcamcar"
+        }, 
+        {
+            "content": "The volume driver's create_export method should block until the device is actually ready. There must be some way to check when vblade (assuming the you're using AoE) has actually gotten its act together and exported the device?", 
+            "date_created": "2010-11-22 09:36:00.957289+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "This is apparently happening with iscsi.  I'd love to get some tracebacks because I'm not sure what exactly is going to quickly.  I guess it is possible that the iscsi target shell is returning before the target is actually created, but this seems unlikely.\n\nVish\n\nOn Nov 22, 2010, at 1:36 AM, Soren Hansen wrote:\n\n> The volume driver's create_export method should block until the device\n> is actually ready. There must be some way to check when vblade (assuming\n> the you're using AoE) has actually gotten its act together and exported\n> the device?\n> \n> -- \n> Attach volume sometimes incorrectly reports success\n> https://bugs.launchpad.net/bugs/673756\n> You received this bug notification because you are a member of Nova\n> Bugs, which is subscribed to OpenStack Compute (nova).\n> \n> Status in OpenStack Compute (Nova): New\n> \n> Bug description:\n> Recently while I was refactoring the smoke tests, I found that attach volume is reporting success even when the operation fails.  I was able to work around this in the smoke tests by waiting longer before attaching.  My initial sense is that the volume is reporting its state as \"available\" some small amount of time (5-15 seconds?) before it is really available.\n> \n> Here is a snippet from the volume smoke tests that show how I was forced to work around the issue:\n> \n> http://paste.openstack.org/show/100/\n> \n> \n", 
+            "date_created": "2010-11-22 21:00:00+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Ok, so there's two things allegedly doing on here:\n\n  1) A volume is marked as 'available' before it is actually possible to attach a volume\n\n  2) Attaching a volume sometimes succeeds even when we actually failed to attach because it wasn't ready\n\nNow, in VolumeManager.create_volume(), we mark the volume as available just before returning successfully. That implies to me that the call shouldn't return until the volume is available. And, as Soren points out, that means create_export() should block until it's ready.\n\nThat means that this loop in test_002_can_attach_volume() doesn't make sense:\n\n        for x in xrange(10):\n            volume.update()\n            if volume.status.startswith('available'):\n                break\n            time.sleep(1)\n        else:\n            self.fail('cannot attach volume with state %s' % volume.status)\n\ni.e. create_volume() has already allegedly succeeded, so the volume should have 'available' status\n\nTo reproduce the bug, I think you just need to remove the two five second sleeps between create_volume() and attach_volume() in the test. I haven't tried reproducing yet, so it'd be nice to know what cases are failing - iSCSI only, or all volume drivers? tgtadm or ietadm? Xen/KVM? With an instance running on the volumes host, or remotely, or both?\n\nIn the case of ISCSIDriver, the last thing we do in create_export() is run 'tgtdadm --op new --mode=logicalunit ...'. So, we need to understand the semantics of that. Is it supposed to block until the LUN is available? If not, how do we poll for completion?\n\nAnd we also need to figure out why attach_volume returns successfully when it has failed.", 
+            "date_created": "2012-02-02 12:22:58.761150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I am trying to reproduce it with ISCSIDriver", 
+            "date_created": "2012-03-23 12:12:46.405941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gongysh"
+        }
+    ]
+}

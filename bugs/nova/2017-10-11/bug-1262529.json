@@ -1,0 +1,99 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-11-21 13:36:09.624832+00:00", 
+    "description": "Associating Floating IP with neutron takes too long to show up in VM's details ('nova show' or 'compute_client.servers.get()') and even longer when there's more than 1 VM involved.\n\nwhen launching 2 VMs with floating IP you can see in the log that it passes once:\n\"unchecked floating IPs: {}\"\nand fails\n\"Timed out while waiting for the floating IP assignments to propagate\"\n\nhttp://logs.openstack.org/01/55101/28/check/check-tempest-dsvm-neutron/0541dff/console.html\nhttp://logs.openstack.org/01/55101/28/check/check-tempest-dsvm-neutron/f383f4b/console.html\nhttp://logs.openstack.org/01/55101/31/check/check-tempest-dsvm-neutron/321413a/console.html\nhttp://logs.openstack.org/97/62697/5/check/check-tempest-dsvm-neutron/960c6ad/console.html\n\nalso - the floating ip is accessible long time before it is updated in nova DB\n\nHow to reproduce:\nhttps://review.openstack.org/#/c/62697/\n\nSo the problem is both:\n1. the time it takes for nova to get the update\nand\n2. the timeout defined in the tempest neutron-gate\n\nsince I don't see this in my local setup (rhos-4.0), I don't know if this is due to stress in neutron or nova, or if it's a devstack issue", 
+    "tags": [
+        "network", 
+        "nova-neutron"
+    ], 
+    "importance": "Undecided", 
+    "heat": 56, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1262529", 
+    "owner": "None", 
+    "id": 1262529, 
+    "index": 4400, 
+    "created": "2013-12-19 07:33:22.533740+00:00", 
+    "title": "Floating IP takes too long to update in nova and even longer for multiple VMs", 
+    "comments": [
+        {
+            "content": "Associating Floating IP with neutron takes too long to show up in VM's details ('nova show' or 'compute_client.servers.get()') and even longer when there's more than 1 VM involvede.\n\nyou can see in the log that it passes once:\n\"unchecked floating IPs: {}\"\nand fails \n\"Timed out while waiting for the floating IP assignments to propagate\"\n\nhttp://logs.openstack.org/01/55101/28/check/check-tempest-dsvm-neutron/0541dff/console.html\nhttp://logs.openstack.org/01/55101/28/check/check-tempest-dsvm-neutron/f383f4b/console.html\nhttp://logs.openstack.org/01/55101/31/check/check-tempest-dsvm-neutron/321413a/console.html\nhttp://logs.openstack.org/97/62697/5/check/check-tempest-dsvm-neutron/960c6ad/console.html\n\nalso - the floating ip is accessible long time before it is updated in nova DB\n\nHow to reproduce:\nhttps://review.openstack.org/#/c/62697/\n\nSo the problem is both the time it takes for nova to get the update, and the timeout in defined in the neutron-gate", 
+            "date_created": "2013-12-19 07:33:22.533740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yfried"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-12-19 07:33:22.533740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yfried"
+        }, 
+        {
+            "content": "Does not seem to be a tempest issue.", 
+            "date_created": "2013-12-19 19:30:43.613705+00:00", 
+            "author": "https://api.launchpad.net/1.0/~adalbas"
+        }, 
+        {
+            "content": "@adalbas this is a tempest issue because the test needs to change, as agreed in the mailing list", 
+            "date_created": "2013-12-19 21:56:42.698553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yfried"
+        }, 
+        {
+            "content": "HI Yair,\nAs I know, if you use quantum/neutron to associate floating ip.\n1. First the neutron-server will update FloatingIP table in database (which will make the `neutron floatingip-show` command show the floating ip that has associated with port,  actually the flaoting ip hasn't associate with port), then notify l3-agent to update qrouter device and nat rules. (https://github.com/openstack/neutron/blob/master/neutron/db/l3_db.py#L659)\n2. l3-agent periodically update routeres (assocate floating ip to qrouter device and apply nat rules.) every 60 seconds which is the default value (https://github.com/openstack/neutron/blob/master/neutron/agent/l3_agent.py#L733)\nAfter this step, floating ip will can be pinged.\n3. Nova compute also periodically update InstanceInfoCache table which is queried by `nova show <instance>` command every 60 seconds which is the default value. (https://github.com/openstack/nova/blob/master/nova/compute/manager.py#L4391)\n\nThe reason of this issue I guess maybe is that l3-agent or nova compute has something wrong when run periodical tasks.\nmaybe l3-agent/nova-compute is to busy to run periodical tasks.\nmaybe the peridoical task raise excepitons.\n\nAbout the timeout value in tempest to test floating ip, I think 120 seconds is the mininum value.\nif we want to check out who make the floating ip not appear in `nova show` command.\nwe can first check step 2 (but this step is not easy to check, maybe using the default value 60 seconds to check. which is checking the floating ip connectivity with a timeout of 60  seconds),\nthen check step 3.\n\nMaybe my understanding of floating ip is not completely correct, so how do you think?", 
+            "date_created": "2013-12-22 08:13:22.160783+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jufeng"
+        }, 
+        {
+            "content": "I'm thinking:\n\nTempest sollution:\n1. Removing \"wait_for_floating_ip\" from network_basic_ops should be the first step as it doesn't check for network connectivity and fails the test for no reason\n2. Create a scenario that will test both DBs (neutron and nova) and try to stress them (as describe in mailing list)\n\nAnalyzing the new scenario should tell us how to solve the issue in neutron/nova", 
+            "date_created": "2013-12-22 10:34:48.894551+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yfried"
+        }, 
+        {
+            "content": "This patch removes this test from network_basic_ops", 
+            "date_created": "2013-12-22 11:44:12.592167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yfried"
+        }, 
+        {
+            "content": "^ https://review.openstack.org/#/c/63627/ ^", 
+            "date_created": "2013-12-22 15:14:08.663428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yfried"
+        }, 
+        {
+            "content": "Hi Yair,\n\nI agree with your suggestion about removing the check in network basic ops.\nIn principle I also agree with your advice about creating a new scenario for 'association' (it's actually not in my opinion an association, but let's stick to the point!); however this effort should be coupled with a parallel effort aimed at solving the underlying problem in nova, which perhaps is connected to the way neutron floating ips updates are propagated back to nova.", 
+            "date_created": "2013-12-29 23:11:18.785858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "Savanna team faced the same issue during the integrating testing with using novaclient with comparison of neutronclient:\nhttps://bugs.launchpad.net/savanna/+bug/1277501", 
+            "date_created": "2014-02-07 13:20:41.700490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aignatov"
+        }, 
+        {
+            "content": "I think the Tempest portion can be closed - it remains a neutron-nova issue", 
+            "date_created": "2014-03-13 06:51:19.349873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yfried"
+        }, 
+        {
+            "content": "I too have been having a problen in that it may take up to 15 minutes for a floating IP to appear on an instance when I run a nova list command after associating a floating IP to an instance.\n\nNo errors appear in any of the log files.\n\nI am running Havana using Neutron ML2/Open vSwitch on Ubuntu 1204.\n\nMy environment is a controller node, a network node and 7 compute/hypervisor nodes.\n\nThe controller, network and 5 hypervisor nodes are dual proc 12 core Xeon processors with 72G of RAM.\nThe other two hypervisor nodes only have one 12 core proc with 72G RAM.\n\nI have a script that I run on the controller node which creates a project, two users in the project, 4 networks, modifies the security group rules, starts 4 instances that attach to some or all of the networks and then assigns a floating IP to one interface on one VM. \n\nThis script may loop to create up to 25 of these environments. \n\nWatching nova list --all-tenants it can take up to 20 to 30 minutes for all of the VMs to have their floating IPs appear. The floating IPs seem to work right away but the delay for them to show on nova list is strange.\n", 
+            "date_created": "2014-03-19 14:06:10.538924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~phil-hopkins-a"
+        }, 
+        {
+            "content": "Can confirm that this also affects me, using Neutron OVS on Ubuntu 12.04 (Havana).  Had the same problem on Grizzly as well (using quantum linuxbridge on Ubuntu 12.04).", 
+            "date_created": "2014-03-19 17:23:21.806600+00:00", 
+            "author": "https://api.launchpad.net/1.0/~canderso"
+        }, 
+        {
+            "content": "As per yfried's comment closing tempest portion.", 
+            "date_created": "2014-03-19 18:55:06.650435+00:00", 
+            "author": "https://api.launchpad.net/1.0/~maurosr"
+        }, 
+        {
+            "content": "Fixed in Icehouse with the addition of nova-neutron events ", 
+            "date_created": "2014-06-03 10:28:04.570535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Changing to Fix Released per Aaron's comment.", 
+            "date_created": "2014-11-21 13:36:08.737745+00:00", 
+            "author": "https://api.launchpad.net/1.0/~enikanorov"
+        }
+    ]
+}

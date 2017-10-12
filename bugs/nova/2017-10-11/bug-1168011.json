@@ -1,0 +1,83 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-08-01 10:17:53.012279+00:00", 
+    "description": "Here is my story:\n\nWhile i was trying to create a new volume driver for a new network file system,  i stumble upon this error each time i try to attach a volume to my instance, DeviceIsBusy(\"The supplied device (/dev/vdc) is busy.\") and while this error was suggeting me to try to use another device /dev/vdc, /dev/vdb and so on, but still all devices was raising the same error, and so to understand more about how and why this error is raised, i took a pick on the relevant part of the code that handle volume attachement, which is this:\n\n    def attach_volume(self, connection_info, instance, mountpoint): \n           ....\n           try:\n                ...\n                virt_dom.attachDeviceFlags(conf.to_xml(), flags)\n          except Exception, ex:\n               if isinstance(ex, libvirt.libvirtError):\n                    errcode = ex.get_error_code()\n                    if errcode == libvirt.VIR_ERR_OPERATION_FAILED:\n                         ...\n                         raise exception.DeviceIsBusy(device=disk_dev)\n\nAs everyone can see, the code above basically catch all operation error that libvirt can raise and assume that all of them are the source of a device being busy which is not correct at all.\n\nAnd as i understood from the git blame, this part of code was added to fix the bug https://bugs.launchpad.net/nova/+bug/914974 , but didn't take in consideration other bugs that may appear in the future.\n\nSo my suggestion is to raise a more general Exception by setting the error message to the same as libvirt.libvirtError which is good enough from what i see:\n\nMessages will be:\n\n - For bug #914974:  operation failed: target vdb already exists\n - For me it's : operation failed: open disk image file failed\n\nIf this is a concern for anyone i would like to supply a patch to fix this.\n\nCheers,", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "Low", 
+    "heat": 42, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1168011", 
+    "owner": "None", 
+    "id": 1168011, 
+    "index": 5731, 
+    "created": "2013-04-11 15:24:10.111012+00:00", 
+    "title": "Nova raise a confusing error when attaching a volume fail", 
+    "comments": [
+        {
+            "content": "Here is my story:\n\nWhile i was trying to create a new volume driver for a new network file system,  i stumble upon this error each time i try to attach a volume to my instance, DeviceIsBusy(\"The supplied device (/dev/vdc) is busy.\") and while this error was suggeting me to try to use another device /dev/vdc, /dev/vdb and so on, but still all devices was raising the same error, and so to understand more about how and why this error is raised, i took a pick on the relevant part of the code that handle volume attachement, which is this:\n\n    def attach_volume(self, connection_info, instance, mountpoint): \n           ....\n           try:\n                ...\n                virt_dom.attachDeviceFlags(conf.to_xml(), flags)\n          except Exception, ex:\n               if isinstance(ex, libvirt.libvirtError):\n                    errcode = ex.get_error_code()\n                    if errcode == libvirt.VIR_ERR_OPERATION_FAILED:\n                         ...\n                         raise exception.DeviceIsBusy(device=disk_dev)\n\nAs everyone can see, the code above basically catch all operation error that libvirt can raise and assume that all of them are the source of a device being busy which is not correct at all.\n\nAnd as i understood from the git blame, this part of code was added to fix the bug https://bugs.launchpad.net/nova/+bug/914974 , but didn't take in consideration other bugs that may appear in the future.\n\nSo my suggestion is to raise a more general Exception by setting the error message to the same as libvirt.libvirtError which is good enough from what i see:\n\nMessages will be:\n\n - For bug #914974:  operation failed: target vdb already exists\n - For me it's : operation failed: open disk image file failed\n\nIf this is a concern for anyone i would like to supply a patch to fix this.\n\nCheers,", 
+            "date_created": "2013-04-11 15:24:10.111012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mouadino"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/26758", 
+            "date_created": "2013-04-11 15:31:59.664949+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is anyone able to reproduce the bug ?\n", 
+            "date_created": "2015-03-24 14:28:54.500795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sailajap"
+        }, 
+        {
+            "content": "Well, the code in question is still the same, so if you have some kind of error situation where attaching the volume fails, the exception will still get masked as DeviceIsBusy, whatever the original error may be.", 
+            "date_created": "2015-03-24 18:33:55.085893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "On a Openstack deployed virtual machine,there are only three volumes available,\n\n/dev/sda1,/dev/sda2,/dev/sda5.\n\nWhen I attach a volume to a provisioned instance, e.g \nstack@Controller:~$ nova volume-attach e25a8867-ad27-49c0-af2b-207936515a7d b75729c6-fb09-49dc-a0c7-d45e4cc139fe /dev/sda3\nERROR (Conflict): The supplied device path (/dev/sda3) is in use. (HTTP 409) (Request-ID: req-5012d41b-f9fc-49ba-8b88-2d8f3193c621)\n\nIs this a bug to consider,as the device /dev/sda3 does not exist and still the error is , '/dev/sda3 is in use'.\n\nI am not able to reproduce the error 'Device is Busy'.Can anyone let me know how to reproduce the same..\n\nThanks in advance.\n\n\n\n\n", 
+            "date_created": "2015-03-27 13:22:21.438692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sailajap"
+        }, 
+        {
+            "content": "/dev/sda3 is not a volume, it is a partion on the block device /dev/sda. You should only use /dev/sda etc. for attaching. And in your example /dev/sda should be in use, /dev/sdb should work.", 
+            "date_created": "2015-03-27 13:39:02.632525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "Cleanup\n=======\n\nThere are no open reviews for this bug report since more than 2 weeks.\nTo signal that to other contributors which might provide patches for\nthis bug, I switch the status from \"In Progress\" to \"Confirmed\" and\nremove the assignee.\nFeel free to add yourself as assignee and to push a review for it.", 
+            "date_created": "2016-03-11 14:49:24.106214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "should I use VIR_ERR_RESOURCE_BUSY for DeviceIsBusy exception and create general exception like \"Failed to attach volume at mountpoint: %s')\" (as it is logged in code) for libvirt.VIR_ERR_OPERATION_FAILED. If somebody can provide a suggestion it would be really useful", 
+            "date_created": "2016-05-16 22:54:43.241622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~siva-radhakrishnan"
+        }, 
+        {
+            "content": "Keep in mind the code in the description is in the compute manager, and the virt driver that's raising the exception may not be the libvirt driver, so you can't bake libvirt-specific things into the error that's being handled in the compute manager code, it will have to be generic enough for other virt drivers to raise the same type of error.", 
+            "date_created": "2016-05-17 17:06:24.542768+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Sorry, the code in the description is in the libvirt driver, I missed that, it's not the compute manager. Just keep in mind that anything new raised from the virt driver would need to be handled in the compute manager.", 
+            "date_created": "2016-05-17 17:09:08.484506+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/320163", 
+            "date_created": "2016-05-23 22:35:00.478066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/320163\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 09:58:39.057730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There are no currently open reviews on this bug, changing the status back to the previous state and unassigning. If there are active reviews related to this bug, please include links in comments. ", 
+            "date_created": "2017-08-01 10:17:50.653722+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

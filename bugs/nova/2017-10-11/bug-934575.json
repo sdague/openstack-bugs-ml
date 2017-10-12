@@ -1,0 +1,51 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 10:16:18.500636+00:00", 
+    "description": "The recent change for rpc connection pool stuff (https://review.openstack.org/#change,3893) unfortunately broke notifications in the manager when exceptions are raised.\n\nThe notifier payload includes the 'context' used for the manager call.  Unfortunately this is typically an RpcContext which now includes the rpc connection_pool instance.\n\nDebug output:\n\nworking on {'connection_cls': <class 'nova.rpc.impl_kombu.Connection'>, 'current_size': 1, 'order_as_stack': True, 'free_items': deque([<nova.rpc.impl_kombu.Connection object at 0x389aa50>]), 'min_size': 0, 'max_size': 30, 'channel': <LightQueue at 0x3592a90 maxsize=0>} (level=2)\n\nThis is the connection pool.  unfortunately 'deque' has a list of connections... and kombu's Connection class has an attribute 'consumer_num' which is: itertools.count().   When to_primitive() reaches this....   it spins forever iterating on it.\n\nI think there are multiple problems here.\n\n1) to_primitive tries to recurse only so many levels... and there are a number of recursive calls that do not increase the 'level'.\n2) We probably shouldn't store the connection_pool in the rpc context.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/934575", 
+    "owner": "https://api.launchpad.net/1.0/~russellb", 
+    "id": 934575, 
+    "index": 2760, 
+    "created": "2012-02-17 23:24:04.348628+00:00", 
+    "title": "notifier endless loops in is_primitive", 
+    "comments": [
+        {
+            "content": "The recent change for rpc connection pool stuff (https://review.openstack.org/#change,3893) unfortunately broke notifications in the manager when exceptions are raised.\n\nThe notifier payload includes the 'context' used for the manager call.  Unfortunately this is typically an RpcContext which now includes the rpc connection_pool instance.\n\nDebug output:\n\nworking on {'connection_cls': <class 'nova.rpc.impl_kombu.Connection'>, 'current_size': 1, 'order_as_stack': True, 'free_items': deque([<nova.rpc.impl_kombu.Connection object at 0x389aa50>]), 'min_size': 0, 'max_size': 30, 'channel': <LightQueue at 0x3592a90 maxsize=0>} (level=2)\n\nThis is the connection pool.  unfortunately 'deque' has a list of connections... and kombu's Connection class has an attribute 'consumer_num' which is: itertools.count().   When to_primitive() reaches this....   it spins forever iterating on it.\n\nI think there are multiple problems here.\n\n1) to_primitive tries to recurse only so many levels... and there are a number of recursive calls that do not increase the 'level'.\n2) We probably shouldn't store the connection_pool in the rpc context.", 
+            "date_created": "2012-02-17 23:24:04.348628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Since I introduced the bug, I'll assign this to myself and work on it first thing this week.", 
+            "date_created": "2012-02-18 23:53:19.667348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Thanks!  My initial instinct was to not store connection_pool in the context but to just pass it as an arg to msg_reply.... however... that wouldn't work for the case where you can do a context.reply() in a manager.   Now... we don't use that behavior currently, though... and I wonder how useful it is.  If we can ditch the context.reply() support, the fix is rather easy.\n\nMaybe you can come up with something different.", 
+            "date_created": "2012-02-19 01:19:53.000495+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Er, s/msg_reply/ctxt.reply()  in ProxyCallback.", 
+            "date_created": "2012-02-19 01:20:18.584111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4356", 
+            "date_created": "2012-02-21 18:32:40.811887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "it should also be noted that there is no reason to include the context in the notifications. the fact it does was pretty much accidental. ", 
+            "date_created": "2012-02-22 19:39:14.028209+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdragon"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/4356\nCommitted: http://github.com/openstack/nova/commit/2a9b66c3dba5f7fb13c7b4e7442eae2bc5dbc130\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2a9b66c3dba5f7fb13c7b4e7442eae2bc5dbc130\nAuthor: Russell Bryant <email address hidden>\nDate:   Tue Feb 21 11:33:51 2012 -0500\n\n    Don't store connection pool in RpcContext.\n    \n    Fix bug 934575.\n    \n    As Chris pointed out in the bug, there is a downside to this approach to\n    fixing the bug, in that a manager will no longer be able to use\n    context.reply(). However, it wasn't being used at all, and it's no loss\n    in functionality.  A remote method can still return multiple values (in\n    response to a multicall()) by using yield.\n    \n    Change-Id: I0e5aff2e8a40ffd8390c0e19d89dd17e60a74130\n", 
+            "date_created": "2012-02-22 19:51:05.678913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

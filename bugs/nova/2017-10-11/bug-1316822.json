@@ -1,0 +1,144 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2014-09-12 04:27:55.926930+00:00", 
+    "description": "The iptables rules needed to implement instance security group rules get inserted by the \"_create_domain_and_network\" function in nova/virt/libvirt/driver.py\n\nThis function is called by the following functions: _hard_reboot, resume and spawn (also in a couple of migration related functions).\n\nDoing \"nova reboot <instance_id>\" only does a soft reboot (_soft_reboot) and assumes that the rules are already present and therefore does not check or try to add them.\n\nIf the instances is stopped (nova stop <instance_id>) and nova-compute is restarted (for example for a maintenance or problem), the iptables rules are removed as observed via output displayed in iptables -S.\n\nIf the instance is started via  nova reboot <instance_id> the rule is NOT reapplied until a service nova-compute restart is issued. I have reports that this may affect \"nova start <instance_id>\" as well.\n\nDepending on if the Cloud is public facing, this opens up a potentially huge security vulnerability as an instance can be powered on without being protected by any security group rules (not even the sg-fallback rule). This is unbeknownst to the instance owner or Cloud operators unless they specifically monitor for this situation.\n\nThe code should not do a soft reboot/start and error out or fallback to a resume (start)or hard reboot if it detects that the domain is not running.", 
+    "tags": [
+        "network", 
+        "security"
+    ], 
+    "importance": "Undecided", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1316822", 
+    "owner": "None", 
+    "id": 1316822, 
+    "index": 4827, 
+    "created": "2014-05-06 22:13:18.474540+00:00", 
+    "title": "soft reboot of instance does not ensure iptables rules are present", 
+    "comments": [
+        {
+            "content": "The iptables rules needed to implement instance security group rules get inserted by the \"_create_domain_and_network\" function in nova/virt/libvirt/driver.py\n\nThis function is called by the following functions: _hard_reboot, resume and spawn (also in a couple of migration related functions).\n\nDoing \"nova reboot <instance_id>\" only does a soft reboot (_soft_reboot) and assumes that the rules are already present and therefore does not check or try to add them.\n\nIf the instances is stopped (nova stop <instance_id>) and nova-compute is restarted (for example for a maintenance or problem), the iptables rules are removed as observed via output displayed in iptables -S.\n\nIf the instance is started via  nova reboot <instance_id> the rule is NOT reapplied until a service nova-compute restart is issued. I have reports that this may affect \"nova start <instance_id>\" as well.\n\nDepending on if the Cloud is public facing, this opens up a potentially huge security vulnerability as an instance can be powered on without being protected by any security group rules (not even the sg-fallback rule). This is unbeknownst to the instance owner or Cloud operators unless they specifically monitor for this situation.\n\nThe code should not do a soft reboot/start and error out or fallback to a resume (start)or hard reboot if it detects that the domain is not running.", 
+            "date_created": "2014-05-06 22:13:18.474540+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "Added OSSA bug task, set to incomplete until confirmed  by core developer. Even then I suspect we might issue a OSSN instead of a OSSA for this. \n\nThoughts? ", 
+            "date_created": "2014-05-07 03:59:24.622421+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "nova coresec: please comment -- OSSA vs. OSSN all depends on how likely (and triggerable) the chain of events is here.", 
+            "date_created": "2014-05-19 15:04:35.853728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Directly subscribing nova-coresec to elicit a response.", 
+            "date_created": "2014-05-22 13:59:27.427631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The most glaring issue from my perspective is that iptables rules are lost upon a nova-compute restart.  That has the broadest impact and fixing that would address this.  Beyond that it would be nice to have a check that security group rules are in place anytime an instance is started, whether it's reboot or start.  Additionally I question whether reboot should be a valid action for a stopped instance, but that's outside the scope of this.  \n\nThe likeliness is difficult to comment on because it is dependent on how often a deployer restarts their nova-compute services.  That's not something that should be occurring frequently so I would classify this as rather unlikely.  But it is triggerable over a long enough timeframe.  As a user if I stopped my instance and waited long enough it would almost certainly trigger this at some point.  But it should be noted that this is a security hole that a user can open on their own instance, or a deployer could inadvertently open on a user, but can't be triggered in a targeted manner upon another users instance.", 
+            "date_created": "2014-05-27 15:00:12.994539+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Andrew's analysis is correct. The only point that I would like to add is the case where all VMs are shut down if the Hypervisor itself is rebooted for maintenance or due to a crash.\n\nI also question the validity of allowing the using reboot to start a stopped instance.", 
+            "date_created": "2014-05-27 19:24:22.463588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "When the nova compute service is restarted or the host is restarted, instances will be put back online with a soft reboot (thus without iptables rules) ? Even in case of a crash ?\n\nThat seems like a practical attack vector.\n\nDo we know when was this introduced ?", 
+            "date_created": "2014-05-27 19:47:00.558526+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "No, they will not be put back online with reboot. The problem is that the host will come back up with all the VMs in the shutdown state and the problem arises when the operator uses \"reboot\"  to bring the nodes back online. \n\nIn Icehouse, if the operator/user uses \"start\"  instead of \"reboot\", things should be ok. I haven't tested it, but my quick review of the Icehouse code shows that the \"start_instance\" API call will call \"power_on\"  in the driver. In Icehouse, \"power_on\"  calls \"_hard_reboot\" which does the right thing in terms of setting up the security groups. \n\nIn Grizzly this is not the case.\n\nThe \"reboot\"  call does a \"_soft_reboot\"  and even in Icehouse, this does not setup the network security group rules.\n\nIn short, the problem is with the \"reboot\" call. It too should probably teardown and bring the rules back up. Like Andrew, I also question the validity of even allowing the use of \"reboot\"  on a server in the shutdown state but that would be a behavioral change.", 
+            "date_created": "2014-05-27 20:16:26.853265+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "The chain of events is a bit unpredictable, but I'm leaning towards issuing a nadvisory here, unless the change ends up not being backportable (for example, if we decide the proper way to fix this is to disable a previously-supported behavior)", 
+            "date_created": "2014-05-29 09:02:58.976698+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/101021", 
+            "date_created": "2014-06-18 21:04:49.757053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The proposed \"related fix\" is not backportable. alaski said:\n<alaski> fixing reboot would be a better fix, and should be backportable\n\nSo as far as the OSSA goes, let's wait a bit for a better patch", 
+            "date_created": "2014-06-23 15:02:38.624513+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This is not backportable because it depends on one of the fixes for blueprint [1]. That fix introduces a set of checks before executing an action on a VM. This will be backportable if this check is introduced in individual drivers as I was trying to do in an earlier patch [3]. Please let me know if I should go back to that patch.\n\n[1] https://blueprints.launchpad.net/nova/+spec/recover-stuck-state\n[2] https://github.com/openstack/nova/commit/cc0be157d005c5588fe5db779fc30fefbf22b44d\n[3] https://review.openstack.org/#/c/101021/2/nova/virt/libvirt/driver.py", 
+            "date_created": "2014-06-23 18:56:47.198905+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-i"
+        }, 
+        {
+            "content": "This also might be a duplicate of bug 1043886 (nearly two years old now, but looks strikingly similar)?", 
+            "date_created": "2014-06-30 14:58:37.123525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "yes, it does look related to that bug.\n\nI just checked in Icehouse and it seems that as mentioned above, there is code to prevent soft rebooting a VM in the SHUTOFF state. \n\nMy attempt at trying gave me the following error: \n\n\"ERROR: Cannot 'reboot' while instance is in vm_state stopped (HTTP 409) (Request-ID: req-9fbb9089-50a2-44b3-8a15-0083fbf67d3c)\"\n\nFurthermore, since the \"start\" method in Icehouse does the right thing, Icehouse is NOT affected by this bug.\n\nThis only affects older releases, Grizzly in particular.", 
+            "date_created": "2014-06-30 18:21:25.551854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "Can anyone confirm whether Havana is affected? If not, we wouldn't issue a security advisory (since Grizzly is months out of security support at this point).", 
+            "date_created": "2014-06-30 18:33:20.982899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I'm not able to test on Havana right now, but I don't see the code in Havana that prevents a soft reboot (https://github.com/openstack/nova/commit/2392313f562ba6a90ed1ec3fbc507862043fa44f)  if an instance is not currently running.\n\nSo, yes, I strongly suspect that Havana is affected.\n\n-m", 
+            "date_created": "2014-06-30 19:16:16.035758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "https://review.openstack.org/51130 is pretty tiny... perhaps it could be backported to stable/havana without much trouble?", 
+            "date_created": "2014-06-30 19:57:16.757994+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "After discussing with Andrew and Thierry, I'm convinced that the potential behavior change introduced by a backport of that mitigating commit, when weighed against the amount of social engineering needed to exploit this in Havana, means this bug is probably better just documented as a known behavior.\n\nRemoved the advisory task and tagged security in case the OSSG has any interest in documenting this.", 
+            "date_created": "2014-07-07 19:11:49.540525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Does this impact systems using Neutron, or only systems using nova networking?", 
+            "date_created": "2014-07-17 12:41:11.219692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-chivers"
+        }, 
+        {
+            "content": "Answering my own question: no, this only impacts nova networking.\n", 
+            "date_created": "2014-07-17 17:34:50.282259+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-chivers"
+        }, 
+        {
+            "content": "Sorry that I'm a little late to the party here.  I was just made aware of this issue today.\n\nBottom line is that I strongly believe that this should be an OSSA.  Security controls are expected to be in place and they are not.  That is pretty clear cut to me.  The fact that this takes an uncommon path to happen shouldn't mitigate that.  I see that the discussion went back and forth above.  And perhaps it's too late to do anything.  But, if not, I would encourage reopening an OSSA on this issue.  Thanks!", 
+            "date_created": "2014-07-24 17:57:44.585013+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bdpayne"
+        }, 
+        {
+            "content": "I think the counterargument is that you shouldn't be able to \"reboot\" an instance which is in a down state, and safety checks were added in Icehouse to prevent exactly that. The issue arises if you're running Havana or earlier and don't realize you shouldn't reboot a down instance, in which case it gets brought up with no filtering (because reboot assumes it was already running and doesn't reapply them). So essentially if you do something you're not supposed to do, you can leave instances vulnerable--this requires a mistake on the part of an inexperienced operator, or a fairly significant amount of social engineering on the part of an attacker to convince the operator to make such an error, and has since been hardened in subsequent Nova releases anyway.", 
+            "date_created": "2014-07-26 00:28:24.570251+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Also, to issue an OSSA, we'd need a stable backport of the enforcement which was added in Icehouse (a behavioral change  so far deemed unsafe for introduction into a stable branch) or some other hotfix which is less impacting on existing behaviors in Havana.", 
+            "date_created": "2014-07-26 00:31:42.754753+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Change abandoned by Abhishek Chanda (<email address hidden>) on branch: master\nReview: https://review.openstack.org/101021", 
+            "date_created": "2014-08-25 22:30:58.987349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This was published as OSSN-0022:\r\n\r\n  https://wiki.openstack.org/wiki/OSSN/OSSN-0022", 
+            "date_created": "2014-09-12 04:27:50.722032+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }
+    ]
+}

@@ -1,0 +1,223 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 08:46:23.680878+00:00", 
+    "description": "When doing QA for SUSE on bug 1177830\nI found that the fix is incomplete,\nbecause it assumed that the cached image would be mostly sparse.\n\nHowever, I can easily create non-sparse small compressed qcow2 images with\n\nperl -e 'for(1..11000){print \"x\" x 1024000}' > img\nqemu-img convert -c -O qcow2 img img.qcow2\nglance image-create --name=11gb --is-public=True --disk-format=qcow2 --container-format=bare < img.qcow2\nnova boot --image 11gb --flavor m1.small testvm\n\nwhich (in Grizzly and Essex) results in one (or two in Essex) 11GB large files being created in /var/lib/nova/instances/_base/\nstill allowing attackers to fill up disk space of compute nodes\nbecause the size check is only done after the uncompressing / caching", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "High", 
+    "heat": 272, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1206081", 
+    "owner": "https://api.launchpad.net/1.0/~p-draigbrady", 
+    "id": 1206081, 
+    "index": 1166, 
+    "created": "2013-07-29 11:05:22.108590+00:00", 
+    "title": "[OSSA 2013-029] Unchecked qcow2 root disk sizes DoS", 
+    "comments": [
+        {
+            "content": "When doing QA for SUSE on bug 1177830\nI found that the fix is incomplete,\nbecause it assumed that the cached image would be mostly sparse.\n\nHowever, I can easily create non-sparse small compressed qcow2 images with\n\nperl -e 'for(1..11000){print \"x\" x 1024000}' > img\nqemu-img convert -c -O qcow2 img img.qcow2\nglance image-create --name=11gb --is-public=True --disk-format=qcow2 --container-format=bare < img.qcow2\nnova boot --image 11gb --flavor m1.small testvm\n\nwhich (in Grizzly and Essex) results in one (or two in Essex) 11GB large files being created in /var/lib/nova/instances/_base/\nstill allowing attackers to fill up disk space of compute nodes\nbecause the size check is only done after the uncompressing / caching", 
+            "date_created": "2013-07-29 11:05:22.108590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ubuntubmw"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-07-29 11:05:22.108590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ubuntubmw"
+        }, 
+        {
+            "content": "Russell, Mikal: could you confirm the vulnerability ?", 
+            "date_created": "2013-08-01 13:27:19.129029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Added P\u00e1draig Brady to help review this.", 
+            "date_created": "2013-08-08 18:04:28.821176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Refreshing my memory for the flow of these images ... http://www.pixelbeat.org/docs/openstack_libvirt_images/\n\nYes this does seem like a valid issue, though not as serious as the related bug 1177830\nas there is only an allocation per image rather than per instance.\n\nAlso any sizes over the quote size etc. for an instance wouldn't be thus referenced and so\ncould be auto deleted at some stage.\n\nBut yes this is a valid DOS vector given the difference between input and output sizes.\n\nNow if we did limit sizes, I suppose we could limit to the max flavor size?\nBut that doesn't help much. One could still upload many small images up to the max flavor size to fill up the _base/\n\nMaybe we need quotas glance side for max actual disk usage per user for all their images?", 
+            "date_created": "2013-08-08 18:56:31.452351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Looks like we'll need an OSSA on this then.", 
+            "date_created": "2013-08-09 12:48:00.471418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Anyone on the current subscription list up for a patch ?", 
+            "date_created": "2013-08-19 19:25:43.674004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Padraig, Mikal: any chance you could produce a patch to fix this ?", 
+            "date_created": "2013-08-30 14:25:08.424249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Ok I'll take this (was away for a couple of weeks). I might get to it in the next couple of days", 
+            "date_created": "2013-09-03 10:49:23.905459+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "@P\u00e1draig: any progress ?", 
+            "date_created": "2013-09-10 08:50:12.057117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Lets summarize _this_ bug as \"per _image_ qcow2 root disk sizes DoS\"\nand bug 1177830 as \"per _instance_ qcow2 root disk sizes DoS\".\n\nUnfortunately I think that even bug 1177830 mightn't be addressed in the case\nwhere use_cow_images=False, i.e. in nova.virt.libvirt.imagebackend.Raw.create_image().\nOn initial inspection it seems like the large qcow2 files could be copied to each instance here too.\n\nSo thoughts on addressing this.\n\n1. Always set min_disk = virt_size for an image in glance.\nThis is already checked in nova before we download anything.\nThat has the advantage of saving on network bandwidth and is\nhonored by cinder too for volumes.\n\n2. Pass/Inspect size into nova.virt.images.fetch{,_to_raw}()\nand disallow disk.get_disk_size('tmp_download') > size\n\nDoing either should address both bugs I think,\nbut I'm leaning towards 1 as a more general solution.", 
+            "date_created": "2013-09-19 17:51:03.623779+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Actually we probably should do both.\nBetter to have nova not rely on a particular glance implementation or version or glance at all for that matter.\nI'll do the nova change now...", 
+            "date_created": "2013-09-20 13:23:25.900401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "@Padraig: we'll take the Nova patch as the vulnerability fix. We'll consider the Glance as a hardening improvement.", 
+            "date_created": "2013-09-27 08:45:05.175881+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "First attempt at an impact description, not sure I got this right:\r\n\r\n----------------------\r\nTitle: Potential Nova denial of service through compressed disk images\r\nReporter: Bernhard M. Wiedemann (SUSE)\r\nProducts: Nova\r\nAffects: All versions\r\n\r\nDescription:\r\nBernhard M. Wiedemann from SUSE reported a vulnerability in Nova's control of the size of disk images. By using malicious compressed qcow2 disk images, an authenticated user may consume large amounts of disk space, potentially resulting in a Denial of Service attack on Nova compute nodes. This issue is slightly different from CVE-2013-2096 which was addressed in OSSA 2013-012.\r\n---------------------------", 
+            "date_created": "2013-09-27 08:58:08.305933+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Re impact description, I'd mention that CVE-2013-2096 wasn't fully addressed either\nin the non default case where use_cow_images=False, and malicious qcow images\nare being transferred from glance. If mentioning both it's probably worth mentioning\nthe original CVE-2013-2096 was a per instance issue, while this new one is per image.", 
+            "date_created": "2013-09-27 15:26:29.555819+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-09-27 15:41:16.853092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-09-27 16:44:36.730406+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-09-28 03:55:17.972656+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "RC1 will probably be out before we can properly embargo and release this as an OSSA. This should stay as havana-rc-potential just in case it can make it prerelease.\r\n\r\nWould be good to get some core pre-approvals on the proposed patches. Feel free to subscribe fellow core developers to accelerate that.", 
+            "date_created": "2013-10-01 19:10:47.465412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Added a few nova developers that could help review these patches", 
+            "date_created": "2013-10-03 13:53:19.311626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Hey guys, please review proposed patches !", 
+            "date_created": "2013-10-07 12:34:41.349087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+2 on the patch", 
+            "date_created": "2013-10-07 16:54:56.593030+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "respinning with just improved commit messages", 
+            "date_created": "2013-10-09 09:41:52.743295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-10-09 09:43:52.511957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-10-09 09:44:15.684222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-10-09 09:44:55.290141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Nova core: Please review proposed patches", 
+            "date_created": "2013-10-09 15:58:26.088910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "New attempt at impact description:\n\n----------------------\nTitle: Potential Nova denial of service through compressed disk images\nReporter: Bernhard M. Wiedemann (SUSE)\nProducts: Nova\nAffects: All versions\n\nDescription:\nBernhard M. Wiedemann from SUSE reported a vulnerability in Nova's control of the size of disk images. By using malicious compressed qcow2 disk images, an authenticated user may consume large amounts of disk space for each image, potentially resulting in a Denial of Service attack on Nova compute nodes. While fixing this issue, P\u00e1draig Brady from Red Hat additionally discovered that OSSA 2013-012 did not fully address CVE-2013-2096 in the non-default case where use_cow_images=False, and malicious qcow images are being transferred from Glance. In that specific case, an authenticated user could still consume large amounts of disk space for each instance using the malicious image, potentially also resulting in a Denial of Service attack on Nova compute nodes. The provided fixes address both issues.\n---------------------------", 
+            "date_created": "2013-10-21 13:59:00.277375+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+2 on patches", 
+            "date_created": "2013-10-22 20:29:22.585377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "+1 on impact description", 
+            "date_created": "2013-10-23 01:58:06.288045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "CVE requested", 
+            "date_created": "2013-10-24 14:32:41.451995+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "CVE-2013-4463", 
+            "date_created": "2013-10-25 10:29:53.062626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposed public disclosure date/time: Thursday, October 31, 1500UTC.", 
+            "date_created": "2013-10-25 10:41:14.386590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "CVE SPLIT w/ CVE-2013-4469:\n\nTitle: Potential Nova denial of service through compressed disk images\nReporter: Bernhard M. Wiedemann (SUSE) & P\u00e1draig Brady (Red Hat)\nProducts: Nova\nAffects: All versions\n\nDescription:\nBernhard M. Wiedemann from SUSE reported a vulnerability in Nova's\ncontrol of the size of disk images. By using malicious compressed qcow2\ndisk images, an authenticated user may consume large amounts of disk\nspace for each image, potentially resulting in a Denial of Service\nattack on Nova compute nodes (CVE-2013-4463). While fixing this issue, P\u00e1draig Brady from Red Hat additionally discovered that OSSA 2013-012 did not fully address CVE-2013-2096 in the non-default case where use_cow_images=False, and malicious qcow images are being transferred from Glance. In that specific case, an authenticated user could still consume large amounts of disk space for each instance using the malicious image, potentially also resulting in a Denial of Service attack on Nova compute nodes (CVE-2013-4469). The provided fixes address both issues.", 
+            "date_created": "2013-10-28 11:14:27.501756+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Patches test runs:\n\nmaster: tox, smoke PASS\nhavana: tox, neutron PASS\ngrizzly: tox, full PASS\n\n\n", 
+            "date_created": "2013-10-30 12:36:43.355232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/54767", 
+            "date_created": "2013-10-31 16:04:07.701927+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "master: https://review.openstack.org/54765\nstable/havana: https://review.openstack.org/54767\nstable/grizzly: https://review.openstack.org/54768\n", 
+            "date_created": "2013-10-31 16:07:22.988006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "[OSSA 2013-029] ", 
+            "date_created": "2013-10-31 16:48:44.583434+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/54765\nCommitted: http://github.com/openstack/nova/commit/f6810be4ae1a6c93e7d8017ee67d5344dfdf4a30\nSubmitter: Jenkins\nBranch:    master\n\ncommit f6810be4ae1a6c93e7d8017ee67d5344dfdf4a30\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Fri Sep 27 04:07:14 2013 +0100\n\n    ensure we don't boot oversized images\n    \n    Since we can't generally shrink incoming images, add extra checks\n    to ensure oversized images are not allowed through.\n    All cases when populating the libvirt image cache are now handled,\n    including the initial download from glance, where we avoid\n    converting to raw, as that could generate non sparse images\n    much larger than the downloaded image.\n    \n    * nova/virt/libvirt/utils.py (fetch_image): Allow passing through\n    of the max_size parameter.\n    * nova/virt/images.py (fetch_to_raw): Accept the max_size parameter,\n    and use it to discard images with larger (virtual) sizes.\n    * nova/virt/libvirt/imagebackend.py (verify_base_size): A new\n    refactored function to identify and raise exception to oversized images.\n    (Raw.create_image): Pass the max_size to the fetch function.\n    Also enforce virtual image size checking for already fetched images,\n    as this class (despite the name) can be handling qcow files.\n    (Qcow2.create_image): Pass the max_size to the fetch function,\n    or verify the virtual size for the instance as done previously.\n    (Lvm.create_image): Pass the max_size to the fetch function.\n    Also check the size before transferring to the volume to improve\n    efficiency by not even attempting the transfer of oversized images.\n    (Rbd.create_image): Likewise.\n    * nova/tests/virt/libvirt/fake_libvirt_utils.py: Support max_size arg.\n    * nova/tests/virt/libvirt/test_libvirt.py (test_fetch_raw_image):\n    Add a case to check oversized images are discarded.\n    * nova/tests/virt/libvirt/test_imagebackend.py\n    (test_create_image_too_small): Adjust to avoid the fetch size check.\n    \n    Fixes bug: 1177830\n    Fixes bug: 1206081\n    Change-Id: I3d47adaa2ad07434853f447feb27d7aae0e2e717\n", 
+            "date_created": "2013-10-31 18:01:59.132078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/54767\nCommitted: http://github.com/openstack/nova/commit/3cdfe894ab58f7b91bf7fb690fc5bc724e44066f\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 3cdfe894ab58f7b91bf7fb690fc5bc724e44066f\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Fri Sep 27 04:07:14 2013 +0100\n\n    ensure we don't boot oversized images\n    \n    Since we can't generally shrink incoming images, add extra checks\n    to ensure oversized images are not allowed through.\n    All cases when populating the libvirt image cache are now handled,\n    including the initial download from glance, where we avoid\n    converting to raw, as that could generate non sparse images\n    much larger than the downloaded image.\n    \n    * nova/virt/libvirt/utils.py (fetch_image): Allow passing through\n    of the max_size parameter.\n    * nova/virt/images.py (fetch_to_raw): Accept the max_size parameter,\n    and use it to discard images with larger (virtual) sizes.\n    * nova/virt/libvirt/imagebackend.py (verify_base_size): A new\n    refactored function to identify and raise exception to oversized images.\n    (Raw.create_image): Pass the max_size to the fetch function.\n    Also enforce virtual image size checking for already fetched images,\n    as this class (despite the name) can be handling qcow files.\n    (Qcow2.create_image): Pass the max_size to the fetch function,\n    or verify the virtual size for the instance as done previously.\n    (Lvm.create_image): Pass the max_size to the fetch function.\n    Also check the size before transferring to the volume to improve\n    efficiency by not even attempting the transfer of oversized images.\n    (Rbd.create_image): Likewise.\n    * nova/tests/virt/libvirt/fake_libvirt_utils.py: Support max_size arg.\n    * nova/tests/virt/libvirt/test_libvirt.py (test_fetch_raw_image):\n    Add a case to check oversized images are discarded.\n    * nova/tests/virt/libvirt/test_imagebackend.py\n    (test_create_image_too_small): Adjust to avoid the fetch size check.\n    \n    Fixes bug: 1177830\n    Fixes bug: 1206081\n    Change-Id: I3d47adaa2ad07434853f447feb27d7aae0e2e717\n", 
+            "date_created": "2013-10-31 18:06:51.336033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/54768\nCommitted: http://github.com/openstack/nova/commit/135faa7b5d9855312bedc19e5e1ecebae34d3d18\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 135faa7b5d9855312bedc19e5e1ecebae34d3d18\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Fri Sep 27 04:07:14 2013 +0100\n\n    ensure we don't boot oversized images\n    \n    Since we can't generally shrink incoming images, add extra checks\n    to ensure oversized images are not allowed through.\n    All cases when populating the libvirt image cache are now handled,\n    including the initial download from glance, where we avoid\n    converting to raw, as that could generate non sparse images\n    much larger than the downloaded image.\n    \n    * nova/virt/libvirt/utils.py (fetch_image): Allow passing through\n    of the max_size parameter.\n    * nova/virt/images.py (fetch_to_raw): Accept the max_size parameter,\n    and use it to discard images with larger (virtual) sizes.\n    * nova/virt/libvirt/imagebackend.py (verify_base_size): A new\n    refactored function to identify and raise exception to oversized images.\n    (Raw.create_image): Pass the max_size to the fetch function.\n    Also enforce virtual image size checking for already fetched images,\n    as this class (despite the name) can be handling qcow files.\n    (Qcow2.create_image): Pass the max_size to the fetch function,\n    or verify the virtual size for the instance as done previously.\n    (Lvm.create_image): Pass the max_size to the fetch function.\n    Also check the size before transferring to the volume to improve\n    efficiency by not even attempting the transfer of oversized images.\n    (Rbd.create_image): Likewise.\n    * nova/tests/fake_libvirt_utils.py: Support max_size arg.\n    * nova/tests/test_libvirt.py (test_fetch_raw_image):\n    Add a case to check oversized images are discarded.\n    * nova/tests/test_imagebackend.py (test_create_image_too_small):\n    Adjust to avoid the fetch size check.\n    \n    Fixes bug: 1177830\n    Fixes bug: 1206081\n    \n    Conflicts:\n    \n    \tnova/tests/test_imagebackend.py\n    \tnova/virt/libvirt/imagebackend.py\n    \n    Change-Id: Idc35fce580be4f74e23883d1b4bea6475c3f6e30\n", 
+            "date_created": "2013-10-31 18:08:11.389932+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

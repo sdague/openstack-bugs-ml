@@ -1,0 +1,51 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-10-07 05:37:22.778362+00:00", 
+    "description": "Ran into this while hacking on something locally and running the server groups functional tests:\n\n\n==============================\nFailed 1 tests - output below:\n==============================\n\nnova.tests.functional.test_server_group.ServerGroupTestV215.test_rebuild_with_anti_affinity\n-------------------------------------------------------------------------------------------\n\nCaptured pythonlogging:\n~~~~~~~~~~~~~~~~~~~~~~~\n19:45:29,525 ERROR [nova.scheduler.utils] Error from last host: host2 (node host2): ['Traceback (most recent call last):\\n', '  File \"nova/compute/manager.py\", line 1831, in _do_build_and_run_instance\\n    filter_properties)\\n', '  File \"nova/compute/manager.py\", line 2061, in _build_and_run_instance\\n    instance_uuid=instance.uuid, reason=six.text_type(e))\\n', 'RescheduledException: Build of instance c249e39f-0d38-40ce-860d-6c72cdeba436 was re-scheduled: Build of instance c249e39f-0d38-40ce-860d-6c72cdeba436 was re-scheduled: Anti-affinity instance group policy was violated.\\n']\n19:45:29,526 WARNING [nova.scheduler.utils] Failed to compute_task_build_instances: 'NoneType' object is not iterable\n19:45:29,527 WARNING [nova.scheduler.utils] Setting instance to ERROR state.\n\n\nTwo instances are being booted simultaneously and both land on the same host, so the second one will fail the late affinity check and raise a RescheduledException to be rescheduled to another host. But conductor fails to do that because the 'group_members' key doesn't exist in filter_properties and an attempt to make a list out of it fails [1].\n\nIn the past, code [2] was added 'group_members' to filter_properties to handle affinity and a more recent change removed most of it but missed 'group_members' [3]. So nothing is ever setting filter_properties['group_members'] but RequestSpec.from_primitives() expects it to be there and blows up trying to make a list from None.\n\n\n[1] https://github.com/openstack/nova/blob/ad6d339/nova/objects/request_spec.py#L205 \n[2] https://review.openstack.org/#/c/148277\n[3] https://review.openstack.org/#/c/469037", 
+    "tags": [
+        "affinity", 
+        "requestspec", 
+        "reschedule", 
+        "server-groups"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1719730", 
+    "owner": "https://api.launchpad.net/1.0/~melwitt", 
+    "id": 1719730, 
+    "index": 2154, 
+    "created": "2017-09-26 20:29:49.011335+00:00", 
+    "title": "Reschedule after the late affinity check fails with ''NoneType' object is not iterable'", 
+    "comments": [
+        {
+            "content": "Ran into this while hacking on something locally and running the server groups functional tests:\n\n\n==============================\nFailed 1 tests - output below:\n==============================\n\nnova.tests.functional.test_server_group.ServerGroupTestV215.test_rebuild_with_anti_affinity\n-------------------------------------------------------------------------------------------\n\nCaptured pythonlogging:\n~~~~~~~~~~~~~~~~~~~~~~~\n19:45:29,525 ERROR [nova.scheduler.utils] Error from last host: host2 (node host2): ['Traceback (most recent call last):\\n', '  File \"nova/compute/manager.py\", line 1831, in _do_build_and_run_instance\\n    filter_properties)\\n', '  File \"nova/compute/manager.py\", line 2061, in _build_and_run_instance\\n    instance_uuid=instance.uuid, reason=six.text_type(e))\\n', 'RescheduledException: Build of instance c249e39f-0d38-40ce-860d-6c72cdeba436 was re-scheduled: Build of instance c249e39f-0d38-40ce-860d-6c72cdeba436 was re-scheduled: Anti-affinity instance group policy was violated.\\n']\n19:45:29,526 WARNING [nova.scheduler.utils] Failed to compute_task_build_instances: 'NoneType' object is not iterable\n19:45:29,527 WARNING [nova.scheduler.utils] Setting instance to ERROR state.\n\n\nTwo instances are being booted simultaneously and both land on the same host, so the second one will fail the late affinity check and raise a RescheduledException to be rescheduled to another host. But conductor fails to do that because the 'group_members' key doesn't exist in filter_properties and an attempt to make a list out of it fails [1].\n\nIn the past, code [2] was added 'group_members' to filter_properties to handle affinity and a more recent change removed most of it but missed 'group_members' [3]. So nothing is ever setting filter_properties['group_members'] but RequestSpec.from_primitives() expects it to be there and blows up trying to make a list from None.\n\n\n[1] https://github.com/openstack/nova/blob/ad6d339/nova/objects/request_spec.py#L205 \n[2] https://review.openstack.org/#/c/148277\n[3] https://review.openstack.org/#/c/469037", 
+            "date_created": "2017-09-26 20:29:49.011335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Since https://review.openstack.org/#/c/469037 was made in pike, this is a regression in the pike release.", 
+            "date_created": "2017-09-26 20:34:26.476279+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/507938", 
+            "date_created": "2017-09-27 17:35:55.875940+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/507938\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9d6632a67d91fb3c5145c14ac38011e919d6d8c0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9d6632a67d91fb3c5145c14ac38011e919d6d8c0\nAuthor: melanie witt <email address hidden>\nDate:   Wed Sep 27 17:27:56 2017 +0000\n\n    Set group_members when converting to legacy request spec\n    \n    In Pike we converted the affinity filter code to use the RequestSpec\n    object instead of legacy dicts. The filter used to populate server\n    group info in the filter_properties and the conversion removed that.\n    However, in the conductor, we are still converting RequestSpec back\n    and forth between object and primitive, and there is a mismatch\n    between the keys being set/get in filter_properties. So during a\n    reschedule with a server group, we hit an exception\n    \"'NoneType' object is not iterable\" in the RequestSpec.from_primitives\n    method and the reschedule fails.\n    \n    This adds 'group_members' to the _to_legacy_group_info method to set\n    the key.\n    \n    Closes-Bug: #1719730\n    \n    Change-Id: Icb418f2be575bb2ba82756fdeb67b24a28950746\n", 
+            "date_created": "2017-10-05 00:58:23.734922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/pike\nReview: https://review.openstack.org/509766", 
+            "date_created": "2017-10-05 12:52:14.867858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/509766\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d288132dca7cc76dfc6679eda17bb8fcc62577de\nSubmitter: Jenkins\nBranch:    stable/pike\n\ncommit d288132dca7cc76dfc6679eda17bb8fcc62577de\nAuthor: melanie witt <email address hidden>\nDate:   Wed Sep 27 17:27:56 2017 +0000\n\n    Set group_members when converting to legacy request spec\n    \n    In Pike we converted the affinity filter code to use the RequestSpec\n    object instead of legacy dicts. The filter used to populate server\n    group info in the filter_properties and the conversion removed that.\n    However, in the conductor, we are still converting RequestSpec back\n    and forth between object and primitive, and there is a mismatch\n    between the keys being set/get in filter_properties. So during a\n    reschedule with a server group, we hit an exception\n    \"'NoneType' object is not iterable\" in the RequestSpec.from_primitives\n    method and the reschedule fails.\n    \n    This adds 'group_members' to the _to_legacy_group_info method to set\n    the key.\n    \n    Closes-Bug: #1719730\n    \n    Change-Id: Icb418f2be575bb2ba82756fdeb67b24a28950746\n    (cherry picked from commit 9d6632a67d91fb3c5145c14ac38011e919d6d8c0)\n", 
+            "date_created": "2017-10-07 05:37:22.231900+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

@@ -1,0 +1,551 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-18 19:02:54.270986+00:00", 
+    "description": "Reported via private E-mail from Richard W.M. Jones.\n\nTurns out qemu image parser is not hardened against malicious input and can be abused to allocated an arbitrary amount of memory and/or dump a lot of information when used with \"--output=json\".\n\nThe solution seems to be: limit qemu-img ressource using ulimit.\n\nExample of abuse:\n\n-- afl1.img --\n\n$ /usr/bin/time qemu-img info afl1.img\nimage: afl1.img\n[...]\n0.13user 0.19system 0:00.36elapsed 92%CPU (0avgtext+0avgdata 642416maxresident)k\n0inputs+0outputs (0major+156927minor)pagefaults 0swaps\n\nThe original image is 516 bytes, but it causes qemu-img to allocate 640 MB.\n\n-- afl2.img --\n\n$ qemu-img info --output=json afl2.img | wc -l\n589843\n\nThis is a 200K image which causes qemu-img info to output half a\nmillion lines of JSON (14 MB of JSON).\n\nGlance runs the --output=json variant of the command.\n\n-- afl3.img --\n\n$ /usr/bin/time qemu-img info afl3.img\nimage: afl3.img\n[...]\n0.09user 0.35system 0:00.47elapsed 94%CPU (0avgtext+0avgdata 1262388maxresident)k\n0inputs+0outputs (0major+311994minor)pagefaults 0swaps\n\nqemu-img allocates 1.3 GB (actually, a bit more if you play with\nulimit -v).  It appears that you could change it to allocate\narbitrarily large amounts of RAM.", 
+    "tags": [
+        "in-stable-mitaka", 
+        "liberty-rc-potential", 
+        "newton-rc-potential", 
+        "verification-needed"
+    ], 
+    "importance": "Medium", 
+    "heat": 282, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1449062", 
+    "owner": "https://api.launchpad.net/1.0/~berrange", 
+    "id": 1449062, 
+    "index": 4237, 
+    "created": "2015-04-27 14:32:56.474361+00:00", 
+    "title": "[OSSA 2016-012] qemu-img calls need to be restricted by ulimit (CVE-2015-5162)", 
+    "comments": [
+        {
+            "content": "This issue is being treated as a potential security risk under embargo. Please do not make any public mention of embargoed (private) security vulnerabilities before their coordinated publication by the OpenStack Vulnerability Management Team in the form of an official OpenStack Security Advisory. This includes discussion of the bug or associated fixes in public forums such as mailing lists, code review systems and bug trackers. Please also avoid private disclosure to other individuals not already approved for access to this information, and provide this same reminder to those who are made aware of the issue prior to publication. All discussion should remain confined to this private bug report, and any proposed fixes should be added as to the bug as attachments.\n\nReported via private E-mail from Richard W.M. Jones.\n\nTurns out qemu image parser is not hardened against malicious input and can be abused to allocated an arbitrary amount of memory and/or dump a lot of information when used with \"--output=json\".\n\nThe solution seems to be: limit qemu-img ressource using ulimit.\n\nExample of abuse:\n\n-- afl1.img --\n\n$ /usr/bin/time qemu-img info afl1.img \nimage: afl1.img\n[...]\n0.13user 0.19system 0:00.36elapsed 92%CPU (0avgtext+0avgdata 642416maxresident)k\n0inputs+0outputs (0major+156927minor)pagefaults 0swaps\n\nThe original image is 516 bytes, but it causes qemu-img to allocate 640 MB.\n\n\n-- afl2.img --\n\n$ qemu-img info --output=json afl2.img | wc -l\n589843\n\nThis is a 200K image which causes qemu-img info to output half a\nmillion lines of JSON (14 MB of JSON).\n\nGlance runs the --output=json variant of the command.\n\n\n-- afl3.img --\n\n$ /usr/bin/time qemu-img info afl3.img \nimage: afl3.img\n[...]\n0.09user 0.35system 0:00.47elapsed 94%CPU (0avgtext+0avgdata 1262388maxresident)k\n0inputs+0outputs (0major+311994minor)pagefaults 0swaps\n\nqemu-img allocates 1.3 GB (actually, a bit more if you play with\nulimit -v).  It appears that you could change it to allocate\narbitrarily large amounts of RAM.", 
+            "date_created": "2015-04-27 14:32:56.474361+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-04-27 14:32:56.474361+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-04-27 14:33:11.581460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-04-27 14:33:23.163072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "FYI, I tested a recentish git master to see if I can trigger it and was succesful:\n\nWhat I did was\n\n $ cd /usr/bin\n $ mv qemu-img qemu-img.real\n\n $ cat > qemu-img <<EOF\n  #!/bin/sh\n\n  echo \"$@\" >> /tmp/usage.log\n  /usr/bin/time /usr/bin/qemu-img.real \"$@\" 2>> /tmp/usage.log\n  echo >> /tmp/usage.log\n  EOF\n\n $ chmod +x qemu-img\n\nThen\n\n $ glance image-create --name afl3 --disk-format vmdk --container-format bare --file /home/berrange/afl3.img --is-public true\n\n\nGlance did not appear to run qemu-img info at this stage, but when I then boot the image iwth Nova:\n\n\n $ nova boot --image afl3 --flavor m1.tiny afl3\n\nNova correctly refuses to boot the guest, because the disk image is larger\nthan the maximum it permits:\n\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]     return f(*args, **kwargs)\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]   File\n+\"/home/berrange/src/cloud/nova/nova/virt/libvirt/imagebackend.py\", line 221, in fetch_func_sync\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]     fetch_func(target=target, *args, **kwargs)\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]   File\n+\"/home/berrange/src/cloud/nova/nova/virt/libvirt/utils.py\", line 501, in fetch_image\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]     max_size=max_size)\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]   File\n+\"/home/berrange/src/cloud/nova/nova/virt/images.py\", line 119, in fetch_to_raw\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]     raise exception.FlavorDiskTooSmall()\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b] FlavorDiskTooSmall: Flavor's disk is too small for\n+requested image.\n2015-04-27 14:39:00.381 TRACE nova.compute.manager [instance: aab2db9f-cbcc-4858-98e8-95e82b1d3b3b]\n\n\n\nHowever in checking that maximum limit, it has indeed run qemu-img info\nand suffered the memory usage DOS.\n\n $ cat /tmp/usage.log\n\n info /home/berrange/src/cloud/data/nova/instances/_base/30854c86815b92c21c8af45cf8ff5757c04046aa.part\n 0.08user 0.94system 0:01.24elapsed 82%CPU (0avgtext+0avgdata 1260680maxresident)k\n 0inputs+0outputs (0major+311876minor)pagefaults 0swaps\n\n\nSo someone needs to see just what code paths in glance might trigger the qemu-img info call. I also wonder if there is any risk to cinder, because it too has various invokations of qemu-img", 
+            "date_created": "2015-04-27 14:42:28.317231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.\n\nProjects security liaison and original reporter have been subscribe.\n\nWhile being an issue in a dependency (qemu), it's not clear whenever OpenStack is really missing restriction on the qemu-img process...\n\nHowever, depending on what a malicious user can effectively do with this issue, we may want to consider this OSSA worthy. Thought ?", 
+            "date_created": "2015-04-27 14:45:15.047276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Excellent catch! And thanks for bringing this up, Richard. I was going to do some testing myself this week and file a corresponding bug.\n\nThis is a valid concern and something that we realized after the code was merged. One more point to consider here is that we need to run qemu-img in a sandbox vs. directly as a \"glance\" user on the the API node as possible in certain configurations. A approach for fixing this could be, using a chroot environment.", 
+            "date_created": "2015-04-27 14:51:39.738840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nikhil-komawar"
+        }, 
+        {
+            "content": "Here's an image which causes 4 GB to be allocated.\n\nIf you change a single byte in this image, then you can get qemu-img to crash with an allocation error:\n\n00000000  4b 44 4d 56 01 00 00 00  03 00 00 00 01 00 ff ff  |KDMV............|\n00000010  ff ff 00 00 01 04 00 00  00 00 00 00 01 00 00 00  |................|\n                      ^\n                      +--- this byte to 0\n", 
+            "date_created": "2015-04-27 14:54:26.134586+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "qemu-img is run only on Glance API/worker nodes when user makes a tasks import call while the operator wants it converted into a specific format, currently.\n\nRef:-\nhttp://specs.openstack.org/openstack/glance-specs/specs/kilo/conversion-of-images.html\nhttps://review.openstack.org/#/c/159129/\n", 
+            "date_created": "2015-04-27 14:56:32.728323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nikhil-komawar"
+        }, 
+        {
+            "content": "> However, depending on what a malicious user can effectively do with this issue, we may want to consider this OSSA worthy. Thought ?\n\nFrom Nova's POV I consider it to be OSSA worthy.  Nova uses flavours to limit the amount of RAM that a user may consume. So if using the m1.tiny flavour, a guest is supposed to only have 500 MB RAM usage. The scheduler will consider this when deciding if a host has sufficient free RAM to run the guest.  Now regardless of what the flavour limit is set to, the unprivileged user can consume as much as 4 GB of RAM on the host by uploading a malicious  disk image. This is enough to cause OOM on the compute host and so affect running of other tenants VMs in a negative way.", 
+            "date_created": "2015-04-27 14:58:29.573619+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Any progess on patch for this bug ?", 
+            "date_created": "2015-06-15 16:58:34.970869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Although this bug is marked as secret, I have published elsewhere some information about this (it was anyway an open secret that I was fuzzing qemu-img), and it is also fixed in libguestfs.\n\nhttps://bugs.launchpad.net/qemu/+bug/1462944\nhttps://bugs.launchpad.net/qemu/+bug/1462949\nhttps://github.com/libguestfs/libguestfs/commit/9db0f807a917ec00d24297d5bf63c19065f930cf", 
+            "date_created": "2015-06-15 17:11:05.528752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "Thanks, I will have a Glance patch this week.", 
+            "date_created": "2015-06-15 18:22:14.401410+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nikhil-komawar"
+        }, 
+        {
+            "content": "This is the simplest patch I could come up with for limiting qemu-img info commands.  There are various other qemu-img commands run, eg to create snapshots and the like, but I believe checking the qemu-img info command is sufficient as it is used to validate images after obtaining them from glance.", 
+            "date_created": "2015-06-16 15:05:32.379285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Added cinder, since the file cinder/image/image_utils.py invokes qemu-img info without protection too", 
+            "date_created": "2015-06-16 15:25:55.085647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Thanks Daniel, cinder-coresec is now subscribed. Can Glance and Cinder use the same prlimit fix ?", 
+            "date_created": "2015-06-16 15:28:10.736258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "And now I've fixed the patch to make the unit tests pass again. Opps :-)", 
+            "date_created": "2015-06-16 15:35:46.406016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Yes, from looking at their code, the change to cinder & glance could be essentially identical.", 
+            "date_created": "2015-06-16 15:36:12.909375+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "> \"util-limit package in Linux distros.\"\n\nThat should say \"util-linux\".", 
+            "date_created": "2015-06-16 16:12:00.475859+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rjones-redhat"
+        }, 
+        {
+            "content": "Here is a proposed patch for cinder", 
+            "date_created": "2015-06-16 19:18:16.724096+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hum, prlimit is not readily available on stable Ubuntu and Debian...", 
+            "date_created": "2015-06-16 20:11:23.018847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Sigh, \"only\" been part of util-linux since early 2012\n\nhttp://karelzak.blogspot.co.uk/2012/01/prlimit1.html\nhttps://www.kernel.org/pub/linux/utils/util-linux/v2.21/v2.21-ReleaseNotes\n", 
+            "date_created": "2015-06-17 10:22:57.004400+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "The alternative approach is to modify oslo.concurrency processutils.execute method to allow limits to be passed in explicitly, and then use the pre-exec function to set them between fork + exec.  This is actually the more desirable architectural approach, but I didn't go that way, since while it is fine for master, it would not be something that's easily backported to stable branches due to the need to update the min required oslo.concurrency version dependancy.", 
+            "date_created": "2015-06-17 10:24:57.497169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I actually much prefer the ulimit argument to processutils.execute() plan. I'm going to go to the oslo PTL and ask for an opinion of backporting that.", 
+            "date_created": "2015-06-23 23:35:25.022235+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Since this bugs requires change in 4 different projects, and the impacts is moderate, I propose we open this bug in a few days for a faster solution. Is there any objections ?", 
+            "date_created": "2015-06-23 23:39:00.380251+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@mikal,\n\nyes, i'd support a ulimit argument to processutils.execute and willing to help backport it to stable/kilo (and release if needed)", 
+            "date_created": "2015-06-24 00:31:28.726683+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This is a *completely untested* patch to illustrate adding support for process resource limits to oslo.concurrency's execute() call. If people agree with this approach, I'll just submit it to gerrit against oslo, as adding this feature to olso is probably useful regardless of this OSSA", 
+            "date_created": "2015-06-29 16:20:05.138532+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Hi, we've released a oslo.concurrency 1.8.1 (stable/kilo) with support to call a user specified preexec_fn to support this bug/fix. yes, same is in master as well.\n\n80bfd1a Allow preexec_fn method for processutils.execute\n\nthanks,\ndims", 
+            "date_created": "2015-07-07 21:22:32.710913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Draft impact description: \n\nTitle: Malicious input to qemu-img may result in resource exhaustion\nReporter: Richard W.M. Jones\nProduct: Nova, Cinder, Glance\nAffects:\n    Nova: 2012.1.0 versions through 2015.1.0,\n    Cinder: 2013.1.0 versions through 2015.1.0,\n    Glance: 2015.1.0\n\n\nDescription:\nRichard W.M. Jones of Red Hat reported a vulnerability that affects several\nOpenStack projects including Nova, Glance, and Cinder. By providing a\nmaliciously crafted disk image an attacker can consume considerable amounts\nof RAM and CPU time resulting in a denial of service via resource exhaustion.\nAny project which makes calls to qemu-img without appropriate ulimit restrictions\nin place is affected by this flaw.", 
+            "date_created": "2015-07-16 21:39:57.549466+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "I think this would more properly be (assuming the fixes won't make it in time for 2015.1.1)...\n\n    Nova: versions through 2014.2.3, 2015.1 versions through 2015.1.1\n    Cinder: versions through 2014.2.3, 2015.1 versions through 2015.1.1\n    Glance: 2015.1 versions through 2015.1.1", 
+            "date_created": "2015-07-16 21:45:59.947317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "CVE requested.", 
+            "date_created": "2015-07-28 03:24:36.523950+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/209627", 
+            "date_created": "2015-08-05 18:50:15.267053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is there a review in progress for Glance ?", 
+            "date_created": "2015-09-03 15:38:55.397482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Yep.", 
+            "date_created": "2015-09-03 16:07:54.302574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nikhil-komawar"
+        }, 
+        {
+            "content": "I've attached another patch which this time uses the new preexec_fn feature of oslo.concurrency 2.3.0.\n\nThis patch is *UNTESTED* beyond running the unit tests, so don't assume this actually fixes the problem without testing it in real world.", 
+            "date_created": "2015-10-13 14:03:49.345285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Daniel, could you please have a look at https://review.openstack.org/#/c/209627/ ?", 
+            "date_created": "2015-10-13 14:09:51.542862+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/209627\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=da217205f53f9a38a573fb151898fbbeae41021d\nSubmitter: Jenkins\nBranch:    master\n\ncommit da217205f53f9a38a573fb151898fbbeae41021d\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Wed Aug 5 17:17:04 2015 +0000\n\n    virt: Use preexec_fn to ulimit qemu-img info call\n    \n    This uses the preexec_fn oslo.concurrency execute parameter to set user limit\n    before calling qemu-img info. The process is limitted to 2 seconds of cpu\n    and 1GB of virtual memory\n    \n    Change-Id: Ib47f1116c94c8f76d2a4a525af24439a4aa15854\n    Closes-Bug: #1449062\n", 
+            "date_created": "2015-10-13 18:40:20.512744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "FYI, we are reverting the patch for this bug because it caused a spike in gate failures\n\nhttps://bugs.launchpad.net/nova/+bug/1506012\nhttps://review.openstack.org/#/c/234696/", 
+            "date_created": "2015-10-14 11:18:27.584721+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "The way https://review.openstack.org/#/c/209627/ applied the limits to qemu-img was by setting rlimits in between fork() and execve(). The problem with this is that before we reach exec() we have a full copy-on-write  mapping of the nova python process. So if Nova memory usage is too high, this could tickle the limit we're setting for qemu-img.\n\nThe only way to avoid this is to *not* set limits until after we have exec'd. This would require using an external command like my original prlimit patch.\n\nSince not all distros have prlimit, we could create a simple  nova-prlimit python script todo this. We would use native prlimit if it was present in the distro (as its fast) and fallacck to nova-prlimit if missing.\n\nIt is a shame oslo.concurrency went for the preexec_fn approach, rather than my suggestion of explicitly representing resource limits in the API, as that would have allowed us to hide this compat code in oslo.concurrency, instead of dealing with it in nova, glance and cinder :-(", 
+            "date_created": "2015-10-14 12:58:21.740670+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Can this prlimit python script could be provided by oslo or a requirement since it could be used by Cinder and Glance as well?", 
+            "date_created": "2015-10-14 14:29:22.009071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Note that such prlimit utility is being worked on in oslo.concurrency here: https://review.openstack.org/#/c/243829/", 
+            "date_created": "2015-11-17 15:56:37.587371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b1 development milestone.", 
+            "date_created": "2015-12-02 16:17:47.826491+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The proposed change did not effectively fixed that issue.", 
+            "date_created": "2015-12-03 23:18:54.176065+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "The oslo.concurrency feature we require merged in Feb 1st this year. So we can now retry fixing nova once again, and also backport it to Mitaka stable series once merged in master", 
+            "date_created": "2016-04-18 16:00:10.060162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/307663", 
+            "date_created": "2016-04-19 09:15:11.895588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/326327", 
+            "date_created": "2016-06-07 09:33:02.696910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The task API is now admin only by default since Mitaka. So, the risk of this issue to glance tasks API is significantly low. I've degraded the importance accordingly.", 
+            "date_created": "2016-06-07 20:12:14.810109+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nikhil-komawar"
+        }, 
+        {
+            "content": "For Glance: The task API is now admin only by default since Mitaka. So, the risk of this issue to glance tasks API is significantly low. I've degraded the importance accordingly.", 
+            "date_created": "2016-06-07 20:12:53.081466+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nikhil-komawar"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/307663\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=068d851561addfefb2b812d91dc2011077cb6e1d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 068d851561addfefb2b812d91dc2011077cb6e1d\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Mon Apr 18 16:32:19 2016 +0000\n\n    virt: set address space & CPU time limits when running qemu-img\n    \n    This uses the new 'prlimit' parameter for oslo.concurrency execute\n    method, to set an address space limit of 1GB and CPU time limit\n    of 2 seconds, when running qemu-img.\n    \n    This is a re-implementation of the previously reverted commit\n    \n    commit da217205f53f9a38a573fb151898fbbeae41021d\n    Author: Tristan Cacqueray <email address hidden>\n    Date:   Wed Aug 5 17:17:04 2015 +0000\n    \n        virt: Use preexec_fn to ulimit qemu-img info call\n    \n    Closes-Bug: #1449062\n    Change-Id: I135b5242af1bfdcb0ea09a6fcda21fc03a6fbe7d\n", 
+            "date_created": "2016-06-09 10:17:29.152777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/327624", 
+            "date_created": "2016-06-09 12:12:20.135531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Newton is now fixed, but mitaka needs an oslo.concurrency requirements bump to 3.8.0.\n\nFor liberty, it is still using 2.6.x version and we need to first merge: https://review.openstack.org/#/c/327630/, then release a new version of olso.concurrency in order to bump requirements for stable/liberty.", 
+            "date_created": "2016-06-09 12:37:50.746151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/326327\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c8ec9ebf379c61d73c5671a75dd2a4e4ae1403fb\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit c8ec9ebf379c61d73c5671a75dd2a4e4ae1403fb\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Mon Apr 18 16:32:19 2016 +0000\n\n    virt: set address space & CPU time limits when running qemu-img\n    \n    This uses the new 'prlimit' parameter for oslo.concurrency execute\n    method, to set an address space limit of 1GB and CPU time limit\n    of 2 seconds, when running qemu-img.\n    \n    This is a re-implementation of the previously reverted commit\n    \n    commit da217205f53f9a38a573fb151898fbbeae41021d\n    Author: Tristan Cacqueray <email address hidden>\n    Date:   Wed Aug 5 17:17:04 2015 +0000\n    \n        virt: Use preexec_fn to ulimit qemu-img info call\n    \n    NOTE(mriedem): The backport depends on raising the minimum\n    required oslo.concurrency>=3.7.1 which contains the prlimits\n    fix for this change, the code fails without it.\n    \n    Depends-on: I157a6fc88836da73814ae46c8991ddefc5066c96\n    Closes-Bug: #1449062\n    Change-Id: I135b5242af1bfdcb0ea09a6fcda21fc03a6fbe7d\n    (cherry picked from commit 068d851561addfefb2b812d91dc2011077cb6e1d)\n", 
+            "date_created": "2016-06-11 00:04:10.672737+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.0 release.", 
+            "date_created": "2016-06-14 15:41:26.966028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Hello Tristan, or anyone else affected,\n\nAccepted python-oslo.concurrency into xenial-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/python-oslo.concurrency/3.7.1-0ubuntu1 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2016-06-15 11:04:02.422023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "Hi Chris,\n\npython-oslo.concurrency 3.7.1-0ubuntu1 has been tested successfully.\n\nThanks,\nCorey", 
+            "date_created": "2016-06-27 13:40:50.914260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~corey.bryant"
+        }, 
+        {
+            "content": "This bug was fixed in the package python-oslo.concurrency - 3.7.1-0ubuntu1\n\n---------------\npython-oslo.concurrency (3.7.1-0ubuntu1) xenial; urgency=medium\n\n  * New upstream point release (LP: #1449062).\n\n -- Corey Bryant <email address hidden>  Mon, 13 Jun 2016 12:34:15 -0400", 
+            "date_created": "2016-06-28 07:30:56.198114+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "This bug was fixed in the package python-oslo.concurrency - 3.7.1-0ubuntu1\n\n---------------\npython-oslo.concurrency (3.7.1-0ubuntu1) xenial; urgency=medium\n\n  * New upstream point release (LP: #1449062).\n\n -- Corey Bryant <email address hidden>  Mon, 13 Jun 2016 12:34:15 -0400", 
+            "date_created": "2016-06-28 07:31:30.892342+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for python-oslo.concurrency has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2016-06-28 07:36:39.791835+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pitti"
+        }, 
+        {
+            "content": "Here is a recap of all related patches,\n\nmaster/newton (oslo.concurrency-3.8.0):\n* https://review.openstack.org/243829 oslo.concurrency prlimit (merged in 3.7.1)\n* https://review.openstack.org/307813 oslo.concurrency process limit (not merged in 3.7.1)\n* https://review.openstack.org/307663 nova fix\n\nstable/mitaka (oslo.concurrency-3.7.1):\n* https://review.openstack.org/326327 nova backport\n* https://review.openstack.org/327774 oslo.concurrency process limit backport\n\nstable/liberty (oslo.concurrency-2.6.1):\n* https://review.openstack.org/327624 nova backport\n* https://review.openstack.org/327630 oslo.concurrency prlimit backport\n* https://review.openstack.org/332222 oslo.concurrency process limit backport\n\n\nIt seems like we only need 327624 to move on the OSSA task. Is there something like a global requirement change we are waiting for ?", 
+            "date_created": "2016-07-11 20:01:55.781652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hello Tristan, or anyone else affected,\n\nAccepted python-oslo.concurrency into wily-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/python-oslo.concurrency/2.6.1-0ubuntu1 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2016-07-13 14:54:21.605587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b2 development milestone.", 
+            "date_created": "2016-07-14 13:01:56.363047+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Just a note that the Ubuntu Cloud Archive for Liberty includes the fix with python-oslo.concurrency 2.6.1-0ubuntu1~cloud0. (Wily has gone EOL since the update from Chris Arges above.)", 
+            "date_created": "2016-08-08 13:54:42.460746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~corey.bryant"
+        }, 
+        {
+            "content": "Based on the thread at http://lists.openstack.org/pipermail/openstack-dev/2016-September/104091.html we may need to figure out how to adjust the messaging to indicate that it was a severe enough bug to fix in stable/mitaka but that stable/liberty will be left unfixed.", 
+            "date_created": "2016-09-20 17:29:15.933263+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/327624\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6bc37dcceca823998068167b49aec6def3112397\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 6bc37dcceca823998068167b49aec6def3112397\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Mon Apr 18 16:32:19 2016 +0000\n\n    virt: set address space & CPU time limits when running qemu-img\n    \n    This uses the new 'prlimit' parameter for oslo.concurrency execute\n    method, to set an address space limit of 1GB and CPU time limit\n    of 2 seconds, when running qemu-img.\n    \n    This is a re-implementation of the previously reverted commit\n    \n    commit da217205f53f9a38a573fb151898fbbeae41021d\n    Author: Tristan Cacqueray <email address hidden>\n    Date:   Wed Aug 5 17:17:04 2015 +0000\n    \n        virt: Use preexec_fn to ulimit qemu-img info call\n    \n    NOTE (kchamart) [stable/liberty]: Add a check for the presence of\n    'ProcessLimits' attribute (which is only present in\n    oslo.concurrency>=2.6.1; and a conditional check for 'prlimit' parameter\n    in qemu_img_info() method.\n    \n    Upstream discussion[1][2] that led to merging this patch to\n    stable/liberty branch.\n    \n    [1] http://lists.openstack.org/pipermail/openstack-dev/2016-September/104091.html\n    [2] http://lists.openstack.org/pipermail/openstack-dev/2016-September/104303.html\n    \n    Closes-Bug: #1449062\n    Change-Id: I135b5242af1bfdcb0ea09a6fcda21fc03a6fbe7d\n    (cherry picked from commit 068d851561addfefb2b812d91dc2011077cb6e1d)\n", 
+            "date_created": "2016-09-22 14:30:34.279355+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm resurrecting Grant's proposed impact description from comment #28 and updating for the year of time which has passed since. I've also edited it to remove references to Cinder and Glance... are those effectively still impacted in any supported branches? I see that the tasks API in Glance becoming admin-only in Mitaka results in this being impractical there, but what about for Liberty? And there's little input from Cinder on this bug at all but the claim is that it's exploitable there as well. Is that still the case today?\n\n--\n\nTitle: Malicious input to qemu-img may result in resource exhaustion\nReporter: Richard W.M. Jones\nProduct: Nova\nAffects: <=12.0.4, ==13.0.0\n\nDescription:\nRichard W.M. Jones of Red Hat reported a vulnerability that affects OpenStack\nNova. By providing a maliciously crafted disk image an attacker can consume\nconsiderable amounts of RAM and CPU time resulting in a denial of service via\nresource exhaustion. Any project which makes calls to qemu-img without\nappropriate ulimit restrictions in place is affected by this flaw.", 
+            "date_created": "2016-09-22 19:11:52.919831+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/375099", 
+            "date_created": "2016-09-22 20:35:34.373178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/375102", 
+            "date_created": "2016-09-22 20:45:48.251334+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Following discussion with Sean and Hemanth, it looks like we ought to get fixes for this into supported branches of Cinder and Glance after all. Hopefully getting them merged goes quickly now that Nova has already trodden this ground and the fixes are basically identical between them.\n\nAssuming all fixes merge before Newton releases and prior to any stable branch point releases, this is the updated proposed impact description. I'm using our YAML format here both for convenience and clarity due to the number of repos and releases involved. I've also shortened the title and referenced the affected software in it.\n\nShould I include a note about the updated versions of oslo.concurrency required, or are the references to patches in consuming projects sufficient for this purpose? I'd like to avoid unnecessary additional complexity if possible here.\n\n--\n\ndate: TBD\n\nid: TBD\n\ntitle: Malicious qemu-img input may exhaust resources in Cinder, Glance, Nova\n\ndescription: >\n  Richard W.M. Jones of Red Hat reported a vulnerability that affects OpenStack\n  Cinder, Glance and Nova. By providing a maliciously crafted disk image an\n  attacker can consume considerable amounts of RAM and CPU time resulting in a\n  denial of service via resource exhaustion. Any project which makes calls to\n  qemu-img without appropriate ulimit restrictions in place is affected by this\n  flaw.\n\naffected-products:\n  - product: cinder\n    version: \"<=7.0.2, >=8.0.0 <=8.1.1\"\n  - product: glance\n    version: \"<=11.0.1, ==12.0.0\"\n  - product: nova\n    version: \"<=12.0.4 and ==13.0.0\"\n\nvulnerabilities:\n  - cve-id: CVE-2015-5162\n\nreporters:\n  - name: Richard W.M. Jones\n    affiliation: Red Hat\n    reported:\n      - CVE-2015-5162\n\nissues:\n  links:\n    - https://launchpad.net/bugs/1449062\n\nreviews:\n  ocata:\n    - https://review.openstack.org/375099 (cinder)\n    - https://review.openstack.org/TBD (glance)\n  newton:\n    - https://review.openstack.org/375102 (cinder)\n    - https://review.openstack.org/TBD (glance)\n    - https://review.openstack.org/307663 (nova)\n  mitaka:\n    - https://review.openstack.org/TBD (cinder)\n    - https://review.openstack.org/TBD (glance)\n    - https://review.openstack.org/326327 (nova)\n  liberty:\n    - https://review.openstack.org/TBD (cinder)\n    - https://review.openstack.org/TBD (glance)\n    - https://review.openstack.org/327624 (nova)\n\nnotes:\n  - >\n    Separate Ocata patches are listed for Cinder and Glance, as they were fixed\n    during the Newton release freeze after it branched from master.", 
+            "date_created": "2016-09-22 23:46:09.932854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Thank you for that info Jeremy, I've targetted it to the appropriate series in Glance so it's clear.", 
+            "date_created": "2016-09-23 12:46:16.829958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~icordasc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/375099\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=78f17f0ad79380ee3d9c50f2670252bcc559b62b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 78f17f0ad79380ee3d9c50f2670252bcc559b62b\nAuthor: Sean McGinnis <email address hidden>\nDate:   Thu Sep 22 15:31:37 2016 -0500\n\n    Limit memory & CPU when running qemu-img info\n    \n    It was found that a modified or corrupted image file can cause a DoS\n    on the host when getting image info with qemu-img.\n    \n    This uses the newer 'prlimit' parameter for oslo.concurrency execute\n    to set an address space limit of 1GB and CPU time limit of 2 seconds\n    when running the qemu-img info command.\n    \n    Change-Id: If5b7129b266ef065642bc7898ce9dcf93722a053\n    Closes-bug: #1449062\n", 
+            "date_created": "2016-09-23 14:22:11.301346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/375102\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=8547444775e406a50d9d26a0003e9ba6554b0d70\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 8547444775e406a50d9d26a0003e9ba6554b0d70\nAuthor: Sean McGinnis <email address hidden>\nDate:   Thu Sep 22 15:31:37 2016 -0500\n\n    Limit memory & CPU when running qemu-img info\n    \n    It was found that a modified or corrupted image file can cause a DoS\n    on the host when getting image info with qemu-img.\n    \n    This uses the newer 'prlimit' parameter for oslo.concurrency execute\n    to set an address space limit of 1GB and CPU time limit of 2 seconds\n    when running the qemu-img info command.\n    \n    Change-Id: If5b7129b266ef065642bc7898ce9dcf93722a053\n    Closes-bug: #1449062\n    (cherry picked from commit 78f17f0ad79380ee3d9c50f2670252bcc559b62b)\n", 
+            "date_created": "2016-09-23 16:56:27.694817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/375625", 
+            "date_created": "2016-09-23 17:05:36.665701+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "It's just a theory (credits to Brian Rosmaita) at this point, but looks like \"qemu-img convert\" will try to infer the format of input image if \"-f\" is not provided. So, \"qemu-img convert\" may be susceptible to the same attack. Any thoughts?\n", 
+            "date_created": "2016-09-23 19:41:49.913460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hemanth-makkapati"
+        }, 
+        {
+            "content": "Yes, *any* qemu-img command that you run without providing '-f' will try to guess the image format. Rather than trying to figure out whether a particular invokation may or may not be susceptible to attack, the safe approach is to use '-f' every time.", 
+            "date_created": "2016-09-26 07:56:34.722228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Jeremy, the impact description looks good. Though note that prlimit implementation before oslo.concurrency-3.8.0 doesn't support all the required resources limit, thus I would mention that oslo.concurrency>=3.8.0 is required to fix that issue.", 
+            "date_created": "2016-09-26 13:45:14.185070+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hemanth, Daniel: So that means the current patches to Nova are insufficient because they missed `qemu-image convert` invocations? For example at http://git.openstack.org/cgit/openstack/nova/tree/nova/virt/xenapi/vm_utils.py#n1128\n\nTristan: Thanks, it looked like oslo.concurrency got backports to stable/mitaka and stable/liberty to support it too though. Is that correct? If so we may need to get much more verbose about the library versions required by the service fixes.", 
+            "date_created": "2016-09-26 16:26:52.185206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Jeremy: Hemanth (in comment#72) seems to have mixed up this bug (which sets limits for memory / CPU usage for `qemu-img` calls) with *another* bug[x] that is about disk image format guessing.\n\nSo, the Nova patches that fix this bug (1449062) are sufficient for the problem it is solving (setting a cap on memory / CPU usage).\n\n\n[x] https://bugs.launchpad.net/nova/+bug/1415087 -- \n    [OSSA 2015-011] Format-guessing and file disclosure \n    in image convert (CVE-2015-1850, CVE-2015-1851)\n", 
+            "date_created": "2016-09-26 17:40:36.240323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Thanks Kashyap.\n\nThat bug isn't cross listed with Glance and the current one applies to Glance in a very generic way. So, Hemanth did the right thing from our perspective. I will leave the rest of the story to the VMT  team.", 
+            "date_created": "2016-09-26 18:14:55.607935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nikhil-komawar"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/375526\nCommitted: https://git.openstack.org/cgit/openstack/glance/commit/?id=69a9b659fd48aa3c1f84fc7bc9ae236b6803d31f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 69a9b659fd48aa3c1f84fc7bc9ae236b6803d31f\nAuthor: Hemanth Makkapati <email address hidden>\nDate:   Fri Sep 23 09:29:12 2016 -0500\n\n    Adding constraints around qemu-img calls\n    \n    * All \"qemu-img info\" calls are now run under resource limitations\n      that limit CPU time to 2 seconds and address space usage to 1 GB.\n      This helps avoid any DoS attacks via malicious images.\n    * All \"qemu-img convert\" calls now specify the import format so that\n      it does not have to be inferred by qemu-img.\n    \n    SecurityImpact\n    \n    Change-Id: Ib900bbc05cb9ccd90c6f56ccb4bf2006e30cdc80\n    Closes-Bug: #1449062\n", 
+            "date_created": "2016-09-27 04:03:28.076324+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Jeremy, the missing bit for oslo-concurrency 3.7.1 is https://review.openstack.org/#/q/I164c4b35e1357a0f80ed7fe00a7ae8f49df92e31 and it was merged to stable branches. Fortunately it seems like all version >= 3.8.0 are good enough to support correct resources limit, so I guess we could just mention that.", 
+            "date_created": "2016-09-27 14:04:15.551565+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/377734", 
+            "date_created": "2016-09-27 14:22:57.770058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/377736", 
+            "date_created": "2016-09-27 14:23:47.201874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Tristan: I'm still a little confused on the oslo.concurrency recommendation. Are you saying that we should suggest stable/liberty and stable/mitaka deployments to also use oslo.concurrency>=3.8.0? At the moment the tips of stable/liberty and stable/mitaka branches for oslo.concurrency are tagged 2.6.1 and 3.7.1 respectively (and that's what we have pinned in upper-constraints.txt for testing purposes as well). I don't want to imply in an advisory that all deployments should upgrade oslo.concurrency to 3.8.0 or later if there's a risk it will break liberty or mitaka deployments (which is why I was leaning toward not mentioning oslo.concurrency versions as that would just add to confusion).", 
+            "date_created": "2016-09-27 16:05:38.870272+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I had the same question for mitaka, so had to dig a little deeper. oslo.concurrency 3.7.1 was the follow on release to 3.7.0 to include the prlimit option. So based on current requirements for stable/mitaka, it should be safe to backport this fix.\n\nI did not investigate stable/liberty, but I'm assuming 2.6.1 is the same situation.", 
+            "date_created": "2016-09-27 16:29:18.007326+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/377734\nCommitted: https://git.openstack.org/cgit/openstack/glance/commit/?id=6cba6b18a348e8fc2eb4ae25b636d065456a633c\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 6cba6b18a348e8fc2eb4ae25b636d065456a633c\nAuthor: Hemanth Makkapati <email address hidden>\nDate:   Fri Sep 23 09:29:12 2016 -0500\n\n    Adding constraints around qemu-img calls\n    \n    * All \"qemu-img info\" calls are now run under resource limitations\n      that limit CPU time to 2 seconds and address space usage to 1 GB.\n      This helps avoid any DoS attacks via malicious images.\n    * All \"qemu-img convert\" calls now specify the import format so that\n      it does not have to be inferred by qemu-img.\n    \n    SecurityImpact\n    \n    Change-Id: Ib900bbc05cb9ccd90c6f56ccb4bf2006e30cdc80\n    Closes-Bug: #1449062\n    (cherry picked from commit 69a9b659fd48aa3c1f84fc7bc9ae236b6803d31f)\n", 
+            "date_created": "2016-09-27 19:22:51.520964+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Indeed my bad, oslo-concurrency 2.6.1, 3.7.1 and 3.8.0 are all good and referenced in the upper-constraint of supported stable branches. Thus I agree we could omit that note on the advisory.", 
+            "date_created": "2016-09-28 01:56:16.298359+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/377736\nCommitted: https://git.openstack.org/cgit/openstack/glance/commit/?id=c90830d71969f68768d898c1c178489f602214e2\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit c90830d71969f68768d898c1c178489f602214e2\nAuthor: Hemanth Makkapati <email address hidden>\nDate:   Fri Sep 23 09:29:12 2016 -0500\n\n    Adding constraints around qemu-img calls\n    \n    * All \"qemu-img info\" calls are now run under resource limitations\n      that limit CPU time to 2 seconds and address space usage to 1 GB.\n      This helps avoid any DoS attacks via malicious images.\n    * All \"qemu-img convert\" calls now specify the import format so that\n      it does not have to be inferred by qemu-img.\n    \n    SecurityImpact\n    \n    Change-Id: Ib900bbc05cb9ccd90c6f56ccb4bf2006e30cdc80\n    Closes-Bug: #1449062\n    (cherry picked from commit 69a9b659fd48aa3c1f84fc7bc9ae236b6803d31f)\n", 
+            "date_created": "2016-09-28 12:55:08.310053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/glance 13.0.0.0rc2 release candidate.", 
+            "date_created": "2016-09-28 21:35:19.220453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/cinder 9.0.0.0rc2 release candidate.", 
+            "date_created": "2016-09-29 00:21:57.658191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.5 release.", 
+            "date_created": "2016-09-29 21:42:35.010107+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/378012\nCommitted: https://git.openstack.org/cgit/openstack/glance/commit/?id=58311904a73f931404416649dc6ed3958adc59c8\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 58311904a73f931404416649dc6ed3958adc59c8\nAuthor: Brian Rosmaita <email address hidden>\nDate:   Tue Sep 27 16:11:17 2016 -0400\n\n    Adding constraints around qemu-img calls\n    \n    * All \"qemu-img info\" calls are now run under resource limitations that\n      limit CPU time to 2 seconds and address space usage to 1 GB. This\n      helps avoid any DoS attacks via malicious images.\n    * All \"qemu-img convert\" calls now specify the import format so that it\n      does not have to be inferred by qemu-img.\n    \n    SecurityImpact\n    \n    (Hemanth did all the work on this, I'm just doing the backport.)\n    \n    Co-authored-by: Hemanth Makkapati <email address hidden>\n    Closes-Bug: #1449062\n    (cherry picked from commit 69a9b659fd48aa3c1f84fc7bc9ae236b6803d31f)\n    \n    Change-Id: I65f30b85439a8811545b0ca590555528631954df\n", 
+            "date_created": "2016-09-30 10:55:38.743602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Status update: it looks like all Glance and Nova fixes have merged; so too have the master and stable/newton changes for Cinder. At this point we're waiting for https://review.openstack.org/375625 (Cinder's stable/mitaka fix) to merge, and we don't seem to have a stable/liberty backport for Cinder.\n\nSean: were you planning to work on a liberty change for this? Or is stable/liberty of Cinder unaffected (in which case I need to adjust the impact description accordingly)?", 
+            "date_created": "2016-10-05 16:40:27.761703+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I think the impact description is good. I will push through those backports.", 
+            "date_created": "2016-10-05 16:58:48.840828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/382573", 
+            "date_created": "2016-10-05 17:00:39.129327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/375625\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=c6adc020a67ae77e3645d4f6e80fa93b19432177\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit c6adc020a67ae77e3645d4f6e80fa93b19432177\nAuthor: Sean McGinnis <email address hidden>\nDate:   Thu Sep 22 15:31:37 2016 -0500\n\n    Limit memory & CPU when running qemu-img info\n    \n    It was found that a modified or corrupted image file can cause a DoS\n    on the host when getting image info with qemu-img.\n    \n    This uses the newer 'prlimit' parameter for oslo.concurrency execute\n    to set an address space limit of 1GB and CPU time limit of 2 seconds\n    when running the qemu-img info command.\n    \n    Change-Id: If5b7129b266ef065642bc7898ce9dcf93722a053\n    Closes-bug: #1449062\n    (cherry picked from commit 8547444775e406a50d9d26a0003e9ba6554b0d70)\n", 
+            "date_created": "2016-10-05 18:25:57.011123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/382573\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=455b318ced717fb38dfe40014817d78fbc47dea5\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 455b318ced717fb38dfe40014817d78fbc47dea5\nAuthor: Sean McGinnis <email address hidden>\nDate:   Thu Sep 22 15:31:37 2016 -0500\n\n    Limit memory & CPU when running qemu-img info\n    \n    It was found that a modified or corrupted image file can cause a DoS\n    on the host when getting image info with qemu-img.\n    \n    This uses the newer 'prlimit' parameter for oslo.concurrency execute\n    to set an address space limit of 1GB and CPU time limit of 2 seconds\n    when running the qemu-img info command.\n    \n    Change-Id: If5b7129b266ef065642bc7898ce9dcf93722a053\n    Closes-bug: #1449062\n    (cherry picked from commit 8547444775e406a50d9d26a0003e9ba6554b0d70)\n", 
+            "date_created": "2016-10-06 13:01:56.246555+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "See comment #90 for glance fix to stable/liberty", 
+            "date_created": "2016-10-18 19:54:23.562629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-rosmaita"
+        }, 
+        {
+            "content": "Fix released to all stable branches", 
+            "date_created": "2016-10-18 19:56:57.548360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-rosmaita"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.5 release.", 
+            "date_created": "2016-11-10 01:11:02.320207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/cinder 9.0.0 release.", 
+            "date_created": "2016-11-10 02:23:00.562187+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/glance 13.0.0 release.", 
+            "date_created": "2016-11-10 02:24:27.149219+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/cinder 7.0.3 release.", 
+            "date_created": "2016-11-15 22:31:33.570663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/cinder 10.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-16 16:51:10.259629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/glance 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 20:37:39.990886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/glance 13.0.0 release.", 
+            "date_created": "2016-12-07 10:34:56.589978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/glance 11.0.2 release.", 
+            "date_created": "2016-12-12 04:42:13.897021+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

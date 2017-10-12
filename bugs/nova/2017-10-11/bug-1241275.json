@@ -1,0 +1,95 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-08-21 03:25:55.099815+00:00", 
+    "description": "By default, the token length for clients is 24 hours.  When that token expires (or is invalidated for any reason), nova should obtain a new token.\n\nCurrently, when the token expires, it leads to the following fault:\n    File \"/usr/lib/python2.6/site-packages/nova/network/neutronv2/api.py\", line 136, in _get_available_networks\n      nets = neutron.list_networks(**search_opts).get('networks', [])\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 108, in with_params\n      ret = self.function(instance, *args, **kwargs)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 325, in list_networks\n      **_params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1197, in list\n      for r in self._pagination(collection, path, **params):\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1210, in _pagination\n      res = self.get(path, params=params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1183, in get\n      headers=headers, params=params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1168, in retry_request\n      headers=headers, params=params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1103, in do_request\n      resp, replybody = self.httpclient.do_request(action, method, body=body)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/client.py\", line 188, in do_request\n      self.authenticate()\n    File \"/usr/lib/python2.6/site-packages/neutronclient/client.py\", line 224, in authenticate\n      token_url = self.auth_url + \"/tokens\"\n    TRACE nova.openstack.common.rpc.amqp TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'\n\nThis error is occurring because nova/network/neutronv2/__init__.py obtains a token for communication with neutron.  Nova is then authenticating the token (nova/network/neutronv2/__init__.py - _get_auth_token).  Upon authentication, it passes in the token into the neutron client (via the _get_client method).  It should be noted that the token is the main element passed into the neutron client (auth_url, username, password, etc... are not passed in as part of the request)\n\nSince nova is passing the token directly into the neutron client, nova does not validate whether or not the token is authenticated.  \n\nAfter the 24 hour period of time, the token naturally expires.  Therefore, when the neutron client goes to make a request, it catches an exceptions.Unauthorized block.  Upon catching this exception, the neutron client attempts to re-authenticate and then make the request again.\n\nThe issue arises in the re-authentication of the token.  The neutron client's authenticate method requires that the following parameters are sent in from its users:\n - username\n - password\n - tenant_id or tenant_name\n - auth_url\n - auth_strategy\n\nSince the nova client is not passing these parameters in, the neutron client is failing with the exception above.\n\nNot all methods from the nova client are exposed to this.  Invocations to nova/network/neutronv2/__init__.py - get_client with an 'admin' value set to True will always get a new token.  However, the clients that invoke the get_client method without specifying the admin flag, or by explicitly setting it to False will be affected by this.  Note that the admin flag IS NOT determined based off the context's admin attribute.\n\nMethods from nova/network/neutronv2/api.py that are currently affected appear to be:\n - _get_available_networks\n - allocate_for_instance\n - deallocate_for_instance\n - deallocate_port_for_instance\n - list_ports\n - show_port\n - add_fixed_ip_to_instance\n - remove_fixed_ip_from_instance\n - validate_networks\n - _get_instance_uuids_by_ip\n - associate_floating_ip\n - get_all\n - get\n - get_floating_ip\n - get_floating_ip_pools\n - get_floating_ip_by_address\n - get_floating_ips_by_project\n - get_instance_id_by_floating_address\n - allocate_floating_ip\n - release_floating_ip\n - disassociate_floating_ip\n - _get_subnets_from_port", 
+    "tags": [
+        "api", 
+        "in-stable-havana", 
+        "network"
+    ], 
+    "importance": "High", 
+    "heat": 70, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1241275", 
+    "owner": "https://api.launchpad.net/1.0/~thorst", 
+    "id": 1241275, 
+    "index": 1277, 
+    "created": "2013-10-18 00:42:35.104567+00:00", 
+    "title": "Nova / Neutron Client failing upon re-authentication after token expiration", 
+    "comments": [
+        {
+            "content": "By default, the token length for clients is 24 hours.  When that token expires (or is invalidated for any reason), nova should obtain a new token.\n\nCurrently, when the token expires, it leads to the following fault:\n    File \"/usr/lib/python2.6/site-packages/nova/network/neutronv2/api.py\", line 136, in _get_available_networks\n      nets = neutron.list_networks(**search_opts).get('networks', [])\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 108, in with_params\n      ret = self.function(instance, *args, **kwargs)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 325, in list_networks\n      **_params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1197, in list\n      for r in self._pagination(collection, path, **params):\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1210, in _pagination\n      res = self.get(path, params=params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1183, in get\n      headers=headers, params=params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1168, in retry_request\n      headers=headers, params=params)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/v2_0/client.py\", line 1103, in do_request\n      resp, replybody = self.httpclient.do_request(action, method, body=body)\n    File \"/usr/lib/python2.6/site-packages/neutronclient/client.py\", line 188, in do_request\n      self.authenticate()\n    File \"/usr/lib/python2.6/site-packages/neutronclient/client.py\", line 224, in authenticate\n      token_url = self.auth_url + \"/tokens\"\n    TRACE nova.openstack.common.rpc.amqp TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'\n\nThis error is occurring because nova/network/neutronv2/__init__.py obtains a token for communication with neutron.  Nova is then authenticating the token (nova/network/neutronv2/__init__.py - _get_auth_token).  Upon authentication, it passes in the token into the neutron client (via the _get_client method).  It should be noted that the token is the main element passed into the neutron client (auth_url, username, password, etc... are not passed in as part of the request)\n\nSince nova is passing the token directly into the neutron client, nova does not validate whether or not the token is authenticated.  \n\nAfter the 24 hour period of time, the token naturally expires.  Therefore, when the neutron client goes to make a request, it catches an exceptions.Unauthorized block.  Upon catching this exception, the neutron client attempts to re-authenticate and then make the request again.\n\nThe issue arises in the re-authentication of the token.  The neutron client's authenticate method requires that the following parameters are sent in from its users:\n - username\n - password\n - tenant_id or tenant_name\n - auth_url\n - auth_strategy\n\nSince the nova client is not passing these parameters in, the neutron client is failing with the exception above.\n\nNot all methods from the nova client are exposed to this.  Invocations to nova/network/neutronv2/__init__.py - get_client with an 'admin' value set to True will always get a new token.  However, the clients that invoke the get_client method without specifying the admin flag, or by explicitly setting it to False will be affected by this.  Note that the admin flag IS NOT determined based off the context's admin attribute.\n\nMethods from nova/network/neutronv2/api.py that are currently affected appear to be:\n - _get_available_networks\n - allocate_for_instance\n - deallocate_for_instance\n - deallocate_port_for_instance\n - list_ports\n - show_port\n - add_fixed_ip_to_instance\n - remove_fixed_ip_from_instance\n - validate_networks\n - _get_instance_uuids_by_ip\n - associate_floating_ip\n - get_all\n - get\n - get_floating_ip\n - get_floating_ip_pools\n - get_floating_ip_by_address\n - get_floating_ips_by_project\n - get_instance_id_by_floating_address\n - allocate_floating_ip\n - release_floating_ip\n - disassociate_floating_ip\n - _get_subnets_from_port", 
+            "date_created": "2013-10-18 00:42:35.104567+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thorst"
+        }, 
+        {
+            "content": "This is essentially a duplicate of bug 1177579.", 
+            "date_created": "2013-10-22 18:46:27.168424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The patch is here: https://review.openstack.org/#/c/52954/", 
+            "date_created": "2013-10-23 16:20:43.639220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/53461", 
+            "date_created": "2013-10-23 21:45:50.045957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "nova should not be doing token management on behalf on neutronclient. Neutronclient should handle that on its own.  We had a similar issue in novaclient that has been fixed (uses python-keyring).", 
+            "date_created": "2013-10-29 10:13:08.502711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/52954\nCommitted: http://github.com/openstack/nova/commit/51e5f52e4cb60e266ccde71f205c91eb8c97b48b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 51e5f52e4cb60e266ccde71f205c91eb8c97b48b\nAuthor: Drew Thorstensen <email address hidden>\nDate:   Mon Oct 21 09:52:28 2013 -0500\n\n    Pass thru credentials to allow re-authentication\n    \n    Nova's network client obtains a token from keystone for authenitcation\n    to the neutron services.  When the timeout of keystone is set low, it\n    creates a condition where some of the invocations to neutron start\n    failing.\n    \n    This is because the neutron client detects that the token is expired,\n    but during the re-authorization attempt fails due to not having enough\n    information to properly reauthorize.  Nova also assumes that within a\n    given context, the token will always be valid.  It does not perform the\n    authorization check (and doing so would be double verification as the\n    neutron client is already validating this).\n    \n    Since the neutron client has logic in place to re-authorize the token,\n    this change set will pass thru the credentials to the neutron client\n    for the re-authorization attempts.  This change also updates the unit\n    tests.\n    \n    Note: the change only will pass in the admin credential information\n    if the context indicates that it is an admin.\n    \n    Change-Id: I2858562b180f3e058a2da9d67bef02af80927177\n    Closes-Bug: #1241275\n", 
+            "date_created": "2013-10-30 15:52:50.837621+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/54736", 
+            "date_created": "2013-10-31 13:34:21.845611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Abandoned the stable/havana cherry pick since this is required for this to be backported:\n\nhttps://review.openstack.org/#/c/56174/", 
+            "date_created": "2013-11-17 14:57:24.096195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Is there a workaround for this while the fix is being worked on? I tried deleting all tokens from the database and restarting everything but that doesn't seem to have worked.", 
+            "date_created": "2013-12-18 20:28:57.145422+00:00", 
+            "author": "https://api.launchpad.net/1.0/~adriansmith"
+        }, 
+        {
+            "content": "I found a workaround.  Logout... and to do that go to /horizon/auth/logout\n\nThis allowed me to log back in.", 
+            "date_created": "2014-01-28 09:21:13.702243+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mattkenn4545"
+        }, 
+        {
+            "content": "Matt's workaround works for me on Horizon but it doesn't help my compute nodes throwing this error. ", 
+            "date_created": "2014-01-29 18:06:09.488023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kamador"
+        }, 
+        {
+            "content": "Guys, is there any known workaround for this for Havana? Dashboard works fine for me but I get this error when I try to start an instance (using Neutron + monolithic Openvswitch plugin).\n\nDoes nova cache the old tokens somewhere somewhere on the disk? I ask, as restarting all the OpenStack services on each node and even manually deleting all the tokens from the Keystone's database does not seem the resolve the issue for me.  Once I start seeing the issue the only solution seems to be reinitializing the whole OpenStack deployment on a clean drive. Reinitializing only the OpenStack DBs does not seem to do the trick, I actually have to reinstall the whole system  from scratch.  But then, after reinstalling, after some time I start seeing the issue again, and again...\n\n", 
+            "date_created": "2014-02-07 08:25:45.905646+00:00", 
+            "author": "https://api.launchpad.net/1.0/~piotr-wachowicz"
+        }, 
+        {
+            "content": "Solved.\n\nIt turns that in my case this error was caused by Neutron using a stale (cached locally) cacert.pem from the \"/var/lib/neutron/keystone-signing/\".\n\nFlushing the content of that directory before reinstalling my OpenStack cluster (without re-installing the entire Operating System) solved my issue.\n\nHowever I would argue that neutron should do a better job on reporting errors...\n", 
+            "date_created": "2014-02-11 11:57:07.187415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~piotr-wachowicz"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/53461\nCommitted: https://git.openstack.org/cgit/openstack/python-neutronclient/commit/?id=e49819caf95fc6985036231b1e5717f0ff7b6c61\nSubmitter: Jenkins\nBranch:    master\n\ncommit e49819caf95fc6985036231b1e5717f0ff7b6c61\nAuthor: Drew Thorstensen <email address hidden>\nDate:   Wed Oct 23 16:41:45 2013 -0500\n\n    New exception when auth_url is not specified\n    \n    Certain scenarios into the neutron client will not specify the\n    auth_url.  This is typically when a token is specified.  However, when\n    the token is expired the neutron client will attempt to refresh the\n    token.  Users of this may not have passed in all of the required\n    information for this reauthentication to properly occur.\n    \n    This code fixes an error that occurs in this flow where the auth_url\n    (which is None) is appended to another string.  This results in a core\n    Python error.\n    \n    The update will provide a more targetted error message specifying to\n    the user that the auth_url needs to be specified.  An associated unit\n    test is also included to validate this behavior.\n    \n    Change-Id: I577ce0c009a9a281acdc238d290a22c5e561ff82\n    Closes-Bug: #1241275\n", 
+            "date_created": "2014-03-06 21:03:52.408458+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/54736\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bdc7519862299e43af55d7a7a221669de905d15c\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit bdc7519862299e43af55d7a7a221669de905d15c\nAuthor: Drew Thorstensen <email address hidden>\nDate:   Mon Oct 21 09:52:28 2013 -0500\n\n    Pass thru credentials to allow re-authentication\n    \n    This is a backport of 4 fixes squashed into one because:\n    \n    1. They need to all be merged together as they build on each\n       other as problems were found in each change after it was\n       merged on master.\n    2. The 3rd change won't pass Jenkins on it's own so it has\n       to be squashed with the 4th and final change, so I'm just\n       going to squash the entire topic branch together.\n    \n    The change bugs fixed and cherry pick commit hashes are left\n    intact for each change.\n    \n    Closes-Bug: #1241275\n    (cherry picked from commit 51e5f52e4cb60e266ccde71f205c91eb8c97b48b)\n    \n    Cache Neutron Client for Admin Scenarios\n    \n    Closes-Bug: #1250580\n    (cherry picked from commit 85332012dede96fa6729026c2a90594ea0502ac5)\n    \n    Users with admin role in Nova should not re-auth with Neutron\n    \n    Closes-Bug: 1250763\n    (cherry picked from commit 1c1371c78b990447aeaa4377b512f8887e6ff3ce)\n    \n    Fix Neutron Authentication for Metadata Service\n    \n    Closes-Bug:  1255577\n    (cherry picked from commit 652620d12f3afe6845e41d9762b52d23f44fd557)\n    \n    ============\n    \n    Change-Id: I2858562b180f3e058a2da9d67bef02af80927177\n", 
+            "date_created": "2014-03-28 04:39:32.283939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

@@ -1,0 +1,73 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:26:13.307251+00:00", 
+    "description": "In this grenade job \nhttp://logs.openstack.org/63/62463/3/gate/gate-grenade-dsvm/4a94d81/console.html\n\nOne process tries to list ALL security groups :\n\"2013-12-19 06:42:11.519 15319 INFO tempest.common.rest_client [-] Request: GET http://127.0.0.1:8774/v2/1fb77a9f8ccc417498161dbad4eeabda/os-security-groups?all_tenants=true\"\n(pid=15319)\n\nhttp://logs.openstack.org/63/62463/3/gate/gate-grenade-dsvm/4a94d81/logs/tempest.txt.gz#_2013-12-19_06_42_11_519\n\nWhile another process deletes one:\nhttp://logs.openstack.org/63/62463/3/gate/gate-grenade-dsvm/4a94d81/logs/tempest.txt.gz#_2013-12-19_06_42_11_510\n\"2013-12-19 06:42:11.510 15315 INFO tempest.common.rest_client [-] Request: DELETE http://127.0.0.1:8774/v2/c64e11f31d25473b91f7e1124f41f2a1/os-security-groups/27\"\n(pid=15315)\n\n\nThe test case failed on  listing ALL security group request , which  requested closely in time  to a security group deletion.\n'<message>Security group 27 not found.</message></itemNotFound>'\n\n\n$ nova secgroup-list --all-tenants 1  # is the cli equivalent of the failing request, this call should not fail with 'Security group 27 not found.'", 
+    "tags": [
+        "network"
+    ], 
+    "importance": "Critical", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1262566", 
+    "owner": "https://api.launchpad.net/1.0/~arosen", 
+    "id": 1262566, 
+    "index": 164, 
+    "created": "2013-12-19 09:42:36.034777+00:00", 
+    "title": "security group listing race", 
+    "comments": [
+        {
+            "content": "In this grenade job \nhttp://logs.openstack.org/63/62463/3/gate/gate-grenade-dsvm/4a94d81/console.html\n\nOne process tries to list ALL security groups :\n\"2013-12-19 06:42:11.519 15319 INFO tempest.common.rest_client [-] Request: GET http://127.0.0.1:8774/v2/1fb77a9f8ccc417498161dbad4eeabda/os-security-groups?all_tenants=true\"\n(pid=15319)\n\nhttp://logs.openstack.org/63/62463/3/gate/gate-grenade-dsvm/4a94d81/logs/tempest.txt.gz#_2013-12-19_06_42_11_519\n\nWhile another process deletes one:\nhttp://logs.openstack.org/63/62463/3/gate/gate-grenade-dsvm/4a94d81/logs/tempest.txt.gz#_2013-12-19_06_42_11_510\n\"2013-12-19 06:42:11.510 15315 INFO tempest.common.rest_client [-] Request: DELETE http://127.0.0.1:8774/v2/c64e11f31d25473b91f7e1124f41f2a1/os-security-groups/27\"\n(pid=15315)\n\n\nThe test case failed on  listing ALL security group request , which  requested closely in time  to a security group deletion.\n'<message>Security group 27 not found.</message></itemNotFound>'\n\n\n$ nova secgroup-list --all-tenants 1  # is the cli equivalent of the failing request, this call should not fail with 'Security group 27 not found.'", 
+            "date_created": "2013-12-19 09:42:36.034777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Is this with Neutron or traditional nova networks?\nThanks\nGary", 
+            "date_created": "2014-02-10 09:55:23.934816+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "n-net, so traditional nova network.", 
+            "date_created": "2014-02-18 09:57:22.971058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Confirmed this issue in the code. The crux of the problem is as follows:\n\nAfter listing the security groups, we call a list comprehension to format it (https://github.com/openstack/nova/blob/master/nova/api/openstack/compute/contrib/security_groups.py#L292-L293)\n\n        with translate_exceptions():\n            project_id = context.project_id\n            raw_groups = self.security_group_api.list(context,\n                                                      project=project_id,\n                                                      search_opts=search_opts)\n\n        limited_list = common.limited(raw_groups, req)\n        result = [self._format_security_group(context, group)\n                    for group in limited_list]\n\nThe _format call goes through and indirection then gets to:\n\n    def _format_security_group_rule(self, context, rule):\n        sg_rule = {}\n        sg_rule['id'] = rule['id']\n        sg_rule['parent_group_id'] = rule['parent_group_id']\n        sg_rule['ip_protocol'] = rule['protocol']\n        sg_rule['from_port'] = rule['from_port']\n        sg_rule['to_port'] = rule['to_port']\n        sg_rule['group'] = {}\n        sg_rule['ip_range'] = {}\n        if rule['group_id']:\n            with translate_exceptions():\n                source_group = self.security_group_api.get(context,\n                                                           id=rule['group_id'])\n            sg_rule['group'] = {'name': source_group.get('name'),\n                             'tenant_id': source_group.get('project_id')}\n        else:\n            sg_rule['ip_range'] = {'cidr': rule['cidr']}\n        return sg_rule\n\nThe security_group_api.get means we've got another trip to the db (for every rule), and any one of those could fail with the sg having been deleted in the time allotted. ", 
+            "date_created": "2014-04-27 12:58:06.855791+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/92893", 
+            "date_created": "2014-05-08 18:54:39.822998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/92898", 
+            "date_created": "2014-05-08 19:22:58.315569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is a substantial cause of gate resets and random fails", 
+            "date_created": "2014-06-04 13:43:14.717994+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/92893\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=eb84cfb4ef7376401f48488d4810714c2664e5fa\nSubmitter: Jenkins\nBranch:    master\n\ncommit eb84cfb4ef7376401f48488d4810714c2664e5fa\nAuthor: Aaron Rosen <email address hidden>\nDate:   Thu May 8 11:25:02 2014 -0700\n\n    Fix security group race condition while listing and deleting rules\n    \n    Previously, there was a race condition that could occur if one was listing\n    a security group which contained a rule which referenced another security\n    group as an additional api call is used to look up the security group's\n    name which is returned (rather than id) via the API. The problem occurs if\n    this security group is deleted in which case a 404 was raised.\n    This patch fixes this issue by catching the 404 and ignoring the rule as\n    its already deleted as there is a constraint enforced that you cannot\n    delete a security group if another security group has a rule that references\n    that security group.\n    \n    Change-Id: I3855b8d3a1bd2f7c88901da071f9bd5581bd56e4\n    Closes-bug: 1262566\n", 
+            "date_created": "2014-06-04 15:16:42.755198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/97845", 
+            "date_created": "2014-06-04 16:15:11.791930+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/97845\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=867341ff27cf91503e6919a2702298ce39f679ad\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 867341ff27cf91503e6919a2702298ce39f679ad\nAuthor: Aaron Rosen <email address hidden>\nDate:   Thu May 8 11:25:02 2014 -0700\n\n    Fix security group race condition while listing and deleting rules\n    \n    Previously, there was a race condition that could occur if one was listing\n    a security group which contained a rule which referenced another security\n    group as an additional api call is used to look up the security group's\n    name which is returned (rather than id) via the API. The problem occurs if\n    this security group is deleted in which case a 404 was raised.\n    This patch fixes this issue by catching the 404 and ignoring the rule as\n    its already deleted as there is a constraint enforced that you cannot\n    delete a security group if another security group has a rule that references\n    that security group.\n    \n    Change-Id: I3855b8d3a1bd2f7c88901da071f9bd5581bd56e4\n    Closes-bug: 1262566\n    (cherry picked from commit eb84cfb4ef7376401f48488d4810714c2664e5fa)\n", 
+            "date_created": "2014-06-05 12:42:03.800032+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/92898\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2620a7c74e2d7e9c904af364a59efcd69cb5947f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2620a7c74e2d7e9c904af364a59efcd69cb5947f\nAuthor: Aaron Rosen <email address hidden>\nDate:   Thu May 8 12:07:27 2014 -0700\n\n    Fix security group race condition while creating rule\n    \n    Previously, it was possible for someone to create a security group rule\n    where the rule references another security group. To do this nova would\n    first create the security group rule and then look up the referenced group\n    (group_id's) name in order to return that via the api. During this time\n    it's possible for someone to delete this security group rule and the\n    referenced group before the call returned resulting in a 404 error being\n    raised. This patch addresses this issue by looking up the group name\n    first and then creating the security group rule in order to avoid this\n    from occuring.\n    \n    Note: this patch also adds a test to cover the case where an invalid group\n    id was passed though this does not really add any real additional coverage\n    to the change largely because the code is currently using global stubs. That\n    said, the previous coverage should hopefully be sufficient\n    \n    Change-Id: If58ffa5629ba5166f260379ac47922974de31be0\n    Related-bug: 1262566\n", 
+            "date_created": "2014-07-29 16:08:27.385106+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

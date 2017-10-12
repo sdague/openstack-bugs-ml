@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 11:05:14.529083+00:00", 
+    "description": "Rootwrap may leak some information that it shouldn't -- it can allow people with sudo access to rootwrap to read data that is only readable by root.  ConfigParser prints the beginning of files that it can't parse.\n\n$ sudo /usr/bin/cinder-rootwrap /etc/shadow asdf\nTraceback (most recent call last):\n  File \"/usr/bin/cinder-rootwrap\", line 7, in <module>\n    execfile(__file__)\n  File \"/opt/stack/cinder/bin/cinder-rootwrap\", line 65, in <module>\n    config.read(configfile)\n  File \"/usr/lib64/python2.7/ConfigParser.py\", line 305, in read\n    self._read(fp, filename)\n  File \"/usr/lib64/python2.7/ConfigParser.py\", line 512, in _read\n    raise MissingSectionHeaderError(fpname, lineno, line)\nConfigParser.MissingSectionHeaderError: File contains no section headers.\nfile: /etc/shadow, line: 1\n'root:$6$fYDj1IjYKFmVfyZp$tasdfasdfmf163gasdfFasdfzp.mkasdfXBJasdfX1gkasdfoir6lcVh36asdfqRcEasdfOXuflr1easdf6bt.:15597:0:99999:7:::\\n'\n\nFlagged as security bug because it may have some implications there, hard to say.", 
+    "tags": [
+        "rootwrap"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1084766", 
+    "owner": "https://api.launchpad.net/1.0/~ttx", 
+    "id": 1084766, 
+    "index": 5619, 
+    "created": "2012-11-29 22:27:36.301348+00:00", 
+    "title": "rootwrap ConfigParser behavior", 
+    "comments": [
+        {
+            "content": "Rootwrap may leak some information that it shouldn't -- it can allow people with sudo access to rootwrap to read data that is only readable by root.  ConfigParser prints the beginning of files that it can't parse.\n\n$ sudo /usr/bin/cinder-rootwrap /etc/shadow asdf\nTraceback (most recent call last):\n  File \"/usr/bin/cinder-rootwrap\", line 7, in <module>\n    execfile(__file__)\n  File \"/opt/stack/cinder/bin/cinder-rootwrap\", line 65, in <module>\n    config.read(configfile)\n  File \"/usr/lib64/python2.7/ConfigParser.py\", line 305, in read\n    self._read(fp, filename)\n  File \"/usr/lib64/python2.7/ConfigParser.py\", line 512, in _read\n    raise MissingSectionHeaderError(fpname, lineno, line)\nConfigParser.MissingSectionHeaderError: File contains no section headers.\nfile: /etc/shadow, line: 1\n'root:$6$fYDj1IjYKFmVfyZp$tasdfasdfmf163gasdfFasdfzp.mkasdfXBJasdfX1gkasdfoir6lcVh36asdfqRcEasdfOXuflr1easdf6bt.:15597:0:99999:7:::\\n'\n\nFlagged as security bug because it may have some implications there, hard to say.", 
+            "date_created": "2012-11-29 22:27:36.301348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "I was talking to Eric about this on IRC.  My inclination is to not treat it as a security vulnerability since I don't see any path to exploit it.  However, it does seem like something worth changing.\n\n@ttx, thoughts?", 
+            "date_created": "2012-11-29 22:36:25.892217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Agreed on both counts. You can't use that to read the first line(s) of root-readable files unless you're specifically allowed to run the rootwrap, which is restricted to the cinder/nova system user anyway, and those are not accounts local users should be allowed to switch to (unless they have root rights). So I would not treat it as an exploitable vulnerability (you need another massive vulnerability to make this one exploitable).\n\nThat said, it could be used as part of an attack (get cinder user access somehow, exploit this to escalate to root) so it should definitely be fixed. Nice finding :)\n\nI suggest we keep it private until I find the time to submit a (public) review to fix it.", 
+            "date_created": "2012-11-30 09:47:26.200936+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Oh, it's even more non-exploitable than I thought. \"sudo nova-rootwrap /etc/shadow\" should not be authorized by the sudoers file... since you explicitely only allow \"sudo nova-rootwrap /etc/nova/rootwrap.conf\". See http://wiki.openstack.org/Nova/Rootwrap", 
+            "date_created": "2012-12-03 15:08:43.987339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "That said it probably still makes sense to catch the exception.", 
+            "date_created": "2012-12-03 15:11:31.147473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/17672", 
+            "date_created": "2012-12-07 10:49:58.651973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/17672\nCommitted: http://github.com/openstack/nova/commit/a5b12b675ced2bc7e942cb107a8e181dbc5f6f45\nSubmitter: Jenkins\nBranch:    master\n\ncommit a5b12b675ced2bc7e942cb107a8e181dbc5f6f45\nAuthor: Thierry Carrez <email address hidden>\nDate:   Wed Dec 5 16:23:44 2012 +0100\n\n    Add syslogging to nova-rootwrap\n    \n    Add syslogging capabilities to nova-rootwrap, if you set parameter\n    use_syslog to True. You can specify a facility (syslog_log_facility)\n    and level (syslog_log_level) to use. Finalizes bp nova-rootwrap-options.\n    \n    In doing so, it moves rootwrap config parsing to a nova.rootwrap.wrapper\n    object (and adds unit testing for it). It also improves log messages\n    content (including the name of the matching filter and the escalation\n    path used). Incidentally fixes bug 1084766.\n    \n    Change-Id: Idb8cd9c9febd6263dafab4bc2bff817f00c53dc0\n", 
+            "date_created": "2012-12-17 17:09:27.143740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

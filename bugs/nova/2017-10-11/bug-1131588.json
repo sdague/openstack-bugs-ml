@@ -1,0 +1,41 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 11:16:52.471392+00:00", 
+    "description": "nova-compute's init_host() can attempt to resume instances that are found not to be in RUNNING power state... but should be.\n\nFor xenapi, the driver just tries to 'power on' the instance.\nFor libvirt, it tries to do a hard reboot.\n\nNeither method account for 'resize_migrating' task state... where (at least in XenAPI), the instance would have been renamed to append '-orig' to it.  The driver will raise NotFound because it can't find the instance.\n\nnova-compute's init_host() will catch all Exceptions and set the instance to ERROR...  but it seems that since we have code to clean up the destination (there's code that looks at all instances in the driver and looks to see if their 'host' changed... and destroys them if so)...  we could potentially clean up the source as well.  Rename the instance back, clear task_state, and restart the old instance?", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1131588", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1131588, 
+    "index": 976, 
+    "created": "2013-02-22 06:49:47.773412+00:00", 
+    "title": "virt drivers' resume_state_on_host_boot don't handle migrating instances", 
+    "comments": [
+        {
+            "content": "nova-compute's init_host() can attempt to resume instances that are found not to be in RUNNING power state... but should be.  For xenapi, the driver just tries to 'power on' the instance.\n\nBut.. if the task_state is 'resize_migrating', it's possible that the instance's name in the driver has '-orig' appended to it.  'power on' does not account for this.   NotFound ends up being raised back... and since nothing catches it, nova-compute dies.\n\nNot sure how to resolve this correctly.\n\n1) init_host() should probably not crash startup if an instance is not found.\n2) Code in init_host() will destroy instances found in the driver where the 'host' has changed.  This means that instances that were in mid-migration will get destroyed properly on the destination host.  On the source host, we should probably look for 'resize_migrating' task_state... and rename the instance in the driver back to the correct name... and THEN try to power it on, restoring task_state to None?", 
+            "date_created": "2013-02-22 06:49:47.773412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Trace for XenAPI:\n\n2013-02-22 05:29:04 9736 TRACE nova   File \"/opt/rackstack/1.31/nova/lib/python2\n.6/site-packages/nova-2013.1-py2.6.egg/nova/service.py\", line 394, in start\n2013-02-22 05:29:04 9736 TRACE nova     self.manager.init_host()\n2013-02-22 05:29:04 9736 TRACE nova   File \"/opt/rackstack/1.31/nova/lib/python2\n.6/site-packages/nova-2013.1-py2.6.egg/nova/compute/manager.py\", line 468, in in\nit_host\n2013-02-22 05:29:04 9736 TRACE nova     self._init_instance(context, instance)\n2013-02-22 05:29:04 9736 TRACE nova   File \"/opt/rackstack/1.31/nova/lib/python2\n.6/site-packages/nova-2013.1-py2.6.egg/nova/compute/manager.py\", line 442, in _i\nnit_instance\n2013-02-22 05:29:04 9736 TRACE nova     block_device_info)\n2013-02-22 05:29:04 9736 TRACE nova   File \"/opt/rackstack/1.31/nova/lib/python2\n.6/site-packages/nova-2013.1-py2.6.egg/nova/virt/xenapi/driver.py\", line 607, in\n resume_state_on_host_boot\n2013-02-22 05:29:04 9736 TRACE nova     self._vmops.power_on(instance)\n2013-02-22 05:29:04 9736 TRACE nova   File \"/opt/rackstack/1.31/nova/lib/python2\n.6/site-packages/nova-2013.1-py2.6.egg/nova/virt/xenapi/vmops.py\", line 1296, in\n power_on\n2013-02-22 05:29:04 9736 TRACE nova     vm_ref = self._get_vm_opaque_ref(instanc\ne)\n2013-02-22 05:29:04 9736 TRACE nova   File \"/opt/rackstack/1.31/nova/lib/python2\n.6/site-packages/nova-2013.1-py2.6.egg/nova/virt/xenapi/vmops.py\", line 691, in \n_get_vm_opaque_ref\n2013-02-22 05:29:04 9736 TRACE nova     instance['name'])\n2013-02-22 05:29:04 9736 TRACE nova NotFound: Could not find VM with name instance-4834bbfa-cb0b-4b29-8da2-b55d9f4dea38\n\nAt this point the compute process dies... because it was just in the init phase.\n\nThe instance's name in the driver at this moment was actually instance-4834bbfa-cb0b-4b29-8da2-b55d9f4dea38-orig because it was being migrated when compute was restarted.", 
+            "date_created": "2013-02-25 16:57:36.985340+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Ignore the above traceback.  It was based on old code that didn't have a 'except Exception' catch in init_host().", 
+            "date_created": "2013-02-25 17:06:34.808479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/22897", 
+            "date_created": "2013-02-25 21:18:27.273049+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22897\nCommitted: http://github.com/openstack/nova/commit/a9d0313cc7d36a9e5e60aa7710b9ce8ec2f37f19\nSubmitter: Jenkins\nBranch:    master\n\ncommit a9d0313cc7d36a9e5e60aa7710b9ce8ec2f37f19\nAuthor: Dan Smith <email address hidden>\nDate:   Mon Feb 25 16:16:19 2013 -0500\n\n    Make compute manager revert crashed migrations on init_host()\n    \n    This should provide a path to cleanup partial migrations by reverting\n    them back to the original state instead of leaving them in limbo. Note\n    that libvirt needs a change to make this work, in the case where the\n    unconfirmed instance's directory is still present and needs to be\n    removed before the rollback.\n    \n    The libvirt, xenapi and powervm drivers are modified here, and tests\n    are added to confirm their compliance with the proper behavior.\n    \n    Addresses bug 1131588\n    \n    Change-Id: I85bc0f6e9cda10aa85328199d107a3ff6e240b96\n", 
+            "date_created": "2013-03-02 04:28:46.562310+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

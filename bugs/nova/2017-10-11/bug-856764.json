@@ -1,0 +1,528 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-09-27 22:03:28.384887+00:00", 
+    "description": "There is currently no method built into Nova to keep connections from various components into RabbitMQ alive.  As a result, placing a stateful firewall (such as a Cisco ASA) between the connection can/does result in idle connections being terminated without either endpoint being aware.\n\nThis issue can be mitigated a few different ways:\n\n1. Connections to RabbitMQ set socket options to enable TCP keepalives.  \n\n2. Rabbit has heartbeat functionality.  If the client requests heartbeats on connection, rabbit server will regularly send messages to each connections with the expectation of a response.\n\n3. Other?", 
+    "tags": [
+        "patch"
+    ], 
+    "importance": "High", 
+    "heat": 298, 
+    "link": "https://bugs.launchpad.net/nova/+bug/856764", 
+    "owner": "None", 
+    "id": 856764, 
+    "index": 494, 
+    "created": "2011-09-22 20:14:07.142220+00:00", 
+    "title": "RabbitMQ connections lack heartbeat or TCP keepalives", 
+    "comments": [
+        {
+            "content": "There is currently no method built into Nova to keep connections from various components into RabbitMQ alive.  As a result, placing a stateful firewall (such as a Cisco ASA) between the connection can/does result in idle connections being terminated without either endpoint being aware.\n\nThis issue can be mitigated a few different ways:\n\n1. Connections to RabbitMQ set socket options to enable TCP keepalives.  \n\n2. Rabbit has heartbeat functionality.  If the client requests heartbeats on connection, rabbit server will regularly send messages to each connections with the expectation of a response.\n\n3. Other?", 
+            "date_created": "2011-09-22 20:14:07.142220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "For the solution 2 (heartbeat functionality) we need to use another amqp client (for example pika), at this moment the python-amqplib doesn't implement the heartbeat. \n\n", 
+            "date_created": "2011-11-17 16:51:21.785096+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "Just wanted to add an alternate solution to this for the folks that run into this bug while searching.  If you make the ASA send active resets instead of silently dropping the connections out of their table, your environment should stabilize.  Something along the lines of the following, plus any appropriate adjustments for port/policy-map based upon your individual environment:\n\nclass-map rabbit-hop\n match port tcp eq 5672\npolicy-map global_policy\n class rabbit-hop\n  set connection timeout idle 12:00:00 reset", 
+            "date_created": "2012-02-23 23:31:42.382594+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bmcconne"
+        }, 
+        {
+            "content": "From searching around it sounds like this should no longer be an issue due to enabling TCP keepalives.\n\n\"amqplib versions after and including 1.0 enables SO_KEEPALIVE by default, and Kombu versions after and including 1.2.1 depends on amqplib >= 1.0\"", 
+            "date_created": "2012-12-15 15:51:34.470865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "The version of kombu we are now using and the py-amqp lib that provides the transport supports heartbeat.\n\nHeartbeat will help close connections when a client using rabbit is forcefully terminated.  \n\nUsing heartbeats may be an option and if so can either be exposed to the rpc-component user by way of server-params or a configuration for the rpc-component.", 
+            "date_created": "2013-07-03 00:16:12.946090+00:00", 
+            "author": "https://api.launchpad.net/1.0/~justin-hopper"
+        }, 
+        {
+            "content": "By pure fluke, I submitted this a few days back: https://review.openstack.org/#/c/34949\n\nIt adds heartbeat support to the Kombu driver. ", 
+            "date_created": "2013-07-03 17:41:29.116309+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "Russell's point should be addressed:\n\n  \"amqplib versions after and including 1.0 enables SO_KEEPALIVE by default, and Kombu versions after and including 1.2.1 depends on amqplib >= 1.0\"", 
+            "date_created": "2013-07-06 13:25:06.347630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I asked a bunch of questions in the oslo review\n\nMain thing missing is what exactly the heartbeat fixes that SO_KEEPALIVE doesn't already address", 
+            "date_created": "2013-07-06 13:31:38.357616+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Hey Mark - I've responded to your comments in the review comments. Rather than split the conversation over two places, I'll just leave a link here:\n\nhttps://review.openstack.org/#/c/34949/", 
+            "date_created": "2013-07-06 14:05:36.302557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "The convincing point made in the review is that a service sitting there listening for RPC requests will have to wait 2 hours by default to be notified that it has lost its connection with the broker if we rely on SO_KEEPALIVE", 
+            "date_created": "2013-07-08 07:58:43.607087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/34949\nCommitted: http://github.com/openstack/oslo-incubator/commit/c37f6aaab3ac00b7865dee18158114433350237e\nSubmitter: Jenkins\nBranch:    master\n\ncommit c37f6aaab3ac00b7865dee18158114433350237e\nAuthor: Kiall Mac Innes <email address hidden>\nDate:   Fri Jun 28 21:14:26 2013 +0100\n\n    Add support for heartbeating in the kombu RPC driver\n    \n    This aides in detecting connection interruptions that would otherwise\n    go unnoticed.\n    \n    Fixes bug #856764\n    \n    Change-Id: Id4eb3d36036969b62890175d6a33b4e304be0527\n", 
+            "date_created": "2013-07-08 13:09:34.400960+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Note that the fix for this was reverted: https://github.com/openstack/oslo-incubator/commit/23f2ea29bcfbcfd27a1e4eb2712b0f65245cc7ec", 
+            "date_created": "2013-07-19 01:14:58.316834+00:00", 
+            "author": "https://api.launchpad.net/1.0/~novas0x2a"
+        }, 
+        {
+            "content": "I spoke with MarkMc about this in #openstack-dev, but another thing I've discovered:\n\nI should start by saying I'm in no way an ampq or rabbit expert. This is just based on a lot of googling, testing in my environment and trial and error. If I say something which doesn't make sense, it's quite possible it doesn't :-D\n\nIn rabbit, when master promotion occurs a slave queue will kick off all of it's consumers, but not kill the connection (http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2012-January/017341.html). An almost identical issue was brought up on the springsource client forums here: http://forum.springsource.org/archive/index.php/t-121480.html.\n\nWhile the ampq libraries support connection disruption handling, they don't appear to handle channel disruption or consumer cancel notifications. The end result of which is that when a master promotion occurs in rabbit, the OpenStack services will continue to consume from a queue whose channel has been closed.\n\nOnce you get all your consumers to re-establish their channels, messages begin flowing again, but the ultimate result is that a single node failure can cause the majority (or even all) messages to stop flowing to OS services until you force them to re-establish (either by bouncing all rabbit nodes with attached/hung consumers or by restarting individual OS services).\n\nYou can reproduce the effects like so:\n\n* Determine the master for any given queue. \n** I generally do this by running watch \"rabbitmqctl list_queues -p /nova name slave_pids synchronised_slave_pids messages messages_unacknowledged consumers | grep -v fanout\"  and look for the node in the cluster which is not a slave (inherently making it the master)\n* Stop rabbit on the master node\n* Watch the consumers column. It should mostly drop to 0, and busy queues (such as q-plugin) will likely begin backing up\n* Pick a service (quantum-server works well, as it will drain q-plugin) and validate which rabbit node it is connected to (netstat, grepping the logs of the service, or rabbitmqctl list_connections name should find it pretty easily)\n* Restart said service or the rabbit broker it is connected to\n*Once it restarts and/or determines the connection has been lost, the connection will be re-established\n* Go back to your watch command, and you should now see the new subscriber on its specific queue\n\nI'm adding notes here because I'm not sure if the heartbeat implementation works at the channel level, or if we need to implement consumer cancel notification support (https://lists.launchpad.net/openstack/msg15111.html).\n\nRegardless, without properly handling master promotion in rabbit, it makes using HA queues a moot exercise as losing a single node can cause all messages to stop flowing. Given the heavy reliance on the message queue, I think we need to be especially careful how we handle this and make it as solid as possible.", 
+            "date_created": "2013-08-20 16:47:20.648285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kbringard"
+        }, 
+        {
+            "content": "So it looks like Ask Solem outlines how we need to do heartbeats in this post:\n\nhttps://lists.launchpad.net/openstack/msg15111.html\n\nSpecifically:\n\nAn example of enabling heartbeats with eventlet could be:\n\nimport weakref\nfrom kombu import Connection\nfrom eventlet import spawn_after\n\ndef monitor_heartbeats(connection, rate=2):\nif not connection.heartbeat:\n    return\ninterval = connection.heartbeat / 2.0\ncref = weakref.ref(connection)\n\ndef heartbeat_check():\n    conn = cref()\n    if conn is not None and conn.connected:\n        conn.heartbeat_check(rate=rate)\n        spawn_after(interval, heartbeat_check)\n\n return spawn_after(interval, heartbeat_check)\n\nconnection = Connection('pyamq://', heartbeat=10)\n\nor:\n\nconnection = Connection('pyamqp://?heartbeat=10')\n\nAdditionally, I think adding support for consumer cancel notifications would aid in the master promotion issues I outlined above. From Ask's email:\n\n- Consumer cancel notifications\n\nRequires no changes to your code,\nall you need is to properly reconnect when one of the\nerrors in Connection.channel_errors occur, which is handled\nautomatically by Connection.ensure / Connection.autoretry (I don't believe\nNova uses that, but it probably should).\n\nOf course, this all requires updating to a newer version of kombu and amqp as well, but based on our experiences with rabbit, I really think the benefits of adding this functionality will help tremendously from an enterprise operationally ready standpoint. Without it, the HA story in rabbit is pretty dismal :-/", 
+            "date_created": "2013-08-22 19:16:07.037583+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kbringard"
+        }, 
+        {
+            "content": "So, based on Ask's comment about notifications, I started looking into it. As it turns out, *if* you're running a version of kombu/amqp which supports the channel_errors object  (version 2.1.4 seems to be when it was introduced: http://kombu.readthedocs.org/en/latest/changelog.html), the following simple patch resolves the issue (also attached):\n\n\n--- impl_kombu.py.new   2013-08-22 21:52:54.711337602 +0000\n+++ impl_kombu.py.orig  2013-08-22 21:52:37.727386558 +0000\n@@ -488,7 +488,6 @@\n             self.connection = None\n         self.connection = kombu.connection.BrokerConnection(**params)\n         self.connection_errors = self.connection.connection_errors\n-   self.channel_errors = self.connection.channel_errors\n         if self.memory_transport:\n             # Kludge to speed up tests.\n             self.connection.transport.polling_interval = 0.0\n@@ -562,7 +561,7 @@\n         while True:\n             try:\n                 return method(*args, **kwargs)\n-            except (self.channel_errors, socket.timeout, IOError), e:\n+            except (self.connection_errors, socket.timeout, IOError), e:\n                 if error_callback:\n                     error_callback(e)\n             except Exception, e:\n\nBasically, in ensure() you want to watch the channel and not the connection. \n\n\nI verified this in a 2 node rabbit cluster. There are 2 nodes: .139 and .141. .139 is currently the master.\n\nThe following is from the nova logs when .139 is stopped (and .141 is promoted to the master):\n\nNotice, we're connected to 192.168.128.141:\n\n013-08-22 21:27:45.807 INFO nova.openstack.common.rpc.common [req-20aa6610-b0df-4730-9773-6024e47a6da7 None None] Connected to AMQP server on 192.168.128.141:5672\n2013-08-22 21:27:45.843 INFO nova.openstack.common.rpc.common [req-c82c8ea0-aa8b-49b0-925c-b79399f011de None None] Connected to AMQP server on 192.168.128.141:5672\n\n...\n\nThen, we stop rabbit on .139 and see the following *channel* error:\n\n2013-08-22 21:28:13.475 20003 ERROR nova.openstack.common.rpc.common [-] Failed to consume message from queue: tag u'2'\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common Traceback (most recent call last):\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common   File \"/usr/lib/python2.7/dist-packages/nova/openstack/common/rpc/impl_kombu.py\", line 572, in ensure\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common     return method(*args, **kwargs)\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common   File \"/usr/lib/python2.7/dist-packages/nova/openstack/common/rpc/impl_kombu.py\", line 654, in _consume\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common     return self.connection.drain_events(timeout=timeout)\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common   File \"/usr/local/lib/python2.7/dist-packages/kombu/connection.py\", line 281, in drain_events\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common     return self.transport.drain_events(self.connection, **kwargs)\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common   File \"/usr/local/lib/python2.7/dist-packages/kombu/transport/pyamqp.py\", line 91, in drain_events\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common     return connection.drain_events(**kwargs)\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common   File \"/usr/local/lib/python2.7/dist-packages/amqp/connection.py\", line 286, in drain_events\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common     return amqp_method(channel, args)\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common   File \"/usr/local/lib/python2.7/dist-packages/amqp/channel.py\", line 1628, in _basic_cancel_notify\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common     raise ConsumerCancel('tag %r' % (consumer_tag, ))\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common ConsumerCancel: tag u'2'\n2013-08-22 21:28:13.475 20003 TRACE nova.openstack.common.rpc.common \n\nEnsure fails due to the channel error and causes the service to reconnect. It reconnects to the same host (as it is now the only one alive):\n\n2013-08-22 21:28:13.478 20003 INFO nova.openstack.common.rpc.common [-] Reconnecting to AMQP server on 192.168.128.141:5672\n2013-08-22 21:28:13.510 20003 INFO nova.openstack.common.rpc.common [-] Connected to AMQP server on 192.168.128.141:5672\n2013-08-22 21:28:17.007 INFO nova.openstack.common.rpc.common [req-482627bb-812e-4997-90c0-96fbf3c8de34 None None] Connected to AMQP server on 192.168.128.141:5672\n\nMessage processing then continues as per usual.\n\nPip install --upgrade kombu works (even on Ubuntu 12.04) to upgrade kombu to support this, however the ultimate solution will likely need to be more robust than this patch as we should do our best to support the shipping version in LTS out of the box.", 
+            "date_created": "2013-08-22 22:07:40.296152+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kbringard"
+        }, 
+        {
+            "content": "Sorry, realized I created the patch the wrong way. :facepalm:\n\nThis is how it *should* be:\n\n\n--- impl_kombu.py.orig  2013-08-22 21:52:37.727386558 +0000\n+++ impl_kombu.py.new   2013-08-22 21:52:54.711337602 +0000\n@@ -488,6 +488,7 @@\n             self.connection = None\n         self.connection = kombu.connection.BrokerConnection(**params)\n         self.connection_errors = self.connection.connection_errors\n+        self.channel_errors = self.connection.channel_errors\n         if self.memory_transport:\n             # Kludge to speed up tests.\n             self.connection.transport.polling_interval = 0.0\n@@ -561,7 +562,7 @@\n         while True:\n             try:\n                 return method(*args, **kwargs)\n-            except (self.connection_errors, socket.timeout, IOError), e:\n+            except (self.channel_errors, socket.timeout, IOError), e:\n                 if error_callback:\n                     error_callback(e)\n             except Exception, e:\n\n", 
+            "date_created": "2013-08-23 12:45:00.968087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kbringard"
+        }, 
+        {
+            "content": "Quick update on this... I will probably submit this patch upstream, but the channel_errors object seems to exist in the old kombu, so we can declare it without an error, but it doesn't get populated as that version of kombu doesn't populate it.\n\nThe supplied patch should \"work\" on any version, but will only detect channel_errors when running versions of kombu which support it.\n\nDoubtlessly this could be cleaner, and I still think that adding heartbeat support to actively populate and check the channel would be worthwhile, but this should also help with the issue in the short term.\n\nIt's also worth pointing out that the newer versions of kombu inherently support a lot of the functionality we're duplicating, such as ensuring connections exist, pooling connections and determining which servers to use and in what order. It's probably worth looking at implementing those once the newer versions of kombu are \"standard\" on the bulk of distros.", 
+            "date_created": "2013-08-27 18:00:00.233949+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kbringard"
+        }, 
+        {
+            "content": "Hi Kevin,\nJust wondering if you've had a chance to submit this upstream?", 
+            "date_created": "2013-10-16 03:12:31.691288+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "Any update on this issue?  I've just run into an issue that I think might be related.  We have active/standby controllers (using pacemaker) and multiple compute nodes.\n\nIf a controller is killed uncleanly all the services come up on the other controller but it takes about 9 minutes or so before I can boot up a new instance.  After that time I see \"nova.openstack.common.rpc.common [-] Failed to consume message from queue: Socket closed\" on the compute nodes, then it reconnects to the AMQP server and I can then boot an instance.\n\nUnfortunately, any instances I tried to boot during those 9 minutes stay in the \"BUILD/scheduling\" state forever.", 
+            "date_created": "2013-11-30 05:39:03.022215+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "The following fix works for failover, but doesn't solve all of the problems in HA mode. For that kevin's patch above is needed.\n\nWhen a connection to a socket is cut off completely, the receiving side doesn't know that the connection has dropped, so can end up with a half-open connection. The general solution for this in linux is to turn on TCP_KEEPALIVES. Kombu will enable keepalives if the version number is high enough (>1.0 iirc), but rabbit needs to be specially configured to send keepalives on the connections that it creates.\n\nSo solving the HA issue generally involves a rabbit config with a section like the following:\n\n[\n {rabbit, [{tcp_listen_options, [binary,\n                                {packet, raw},\n                                {reuseaddr, true},\n                                {backlog, 128},\n                                {nodelay, true},\n                                {exit_on_close, false},\n                                {keepalive, true}]}\n          ]}\n].\n\nThen you should also shorten the keepalive sysctl settings or it will still take ~2 hrs to terminate the connections:\n\necho \"5\" > /proc/sys/net/ipv4/tcp_keepalive_time\necho \"5\" > /proc/sys/net/ipv4/tcp_keepalive_probes\necho \"1\" > /proc/sys/net/ipv4/tcp_keepalive_intvl\n\nObviously this should be done in a sysctl config file instead of at the command line. Note that if you only want to shorten the rabbit keepalives but keep everything else as a default, you can use an LD_PRELOAD library to do so. For example you could use:\n\nhttps://github.com/meebey/force_bind/blob/master/README", 
+            "date_created": "2013-12-02 18:34:58.617439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I have done extensive testing using both Vish's keepalive tuning parameters and Kevin's proposed fix. We've been able to validate that the following occur correctly.\n\n1) A client will reconnect if the server they are actively connected to dies (Vish's tuning).\n2) A client will reconnect if the AMQP master for the queue its subscribed too goes away (Kevin's proposed fix).\n\nAs the original reporters of this we feel the combination successfully addresses the issue and allows for a complete HA solution at the RPC level with rabbit. \n\nGiven the time since the patch was posted to the issue I plan on submitting a review to oslo.messaging with the proposed fix as soon as I have definitively confirmed what version of kombu will be required.\n\nI also think we should open a doc bug to document the tuning parameters Vish has outlined. The default behavior out of the box is fairly poor and the HA story isn't really complete until both things are done. \n\nI'm not entirely sure of the proper procedure for the doc bug so any guidance would be appreciated.", 
+            "date_created": "2013-12-21 23:44:33.573934+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cfb-n"
+        }, 
+        {
+            "content": "Seems like tcp keepalive settings are not enough to provide good failure tolerance. For example, in my openstack cluster nova-conductor and neutron agents always stuck with some unacknowledged tcp traffic, so tcp keepalive timer is never been started. After 900 seconds services began to work.\n\nThis problem was expained on Stack Overflow: http://stackoverflow.com/questions/16320039/getting-disconnection-notification-using-tcp-keep-alive-on-write-blocked-socket\n\nCurrently I use a hacky workaround: set TCP_USER_TIMEOUT with hardcoded value for socket in amqp library (the patch is attached). Is there a more elegant way to solve this problem? Thank you!", 
+            "date_created": "2013-12-27 15:13:47.189114+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sergey-pimkov"
+        }, 
+        {
+            "content": "I'm not sure if this is germane to the original bug report, but this seems to be where the discussion about RabbitMQ failover is happening, so here's the current state of the art, as far as we can tell:\n\nWith the RabbitMQ configs described above (and RabbitMQ 3.2.2), failover works pretty seamlessly, and Kombu 2.5.x and newer handle the Consumer Cancel Notifications properly and promptly.\n\nWhere things get interesting is when you have a cluster of >2 RabbitMQ servers and mirrored queues enabled.  We're seeing an odd phenomenon where, upon failover, a random subset of nova-compute nodes will \"orphan\" their topic and fanout queues, and never consume messages from them.  They will still publish messages successfully, though, so commands like \"nova service-list\" will show the nodes as active, although for all intents and purposes, they're dead.\n\nWe're not 100% sure why this is happening, but log analysis and observation causes us to wildly speculate that on failover with mirrored queues, RabbitMQ forces an election to determine a new master, and if clients attempt to teardown and re-establish their queues before the election has concluded, they will encounter a race condition where their termination requests get eaten and are unacknowledged by the server, and the clients just hang out forever waiting for their requests to complete, and never retry.\n\nWith Kombu 2.5.x, a restart of nova-compute is required to get them to reconnect, and the /usr/bin/nova-clear-rabbit-queues command must be run to clear out the \"stale\" fanout queues.  With Kombu 3.x and newer, the situation is improved, and stopping RabbitMQ on all but one server will cause new CCNs to be generated, and the clients will cleanly migrate to the remaining server and begin working again.\n\nThis is still sub-wonderful because when the compute nodes \"go dead\", they can't receive messages on the bus, but Nova still thinks they're fine.  As a dodge around this, we've added a config option to the conductor to introduce an artificial delay before Kombu responds to CCNs.  The default value of 1.0 seconds seems to be more than enough time for RabbitMQ to get itself sorted out and avoid races, but users can turn it up (or down) as desired.", 
+            "date_created": "2014-02-26 23:22:55.034774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/76686", 
+            "date_created": "2014-02-26 23:23:15.880680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/77276", 
+            "date_created": "2014-02-28 22:22:42.161980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/77276\nCommitted: https://git.openstack.org/cgit/openstack/oslo.messaging/commit/?id=0400cbf4f83cf8d58076c7e65e08a156ec3508a8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0400cbf4f83cf8d58076c7e65e08a156ec3508a8\nAuthor: Chet Burgess <email address hidden>\nDate:   Fri Feb 28 13:39:09 2014 -0800\n\n    Gracefully handle consumer cancel notifications\n    \n    With mirrored queues and clustered rabbit nodes a queue is still\n    mastered by a single rabbit node. When the rabbit node dies an\n    election occurs amongst the remaining nodes and a new master is\n    elected. When a slave is promoted to master it will close all the\n    open channels to its consumers but it will not close the\n    connections. This is reported to consumers as a consumer cancel\n    notification (CCN). Consumers need to re-subscribe to these queues\n    when they recieve a CCN.\n    \n    kombu 2.1.4+ reports CCNs as channel errors. This patch updates\n    the ensure function to be more inline with the upstream kombu\n    functionality. We now monitor for channel errors as well as\n    connection errors and initiate a reconnect if we detect an error.\n    \n    Change-Id: Ie00f67e65250dc983fa45877c14091ad4ae136b4\n    Partial-Bug: 856764\n", 
+            "date_created": "2014-03-04 04:33:32.455788+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/76686\nCommitted: https://git.openstack.org/cgit/openstack/oslo.messaging/commit/?id=fcd51a67d18a9e947ae5f57eafa43ac756d1a5a8\nSubmitter: Jenkins\nBranch:    master\n\ncommit fcd51a67d18a9e947ae5f57eafa43ac756d1a5a8\nAuthor: Nicolas Simonds <email address hidden>\nDate:   Wed Feb 26 15:21:01 2014 -0800\n\n    Slow down Kombu reconnect attempts\n    \n    For a rationale for this patch, see the discussion surrounding Bug\n    \n    When reconnecting to a RabbitMQ cluster with mirrored queues in\n    use, the attempt to release the connection can hang \"indefinitely\"\n    somewhere deep down in Kombu.  Blocking the thread for a bit\n    prior to release seems to kludge around the problem where it is\n    otherwise reproduceable.\n    \n    DocImpact\n    \n    Change-Id: Ic2ede3046709b831adf8204e4c909c589c1786c4\n    Partial-Bug: 856764\n", 
+            "date_created": "2014-03-04 04:33:37.706646+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Marking as Invalid for Nova because any fix would be in oslo.messaging", 
+            "date_created": "2014-03-31 10:48:19.750424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/94656", 
+            "date_created": "2014-05-21 16:01:25.335876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Please sync kombu_reconnect_delay for all affected projects as well.", 
+            "date_created": "2014-05-26 07:59:37.928460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bogdando"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/95479", 
+            "date_created": "2014-05-26 09:50:29.182676+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/95482", 
+            "date_created": "2014-05-26 10:07:01.060816+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/95489", 
+            "date_created": "2014-05-26 10:28:11.965170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/95489\nCommitted: https://git.openstack.org/cgit/openstack/ceilometer/commit/?id=06eb8bc53225c2b58cd2ffeedad17b7428b5f1de\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 06eb8bc53225c2b58cd2ffeedad17b7428b5f1de\nAuthor: Bogdan Dobrelya <email address hidden>\nDate:   Mon May 26 13:28:40 2014 +0300\n\n    Sync kombu_reconnect_delay from Oslo\n    \n    When reconnecting to a RabbitMQ cluster\n    with mirrored queues in use, the attempt to release the\n    connection can hang \"indefinitely\" somewhere deep down\n    in Kombu.  Blocking the thread for a bit prior to\n    release seems to kludge around the problem where it is\n    otherwise reproduceable.\n    The value 5.0 fits for low perfomance environments as well.\n    \n    Cherry-picked from Oslo.messaging:\n    fcd51a67d18a9e947ae5f57eafa43ac756d1a5a8\n    Related-bug: #856764\n    \n    Change-Id: Ifadda4dd9122df9ccb4ecf560ce3db3e38adf2b9\n    Signed-off-by: Bogdan Dobrelya <email address hidden>\n", 
+            "date_created": "2014-05-30 18:04:02.124701+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Please note, the patch https://review.openstack.org/95489 does not close the subject of the issue, it only syncs kombu_reconnect_delay - the TCP heartbeat is still in TODO list, please reassign as appropriate.", 
+            "date_created": "2014-06-06 09:34:33.195178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bogdando"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/99007", 
+            "date_created": "2014-06-10 11:25:21.973354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/99009", 
+            "date_created": "2014-06-10 11:29:28.089285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/99015", 
+            "date_created": "2014-06-10 11:44:41.495233+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/99017", 
+            "date_created": "2014-06-10 11:45:25.203591+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/99018", 
+            "date_created": "2014-06-10 11:46:41.492353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Bogdan Dobrelya (<email address hidden>) on branch: stable/icehouse\nReview: https://review.openstack.org/99007\nReason: new change id is Ic2ede3046709b831adf8204e4c909c589c1786c4", 
+            "date_created": "2014-06-10 11:48:57.855652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Bogdan Dobrelya (<email address hidden>) on branch: master\nReview: https://review.openstack.org/95479\nReason: Updated change id Ic2ede3046709b831adf8204e4c909c589c1786c4\nPlease review the new patchsets now. Sorry for inconvenience...", 
+            "date_created": "2014-06-10 11:49:52.995883+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Bogdan Dobrelya (<email address hidden>) on branch: master\nReview: https://review.openstack.org/99009\nReason: Updated change id Ic2ede3046709b831adf8204e4c909c589c1786c4\nPlease review the new patchsets now. Sorry for inconvenience...", 
+            "date_created": "2014-06-10 11:50:08.934108+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Bogdan Dobrelya (<email address hidden>) on branch: master\nReview: https://review.openstack.org/99018", 
+            "date_created": "2014-06-11 09:35:14.570126+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/99017\nCommitted: https://git.openstack.org/cgit/openstack/oslo-incubator/commit/?id=28f73c26d0eb43ab3e8ee058423ba248d65a2847\nSubmitter: Jenkins\nBranch:    master\n\ncommit 28f73c26d0eb43ab3e8ee058423ba248d65a2847\nAuthor: Bogdan Dobrelya <email address hidden>\nDate:   Tue Jun 10 14:30:27 2014 +0300\n\n    Slow down Kombu reconnect attempts\n    \n    For a rationale for this patch, see the discussion surrounding Bug\n    \n    When reconnecting to a RabbitMQ cluster with mirrored queues in\n    use, the attempt to release the connection can hang \"indefinitely\"\n    somewhere deep down in Kombu.  Blocking the thread for a bit\n    prior to release seems to kludge around the problem where it is\n    otherwise reproduceable.\n    \n    DocImpact\n    \n    Change-Id: Ic2ede3046709b831adf8204e4c909c589c1786c4\n    Partial-Bug: #856764\n", 
+            "date_created": "2014-06-16 18:11:32.811216+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Bogdan Dobrelya (<email address hidden>) on branch: master\nReview: https://review.openstack.org/95482\nReason: Should be synced from Oslo.incubator", 
+            "date_created": "2014-06-17 12:24:17.790124+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Pleaes note that Ceilometer master branch does not require manual syncing for kombu_reconnect_delay patch, because it supports Oslo.messaging since Juno dev cycle. That's why I submitted this cherry-pick only for stable/icehouse branch.", 
+            "date_created": "2014-06-17 12:29:49.734817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bogdando"
+        }, 
+        {
+            "content": "Neutron and Heat could now be synced by the kombu_reconnect_delay patch from Oslo-incubator master branch (and from the stable/icehouse as well, once the https://review.openstack.org/#/c/99015/ is merged).\n\nTCP heartbeat support should be implemented in Oslo.messaging, cherry-picked for Oslo-incubator and synced for all afected projects - so, it is still requires an assignee to implement it.\n\nThat is the status update for this issue.", 
+            "date_created": "2014-06-17 12:35:07.930812+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bogdando"
+        }, 
+        {
+            "content": "I hope that this patch will be able to fix it", 
+            "date_created": "2014-07-11 12:08:37.776179+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexei-kornienko"
+        }, 
+        {
+            "content": "Package cinder has been built from changeset: http://gerrit.mirantis.com/18890\nRPM Repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-5.1-stable-18890/centos", 
+            "date_created": "2014-07-23 12:37:29.395569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Package cinder has been built from changeset: http://gerrit.mirantis.com/18890\nDEB Repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-5.1-stable-18890/ubuntu", 
+            "date_created": "2014-07-23 12:39:59.909623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Package cinder has been built from changeset: http://gerrit.mirantis.com/18910\nRPM Repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-5.0.1-stable-18910/centos", 
+            "date_created": "2014-07-23 14:30:46.476413+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Package cinder has been built from changeset: http://gerrit.mirantis.com/18910\nDEB Repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-5.0.1-stable-18910/ubuntu", 
+            "date_created": "2014-07-23 14:33:50.359892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "related bug https://bugs.launchpad.net/oslo.messaging/+bug/1338732", 
+            "date_created": "2014-07-23 17:18:14.879856+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bogdando"
+        }, 
+        {
+            "content": "Package oslo.messaging has been built from changeset: http://gerrit.mirantis.com/19112\nRPM Repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-5.0.1-stable-19112/centos", 
+            "date_created": "2014-07-29 11:11:35.847332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Package oslo.messaging has been built from changeset: http://gerrit.mirantis.com/19112\nDEB Repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-5.0.1-stable-19112/ubuntu", 
+            "date_created": "2014-07-29 11:11:39.965647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Package oslo.messaging has been built from changeset: http://gerrit.mirantis.com/19112\nRPM Repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-5.0.1-stable-19112/centos", 
+            "date_created": "2014-07-30 15:00:36.024748+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Package oslo.messaging has been built from changeset: http://gerrit.mirantis.com/19112\nDEB Repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-5.0.1-stable-19112/ubuntu", 
+            "date_created": "2014-07-30 15:03:07.815731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "The summary of changes for this bug for Mirantis OpenStack is here:\nhttps://gerrit.mirantis.com/19900\nhttps://gerrit.mirantis.com/19112\nhttps://gerrit.mirantis.com/19573\nhttps://review.openstack.org/112681", 
+            "date_created": "2014-08-11 14:28:51.627991+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dmitrymex"
+        }, 
+        {
+            "content": "Two WIP patches from James and Alexei on this:\n\nhttps://review.openstack.org/94656\nhttps://review.openstack.org/106324", 
+            "date_created": "2014-08-13 05:28:40.750053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Package oslo.messaging has been built from changeset: http://gerrit.mirantis.com/19906\nDEB Repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-5.1-stable/ubuntu", 
+            "date_created": "2014-08-14 10:03:21.675578+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Package oslo.messaging has been built from changeset: http://gerrit.mirantis.com/19906\nRPM Repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-5.1-stable/centos", 
+            "date_created": "2014-08-14 10:03:45.626357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/99015\nCommitted: https://git.openstack.org/cgit/openstack/oslo-incubator/commit/?id=14720138309c67d3a6dcaeb6b7a784e21cd74ad2\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 14720138309c67d3a6dcaeb6b7a784e21cd74ad2\nAuthor: Bogdan Dobrelya <email address hidden>\nDate:   Tue Jun 10 14:26:42 2014 +0300\n\n    Slow down Kombu reconnect attempts\n    \n    For a rationale for this patch, see the discussion surrounding Bug\n    \n    When reconnecting to a RabbitMQ cluster with mirrored queues in\n    use, the attempt to release the connection can hang \"indefinitely\"\n    somewhere deep down in Kombu.  Blocking the thread for a bit\n    prior to release seems to kludge around the problem where it is\n    otherwise reproduceable.\n    \n    DocImpact\n    \n    Change-Id: Ic2ede3046709b831adf8204e4c909c589c1786c4\n    Partial-Bug: #856764\n", 
+            "date_created": "2014-08-24 15:27:19.018367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/126329", 
+            "date_created": "2014-10-06 15:44:04.369772+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/126330", 
+            "date_created": "2014-10-06 15:45:14.614480+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Ilya Pekelny (<email address hidden>) on branch: master\nReview: https://review.openstack.org/126329\nReason: Invalid change ID", 
+            "date_created": "2014-10-06 15:46:24.097453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "related bug https://bugs.launchpad.net/mos/+bug/1371723", 
+            "date_created": "2014-10-28 10:06:39.479841+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bogdando"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/132979", 
+            "date_created": "2014-11-06 09:33:33.849524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Mehdi Abaakouk (<email address hidden>) on branch: master\nReview: https://review.openstack.org/132979", 
+            "date_created": "2014-11-24 15:49:16.529531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by James Page (<email address hidden>) on branch: master\nReview: https://review.openstack.org/94656\nReason: Alternative implementation proposed which is more complete", 
+            "date_created": "2014-11-27 09:39:02.192470+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nOur rabbitmq problems have gone away by using a version of rabbitmq > 3.3.0 due to the following change in rabbitmq.\n\n26070 automatically reconsume when mirrored queues fail over (and\n      introduce x-cancel-on-ha-failover argument for the old behaviour)\n\nThis moves the logic to enable consumption on a queue back to the server side by default. Previously during a queue failover, the server notified consumers about the need to reconsume and left it to the clients to initiate it. Using version 3.3.5 of rabbitmq and 2.5.12 of kombu, we haven't had a single stuck queue after multiple restarts of members in our rabbitmq cluster.", 
+            "date_created": "2014-12-05 19:15:13.661080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sri-7"
+        }, 
+        {
+            "content": "That is a good point, thank you. I believe Oslo.messaging should has an option (default false) to use this x-cancel-on-ha-failover for all created queues", 
+            "date_created": "2014-12-08 10:11:37.228995+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bogdando"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/146047", 
+            "date_created": "2015-01-09 10:03:36.974836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/148890", 
+            "date_created": "2015-01-21 11:25:57.715809+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/148891", 
+            "date_created": "2015-01-21 11:26:09.860229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Mehdi Abaakouk (<email address hidden>) on branch: master\nReview: https://review.openstack.org/148891\nReason: wrong change id: see https://review.openstack.org/#/c/146047/", 
+            "date_created": "2015-01-21 13:11:35.564664+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/148890\nCommitted: https://git.openstack.org/cgit/openstack/oslo.messaging/commit/?id=16ee9a86830a1740655c097cd4714c67e31129bb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 16ee9a86830a1740655c097cd4714c67e31129bb\nAuthor: Mehdi Abaakouk <email address hidden>\nDate:   Wed Jan 21 10:24:54 2015 +0100\n\n    Refactor the replies waiter code\n    \n    This changes improves the way of we wait for replies.\n    Currently, one of the rpc client is reponsible to poll the amqp connection\n    used for replies and passed received answers to the correct client.\n    \n    In this way, we have some case if no client is waiting for a reply, the\n    connection is not polled and no IO are done on the wire. The direct\n    effect of that is we don't detect if the tcp connection is broken,\n    from the system point of view, the tcp connection stay alive even if someone\n    between the client and server have closed the connection.\n    \n    This change refactors the replies waiter code by creating a background\n    thread responsible to poll the connection instead of a random client.\n    The connection lost will be detect as soon as possible even if no rpc\n    client are currently used the connection.\n    \n    This is a mandatory change to be able to enable heartbeat on this\n    connection.\n    \n    Related-Bug: #1371723\n    Related-Bug: #856764\n    \n    Change-Id: I82d4029dd897ef13ae8ba3cda84a2fe65c8c91d2\n", 
+            "date_created": "2015-02-02 10:58:00.902370+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/152201", 
+            "date_created": "2015-02-02 17:30:14.260236+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Davanum Srinivas (dims) (<email address hidden>) on branch: master\nReview: https://review.openstack.org/126330\nReason: Ok Ilya, i'll mark it as abandoned", 
+            "date_created": "2015-02-03 20:27:56.976276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Mehdi Abaakouk (<email address hidden>) on branch: master\nReview: https://review.openstack.org/152201\nReason: Merged into the heartbeat patch.", 
+            "date_created": "2015-02-12 15:48:49.287287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is there any work being done to backport heartbeats to Icehouse's Oslo messaging?", 
+            "date_created": "2015-02-17 21:31:20.446773+00:00", 
+            "author": "https://api.launchpad.net/1.0/~redmind"
+        }, 
+        {
+            "content": "RPM package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1.mira10.git.873c247.acb3abf\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: Pekelny Ilya\nsubject:   rabbit: heartbeat implementation\nstatus:    patchset-created\n\nFiles placed on repository:\npython-oslo-messaging-1.8.0-fuel6.1.mira10.git.873c247.acb3abf.noarch.rpm\npython-oslo-messaging-doc-1.8.0-fuel6.1.mira10.git.873c247.acb3abf.noarch.rpm\n\nNOTE: Changeset is not merged, created temporary package repository.\nRPM repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-master-4736/centos", 
+            "date_created": "2015-03-18 13:05:18.865391+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "DEB package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1~mira10+git.873c247.acb3abf\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: Pekelny Ilya\nsubject:   rabbit: heartbeat implementation\nstatus:    patchset-created\n\nFiles placed on repository:\npython-oslo.messaging_1.8.0-fuel6.1~mira10+git.873c247.acb3abf_all.deb\n\nNOTE: Changeset is not merged, created temporary package repository.\nDEB repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-master-4736/ubuntu", 
+            "date_created": "2015-03-18 13:05:56.390763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "RPM package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1.mira10.git.689b558.acb3abf\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: Pekelny Ilya\nsubject:   rabbit: heartbeat implementation\nstatus:    patchset-created\n\nFiles placed on repository:\npython-oslo-messaging-1.8.0-fuel6.1.mira10.git.689b558.acb3abf.noarch.rpm\npython-oslo-messaging-doc-1.8.0-fuel6.1.mira10.git.689b558.acb3abf.noarch.rpm\n\nNOTE: Changeset is not merged, created temporary package repository.\nRPM repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-master-4736/centos", 
+            "date_created": "2015-03-18 13:46:22.386583+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "DEB package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1~mira10+git.689b558.acb3abf\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: Pekelny Ilya\nsubject:   rabbit: heartbeat implementation\nstatus:    patchset-created\n\nFiles placed on repository:\npython-oslo.messaging_1.8.0-fuel6.1~mira10+git.689b558.acb3abf_all.deb\n\nNOTE: Changeset is not merged, created temporary package repository.\nDEB repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-master-4736/ubuntu", 
+            "date_created": "2015-03-18 13:46:58.699774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/146047\nCommitted: https://git.openstack.org/cgit/openstack/oslo.messaging/commit/?id=b9e134d7e955b9180482d2f7c8844501c750adf6\nSubmitter: Jenkins\nBranch:    master\n\ncommit b9e134d7e955b9180482d2f7c8844501c750adf6\nAuthor: Mehdi Abaakouk <email address hidden>\nDate:   Wed Jan 21 09:13:10 2015 +0100\n\n    rabbit: heartbeat implementation\n    \n    AMQP offers a heartbeat feature to ensure that the application layer\n    promptly finds out about disrupted connections (and also completely\n    unresponsive peers). If the client requests heartbeats on connection, rabbit\n    server will regularly send messages to each connections with the expectation of\n    a response.\n    \n    To acheive this, each driver connection object spawn a thread that\n    send/retrieve heartbeat packets exchanged between the server and the\n    client.\n    \n    To protect the concurrency access to the kombu connection between the\n    driver and this thread use a lock that always prioritize the\n    heartbeat thread. So when the heartbeat thread wakes up it will acquire the\n    lock quickly, to ensure we have no heartbeat starvation when the driver\n    sends a lot of messages.\n    \n    Also when we are polling the broker, the lock can be held for a long\n    time by the 'consume' method, so this one does the heartbeat stuffs itself.\n    \n    DocImpact: 2 new configuration options for Rabbit driver\n    \n    Co-Authored-By: Oleksii Zamiatin <email address hidden>\n    Co-Authored-By: Ilya Pekelny <email address hidden>\n    \n    Related-Bug: #1371723\n    Closes-Bug: #856764\n    \n    Change-Id: I1d3a635f3853bc13ffc14034468f1ac6262c11a3\n", 
+            "date_created": "2015-03-18 18:44:49.174765+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "RPM package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1.mira10.git.b9e134d.acb3abf\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: openstack-ci-mirrorer-jenkins\nsubject:   rabbit: heartbeat implementation\nstatus:    patchset-created\n\nFiles placed on repository:\npython-oslo-messaging-1.8.0-fuel6.1.mira10.git.b9e134d.acb3abf.noarch.rpm\npython-oslo-messaging-doc-1.8.0-fuel6.1.mira10.git.b9e134d.acb3abf.noarch.rpm\n\nNOTE: Changeset is not merged, created temporary package repository.\nRPM repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-master-4736/centos", 
+            "date_created": "2015-03-18 18:52:29.015703+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "RPM package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1.mira10\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: openstack-ci-mirrorer-jenkins\nsubject:   rabbit: heartbeat implementation\nstatus:    change-merged\n\nFiles placed on repository:\npython-oslo-messaging-1.8.0-fuel6.1.mira10.noarch.rpm\npython-oslo-messaging-doc-1.8.0-fuel6.1.mira10.noarch.rpm\n\nChangeset merged. Package placed on primary repository\nRPM repository URL: http://osci-obs.vm.mirantis.net:82/centos-fuel-master/centos", 
+            "date_created": "2015-03-18 18:53:02.754694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "DEB package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1~mira10\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: openstack-ci-mirrorer-jenkins\nsubject:   rabbit: heartbeat implementation\nstatus:    change-merged\n\nFiles placed on repository:\npython-oslo.messaging_1.8.0-fuel6.1~mira10_all.deb\n\nChangeset merged. Package placed on primary repository\nDEB repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-master/ubuntu", 
+            "date_created": "2015-03-18 18:53:11.163733+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "DEB package oslo.messaging has been built for project openstack/oslo.messaging\nPackage version == 1.8.0, package release == fuel6.1~mira10+git.b9e134d.acb3abf\n\nChangeset: https://review.fuel-infra.org/4736\nproject:   openstack/oslo.messaging\nbranch:    master\nauthor:    Pekelny Ilya\ncommitter: openstack-ci-mirrorer-jenkins\nsubject:   rabbit: heartbeat implementation\nstatus:    patchset-created\n\nFiles placed on repository:\npython-oslo.messaging_1.8.0-fuel6.1~mira10+git.b9e134d.acb3abf_all.deb\n\nNOTE: Changeset is not merged, created temporary package repository.\nDEB repository URL: http://osci-obs.vm.mirantis.net:82/ubuntu-fuel-master-4736/ubuntu", 
+            "date_created": "2015-03-18 18:53:12.961098+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oscirobot"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/167299", 
+            "date_created": "2015-03-24 16:28:50.808359+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Mehdi Abaakouk (<email address hidden>) on branch: master\nReview: https://review.openstack.org/167299", 
+            "date_created": "2015-03-24 16:32:07.122058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/167308", 
+            "date_created": "2015-03-24 16:35:40.490194+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/167308\nCommitted: https://git.openstack.org/cgit/openstack/oslo.messaging/commit/?id=64bdd80c5fe4d53ac8d7ab3ed906ec9feaeb7ec4\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 64bdd80c5fe4d53ac8d7ab3ed906ec9feaeb7ec4\nAuthor: Mehdi Abaakouk <email address hidden>\nDate:   Wed Jan 21 09:13:10 2015 +0100\n\n    rabbit: heartbeat implementation\n    \n    AMQP offers a heartbeat feature to ensure that the application layer\n    promptly finds out about disrupted connections (and also completely\n    unresponsive peers). If the client requests heartbeats on connection, rabbit\n    server will regularly send messages to each connections with the expectation of\n    a response.\n    \n    To acheive this, each driver connection object spawn a thread that\n    send/retrieve heartbeat packets exchanged between the server and the\n    client.\n    \n    To protect the concurrency access to the kombu connection between the\n    driver and this thread use a lock that always prioritize the\n    heartbeat thread. So when the heartbeat thread wakes up it will acquire the\n    lock quickly, to ensure we have no heartbeat starvation when the driver\n    sends a lot of messages.\n    \n    Also when we are polling the broker, the lock can be held for a long\n    time by the 'consume' method, so this one does the heartbeat stuffs itself.\n    \n    DocImpact: 2 new configuration options for Rabbit driver\n    \n    Co-Authored-By: Oleksii Zamiatin <email address hidden>\n    Co-Authored-By: Ilya Pekelny <email address hidden>\n    \n    Related-Bug: #1371723\n    Closes-Bug: #856764\n    \n    Change-Id: I1d3a635f3853bc13ffc14034468f1ac6262c11a3\n    (cherry picked from commit b9e134d7e955b9180482d2f7c8844501c750adf6)\n", 
+            "date_created": "2015-03-25 00:22:21.006877+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The attachment \"impl_kombu.py.patch\" seems to be a patch.  If it isn't, please remove the \"patch\" flag from the attachment, remove the \"patch\" tag, and if you are a member of the ~ubuntu-reviewers, unsubscribe the team.\n\n[This is an automated message performed by a Launchpad user owned by ~brian-murray, for any issues please contact him.]", 
+            "date_created": "2015-03-25 16:19:36.449796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~crichton"
+        }, 
+        {
+            "content": "This bug was fixed in the package oslo.messaging - 1.8.1-0ubuntu1\n\n---------------\noslo.messaging (1.8.1-0ubuntu1) vivid; urgency=medium\n\n  * New upstream release for OpenStack Kilo, including enablement\n    of RabbitMQ heartbeating for improved connection failure detection\n    (LP: #856764):\n    - d/p/zmq-redis-fix-topic-registration.patch,\n      d/p/disable-zmq-tests.patch: Dropped, included upstream.\n    - d/p/zmq-client-pooling.patch: Rebase.\n    - d/p/disable-new-executors.patch: Disable hard requirement for\n      trollius and aioeventlet executors for vivid release.\n    - d/control: Align minimum version requirements with upstream.\n  * d/pydist-overrides: Add overrides for new oslo package naming.\n  * Misc fixes for zmq driver:\n    - d/p/Fix-changing-keys-during-iteration-in-matchmaker-hea.patch:\n      Fix changing keys during iteration in matchmaker heartbeat\n      (LP: #1432966).\n    - d/p/Add-pluggability-for-matchmakers.patch: Add entry points\n      for matchmaker drivers (LP: #1291701).\n -- James Page <email address hidden>   Mon, 30 Mar 2015 09:52:29 +0100", 
+            "date_created": "2015-03-30 15:55:07.637642+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Any way to have this fixed in Juno too ?", 
+            "date_created": "2015-04-03 14:14:41.325943+00:00", 
+            "author": "https://api.launchpad.net/1.0/~quentin-machu"
+        }, 
+        {
+            "content": "+ 1 is there a way to apply / backport this fix into Juno ? \nOr maybe, pip install -U oslo.messagin will do ?", 
+            "date_created": "2015-04-08 20:36:16.206915+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alejandro-f"
+        }, 
+        {
+            "content": "@Quentin, @Alejandro: Check out http://lists.openstack.org/pipermail/openstack-operators/2015-May/006849.html", 
+            "date_created": "2015-06-11 18:20:45.924969+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }, 
+        {
+            "content": "@Mehdi Abaakouk, @Alexei Kornienko, My patch about keepalive options had been merged into pyamqp[1] ,  it is very useful for aware the connection being terminated and raise a socket error exception.\n\nWe can add some keepalive options in oslo.messaging[2] and pass these keepalive options to kombu pyamqp transport,    so the idle connections in consumer will aware the connection being terminated and the consumer will  catch the socket Exception, and reconnect again.\n\nThe method of tcp keepalive is  simpler than  heartbeat checking thread. I had used this approach  in multiple production environments  more than a year, it is effective.\n\n[1]  https://github.com/celery/py-amqp/commit/b9a6601a93927449fa6f524750e3842cc5c181bd\n[2]  https://github.com/zhurongze/oslo.messaging/commit/c04d9b18536e8032a79c1889adde7beaf517adaf\n", 
+            "date_created": "2015-09-13 16:38:35.469176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zrzhit"
+        }, 
+        {
+            "content": "update [2] https://github.com/zhurongze/oslo.messaging/commit/71c3380c4c411eed261ab0a4741931d07d5c44c7", 
+            "date_created": "2015-09-13 17:33:50.808560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zrzhit"
+        }, 
+        {
+            "content": "If I follow correctly, this no longer effects Cinder since it was implemented in oslo.messaging.", 
+            "date_created": "2016-09-27 22:02:52.931033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }
+    ]
+}

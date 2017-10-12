@@ -1,0 +1,61 @@
+{
+    "status": "Incomplete", 
+    "last_updated": "2017-09-01 01:06:49.951355+00:00", 
+    "description": "Description\n===========\nwhen boot vm with ephemeral disk, the default format is vfat. but when the image has metadata os_type=linux, it should use ext4. in fact, it still use vfat format in ephemeral disk.\n\nSteps to reproduce\n==================\n1. not define virt_mkfs in nova.conf (This is by default)\n2. boot a vm with ephemeral disk first.\n3. add metadata os_type=linux in image\n4. boot a vm with ephemeral disk on the same compute node\n\nExpected result\n===============\nEphemeral Disk format using ext4 format\n\nActual result\n=============\nEphemeral Disk format using vfat format\n\nEnvironment\n===========\nWe tested in Openstack Mitaka/Netwon and master", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1711786", 
+    "owner": "None", 
+    "id": 1711786, 
+    "index": 6993, 
+    "created": "2017-08-19 05:51:13.621546+00:00", 
+    "title": "ephemeral disk format not correct with os_type=linux metadata in image", 
+    "comments": [
+        {
+            "content": "Description\n===========\nwhen boot vm with ephemeral disk, the default format is vfat. but when the image has metadata os_type=linux, it should use ext4. in fact, it still use vfat format in ephemeral disk.\n\nSteps to reproduce\n==================\n1. not define virt_mkfs in nova.conf (This is by default)\n2. add metadata os_type=linux in image\n3. boot a vm with ephemeral disk\n\nExpected result\n===============\nEphemeral Disk format using ext4 format\n\nActual result\n=============\nEphemeral Disk format using vfat format\n\n\nEnvironment\n===========\nWe tested in Openstack Mitaka/Netwon and master", 
+            "date_created": "2017-08-19 05:51:13.621546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~limao"
+        }, 
+        {
+            "content": "can you paste more info such as your glance image information? seems the format of glance v1/v2 api is different ?\n\nhttps://docs.openstack.org/image-guide/image-metadata.html\n\n\n 488     def _inherit_properties_from_image(self, image, auto_disk_config):\n 489         image_properties = image.get('properties', {})\n.........\n 497\n 498         return {\n 499             'os_type': image_properties.get('os_type'),\n 500             'architecture': image_properties.get('architecture'),\n 501             'vm_mode': image_properties.get('vm_mode'),\n 502             'auto_disk_config': auto_disk_config\n 503         }\n", 
+            "date_created": "2017-08-22 07:17:30.149045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "@jichenjc:\n\nHere is the image info,I'm using:\n\n# glance  image-show a448fa48-be28-460a-991c-25adbb7740d5\n+------------------+--------------------------------------+\n| Property         | Value                                |\n+------------------+--------------------------------------+\n| checksum         | 689f460a4156de122d9015cdad78f666     |\n| container_format | bare                                 |\n| created_at       | 2017-08-01T07:13:41Z                 |\n| description      | SOC upload image                     |\n| disk_format      | qcow2                                |\n| id               | a448fa48-be28-460a-991c-25adbb7740d5 |\n| min_disk         | 0                                    |\n| min_ram          | 0                                    |\n| name             | CentOS-6.7-x86_64-harden-v2.0        |\n| os_type          | linux                                |\n| owner            | 1189ed2dcb6444e58805f9f7409f9ad0     |\n| protected        | True                                 |\n| size             | 1316225024                           |\n| status           | active                               |\n| tags             | []                                   |\n| updated_at       | 2017-08-19T02:03:54Z                 |\n| virtual_size     | None                                 |\n| visibility       | public                               |\n+------------------+--------------------------------------+\n\n\nwe added os_type = linux in the image.\nThe problem looks like in :\nvirt/libvirt/driver.py\n3196         # Lookup the filesystem type if required\n3197         os_type_with_default = disk.get_fs_type_for_os_type(instance.os_type)\n3198         # Generate a file extension based on the file system\n3199         # type and the mkfs commands configured if any\n3200         file_extension = disk.get_file_extension_for_os_type(\n3201                                                           os_type_with_default)\n\nin Line 3197, if we did not define virt_mkfs in nova.conf, the os_type will change to \"default\" even you define the os_type is linux.\n\nThanks.", 
+            "date_created": "2017-08-22 08:19:24.262062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~limao"
+        }, 
+        {
+            "content": "thanks, I knew the logic as I did some modifications to the mkfs logic before\nwhat I can't be sure is \nhttps://docs.openstack.org/image-guide/image-metadata.html\n\nsays you need set\nproperties       | architecture='arm', hypervisor_type='qemu' \n\nso nova code I gave above seems try to extract from properties and \nproperties       | architecture='arm', hypervisor_type='qemu' , os_type='linux'\n \nmight be worthy to give a try ,I am not very familiar with the glance nova interaction and maybe someone familiar with glance api can provide you more info about it ", 
+            "date_created": "2017-08-22 09:42:39.398197+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "so my concern is whether the os_type is really set to make nova knows it's a 'linux' and perform the logic...", 
+            "date_created": "2017-08-22 09:43:07.901172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Hi Jichenjc\n\nI set pdb in the following code, I can see the os_type is linux:\n\n\n> /usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py(3012)_create_image()\n-> os_type_with_default = disk_api.get_fs_type_for_os_type(\n(Pdb) l\n3007 \t                                 network_info, admin_pass, files, inject_files,\n3008 \t                                 fallback_from_host)\n3009\n3010 \t        import pdb;pdb.set_trace()\n3011 \t        # Lookup the filesystem type if required\n3012 ->\t        os_type_with_default = disk_api.get_fs_type_for_os_type(\n3013 \t            instance.os_type)\n3014 \t        # Generate a file extension based on the file system\n3015 \t        # type and the mkfs commands configured if any\n3016 \t        file_extension = disk_api.get_file_extension_for_os_type(\n3017 \t                                                          os_type_with_default)\n(Pdb) print instance.os_type\nlinux\n(Pdb)", 
+            "date_created": "2017-08-23 05:01:44.904560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~limao"
+        }, 
+        {
+            "content": "ok, as you are able to pdb, how about add a trace here \n\nhttps://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L99\n\nand see what's the value of specified_fs when calling utils.mkfs?\n\nAnd, can you check default_ephemeral_format setting in nova.conf as well? \nagain, are you using --ephemeral param in booting or just boot with a flavor with empheral disk setting?", 
+            "date_created": "2017-08-24 03:35:06.845455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "If os_type is linux that deep in, I don't see how it's possible to get a non ext4 answer. This is going to be what's called to build the ephemeral - https://github.com/openstack/nova/blob/4cd6a3a1b473795a63f076c7986d1b48d83af99d/nova/virt/disk/api.py#L113-L117", 
+            "date_created": "2017-08-31 14:02:58.713603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "@jichenjc and @Sean,\n\nSorry for the delay reply.\nWe double checked the problem happened when we boot a vm without metadata os_type=linux, then boot another vm with os_type=linux on the same host.\n\nWhen boot the first vm, it will create will create ephemeral disk cache in _base dir, in this case, it initial with vfat format. (Because it do not has os_type=linux)\n\nWhen boot the second vm, it will use the same cache image , this is because:\nvirt/libvirt/driver.py\n3196 # Lookup the filesystem type if required\n3197 os_type_with_default = disk.get_fs_type_for_os_type(instance.os_type)\n3198 # Generate a file extension based on the file system\n3199 # type and the mkfs commands configured if any\n3200 file_extension = disk.get_file_extension_for_os_type(\n3201 os_type_with_default)\n\nin Line 3197, if we did not define virt_mkfs in nova.conf, the os_type will change to \"default\" even you define the os_type is linux.\n\nSo , second vm will use the ephemeral disk cache already initial to vfat. In this case, it will get non ext4 in the vm.\n\n\nYou can reproduce this problem by:\n1. boot a vm without metadata os_type=linux first.\n2. boot second vm with metadata os_type=linux. \nThen you will see the ephemeral disk format is vfat in the vm.\n\nThanks.\n\nLiping Mao", 
+            "date_created": "2017-09-01 01:06:08.878351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~limao"
+        }
+    ]
+}

@@ -1,0 +1,80 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-01-27 00:52:07.855252+00:00", 
+    "description": "This was found purely through code inspection, but the online data migration to move aggregates to the nova API database has a problem here:\n\nhttps://github.com/openstack/nova/blob/a74d3ae4e815e3727961ef67bd801dada0267a0b/nova/objects/aggregate.py#L596\n\nThe problem is the AggregateNameExists exception message is translatable and could be in unicode characters, and when casting that to str() in python 2.7 it results in a UnicodeEncodeError:\n\nPython 2.7.6 (default, Jun 22 2015, 18:00:18) \n[GCC 4.8.2] on linux2\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> msg = u'\\xF0\\x9F\\x92\\xA9'\n>>> msg\nu'\\xf0\\x9f\\x92\\xa9'\n>>> str(msg)\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\nUnicodeEncodeError: 'ascii' codec can't encode characters in position 0-3: ordinal not in range(128)", 
+    "tags": [
+        "i18n", 
+        "nova-manage", 
+        "upgrades"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1653261", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1653261, 
+    "index": 4719, 
+    "created": "2016-12-30 15:54:39.362640+00:00", 
+    "title": "nova-manage db online_data_migrations can fail with UnicodeEncodeError if there are duplicate aggregates or flavors", 
+    "comments": [
+        {
+            "content": "This was found purely through code inspection, but the online data migration to move aggregates to the nova API database has a problem here:\n\nhttps://github.com/openstack/nova/blob/a74d3ae4e815e3727961ef67bd801dada0267a0b/nova/objects/aggregate.py#L596\n\nThe problem is the AggregateNameExists exception message is translatable and could be in unicode characters, and when casting that to str() in python 2.7 it results in a UnicodeEncodeError:\n\nPython 2.7.6 (default, Jun 22 2015, 18:00:18) \n[GCC 4.8.2] on linux2\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> msg = u'\\xF0\\x9F\\x92\\xA9'\n>>> msg\nu'\\xf0\\x9f\\x92\\xa9'\n>>> str(msg)\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\nUnicodeEncodeError: 'ascii' codec can't encode characters in position 0-3: ordinal not in range(128)", 
+            "date_created": "2016-12-30 15:54:39.362640+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I've marked this as High severity because anyone that hits this is going to be blocked on running their online data migrations.", 
+            "date_created": "2016-12-30 15:56:40.884332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Looks like this was copied from the online flavor migration code here:\n\nhttps://github.com/openstack/nova/blob/a74d3ae4e815e3727961ef67bd801dada0267a0b/nova/objects/flavor.py#L726", 
+            "date_created": "2016-12-30 15:57:47.260347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It also looks like hacking check N325 was meant for catching stuff like this but it doesn't handle the LOG.error(str(e)) format of this.", 
+            "date_created": "2016-12-30 15:58:57.130529+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/415896", 
+            "date_created": "2016-12-30 16:56:50.263227+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/415898", 
+            "date_created": "2016-12-30 17:32:27.159195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/415899", 
+            "date_created": "2016-12-30 17:59:05.672603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Dropping the severity back to medium because I think it'd be pretty rare to hit this case as the aggregate and flavors object code checks to see if the main database is empty (migrated) before creating a new resource in the API DB so the only way I can think of that this duplicate exception would happen is if someone pre-populated the API database rather than run the online migrations, or if there was some sort of weird race failure during the migration. Plus you could workaround it by deleting the duplicate resource from the main DB.", 
+            "date_created": "2016-12-30 18:04:02.700834+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/415896\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=641f5f4529509debef6e8e58f01a2ea20109c0be\nSubmitter: Jenkins\nBranch:    master\n\ncommit 641f5f4529509debef6e8e58f01a2ea20109c0be\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Dec 30 11:53:49 2016 -0500\n\n    Actually test online flavor migrations\n    \n    The way the test was written for online flavor migrations\n    we didn't have any flavors in the main database, so nothing\n    was migrated and nothing was asserting that we had migrated\n    anything. This is more or less due to using USES_DB_SELF\n    and then not populating the main database with any flavors.\n    \n    This change creates a single flavor in the main database\n    prior to the online data migration and asserts we actually\n    started with one and it was migrated.\n    \n    Change-Id: Ia18f8abdf10785dc396f5c07e239326059528daf\n    Partial-Bug: #1653261\n", 
+            "date_created": "2017-01-05 21:57:15.507746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/415898\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=eda54b1ed73b0c102f4352e1522e34908dc7c17f\nSubmitter: Jenkins\nBranch:    master\n\ncommit eda54b1ed73b0c102f4352e1522e34908dc7c17f\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Dec 30 12:27:48 2016 -0500\n\n    Handle unicode when dealing with duplicate flavors during online migrations\n    \n    In python 2.7 you can't cast unicode to str and you'll get a\n    UnicodeEncodeError if you try. Since our exception messages are\n    translated, they can contain unicode and if we hit a duplicate flavor\n    exception while performing online flavor migrations it will break the\n    migration and block any further migrations until resolved - which would\n    require manual intervention.\n    \n    This patch fixes the bug so that we use six.text_type instead of str\n    for logging the duplicate exception and adds a test to exhibit the bug\n    and prove it's fixed.\n    \n    On a side note, it's curious that we don't delete the duplicate flavor\n    from the main database during the online data migration, but it's also\n    strange that you'd have duplicates in the API database because the\n    Flavor.create() checks to see if all flavors have been migrated from\n    the main DB to the API DB and if not you can't create new flavors in\n    the API DB - so the only way to get the duplicates is either by inserting\n    them into the API DB manually or perhaps some other kind of race issue.\n    Anyway, that's not dealt with here.\n    \n    Change-Id: I3bdb1a8ca72c3e72ddc3bc5102cff8df18148617\n    Partial-Bug: #1653261\n", 
+            "date_created": "2017-01-26 02:15:17.935031+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/415899\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=539d3512d647ffe562091b7facbc287e75077d92\nSubmitter: Jenkins\nBranch:    master\n\ncommit 539d3512d647ffe562091b7facbc287e75077d92\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Dec 30 12:56:20 2016 -0500\n\n    Handle unicode when dealing with duplicate aggregate errors during migration\n    \n    The AggregateNameExists message can be translated and have unicode in it\n    so we can't cast it to a str in python 2.7 else we'll get a\n    UnicodeEncodeError. That would break the online data migration for\n    aggregates along with any other online data migrations that run after\n    that one which impacts upgrades.\n    \n    This uses six.text_type rather than str for logging the error and adds\n    a test to recreate the bug and show that it's fixed.\n    \n    Change-Id: I040db22ecbb9fabe5bbda8a3d9600cc9f76cb170\n    Closes-Bug: #1653261\n", 
+            "date_created": "2017-01-26 02:15:54.576782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b3 development milestone.", 
+            "date_created": "2017-01-27 00:52:06.915744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

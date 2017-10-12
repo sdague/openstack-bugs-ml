@@ -1,0 +1,71 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2017-07-28 16:24:28.133943+00:00", 
+    "description": "When booting instance with block_device_mapping provided, in the current implementation, the \"destination_type\" is allowed to be None, and this lead to un-sync between Nova and Cinder:\n\nStep 1: Booting with block_device_mapping, leave destination_type to be None:\n\nroot@SZX1000191849:/var/log/nova# nova --debug boot  --flavor 1 --image 2ba75018-403f-407b-864a-08564022e1f8 --nic net-id=cce1d2f1-acf4-4646-abdc-069f8d0dbb71 --block-device 'source=volume,id=9f49d5b0-3625-46a2-9ed4-d82f19949148' test_bdm\n\nthe corresponding REST call is:\nDEBUG (session:342) REQ: curl -g -i -X POST http://10.229.45.17:8774/v2.1/os-volumes_boot -H \"Accept: application/json\" -H \"User-Agent: python-novaclient\" -H \"OpenStack-API-Version: compute 2.37\" -H \"X-OpenStack-Nova-API-Version: 2.37\" -H \"X-Auth-Token: {SHA1}4d8c2c43338e1c4d96e08bcd1c2f3ff36de14154\" -H \"Content-Type: application/json\" -d '{\"server\": {\"name\": \"test_bdm\", \"imageRef\": \"2ba75018-403f-407b-864a-08564022e1f8\", \"block_device_mapping_v2\": [{\"source_type\": \"image\", \"delete_on_termination\": true, \"boot_index\": 0, \"uuid\": \"2ba75018-403f-407b-864a-08564022e1f8\", \"destination_type\": \"local\"}, {\"source_type\": \"volume\", \"uuid\": \"9f49d5b0-3625-46a2-9ed4-d82f19949148\"}], \"flavorRef\": \"1\", \"max_count\": 1, \"min_count\": 1, \"networks\": [{\"uuid\": \"cce1d2f1-acf4-4646-abdc-069f8d0dbb71\"}]}}'\n\nStep 2: After the instance is successfully launched, the detailed info is like this:\n\nroot@SZX1000191849:/var/log/nova# nova show 83d9ec32-93e0-441a-ae10-00e08b65de0b\n+--------------------------------------+----------------------------------------------------------------------------------+\n| Property                             | Value                                                                            |\n+--------------------------------------+----------------------------------------------------------------------------------+\n| OS-DCF:diskConfig                    | MANUAL                                                                           |\n| OS-EXT-AZ:availability_zone          | nova                                                                             |\n| OS-EXT-SRV-ATTR:host                 | SZX1000191849                                                                    |\n| OS-EXT-SRV-ATTR:hostname             | test-bdm                                                                         |\n| OS-EXT-SRV-ATTR:hypervisor_hostname  | SZX1000191849                                                                    |\n| OS-EXT-SRV-ATTR:instance_name        | instance-00000016                                                                |\n| OS-EXT-SRV-ATTR:kernel_id            | 87c9afd6-3a47-4a4c-a804-6b456d68136d                                             |\n| OS-EXT-SRV-ATTR:launch_index         | 0                                                                                |\n| OS-EXT-SRV-ATTR:ramdisk_id           | acd02b28-6484-4f90-a5e7-bba7159343e1                                             |\n| OS-EXT-SRV-ATTR:reservation_id       | r-fiqwkq02                                                                       |\n| OS-EXT-SRV-ATTR:root_device_name     | /dev/vda                                                                         |\n| OS-EXT-SRV-ATTR:user_data            | -                                                                                |\n| OS-EXT-STS:power_state               | 1                                                                                |\n| OS-EXT-STS:task_state                | -                                                                                |\n| OS-EXT-STS:vm_state                  | active                                                                           |\n| OS-SRV-USG:launched_at               | 2016-11-25T06:50:36.000000                                                       |\n| OS-SRV-USG:terminated_at             | -                                                                                |\n| accessIPv4                           |                                                                                  |\n| accessIPv6                           |                                                                                  |\n| config_drive                         |                                                                                  |\n| created                              | 2016-11-25T06:50:30Z                                                             |\n| description                          | -                                                                                |\n| flavor                               | m1.tiny (1)                                                                      |\n| hostId                               | 410c49382deba8e205044b231169b2a656b27b6c994815366712b62e                         |\n| host_status                          | UP                                                                               |\n| id                                   | 83d9ec32-93e0-441a-ae10-00e08b65de0b                                             |\n| image                                | cirros-0.3.4-x86_64-uec (2ba75018-403f-407b-864a-08564022e1f8)                   |\n| key_name                             | -                                                                                |\n| locked                               | False                                                                            |\n| metadata                             | {}                                                                               |\n| name                                 | test_bdm                                                                         |\n| os-extended-volumes:volumes_attached | [{\"id\": \"9f49d5b0-3625-46a2-9ed4-d82f19949148\", \"delete_on_termination\": false}] |\n| private network                      | 2001:db8:8000::5, 10.0.0.13                                                      |\n| progress                             | 0                                                                                |\n| security_groups                      | default                                                                          |\n| status                               | ACTIVE                                                                           |\n| tags                                 | []                                                                               |\n| tenant_id                            | 405a8b8100ae47ffaa89730681ee400f                                                 |\n| updated                              | 2016-11-25T06:50:36Z                                                             |\n| user_id                              | 43db6c7e51754c0d8c8b87278144f789                                                 |\n+--------------------------------------+----------------------------------------------------------------------------------+\n\n\nAs been shown, a volume attach is recored in Nova\n\nStep 3: Check the volume status in Cinder:\n\nroot@SZX1000191849:/var/log/nova# cinder list\n+--------------------------------------+-----------+------+------+-------------+----------+-------------+\n| ID                                   | Status    | Name | Size | Volume Type | Bootable | Attached to |\n+--------------------------------------+-----------+------+------+-------------+----------+-------------+\n| 9f49d5b0-3625-46a2-9ed4-d82f19949148 | available | -    | 1    | lvmdriver-1 | false    |             |\n+--------------------------------------+-----------+------+------+-------------+----------+-------------+\n\nThe volume is still available.\n\n\nThe volume is actually not attached by checking the instance's XML.\nWe should forrbid the boot call with None destination_type both in Nova and NovaClient.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1644725", 
+    "owner": "None", 
+    "id": 1644725, 
+    "index": 4688, 
+    "created": "2016-11-25 06:51:54.302644+00:00", 
+    "title": "Check destination_type when booting with bdm provided", 
+    "comments": [
+        {
+            "content": "TBD", 
+            "date_created": "2016-11-25 06:51:54.302644+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhengzhenyu"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/402364", 
+            "date_created": "2016-11-25 09:02:23.614475+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/402372", 
+            "date_created": "2016-11-25 09:23:00.825620+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "But Destination_type in bdm is optional, checks in nova will make it backward incompatible. I am not sure why cinder does not mark volume in-use.", 
+            "date_created": "2016-12-07 05:36:25.631557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ghanshyammann"
+        }, 
+        {
+            "content": "Humm, interesting problem. I will try reproducing this problem on the gate with a new Tempest test.", 
+            "date_created": "2016-12-07 18:01:49.736577+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oomichi"
+        }, 
+        {
+            "content": "That is https://review.openstack.org/408254", 
+            "date_created": "2016-12-07 18:35:17.546024+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oomichi"
+        }, 
+        {
+            "content": "@Ken'ichi Ohmichi, maybe you will also be interested in this one:\nhttps://bugs.launchpad.net/nova/+bug/1645175", 
+            "date_created": "2016-12-08 01:45:25.138399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhengzhenyu"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/402364\nCommitted: https://git.openstack.org/cgit/openstack/python-novaclient/commit/?id=a58959dd9ec3962cbb6d273f136286809678b0c4\nSubmitter: Jenkins\nBranch:    master\n\ncommit a58959dd9ec3962cbb6d273f136286809678b0c4\nAuthor: Kevin_Zheng <email address hidden>\nDate:   Fri Nov 25 16:55:18 2016 +0800\n\n    Check source_type and destination_type when booting with bdm provided\n    \n    When booting instance with block_device_mapping provided,\n    in the current implementation, the \"destination_type\" is\n    allowed to be None, and this lead to un-sync between Nova\n    and Cinder: Nova will have a bdm in its record while the\n    volume is still in \"available\" status in cinder.\n    \n    Also we should check source_type here\n    \n    This patch adds a check for source_type and\n    destination_type, source_type shoud be within\n    'volume', 'image', 'snapshot' or 'blank';\n    When empty destination_type is provided, it\n    will be assigned to an default value according\n    to source_type, if it is provided with a wrong\n    value, command error will raise and information\n    will shown.\n    \n    Change-Id: If6c7d8ed58a94d262ac6c300e75aca4cdf99ff1d\n    partial-bug: #1644725\n", 
+            "date_created": "2016-12-13 16:11:14.069795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Zhenyu Zheng (<email address hidden>) on branch: master\nReview: https://review.openstack.org/402372", 
+            "date_created": "2017-07-05 02:31:18.267930+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There are no currently open reviews on this bug, changing the status back to the previous state and unassigning. If there are active reviews related to this bug, please include links in comments. ", 
+            "date_created": "2017-07-24 15:38:42.989528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "It does feel like it might be better to fix this on the client side. Marking as opinion as the patch author abandoned the nova patch. It is welcome to come back later.", 
+            "date_created": "2017-07-28 16:24:27.183714+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

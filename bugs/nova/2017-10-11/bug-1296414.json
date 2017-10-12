@@ -1,0 +1,216 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-09 20:39:33.014400+00:00", 
+    "description": "There are a couple of cases in the compute manager where we don't pass reservations to _delete_instance().  For example, one of them is cleaning up when we see a delete that is stuck in DELETING.\n\nThe only place we ever update quotas as part of delete should be when the instance DB record is removed. If something is stuck in DELETING, it means that the quota was not updated.  We should make sure we're always updating the quota when the instance DB record is removed.\n\nSoft delete kinda throws a wrench in this, though, because I think you want soft deleted instances to not count against quotas -- yet their DB records will still exist. In this case, it seems we may have a race condition in _delete_instance() -> _complete_deletion() where if the instance somehow was SOFT_DELETED, quotas would have updated twice (once in soft_delete and once in _complete_deletion).", 
+    "tags": [
+        "compute", 
+        "in-stable-juno", 
+        "in-stable-kilo", 
+        "quotas"
+    ], 
+    "importance": "High", 
+    "heat": 58, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1296414", 
+    "owner": "https://api.launchpad.net/1.0/~dstepanenko", 
+    "id": 1296414, 
+    "index": 1444, 
+    "created": "2014-03-23 21:11:49.059407+00:00", 
+    "title": "quotas not updated when periodic tasks or startup finish deletes", 
+    "comments": [
+        {
+            "content": "There are a couple of cases in the compute manager where we don't pass reservations to _delete_instance().  For example, one of them is cleaning up when we see a delete that is stuck in DELETING.\n\nThe only place we ever update quotas as part of delete should be when the instance DB record is removed. If something is stuck in DELETING, it means that the quota was not updated.  We should make sure we're always updating the quota when the instance DB record is removed.", 
+            "date_created": "2014-03-23 21:11:49.059407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "I went through the code and I think the scenario pointed out is the only routine that we need to take care \nthe others seems already handled (include soft delete)", 
+            "date_created": "2014-04-15 08:00:41.149436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "please take a look at scheduler/manager\nthere is a periodic function that will expire the reservation and destroy them\nso we only 'reserve' and no 'rollback' or 'commit' actions\nfor this kind of quota because of 'DELETING' ,we might let system expire and destroy them ...", 
+            "date_created": "2014-04-15 08:05:54.908505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "_reclaim_queued_deletes which handles soft_delete instances will not commit or rollback the quota \nso that means only 1 quota action are performed during soft-delete stage ....", 
+            "date_created": "2014-04-15 08:13:37.653655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "This is also easily triggered by bug 1299139.", 
+            "date_created": "2014-04-17 21:18:57.538845+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/89318", 
+            "date_created": "2014-04-21 08:48:54.807437+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/89761", 
+            "date_created": "2014-04-23 07:26:48.065544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "some discussion topics: \n\ncomments in _complete_deletion\n\n        # FIXME(comstud): See bug 1296414. Quotas here should only be\n        # committed if the instance is not SOFT_DELETED. If there were\n        # some sort of race and the instance was SOFT_DELETED, we should\n        # not commit quotas, as they would have already been done in\n        # soft_delete().\n\nI think we are not able to enter into this condition because _complete_deletion was called by _complete_partial_deletion and \n_delete_instance\n\nonly if the instance state is DELETED you can enter _complete_partial_deletion\nif we can call _complete_deletion in _delete_instance, that means instance state already become DELETED \n(instance.vm_state = vm_states.DELETED) \n\nalso, if the _delete_instance was called with instance state SOFT_DELETED, the quotas.rollback() will be called \nit will lead quotas.commit later take no effect since the quotas.reservations is already None\n\nso I think it's not a problem ", 
+            "date_created": "2014-04-24 10:01:11.342282+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "in _reclaim_queued_deletes there is \n        # FIXME(comstud): Dummy quota object for now. See bug 1296414.\n        # We have potential for inconsistency if we decide here to not\n        # update quotas. _delete_instance() should determine whether or\n        # not to update quotas based on if instance is in a SOFT_DELETED\n        # state or not.\n\nI think it's reasonable \nsoft_delete_instance will update the instance to soft_delete first then commit the quota\n_init_instance will not handle SOFT_DELETE instance and leave it to _reclaim_queued_deletes \n\nin this case, we need to commit the quota , I will submit a patch for it\n\nlet me know your comments, thanks", 
+            "date_created": "2014-04-24 10:04:40.095437+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/90280", 
+            "date_created": "2014-04-25 03:31:29.157773+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/90280\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=29f2953edf2dc95569d53433d7c28251f652f8d4\nSubmitter: Jenkins\nBranch:    master\n\ncommit 29f2953edf2dc95569d53433d7c28251f652f8d4\nAuthor: jichenjc <email address hidden>\nDate:   Wed Apr 23 06:17:02 2014 +0800\n\n    Remove comments and to-do for quota inconsistency\n    \n    There are comments for quota inconsistency in function\n    _complete_deletion and considering race conditions.\n    \n    _complete_deletion was called by _complete_partial_deletion\n    and_delete_instance only if the instance state is DELETED\n    compute can enter _complete_partial_deletion\n    while if _complete_deletion called in _delete_instance,\n    that means instance vm state already become DELETED\n    \n    also, if the _delete_instance was called with instance\n    state SOFT_DELETED, the quotas.rollback() will be called\n    it will make quotas.commit later take no effect\n    since the quotas.reservations is already None\n    \n    so there is no race conditions and the comments can be removed\n    \n    Change-Id: Iddb9e5197ca7ca9bd4692d63bb5c7f9a2ab44be5\n    Partial-Bug: #1296414\n", 
+            "date_created": "2014-04-29 01:35:34.018869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/93374", 
+            "date_created": "2014-05-13 05:26:26.589559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/93374\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1b35a3b263f47558e2e7791e27810741881eea43\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1b35a3b263f47558e2e7791e27810741881eea43\nAuthor: jichenjc <email address hidden>\nDate:   Mon May 12 20:27:43 2014 +0800\n\n    Change the comments of SOFT_DELETED race condition\n    \n    _reclaim_queued_deletes will only find instances in SOFT_DELETED\n    state and delete them if they are only old enough. The quotas will be\n    committed when the instance was soft-deleted so that resource can\n    be used right after the soft-delete operation.\n    \n    There are some concern about the quota inconsistency for the operation,\n    The only case that the quota might be inconsistent is\n    the compute node died between set instance state to SOFT_DELETED\n    and quota commit to DB; when compute node start again\n    it will have no idea the reservation is committed or not or even\n    expired, since it's a rare case, so marked as todo.\n    \n    There are some alternatives if the problem need to be fixed, e.g.\n    able to find reservation when nova compute restart, so we can double\n    check whether the quota is committed or not.\n    \n    Partial-Bug: #1296414\n    \n    Change-Id: Idf9c179b2dd439462a646568ffd5098cd5d7851f\n", 
+            "date_created": "2014-07-23 05:08:54.195388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Tailor, Rajesh can reproduce the error for deleting so I unassigned myself and Tailor will continue to work on it", 
+            "date_created": "2014-09-16 07:07:42.280071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/122347", 
+            "date_created": "2014-09-18 07:46:42.606180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/89761\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2014-11-22 13:00:51.379441+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related to\nhttps://bugs.launchpad.net/nova/+bug/1284424\nand\nhttps://bugs.launchpad.net/nova/+bug/1333145\n?", 
+            "date_created": "2014-12-10 21:12:50.925892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patrick-crews"
+        }, 
+        {
+            "content": "Hi Patrick,\nThe bugs mentioned by you:\n1) https://bugs.launchpad.net/nova/+bug/1284424\nThere is not enough information on bug description/comments through which I can identify whether it is related to current bug (bug #1296414) or not.\n2) https://bugs.launchpad.net/nova/+bug/1333145\nI'm not sure, but IMO this might be a case mentioned in current bug (bug #1296414) description, where quotas were not getting updated properly (i.e. updated quota everytime for subsequent soft-delete requests).\n\nAs mentioned in current bug (bug #1296414) description there were couple of cases where quota was not getting updated properly \nwhile deleting the instance. \nAs of now, there is only one case when quota is not getting updated properly which is, when instance stuck in 'deleting' task_state.\nAfter that on restart of nova-compute service, init_instance method tries to delete instances stuck in 'deleting' task_state and \ndoesn't update quota properly.\n\nMy patch addresses the issue when quotas are not getting updated properly during deleting instances stuck in 'deleting' task_state on \nrestart of nova-compute service.\nplease refer: https://review.openstack.org/122347", 
+            "date_created": "2014-12-11 07:29:12.660010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rajesh-tailor"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/89761\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-01-23 15:29:09.756926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Removing \"In Progress\" status and assignee as change is abandoned.\n", 
+            "date_created": "2015-02-12 15:02:15.002690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Hi Davanum,\n\nThe following patch is abandoned, which is submitted earlier by another assignee.\nhttps://review.openstack.org/89761\n\nI had already submitted patch to address this issue and it is still under review.\nhttps://review.openstack.org/122347", 
+            "date_created": "2015-02-13 04:43:53.147785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rajesh-tailor"
+        }, 
+        {
+            "content": "Marking this as critical since this affects all users and quota issues were reported as being one of our top pain points", 
+            "date_created": "2015-03-13 23:20:19.835404+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/170118", 
+            "date_created": "2015-04-02 13:20:43.090080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "given the current state of this conversation, I just can't see us fixing this over the next few days :'(\n\nI really want to try help fix these issues. See me on IRC @johnthetubaguy", 
+            "date_created": "2015-04-07 08:12:28.461110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "this feels too risky for RC2 given the size of the fix.", 
+            "date_created": "2015-04-20 11:16:03.891630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/122347\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=71e99b1d56627e8a929f21b88e672f8ee34a53a1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 71e99b1d56627e8a929f21b88e672f8ee34a53a1\nAuthor: Rajesh Tailor <email address hidden>\nDate:   Tue Sep 16 05:50:47 2014 -0700\n\n    Fix quota-update of instances stuck in deleting when nova-compute startup finish\n    \n    Quotas are not updated correctly for the instances whose task_state is\n    in deleting status during the nova-compute init_host call.\n    \n    Added code to pass correct quota to the _delete_instance method.\n    \n    Change-Id: Ida84d2d49d46540e0581dc3a58844c30bc1d2cff\n    Partial-Bug: 1296414\n", 
+            "date_created": "2015-05-13 17:00:02.169365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/188362", 
+            "date_created": "2015-06-04 12:07:52.563971+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/189563", 
+            "date_created": "2015-06-09 06:19:29.829330+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/189563\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2635ee08266858a564596ca7393e11be4e050606\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 2635ee08266858a564596ca7393e11be4e050606\nAuthor: Rajesh Tailor <email address hidden>\nDate:   Tue Sep 16 05:50:47 2014 -0700\n\n    Fix quota-update stuck in deleting when nova-compute startup finish\n    \n    Quotas are not updated correctly for the instances whose task_state is\n    in deleting status during the nova-compute init_host call.\n    \n    Added code to pass correct quota to the _delete_instance method.\n    \n    (cherry picked from commit 71e99b1d56627e8a929f21b88e672f8ee34a53a1)\n    \n    Change-Id: Ida84d2d49d46540e0581dc3a58844c30bc1d2cff\n    Partial-Bug: 1296414\n", 
+            "date_created": "2015-06-18 07:59:52.759207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "seems like the fix has merged in master, so updated the status of the bug.", 
+            "date_created": "2015-06-22 16:41:37.180893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/188362\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=90793b9d397e2987cfd0e658dd64eaa035c14ed7\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 90793b9d397e2987cfd0e658dd64eaa035c14ed7\nAuthor: Rajesh Tailor <email address hidden>\nDate:   Tue Sep 16 05:50:47 2014 -0700\n\n    Fix quota-update in deleting when nova-compute startup finish\n    \n    Quotas are not updated correctly for the instances whose task_state is\n    in deleting status during the nova-compute init_host call.\n    \n    Added code to pass correct quota to the _delete_instance method.\n    \n    (cherry picked from commit 2635ee08266858a564596ca7393e11be4e050606)\n    \n    Change-Id: Ida84d2d49d46540e0581dc3a58844c30bc1d2cff\n    Partial-Bug: 1296414\n", 
+            "date_created": "2015-07-17 05:04:32.909203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Apparently this is a two part fix, the second part is here:\nhttps://review.openstack.org/#/c/170118", 
+            "date_created": "2015-08-06 09:43:46.267512+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/212374", 
+            "date_created": "2015-08-13 06:52:34.594528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/212427", 
+            "date_created": "2015-08-13 09:12:46.696809+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Rajesh Tailor (<email address hidden>) on branch: master\nReview: https://review.openstack.org/212427\nReason: It is duplicate patch of change Id: I424e31c39baa4d7c96bb29687cfa45b7a6092e32", 
+            "date_created": "2015-08-13 09:16:46.116112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/212374\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=60411ddf1bada3629f0588de8726c63b5ab00357\nSubmitter: Jenkins\nBranch:    master\n\ncommit 60411ddf1bada3629f0588de8726c63b5ab00357\nAuthor: Rajesh Tailor <email address hidden>\nDate:   Fri Aug 7 06:26:59 2015 -0700\n\n    Move quota delta reserve methods from api to utils\n    \n    Moved quota delta reserve methods from compute/api to compute/utils, so\n    that it can be used by compute/manager in dependent patch.\n    \n    Change-Id: Idb02104764d490951949a74a9c0d45b532ee7782\n    Related-Bug: #1296414\n", 
+            "date_created": "2015-08-20 20:30:48.844452+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/170118\nReason: It seems this patch isn't being actively worked. I am therefore abandoning it. Feel free to restore when you're ready.", 
+            "date_created": "2016-02-09 05:57:18.228124+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Solving an inconsistency: This bug report has an assignee and it looks\nlike this could result in a patch. Therefore I switch the status to\n\"In Progress\". \nNOTE: This is tightly coupled to bug 1284424 which also got discussed on the ML with http://lists.openstack.org/pipermail/openstack-dev/2016-April/092249.html", 
+            "date_created": "2016-04-18 13:06:33.945431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "The master patch seems to have merged", 
+            "date_created": "2016-12-09 20:39:32.286026+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

@@ -1,0 +1,79 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-08-01 10:05:15.801519+00:00", 
+    "description": "I'm on stable/mitaka, but the master code looks similar.\n\nI have compute nodes configured to use qcow2 and libvirt.  The flavor has an ephemeral disk and a swap disk, with root disk size of \"0\" for auto-size.  I boot an instance with this flavor.\n\nWhen I try to cold-migrate the instance, I get an error:\n2016-07-21 23:33:48.561 46340 ERROR nova.compute.manager [instance: 4e52bfd8-0c71-48dc-89fb-6f6b31dc06bb] libvirtError: Cannot access backing file '/etc/nova/instances/_base/ephemeral_1_0706d66' of storage file '/etc/nova/instances/4e52bfd8-0c71-48dc-89fb-6f6b31dc06bb/disk.eph0' (as uid:0, gid:0): No such file or directory\n\nThe problem seems to be that in nova.virt.libvirt.driver.LibvirtDriver.finish_migration() we call self._create_image(...block_device_info=None...)\n\nDown in _create_image() we handle the case of a \"disk.local\" ephemeral device, but that doesn't help because the device is actually named \"disk.eph0\".   It looks like we then try to loop over any ephemerals in block_device_info, but that's None so we don't handle any of those (which is too bad since it looks like they would be named correctly).\n\nThe end result is that we have a qcow2 \"disk.eph0\" image, but with potentially no backing store in <instances_path>/_base.  When we tell libvirt to start the instance, this results in the above error.", 
+    "tags": [
+        "compute", 
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1605720", 
+    "owner": "https://api.launchpad.net/1.0/~cbf123", 
+    "id": 1605720, 
+    "index": 4585, 
+    "created": "2016-07-22 18:19:13.772726+00:00", 
+    "title": "backing store missing for ephemeral disk on cold migration", 
+    "comments": [
+        {
+            "content": "I'm on stable/mitaka, but the master code looks similar.\n\nI have compute nodes configured to use qcow2 and libvirt.  The flavor has an ephemeral disk and a swap disk.  I boot an instance with this flavor, and the instance is boot-from-volume.\n\nWhen I try to cold-migrate the instance, I get an error:\n2016-07-21 23:33:48.561 46340 ERROR nova.compute.manager [instance: 4e52bfd8-0c71-48dc-89fb-6f6b31dc06bb] libvirtError: Cannot access backing file '/etc/nova/instances/_base/ephemeral_1_0706d66' of storage file '/etc/nova/instances/4e52bfd8-0c71-48dc-89fb-6f6b31dc06bb/disk.eph0' (as uid:0, gid:0): No such file or directory\n\n\nThe problem seems to be that in nova.virt.libvirt.driver.LibvirtDriver.finish_migration() we call self._create_image(...block_device_info=None...)\n\nDown in _create_image() we handle the case of a \"disk.local\" ephemeral device, but that doesn't help because the device is actually named \"disk.eph0\".   It looks like we then try to loop over any ephemerals in block_device_info, but that's None so we don't handle any of those (which is too bad since it looks like they would be named correctly).\n\nThe end result is that we have a qcow2 \"disk.eph0\" image, but with potentially no backing store in <instances_path>/_base.  When we tell libvirt to start the instance, this results in the above error.", 
+            "date_created": "2016-07-22 18:19:13.772726+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "The proposed fix is at https://review.openstack.org/#/c/346263/", 
+            "date_created": "2016-07-25 15:45:50.570289+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Please, include this fix on Mitaka.", 
+            "date_created": "2016-10-31 19:03:15.145352+00:00", 
+            "author": "https://api.launchpad.net/1.0/~martinx"
+        }, 
+        {
+            "content": "I'm trying to include the patch:\n\nhttps://review.openstack.org/changes/346263/revisions/d7b831e38cbc029b7975d1059ed212762a5f6a5e/patch?zip\n\n...on top of Ubuntu Xenial packages but, it fails here:\n\n---\napt source nova\ncd nova-13.1.1\n\nnova-13.1.1$ patch -p1 < ../d7b831e3.diff                                                                                                                                                        \npatching file nova/tests/unit/virt/libvirt/fake_imagebackend.py\nHunk #1 FAILED at 138.\n1 out of 1 hunk FAILED -- saving rejects to file nova/tests/unit/virt/libvirt/fake_imagebackend.py.rej\npatching file nova/tests/unit/virt/libvirt/test_driver.py\nHunk #1 succeeded at 17 (offset -2 lines).\nHunk #2 succeeded at 9549 (offset -975 lines).\nHunk #3 succeeded at 9574 with fuzz 2 (offset -980 lines).\nHunk #4 succeeded at 9674 (offset -969 lines).\nHunk #5 succeeded at 14565 (offset -1092 lines).\nHunk #6 succeeded at 14579 (offset -1092 lines).\nHunk #7 succeeded at 14647 with fuzz 2 (offset -1095 lines).\npatching file nova/virt/libvirt/driver.py\nHunk #1 succeeded at 3112 (offset 152 lines).\nHunk #2 succeeded at 3238 (offset 185 lines).\nHunk #3 succeeded at 7397 with fuzz 1 (offset 191 lines).\n---\n\n We need a proper fix for this on Ubuntu!   :-P\n\n I'll try to rebuild the package with this patch but, don't know yet if tests will pass... If not, is there any way to disable the tests during package creation?\n\nCheers!\nThiago", 
+            "date_created": "2016-11-04 17:47:03.949951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~martinx"
+        }, 
+        {
+            "content": "Thiago: It looks like the patch will need reworking for Mitaka-on-Xenial to make it apply cleanly.", 
+            "date_created": "2016-11-04 18:06:03.566160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "@Thiago, see tests on PS4. I guess such implementation may work in Mitaka (i mostly mean usage of @mock.patch.object(nova.virt.libvirt.imagebackend.Backend, 'image') instead ImageBackendFixture). So you might rewrite tests to use it, but i have no idea if the result will be accepted as the backport to Mitaka.\n\nI know nothing about package rules. I thought that a package must exactly contain a tagged version of an OS project source code, but recently i found an exception of this rule...", 
+            "date_created": "2016-11-06 19:21:29.701880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ftersin"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/346263\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d7b831e38cbc029b7975d1059ed212762a5f6a5e\nSubmitter: Jenkins\nBranch:    master\n\ncommit d7b831e38cbc029b7975d1059ed212762a5f6a5e\nAuthor: Chris Friesen <email address hidden>\nDate:   Fri Jul 22 16:33:43 2016 -0600\n\n    Fix cold migration with qcow2 ephemeral disks\n    \n    If we have qcow2 ephemeral disks we need to ensure that the\n    backing file gets created on a cold migration.\n    \n    This requires passing in the block_device_info when calling\n    _create_image() so that we can loop over the ephemeral disks.\n    \n    Closes-Bug: #1605720\n    Co-Authored-By: Feodor Tersin <email address hidden>\n    Change-Id: Ie278bb10e1675ba1d903aaa3c0249be0d1cf147b\n", 
+            "date_created": "2016-11-16 21:57:25.326275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/398812", 
+            "date_created": "2016-11-17 08:31:15.132794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b2 development milestone.", 
+            "date_created": "2016-12-15 17:35:58.566817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/398812\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=842f1b6651f6104f8cb0e5ef32b80e6ffb10b067\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 842f1b6651f6104f8cb0e5ef32b80e6ffb10b067\nAuthor: Chris Friesen <email address hidden>\nDate:   Fri Jul 22 16:33:43 2016 -0600\n\n    Fix cold migration with qcow2 ephemeral disks\n    \n    If we have qcow2 ephemeral disks we need to ensure that the\n    backing file gets created on a cold migration.\n    \n    This requires passing in the block_device_info when calling\n    _create_image() so that we can loop over the ephemeral disks.\n    \n    Closes-Bug: #1605720\n    Co-Authored-By: Feodor Tersin <email address hidden>\n    Change-Id: Ie278bb10e1675ba1d903aaa3c0249be0d1cf147b\n    (cherry picked from commit d7b831e38cbc029b7975d1059ed212762a5f6a5e)\n", 
+            "date_created": "2017-02-11 01:23:24.743672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.4 release.", 
+            "date_created": "2017-02-27 20:29:35.847084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/372721\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 10:05:15.209973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

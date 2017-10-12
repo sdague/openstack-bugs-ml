@@ -1,0 +1,78 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-07-09 13:58:39.511000+00:00", 
+    "description": "If SQLAlchemy >= 0.8.3 is used, running of unit tests fails. The following error is printed to stderr multiple times:\n\nDBError: (IntegrityError) constraint failed u'UPDATE instance_system_metadata SET   updated_at=?, deleted_at=?, deleted=? WHERE instance_system_metadata.id = ?' ('2013-  11-19 10:37:44.378444', '2013-11-19 10:37:44.377819', 11, 11)\n\nA few of our migrations change the type of deleted column from boolean to int. MySQL and SQLite don't have native boolean data type. SQLAlchemy uses int columns (e.g. in case of MySQL - tinyint) + CHECK constraint (something like CHECK (deleted in (0, 1))) to emulate boolean data type.\n\nIn our migrations when the type of column `deleted` is changed from boolean to int, the corresponding CHECK constraint is dropped too. But starting from SQLAlchemy version 0.8.3, those CHECK constraints aren't dropped anymore. So despite the fact that column deleted is of type int now, we still restrict its values to be either 0 or 1.\n\nMigrations changing the data type of deleted columns rely on SQL rendered for CHECK constraints (e.g. https://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/migrate_repo/versions/152_change_type_of_deleted_column.py#L172). There was a patch in SQLAlchemy 0.8.3 release that slightly changed the way DDL statements are rendered ((http://docs.sqlalchemy.org/en/latest/changelog/changelog_08.html#change-487183f04e6da9aa27d8817bca9906d1)). Unfortunately, due to the fact that nova migrations depend on such implementation details, this change to SQLAlchemy broke our code.\n\nWe must fix our migrations to work properly with new SQLAlchemy versions too (0.8.3+).", 
+    "tags": [
+        "db"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1252693", 
+    "owner": "https://api.launchpad.net/1.0/~i159", 
+    "id": 1252693, 
+    "index": 4295, 
+    "created": "2013-11-19 10:58:10.798563+00:00", 
+    "title": "Running of unit tests fails if SQLAlchemy >= 0.8.3 is used", 
+    "comments": [
+        {
+            "content": "If SQLAlchemy >= 0.8.3 is used, running of unit tests fails. The following error is printed to stderr a multiple times:\n\nDBError: (IntegrityError) constraint failed u'UPDATE instance_system_metadata SET updated_at=?, deleted_at=?, deleted=? WHERE instance_system_metadata.id = ?' ('2013-11-19 10:37:44.378444', '2013-11-19 10:37:44.377819', 11, 11)\n\nA few of our migrations change the type of deleted column from boolean to int. Starting from SQLAlchemy version 0.8.3 our migrations stopped dropping CHECK constraint which are created for boolean columns in SQLite and MySQL (as they don't have a native boolean type). So despite the fact that column deleted is of type int now, we still restrict its values to be either 0 or 1.\n\nMigrations changing the type of deleted column from boolean to int must be updated to handle rendering of CHECK constraints correctly in SQLAlchemy versions >= 0.8.3 (http://docs.sqlalchemy.org/en/latest/changelog/changelog_08.html#change-487183f04e6da9aa27d8817bca9906d1)", 
+            "date_created": "2013-11-19 10:58:10.798563+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/57493", 
+            "date_created": "2013-11-20 16:58:32.178168+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "We have a similar code in Oslo-incubator, so we should fix it there as well", 
+            "date_created": "2013-12-27 14:59:00.278627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vsergeyev"
+        }, 
+        {
+            "content": "This sounds like a bug in sqlalchemy. Has it been reported upstream?", 
+            "date_created": "2013-12-27 15:10:17.838865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Doug, actually it's not.\n\nThis bug is caused by limitations of SQLite and sqlalchemy-migrate library: SQLite doesn't have a native implementation of BOOLEAN data type, so SQLAlchemy emulates it by creating an INTEGER column and setting a CHECK constraint which ensures that values can be either 1 or 0 only. And SQLite doesn't have a 'normal' ALTER, so when we ask sqlalchemy-migrate to drop a column, it actually recreates the table without that column. Though, it knows nothing about constraints which must be dropped. \n\nWe've been carrying a work around for this which relies on the way CHECK constraints are rendered in SQLAlchemy. The new version of SQLAlchemy slightly changed the way constraints are rendered and broke our work around. But we can't blame SQLAlchemy here, because we've been relying on the implementation detail rather than on public API (as there is no public API for this, because no one cares about migrations in SQLite...).\n\nSo we can improve our existing work around here to make it work with new versions of SQLAlchemy. But I hope we'll drop all this stuff as soon as we migrate to using of alembic and stop running migration scripts on SQLite.\n", 
+            "date_created": "2013-12-27 15:37:35.475782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "The change in behavior for SQLAlchemy (not dropping the CHECK constraint) still sounds like a regression, but if the work-around was already in our code base then I agree we need to fix it here.", 
+            "date_created": "2013-12-27 16:18:32.674041+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/57493\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c1be8381e19390b0edca28c8ab3f77e6226f25e0\nSubmitter: Jenkins\nBranch:    master\n\ncommit c1be8381e19390b0edca28c8ab3f77e6226f25e0\nAuthor: Ilya Pekelny <email address hidden>\nDate:   Wed Nov 20 18:51:39 2013 +0200\n\n    Fix migrations changing the type of deleted column\n    \n    SQLite doesn't provide a native implementation of BOOLEAN data type.\n    SQLAlchemy emulates BOOLEAN data type for SQLite using INT column +\n    CHECK constraint.\n    We have a few migrations changing the type of column 'deleted' from\n    BOOLEAN to INT. Due to limitations of ALTER in SQLite, in order to do\n    that, we omit the original 'deleted' column as well as the corresponding\n    CHECK constraint when recreating the table. Omitting of the constraint\n    is more tricky. It's implemented by analyzing the SQL text used for its\n    rendering. SQLAlchemy versions 0.8.3+ slightly changed the way\n    constraints are rendered, so we have to update our migrations changing\n    the type of 'deleted' column to work with SQLAlchemy 0.8.3+ on SQLite\n    backend (we aren't using SQLite in production, but we still need it for\n    running of unit tests).\n    \n    Closes-Bug: #1252693\n    Change-Id: I52f2b5f90a2f9191767fadc7b1eacae236c30e98\n", 
+            "date_created": "2014-02-09 21:51:32.435670+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is there still work to do here for Oslo?", 
+            "date_created": "2014-02-10 16:16:10.723568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Thanks! I forgot about the task! I'm sorry...", 
+            "date_created": "2014-02-10 16:28:05.343736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~i159"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/72419", 
+            "date_created": "2014-02-10 16:50:43.616093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/93414", 
+            "date_created": "2014-05-13 11:17:21.592865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/93414\nCommitted: https://git.openstack.org/cgit/openstack/oslo.db/commit/?id=528e406053ac9dfc5ee1348cf1ee64220ad0c1ce\nSubmitter: Jenkins\nBranch:    master\n\ncommit 528e406053ac9dfc5ee1348cf1ee64220ad0c1ce\nAuthor: Ilya Pekelny <email address hidden>\nDate:   Tue May 13 14:16:44 2014 +0300\n\n    Fix changing the type of column deleted\n    \n    SQLite doesn't provide a native implementation of BOOLEAN data type.\n    SQLAlchemy emulates BOOLEAN data type for SQLite using INT column +\n    a CHECK constraint.\n    \n    We've been providing a helper util to change the type of column\n    'deleted' from BOOLEAN to INT. Due to limitations of ALTER in SQLite,\n    in order to do that, we omit the original 'deleted' column as well as\n    the corresponding CHECK constraint when recreating the table.\n    Omitting of the constraint is more tricky, though. It's implemented\n    by analyzing the SQL text used for its rendering.  SQLAlchemy\n    versions 0.8.3+ slightly changed the way constraints are rendered, so\n    we have to update our util changing the type of 'deleted' column to\n    work with SQLAlchemy 0.8.3+ on SQLite backend (we aren't using SQLite\n    in production, but we still need it for running of unit tests).\n    \n    Closes-Bug: #1252693\n    \n    Change-Id: Ie92caff005217250de17461f4f87692ad8e96a09\n", 
+            "date_created": "2014-06-14 12:33:08.817253+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

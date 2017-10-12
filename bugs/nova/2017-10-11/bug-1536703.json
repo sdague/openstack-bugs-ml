@@ -1,0 +1,68 @@
+{
+    "status": "Triaged", 
+    "last_updated": "2017-06-23 12:45:55.662733+00:00", 
+    "description": "If we call confirm_resize() that sets migration.status to 'confirming' and sends an  RPC cast to the compute node.\n\nIf there's a glitch and that cast is received but never processed, there's no way to confirm the resize since it only looks for migrations with a status of \"finished\".  It looks like it should be safe as-is to allow calling confirm_resize on a migration in the \"confirming\" state since it's already synchronized on the instance.\n\nA similar problem holds for an interrupted revert_resize(), but in that case there's no synchronization currently.  Not sure if that's a problem or not.", 
+    "tags": [
+        "api"
+    ], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1536703", 
+    "owner": "None", 
+    "id": 1536703, 
+    "index": 664, 
+    "created": "2016-01-21 16:07:56.326323+00:00", 
+    "title": "unable to re-issue confirm/revert of resize", 
+    "comments": [
+        {
+            "content": "If we call confirm_resize() that sets migration.status to 'confirming' and sends an  RPC cast to the compute node.\n\nIf there's a glitch and that cast is received but never processed, there's no way to confirm the resize since it only looks for migrations with a status of \"finished\".  It looks like it should be safe as-is to allow calling confirm_resize on a migration in the \"confirming\" state since it's already synchronized on the instance.\n\nA similar problem holds for an interrupted revert_resize(), but in that case there's no synchronization currently.  Not sure if that's a problem or not.", 
+            "date_created": "2016-01-21 16:07:56.326323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "@Chris Friesen:\n> \"If there's a glitch [...]\"\n\nSo it's more a hardening of the current workflow, isn't it? We can't even test it automatized since we don't have a fault injection system (I'm aware of). ", 
+            "date_created": "2016-01-22 17:07:48.239852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "In order for the problem to occur you need to have nova-compute pull the message off the queue but then never process it.  (Crash, kill, reboot, etc.)\n\nOnce that happens, there's no way to clean it up short of manually editing the database.\n\nIn the \"confirming\" case it seems very low-risk since the logic is basically already there to handle it in nova-compute.\n\nWe could test it in the unit tests simply by specifying a starting migration status of \"confirming\".  Testing it in tempest would be a lot harder.", 
+            "date_created": "2016-01-22 23:33:42.648338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "It seems make sense that allow we query migration which status is \"ing\" when doing revert_resize confirm_resize etc.\n\n        migration = objects.Migration.get_by_instance_and_status(\n            elevated, instance.uuid, 'finished')\n", 
+            "date_created": "2016-01-26 03:32:28.484081+00:00", 
+            "author": "https://api.launchpad.net/1.0/~taget-9"
+        }, 
+        {
+            "content": "I will start fixing this until someone others to confirm this bug need to be fixed.", 
+            "date_created": "2016-01-26 03:33:21.946394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~taget-9"
+        }, 
+        {
+            "content": "More updates, there is a logic while doing deleting instance, it will consider if the migration are not confirmed, so it seems that we can do something similar.\n\n    def _confirm_resize_on_deleting(self, context, instance):\n        # If in the middle of a resize, use confirm_resize to\n        # ensure the original instance is cleaned up too\n        migration = None\n        for status in ('finished', 'confirming'):\n            try:\n                migration = objects.Migration.get_by_instance_and_status(\n                        context.elevated(), instance.uuid, status)\n                LOG.info(_LI('Found an unconfirmed migration during delete, '\n                             'id: %(id)s, status: %(status)s'),\n                         {'id': migration.id,\n                          'status': migration.status},\n                         context=context, instance=instance)\n                break\n            except exception.MigrationNotFoundByStatus:\n                pass\n\n....", 
+            "date_created": "2016-01-26 03:40:10.342130+00:00", 
+            "author": "https://api.launchpad.net/1.0/~taget-9"
+        }, 
+        {
+            "content": "I believe allowing a resize_confirm to be idempotent should be fine. Eli provides a pretty good roadmap of how to get there above.", 
+            "date_created": "2016-02-17 15:35:25.135163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/285931", 
+            "date_created": "2016-02-29 08:31:49.093352+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/285931\nReason: This review is > 6 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2016-12-09 21:05:59.078990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:45:52.650106+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

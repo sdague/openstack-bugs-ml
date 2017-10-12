@@ -1,0 +1,61 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:51:20.060824+00:00", 
+    "description": "If we set\ninject_partition = -1\ninject_password = True\nin nova.conf, nova boot will sucessfully inject password but there are errors when nova try to resize2fs the image:\n\n4-08-05 11:58:01.230 DEBUG nova.virt.disk.api [req-ab691c7b-4d50-4281-a1a4-a0de3d5d000a ] [admin admin] Unable to mount image /opt/stack/data/nova/instances/7523c41f-9d70-41eb-95e9-7b0b1daa926b/disk with error Error mounting /opt/stack/data/nova/instances/7523c41f-9d70-41eb-95e9-7b0b1daa926b/disk with libguestfs (mount_options: /dev/sda on / (options: ''): mount: you must specify the filesystem type). Cannot resize.from (pid=27490) is_image_partitionless /opt/stack/nova/nova/virt/disk/api.py:218\n\nThe root cause it that there is a config: inject_partition to tell guestfs the partition in the image disk.\n\n    cfg.IntOpt('inject_partition',\n                default=-2,\n                help='The partition to inject to : '\n                     '-2 => disable, -1 => inspect (libguestfs only), '\n                     '0 => not partitioned, >0 => partition number'),\n\nwhen booting, there are 2 locations to invoke guestfs to load disk, but the first do not pass the inject_partition parameter.\n\n1. https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2316 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2704 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/imagebackend.py#L180 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/imagebackend.py#L391 -> https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L162 -> https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L211\n2. https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2798 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2610 -> https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L357\n\nThe first location  at https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L211 just pass the None for partition:\nfs = vfs.VFS.instance_for_image(image, 'qcow2', None)\nwhich will make guestfs try to mount /dev/sda on /, this will make the Mounting error occured if we using cirros image.\n\nTo fix this issue we need pass the partition parameter which come from CONF.libvirt.inject_partition like in https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2577\n\n\nThis bug related to https://bugs.launchpad.net/nova/+bug/1246852\nand https://bugs.launchpad.net/nova/+bug/1279858\nThe bug: 1279858 told us that we should avoid guestfs loading disk twice. whick will make the booting slow.\nThe better approch is using cloud-init instead of guestfs.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1352806", 
+    "owner": "None", 
+    "id": 1352806, 
+    "index": 5054, 
+    "created": "2014-08-05 09:49:06.454742+00:00", 
+    "title": "virt: Mounting error in is_image_partitionless function when nova boot", 
+    "comments": [
+        {
+            "content": "If we set\ninject_partition = -1\ninject_password = True\nin nova.conf, nova boot will sucessfully inject password but there are errors when nova try to resize2fs the image:\n\n4-08-05 11:58:01.230 DEBUG nova.virt.disk.api [req-ab691c7b-4d50-4281-a1a4-a0de3d5d000a ] [admin admin] Unable to mount image /opt/stack/data/nova/instances/7523c41f-9d70-41eb-95e9-7b0b1daa926b/disk with error Error mounting /opt/stack/data/nova/instances/7523c41f-9d70-41eb-95e9-7b0b1daa926b/disk with libguestfs (mount_options: /dev/sda on / (options: ''): mount: you must specify the filesystem type). Cannot resize.from (pid=27490) is_image_partitionless /opt/stack/nova/nova/virt/disk/api.py:218\n\nThe root cause it that there is a config: inject_partition to tell guestfs the partition in the image disk.\n\n    cfg.IntOpt('inject_partition',\n                default=-2,\n                help='The partition to inject to : '\n                     '-2 => disable, -1 => inspect (libguestfs only), '\n                     '0 => not partitioned, >0 => partition number'),\n\nwhen booting, there are 2 locations to invoke guestfs to load disk, but the first do not pass the inject_partition parameter.\n\n1. https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2316 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2704 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/imagebackend.py#L180 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/imagebackend.py#L391 -> https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L162 -> https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L211\n2. https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2798 -> https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2610 -> https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L357\n\nThe first location  at https://github.com/openstack/nova/blob/master/nova/virt/disk/api.py#L211 just pass the None for partition:\nfs = vfs.VFS.instance_for_image(image, 'qcow2', None)\nwhich will make guestfs try to mount /dev/sda on /, this will make the Mounting error occured if we using cirros image.\n\nTo fix this issue we need pass the partition parameter which come from CONF.libvirt.inject_partition like in https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L2577\n\n\nThis bug related to https://bugs.launchpad.net/nova/+bug/1246852\nand https://bugs.launchpad.net/nova/+bug/1279858\nThe bug: 1279858 told us that we should avoid guestfs loading disk twice. whick will make the booting slow.\nThe better approch is using cloud-init instead of guestfs.", 
+            "date_created": "2014-08-05 09:49:06.454742+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-5"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/111968", 
+            "date_created": "2014-08-05 10:02:01.375810+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Jesse, are you still working on this issue? I'm currently working on something that could fix this too.", 
+            "date_created": "2014-08-22 09:31:01.714273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Hi sahid, I have no time to take care of this issue, please do it if you can fix .", 
+            "date_created": "2014-08-22 09:49:35.455167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-5"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/118677", 
+            "date_created": "2014-09-03 16:10:39.992750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/111968\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2014-11-22 13:00:01.843150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/118677\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-01-23 15:26:32.878824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Removing \"In Progress\" status and assignee as change is abandoned.", 
+            "date_created": "2015-02-12 16:40:46.981771+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:51:19.530647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

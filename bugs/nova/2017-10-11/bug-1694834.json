@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-08 21:51:27.951376+00:00", 
+    "description": "While testing live migration, I hit an exception during libvirt.driver rollback_live_migration_at_destination. The first step is this:\n\nself.destroy(context, instance, network_info, block_device_info,\n                         destroy_disks, migrate_data)\n\nBut there is no arg in the destroy method for migrate_data:\n\ndef destroy(self, context, instance, network_info, block_device_info=None,\n                destroy_disks=True):\n\nThe tail end of the exception:\n\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 5896, in rollback_live_migration_at_destination\n    destroy_disks=destroy_disks, migrate_data=migrate_data)\n  File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 6690, in rollback_live_migration_at_destination\n    destroy_disks, migrate_data)\nTypeError: destroy() takes at most 6 arguments (7 given)\n\nubuntu/kvm/pike:\n\ncommit 20f47b1a3e8e80e6f9e2373cacc2480404c3cfd9\nMerge: c993572 e8afd71\nAuthor: Jenkins <email address hidden>\nDate:   Wed May 31 16:34:27 2017 +0000\n\n    Merge \"Add policy description for os-networks\"", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1694834", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1694834, 
+    "index": 2084, 
+    "created": "2017-05-31 21:31:25.388573+00:00", 
+    "title": "libvirt rollback: destroy called with wrong number of args", 
+    "comments": [
+        {
+            "content": "While testing live migration, I hit an exception during libvirt.driver rollback_live_migration_at_destination. The first step is this:\n\nself.destroy(context, instance, network_info, block_device_info,\n                         destroy_disks, migrate_data)\n\nBut there is no arg in the destroy method for migrate_data:\n\ndef destroy(self, context, instance, network_info, block_device_info=None,\n                destroy_disks=True):\n\nThe tail end of the exception:\n\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 5896, in rollback_live_migration_at_destination\n    destroy_disks=destroy_disks, migrate_data=migrate_data)\n  File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 6690, in rollback_live_migration_at_destination\n    destroy_disks, migrate_data)\nTypeError: destroy() takes at most 6 arguments (7 given)\n\nubuntu/kvm/pike:\n\ncommit 20f47b1a3e8e80e6f9e2373cacc2480404c3cfd9\nMerge: c993572 e8afd71\nAuthor: Jenkins <email address hidden>\nDate:   Wed May 31 16:34:27 2017 +0000\n\n    Merge \"Add policy description for os-networks\"", 
+            "date_created": "2017-05-31 21:31:25.388573+00:00", 
+            "author": "https://api.launchpad.net/1.0/~steve-noyes"
+        }, 
+        {
+            "content": "I don't see driver.destroy called with migrate_data here:\n\nhttps://github.com/openstack/nova/blob/20f47b1a3e8e80e6f9e2373cacc2480404c3cfd9/nova/compute/manager.py\n\nAre you sure this wasn't against some patched code of yours?", 
+            "date_created": "2017-06-01 02:50:03.465501+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This seems to be in the unpatched code in libvirt.py, not compute manager.py.\n\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py around line 6698.\n\n   def rollback_live_migration_at_destination(self, context, instance,\n       ...\n       self.destroy(context, instance, network_info, block_device_info, destroy_disks, migrate_data)\n\n\n    def destroy(self, context, instance, network_info, block_device_info=None,\ndestroy_disks=True):\n\n\n", 
+            "date_created": "2017-06-01 12:03:58.584086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~steve-noyes"
+        }, 
+        {
+            "content": "In the above, I meant libvirt/driver.py, not libivrt.py...", 
+            "date_created": "2017-06-01 12:08:30.509686+00:00", 
+            "author": "https://api.launchpad.net/1.0/~steve-noyes"
+        }, 
+        {
+            "content": "Ah yeah I see it. Sorry.", 
+            "date_created": "2017-06-01 16:31:30.846131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/469958", 
+            "date_created": "2017-06-01 17:49:56.207680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/469958\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f1b41683fc81db780c8939754f073a2644042543\nSubmitter: Jenkins\nBranch:    master\n\ncommit f1b41683fc81db780c8939754f073a2644042543\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Jun 1 13:47:40 2017 -0400\n\n    libvirt: fix call args to destroy() during live migration rollback\n    \n    This was missed during I6cca3b5ddd387dac86750be70f49c764a1be2fca\n    where the migrate_data kwarg was removed from the destroy() method\n    in the virt drivers.\n    \n    The existing test was already brittle in that it just asserts that\n    was passed to the mocked method. This change at least makes the test\n    a bit less brittle by validating the signature, but there should be\n    a better way to do this with autospecing and mock, but I couldn't\n    figure it out.\n    \n    Change-Id: Iaec2db92b4aa0e6d069c9c5071900e2627683e4e\n    Closes-Bug: #1694834\n", 
+            "date_created": "2017-06-02 16:48:10.202000+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b2 development milestone.", 
+            "date_created": "2017-06-08 21:51:27.397775+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

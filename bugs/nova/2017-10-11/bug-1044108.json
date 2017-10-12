@@ -1,0 +1,51 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2014-07-12 19:13:34.545251+00:00", 
+    "description": "In nova DB there might have the same IP address entries. floating_ip_get_by_address() should only return a valid ip that \"deleted\" is False. Otherwise, the client will use the invalid IP information to perform actions.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1044108", 
+    "owner": "None", 
+    "id": 1044108, 
+    "index": 3031, 
+    "created": "2012-08-30 22:56:19.044301+00:00", 
+    "title": "floating_ip_get_by_address() should return a valid ip that 'deleted' is False", 
+    "comments": [
+        {
+            "content": "In nova DB there might have the same IP address entries. floating_ip_get_by_address() should only return a valid ip that \"deleted\" is False. Otherwise, the client will use the invalid IP information to perform actions.", 
+            "date_created": "2012-08-30 22:56:19.044301+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jenny-shieh"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/12343", 
+            "date_created": "2012-09-04 09:43:36.342380+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hmm, this bug could really do with instructions on how to reproduce the issue", 
+            "date_created": "2012-09-04 09:58:12.284021+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Jenny, how did you find this bug exactly? did you encounter a problem caused by this bug? or did you just spot that floating_ip_get_by_address() was incorrect while reading through the code?", 
+            "date_created": "2012-09-07 13:27:48.307658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~adri2000"
+        }, 
+        {
+            "content": "Hi,\r\n\r\nHere are the steps to reproduce the issues:\r\n\r\n1. nova-manage floating create --ip_range=10.0.0.0/24\r\n2. nova-delete floating delete --ip_range=10.0.0.0/24\r\n3. nova-manage floating create --ip_range=10.0.0.0/24\r\n4. nova-delete floating delete --ip_range=10.0.0.0/24\r\n5. nova-manage floating create --ip_range=10.0.0.0/24\r\n6. To check floating_ips table in nova db, there are duplicate entries for the same ip. But the last one is 'deleted'=F.\r\n7. To create an instance - nova boot --flavor 3 --image ......\r\n8. Check floating_ips table in nova db, make sure the floating IP associated with the created instance is assigned to a project and associated with the instance.\r\n9. delete the created instance. Although the deletion is done, but no disaaociate notification.\r\n10. Check \"notifications.info\" from rabbitMQ console. There is no \"network.floating_ip.disassociate\" event_type notification sent out from _disassociate_floating_ip().\r\n11. check nova-network.log:\r\n\r\n2012-08-22 15:43:17 WARNING nova.network.manager [req-f3daeb86-5d5d-4094-84e6-dbc6276e276f 1edc68fd88bc4fe484b18010a5a74b61 241eff48bec841a793035519a57aa7c6] Address |10.0.0.25| is not allocated\r\n2012-08-22 15:43:17 ERROR nova.rpc.amqp [req-f3daeb86-5d5d-4094-84e6-dbc6276e276f 1edc68fd88bc4fe484b18010a5a74b61 241eff48bec841a793035519a57aa7c6] Exception during message handling\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp Traceback (most recent call last):\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp   File \"/usr/lib/python2.6/site-packages/nova/rpc/amqp.py\", line 253, in _process_data\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp     rval = node_func(context=ctxt, **node_args)\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp   File \"/usr/lib/python2.6/site-packages/nova/network/manager.py\", line 258, in wrapped\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp     return func(self, context, *args, **kwargs)\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp   File \"/usr/lib/python2.6/site-packages/nova/network/manager.py\", line 384, in deallocate_for_instance\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp     affect_auto_assigned=True)\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp   File \"/usr/lib/python2.6/site-packages/nova/network/manager.py\", line 258, in wrapped\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp     return func(self, context, *args, **kwargs)\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp   File \"/usr/lib/python2.6/site-packages/nova/network/manager.py\", line 575, in disassociate_floating_ip\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp     self._floating_ip_owned_by_project(context, floating_ip)\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp   File \"/usr/lib/python2.6/site-packages/nova/network/manager.py\", line 406, in _floating_ip_owned_by_project\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp     raise exception.NotAuthorized()\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp NotAuthorized: Not authorized.\r\n2012-08-22 15:43:17 TRACE nova.rpc.amqp\r\n\r\n12. To delete all entries in floating_ips table so there is no any entry in the table.\r\n13. recreate floating IP.  nova-manage floating create --ip_range=10.0.0.0/24\r\n14. create a instance and delete the instance. You will get \"network.floating_ip.disassociate\" event_type notification because there is no duplicate entry.\r\n\r\nThe fix is simple. To add\r\n\r\n\r\n        filter_by(deleted=False).\\\r\n\r\nto floating_ip_get_by_address() of ~/nova/db/sqlalchemy/api.py\r\n\r\n\r\nPlease let me know if you have questions.\r\n\r\nThanks,\r\n\r\n-jenny\r\n\r\n\r\n-----Original Message-----\r\nFrom: <email address hidden> [mailto:<email address hidden>] On Behalf Of Adrien Cunin\r\nSent: Friday, September 07, 2012 6:28 AM\r\nTo: Shieh, Jenny\r\nSubject: [Bug 1044108] Re: floating_ip_get_by_address() should return a valid ip that \"deleted\" is False\r\n\r\nJenny, how did you find this bug exactly? did you encounter a problem\r\ncaused by this bug? or did you just spot that\r\nfloating_ip_get_by_address() was incorrect while reading through the\r\ncode?\r\n\r\n--\r\nYou received this bug notification because you are subscribed to the bug\r\nreport.\r\nhttps://bugs.launchpad.net/bugs/1044108\r\n\r\nTitle:\r\n  floating_ip_get_by_address() should return a valid ip that \"deleted\"\r\n  is False\r\n\r\nStatus in OpenStack Compute (Nova):\r\n  In Progress\r\n\r\nBug description:\r\n  In nova DB there might have the same IP address entries.\r\n  floating_ip_get_by_address() should only return a valid ip that\r\n  \"deleted\" is False. Otherwise, the client will use the invalid IP\r\n  information to perform actions.\r\n\r\nTo manage notifications about this bug go to:\r\nhttps://bugs.launchpad.net/nova/+bug/1044108/+subscriptions\r\n", 
+            "date_created": "2012-09-07 15:54:16+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jenny-shieh"
+        }, 
+        {
+            "content": "Thanks Jenny.\nMy proposed fix has been rejected/abandoned, better ideas welcome.", 
+            "date_created": "2012-09-17 14:46:59.058362+00:00", 
+            "author": "https://api.launchpad.net/1.0/~adri2000"
+        }, 
+        {
+            "content": "based on the comments at https://review.openstack.org/12343 moving this to opinion.", 
+            "date_created": "2014-07-12 19:13:29.472277+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }
+    ]
+}

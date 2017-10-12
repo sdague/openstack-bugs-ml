@@ -1,0 +1,79 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:47:43.725528+00:00", 
+    "description": "The XenApi drivers split a string to create an array for subprocess.Popen, rather than passing an array directly. This invites the potential for command injection / manipulation.\n\nThere is no clearly valid reason to use string splitting here when arguments can be passed, as elsewhere, directly into Popen.\n\nThe behavior here is present in current Trunk, Folsom, and Essex.  Per Trunk and Folsom, _rsync_vhds calls plugins.utils.subprocess to perform the splitting.  In Essex, this behaviorism was present directly in migration/transfer_vhd.py, rather than in utils.py.  Earlier releases have not been evaluated.\n\nI am not certain if this is directly exploitable. The user field is inserted into the generated strings used for command-line execution, and it does seem that Keystone allows usernames to contain arbitrary tokens/characters such as spaces.  It is not clear to me if the user field directly matches that in Keystone, if the user field is otherwise validated in the API, etc.  Other fields inserted into the command string seem to be internally generated.", 
+    "tags": [
+        "security", 
+        "xenserver"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1074087", 
+    "owner": "https://api.launchpad.net/1.0/~euanh", 
+    "id": 1074087, 
+    "index": 3124, 
+    "created": "2012-11-01 17:49:33.497682+00:00", 
+    "title": "XenApi migration driver should not use shell=True with Popen", 
+    "comments": [
+        {
+            "content": "The Xen drivers split a string to create an array for subprocess.Popen, rather than passing an array directly. This invites the potential for command injection / manipulation.\n\nThere is no clearly valid reason to use string splitting here when arguments can be passed, as elsewhere, directly into Popen.\n\nThe behavior here is present in current Trunk, Folsom, and Essex.  Per Trunk and Folsom, _rsync_vhds calls plugins.utils.subprocess to perform the splitting.  In Essex, this behaviorism was present directly in migration/transfer_vhd.py, rather than in utils.py.  Earlier releases have not been evaluated.\n\nI am not certain if this is directly exploitable. The user field is inserted into the generated strings used for command-line execution, and it does seem that Keystone allows usernames to contain arbitrary tokens/characters such as spaces.  It is not clear to me if the user field directly matches that in Keystone, if the user field is otherwise validated in the API, etc.  Other fields inserted into the command string seem to be internally generated.", 
+            "date_created": "2012-11-01 17:49:33.497682+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Are you still investigating this to determine if it is exploitable?  The first step in handling this is to determine that.  That will determine the process we use for fixing the bug (whether it needs to stay private or not).", 
+            "date_created": "2012-11-01 20:46:49.592876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "I've looked further and realized that the user variable is clearly not a vector.\n\nSomeone could clearly exploit a Xen host through this method given access to the database or messaging bus. Through said such mechanism, they could also trigger a host to send them the contents of a guest's disk over the network. Of course, such things may be true in many places throughout Nova today.\n\nThere doesn't appear to be any variables used in this function that is sourced directly from user input in an otherwise normally operating and secure deployment.", 
+            "date_created": "2012-11-01 21:29:30.439394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Thanks for confirming that there is no exploit path here.  I'm going to open this bug up.  I tagged it with \"security\" so that it's noted as a security hardening bug.", 
+            "date_created": "2012-11-02 20:13:46.946766+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Is this bug still valid? I can't find any calls to subprocess or terrible uses of split() in virt/xenapi for grizzly. There are plenty of calls to utils.execute(), but they seem sane to me.", 
+            "date_created": "2013-03-12 15:18:08.716033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "I had RussellB double check this as well, and we think this is invalid now. Please reopen if you disagree.", 
+            "date_created": "2013-03-12 15:22:07.381843+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Most of these scripts do appear to be fixed in one way or another. However, there is still a problem in nova/plugins/xenserver/xenapi/etc/xapi.d/plugins/xenhost. It defines _run_command() which uses shell=True.", 
+            "date_created": "2013-03-12 15:42:55.166439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Changing the summary - xenhost can't use execvp because it needs to process and return the output of the xe processes that it spawns.", 
+            "date_created": "2013-06-24 14:37:04.177158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~euanh"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/34580", 
+            "date_created": "2013-06-26 16:33:47.880718+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/34580\nCommitted: http://github.com/openstack/nova/commit/61ef64f48f6815e6e6bb771d2fb33ddcf2f30f40\nSubmitter: Jenkins\nBranch:    master\n\ncommit 61ef64f48f6815e6e6bb771d2fb33ddcf2f30f40\nAuthor: Euan Harris <email address hidden>\nDate:   Wed Jun 26 16:57:14 2013 +0100\n\n    xenapi: Tidy up Popen calls to avoid command injection attacks\n    \n     * Rewrite xenhost._run_command and xenstore._run_command to use\n       utils.make_subprocess and utils.finish_process\n     * Change exception raised by utils.finish_process to retain information\n       needed by calls in xenhost and xenstore\n    \n    Change-Id: Idcdb50bededf0acde92f1774d6752043ba8f97ce\n    Fixes: bug #1074087\n", 
+            "date_created": "2013-07-09 15:20:26.021425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is this fix going to be backported to folsom or grizzly? (does it need to be backported)?", 
+            "date_created": "2013-07-17 16:49:29.572636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~prometheanfire"
+        }, 
+        {
+            "content": "The analysis in comment #2 suggests that, since the calls to Popen and split don't take any user input, this bug doesn't allow an attack from the outside.   Therefore it isn't necessary to backport it.", 
+            "date_created": "2013-07-25 09:04:27.878177+00:00", 
+            "author": "https://api.launchpad.net/1.0/~euanh"
+        }
+    ]
+}

@@ -1,0 +1,51 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:53:55.144483+00:00", 
+    "description": "When booting a VM with multiple NICs (in different quantum networks)\n\nand using\n\n1. quantum linuxbridge plugin\n2. network injection\n3. config drive\n\nThe NIC ordering is not respected in the network_config metadata file located on the config drive.  Sometimes the first quantum network will be eth0 and the second network eth1, sometimes the other way around (50% of the time, it works all the time!)\n\nBasically, here are my observations:\n\n1. quantum respects the ordering from the nova boot command (--nic net-id=<net1> --nic net-id=<net2>), meaning that the first port is in net1, second port in net2.\n2. nova respects the ordering because it passes both networks in order to libvirt\n3. libvirt respects the ordering because it presents the first interface to the VM in the first network with the right MAC and the second interface in the second network with the second MAC.\n4. the config drive metadata DOES NOT RESPECT THE ORDERING, as half of the time eth0 will contain information for the first network and half the time, it will contains the information for the second network.\n\nBasically, if I have this simple \"RHEL-style\" interfaces template:\n\n#for $ifc in $interfaces\n[${ifc.name}]\nIPADDR=${ifc.address}\nNETMASK=${ifc.netmask}\nGATEWAY=${ifc.gateway}\n#end for\n\nAnd instantiate 6 identical VMs with \"--nic net-id=<net1> --nic net-id=<net2>\"\n\n3 will have an injected network config with eth0 containing net1 information and eth1 containing net2 information\n3 will have an injected network config with eth0 containing net2 information and eth1 containing net1 information\n\nSince I'm using a config drive the injected network information is located on /config-2/openstack/content/0000 but it is basically the same network information that would be injected on a root FS if you were not using config drive.\n\nMy guess is the get_network_injected_template function of nova/virt/netutils.py does not get the network infromation in an ordered fashion, although parts of quantum and nova take care to store it in a particular order (the order that is used on the command-line in the case of the CLI).\n\nthank you very much for your help\n\nBoris", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1156844", 
+    "owner": "https://api.launchpad.net/1.0/~mat128", 
+    "id": 1156844, 
+    "index": 3524, 
+    "created": "2013-03-18 21:02:12.891662+00:00", 
+    "title": "NIC ordering not respected in network_config metadata", 
+    "comments": [
+        {
+            "content": "When booting a VM with multiple NICs (in different quantum networks)\n\nand using\n\n1. quantum linuxbridge plugin\n2. network injection\n3. config drive\n\nThe NIC ordering is not respected in the network_config metadata file located on the config drive.  Sometimes the first quantum network will be eth0 and the second network eth1, sometimes the other way around (50% of the time, it works all the time!)\n\nBasically, here are my observations:\n\n1. quantum respects the ordering from the nova boot command (--nic net-id=<net1> --nic net-id=<net2>), meaning that the first port is in net1, second port in net2.\n2. nova respects the ordering because it passes both networks in order to libvirt\n3. libvirt respects the ordering because it presents the first interface to the VM in the first network with the right MAC and the second interface in the second network with the second MAC.\n4. the config drive metadata DOES NOT RESPECT THE ORDERING, as half of the time eth0 will contain information for the first network and half the time, it will contains the information for the second network.\n\nBasically, if I have this simple \"RHEL-style\" interfaces template:\n\n#for $ifc in $interfaces\n[${ifc.name}]\nIPADDR=${ifc.address}\nNETMASK=${ifc.netmask}\nGATEWAY=${ifc.gateway}\n#end for\n\nAnd instantiate 6 identical VMs with \"--nic net-id=<net1> --nic net-id=<net2>\"\n\n3 will have an injected network config with eth0 containing net1 information and eth1 containing net2 information\n3 will have an injected network config with eth0 containing net2 information and eth1 containing net1 information\n\nSince I'm using a config drive the injected network information is located on /config-2/openstack/content/0000 but it is basically the same network information that would be injected on a root FS if you were not using config drive.\n\nMy guess is the get_network_injected_template function of nova/virt/netutils.py does not get the network infromation in an ordered fashion, although parts of quantum and nova take care to store it in a particular order (the order that is used on the command-line in the case of the CLI).\n\nthank you very much for your help\n\nBoris", 
+            "date_created": "2013-03-18 21:02:12.891662+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boris-michel-deschenes"
+        }, 
+        {
+            "content": "This problem can happen in a multi-nic scenarios when using injected network template.\n\nIn nova.api.metadata.base.InstanceMetadata, when fetching network information with network.API().get_instance_nw_info, the initial network order is lost as the list of network ports returned by Quantum is sorted by port_id.\n\nThe injected network template is then erroneous and the instance will not be able to correctly configure its network interfaces.\n\nget_instance_nw_info accepts a networks parameter which can be used to \"ensure ports are in preferred network order\". Unfortunately, it seems nova.api.metadata.base.InstanceMetadata does not have such information at that time.\n\nShould anyone have an idea on how to fix it, it would be much appreciated.", 
+            "date_created": "2013-05-03 04:35:26.770079+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgagne"
+        }, 
+        {
+            "content": "It appears that this problem may be able to be circumvented by specifying the ordering by adding '--nic net-id=<uuid1> --nic net-id=<uuid2>' .  I think we were seeing the same problem on our systems and then it went away.  I think we started specifying the ordering with --nic which would cause this fix to resolve the issue:  https://review.openstack.org/#/c/15087/", 
+            "date_created": "2013-05-22 18:50:34.691800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsbryant"
+        }, 
+        {
+            "content": "I'm already specifying --nic in my use case. As stated in my comment, the initial Nova network order is lost at some point.\n\nThe list of network ports returned by Quantum is sorted by port_id which obviously isn't always the corresponding order in Nova.\n\nEven with the mentioned patch, \"ensure ports are in preferred network order\" can't sort the list of ports accordingly because it doesn't have access to the list of requested networks. The information is lost.", 
+            "date_created": "2013-05-22 20:04:13.547604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgagne"
+        }, 
+        {
+            "content": "This issue only affects setups using ConfigDrive. When using a ConfigDrive instead of injection, the network information is fetched by API and the original network order is lost, as Mathieu Gagn\u00e9 mentioned.\n\nHere is a patch to pass the original network_info to InstanceMetadata for use when creating the metadata object that will later be used by the ConfigDrive code to generate the network template.\n\nThis patch only supports libvirt and from what I can tell, Hyper-V and XenAPI are also affected. The fix would be the same; simply pass network_info to InstanceMetadata to be later used when preparing the metadata object. I unfortunately do not have any setup to test this.\n\nThis fix is also similar to the content passed to InstanceMetadata. User-provided content to be passed to the virtual machine is not stored and is simply passed to InstanceMetadata.", 
+            "date_created": "2013-06-18 14:31:47.406163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mat128"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/33682", 
+            "date_created": "2013-06-19 18:33:16.835710+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mat128"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/33682\nCommitted: http://github.com/openstack/nova/commit/b0da1ab2310316f55735827aa68ef0167274ce27\nSubmitter: Jenkins\nBranch:    master\n\ncommit b0da1ab2310316f55735827aa68ef0167274ce27\nAuthor: Mathieu Mitchell <email address hidden>\nDate:   Tue Jun 18 10:15:45 2013 -0400\n\n    Preserve network order when using ConfigDrive\n    \n    Pass network_info to be used by InstanceMetadata instead of fetching\n    it by API and losing originally requested network order. This is\n    similar to what has been done for \"content\" where the original data\n    is lost after the initial call.\n    \n    This issue only affects the ConfigDrive code path as the original\n    network_info is used when using file injection.\n    \n    HyperV and XenApi are still probably affected by the bug but\n    unaffected by this fix. The fix is the same for these drivers. Simply\n    pass a network_info and it will be used instead of fetching the\n    network info by API.\n    \n    Change-Id: Ie673b725cb47bf491009db99f6cb1258d46b0a69\n    Fixes: bug #1156844\n", 
+            "date_created": "2013-07-09 09:50:57.917559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

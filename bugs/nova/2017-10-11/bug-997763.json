@@ -1,0 +1,173 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-23 13:17:23.239514+00:00", 
+    "description": "The following scenario does not work:\n\nnova add-floating-ip <instance> <floating_ip>\n\nnova delete <instance>\n\nnova \"floating-ip-list\" renders error like this:\n\"The server has either erred or is incapable of performing the requested operation\"\n\nThis is because there's still mapping between the fixed ip of the deleted instance and floating ip left.\nRight now one must explicitly type:\nnova remove-floating-ip <instance> <floating_ip>\nnova delete <instance>", 
+    "tags": [
+        "verification-done"
+    ], 
+    "importance": "High", 
+    "heat": 52, 
+    "link": "https://bugs.launchpad.net/nova/+bug/997763", 
+    "owner": "https://api.launchpad.net/1.0/~tr3buchet", 
+    "id": 997763, 
+    "index": 679, 
+    "created": "2012-05-10 19:20:20.951704+00:00", 
+    "title": "floating ips are not disassociated from instances on deletion", 
+    "comments": [
+        {
+            "content": "The following scenario does not work:\n\nnova add-floating-ip <instance> <floating_ip>\n\nnova delete <instance>\n\nnova \"floating-ip-list\" renders error like this:\n\"The server has either erred or is incapable of performing the requested operation\"\n\nThis is because there's still mapping between the fixed ip of the deleted instance and floating ip left.\nRight now one must explicitly type:\nnova remove-floating-ip <instance> <floating_ip>\nnova delete <instance>", 
+            "date_created": "2012-05-10 19:20:20.951704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~psiwczak"
+        }, 
+        {
+            "content": "This is a nasty bug.  I think we need a few changes regarding updating network_info to make this work properly, which also means that deallocate_floating_ip may need to go through compute_api like allocate_floating_ip does.", 
+            "date_created": "2012-05-10 20:10:21.836055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I already have a \"dirty\" fix for this in compute/api.py\n\nIt probably deserves to be put into separate function in compute/api.py (the one that dissasociates all the floating ips from instance and takes just instance_id as a parameter.\n\nin _delete function:\n\n    def _delete(self, context, instance):\n        host = instance['host']\n\n        nw_info = self.network_api.get_instance_nw_info(context.elevated(),\n                                                        instance)\n        for i in nw_info:\n            for j in i['network']['subnets']:\n                for k in j['ips']:\n                    for l in k['floating_ips']:\n                        fip=l['address']\n                        LOG.debug(_(\"Dissasociating floating ip %s from instance\") % fip)\n                        self.network_api.disassociate_floating_ip(context.elevated(), fip)", 
+            "date_created": "2012-05-10 20:36:12.142280+00:00", 
+            "author": "https://api.launchpad.net/1.0/~psiwczak"
+        }, 
+        {
+            "content": "this actually looks acceptable with the refactor into a separate function and a test.  I think we can handle the performance penalty of making an actual request for nw_info.\n\nIt would also be nice to handle:\n\nnova floating-ip-list\n\nto allow it to not error like it does above if the instance has been deleted.\n\n and to allow:\n\nnova remove-floating-ip <instance> <floating_ip>\n\nto work even if the instance is gone. (my initial reading of the code makes it seem like this will work but I'm not totally sure)", 
+            "date_created": "2012-05-10 20:57:59.132212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Vish,\nDo you have any ways to work around this performance penalty?\n\nAs for other:\nnova floating-ip-list will work always with the above patch - the clue here is not to have references to non-existent floating ips in the table . So when we dissasociate them before vm deletion everything should be fine here\n\nthe last one - needs a review ;-)", 
+            "date_created": "2012-05-11 16:25:25.360474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~psiwczak"
+        }, 
+        {
+            "content": "The performance shouldn't be to bad so I wouldn't worry about it. I was originally thinking using the network_info cache so we wouldn't have to make a call but not a big deal.\n\nI agree that the problem should never happen, but since floating ips will be managed by a separate service it shouldn't fail if the instance happens to not exist.\n\n", 
+            "date_created": "2012-05-11 19:49:44.419551+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I've just hit this bug from withing horizon. Is it possible to get the fix via apt-get? (I have an essex installed in ubuntu12.04). What would be the workarround? ", 
+            "date_created": "2012-05-31 02:07:54.659769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~adrianmoya"
+        }, 
+        {
+            "content": "+1 to this is a fact.", 
+            "date_created": "2012-05-31 16:35:22.769569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~endre-karlson"
+        }, 
+        {
+            "content": "There's a funny thing happening with this in Horizon:\n1. Assign a floating IP to a instance.\n2. Terminate it\n3. Create a new instance\n4. The same IP is assigned to the new one?!", 
+            "date_created": "2012-05-31 17:32:03.831090+00:00", 
+            "author": "https://api.launchpad.net/1.0/~endre-karlson"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/7995", 
+            "date_created": "2012-05-31 19:35:08.319091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I can't replicate this through the command line. When i create and associate a floating ip then delete the instance it is completely removed from the instance.  Perhaps this is a horizon issue?", 
+            "date_created": "2012-06-01 06:55:33.338682+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Vish,\n\nSeems to be quantum-related. I was able to replicate the bug running the latest devstack + quantum (added \"q-agt,q-svc,quantum\" to ENABLED_SERVICES in stackrc).\n\nNormally when you run without quantum, the function \"deallocate_for_instance\" (nova/network/manager.py) seems to be taking care about cleaning floating ips from instance before termination. And this message is passed to logfile:\n\nLOG.debug(_(\"floating IP deallocation for instance |%s|\")\n\n\ne.g (using flatdhcpmanager - I can see this in nova-network output):\n2012-05-31 01:27:51 DEBUG nova.network.manager [req-627cb4c1-39dd-422d-a8ff-370232a76779 3380b86169804c3581d15cb00fe1f1a5 b02947aca9f3410882b8f6121cfc28a5] floating IP deallocation for instance |12| from (pid=9734) deallocate_for_instance /opt/stack/nova/nova/network/manager.py:358\n\nI could not register this message using quantum manager though.\n\n\nAnd here's the bug reproduced using up-to-date devstack + quantum. When the instance is deleted, we can no longer display floating ips:\n\nhttp://paste.openstack.org/show/18296/\n", 
+            "date_created": "2012-06-01 15:24:18.709177+00:00", 
+            "author": "https://api.launchpad.net/1.0/~psiwczak"
+        }, 
+        {
+            "content": "If this is a quantum issue, then I suspect the quantum manager is not properly deallocating floating ips in the deallocate_for_instance call. It seems preferable to make that work rather than add an extra call through the api to deallocate the ips.", 
+            "date_created": "2012-06-01 18:43:26.060027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "thanks for reporting this Piotr.  The floating IP stuff with Quantum is only lightly used at this point, though I'm starting to work on a couple deployments who will be using it, so it should get a lot more testing soon.  \n\nIf you run into other issues, please do keep reporting them.  ", 
+            "date_created": "2012-06-01 18:48:17.247009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Vish, Dan,\n\nSince this will be fixed in quantum, I abandoned my proposed change.\n\nRegards,\n-Piotr", 
+            "date_created": "2012-06-01 18:57:12.351446+00:00", 
+            "author": "https://api.launchpad.net/1.0/~psiwczak"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/8072", 
+            "date_created": "2012-06-02 00:06:56.901122+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Piotr, please check out that patch and see if it fixes the problem for you.  I tested it on my setup and it solved the issue.  Thanks. ", 
+            "date_created": "2012-06-02 00:22:16.215756+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8072\nCommitted: http://github.com/openstack/nova/commit/e6e0bf343f73fb664167f173ef2ae80d39a06540\nSubmitter: Jenkins\nBranch:    master\n\ncommit e6e0bf343f73fb664167f173ef2ae80d39a06540\nAuthor: Dan Wendlandt <email address hidden>\nDate:   Fri Jun 1 17:07:13 2012 -0700\n\n    Quantum Manager disassociate floating-ips on instance delete.\n    \n    bug #997763\n    \n    Change-Id: I4a1e6c63d2a27c361433b9150dd5ad5218578c02\n", 
+            "date_created": "2012-06-03 18:46:17.866471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Dan,\n\nThe patch fixed the issue! \n\nThank you.\n-Piotr", 
+            "date_created": "2012-06-04 16:26:12.540351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~psiwczak"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/8339", 
+            "date_created": "2012-06-08 15:57:01.654215+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Could this be backported to stable/essex?", 
+            "date_created": "2012-06-14 05:35:28.396072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tomoe"
+        }, 
+        {
+            "content": "On 06/14/2012 08:35 AM, Tomoe Sugihara wrote:\n> Could this be backported to stable/essex?\n>\nYes, this will be done soon.\nThanks\nGary\n", 
+            "date_created": "2012-06-14 06:45:38+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/8646", 
+            "date_created": "2012-06-17 13:23:55.142341+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8339\nCommitted: http://github.com/openstack/nova/commit/82599c77346bbefd550ea4ee6c0b13a3df4950af\nSubmitter: Jenkins\nBranch:    master\n\ncommit 82599c77346bbefd550ea4ee6c0b13a3df4950af\nAuthor: Trey Morris <email address hidden>\nDate:   Fri Jun 15 16:35:31 2012 -0500\n\n    moved update cache functionality to the network api\n    \n    previously the network manager get_instance_nw_info\n    was responsible for updating the cache. This is to\n    prevent calling that function in a confusing way.\n    \n    part 2 of this patch was fixing bug997763\n    floating_ip_associate was removed from the compute\n    api. network api associate is now called directly.\n    network api floating_ip functions now require\n    instance as an argument in order to update cache.\n    \n    Change-Id: Ie8daa017b99e48769afbac4862696ef0a8eb1067\n", 
+            "date_created": "2012-06-19 02:27:48.557865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is the nova part now in the maintenance release? We do experience exactly this behavior without quantum ", 
+            "date_created": "2012-06-19 12:00:01.616686+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ehaselwanter"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8646\nCommitted: http://github.com/openstack/nova/commit/9b789bed095e6110d126f8d355e1434a2b0c60f0\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit 9b789bed095e6110d126f8d355e1434a2b0c60f0\nAuthor: Dan Wendlandt <email address hidden>\nDate:   Fri Jun 1 17:07:13 2012 -0700\n\n    Quantum Manager disassociate floating-ips on instance delete.\n    \n    bug #997763\n    \n    Change-Id: I4a1e6c63d2a27c361433b9150dd5ad5218578c02\n", 
+            "date_created": "2012-06-21 19:10:52.267291+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Please find the attached test log from the Ubuntu Server Team's CI infrastructure.  As part of the verification process for this bug, Nova has been deployed and configured across multiple nodes using precise-proposed as an installation source.  After successful bring-up and configuration of the cluster, a number of exercises and smoke tests have be invoked to ensure the updated package did not introduce any regressions. A number of test iterations were carried out to catch any possible transient errors.\n\nPlease Note the list of installed packages at the top and bottom of the report.\n\nFor records of upstream test coverage of this update, please see the Jenkins links in the comments of the relevant  upstream code-review(s):\n\nTrunk review: https://review.openstack.org/8339\nStable review: https://review.openstack.org/8646\n\nAs per the provisional Micro Release Exception granted to this package by the Technical Board, we hope this contributes toward verification of this update.", 
+            "date_created": "2012-08-30 07:45:40.108559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Test coverage log.", 
+            "date_created": "2012-08-30 07:45:42.995532+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2012.1.3+stable-20120827-4d2a4afe-0ubuntu1\n\n---------------\nnova (2012.1.3+stable-20120827-4d2a4afe-0ubuntu1) precise-proposed; urgency=low\n\n  * New upstream snapshot, fixes FTBFS in -proposed. (LP: #1041120)\n  * Resynchronize with stable/essex (4d2a4afe):\n    - [5d63601] Inappropriate exception handling on kvm live/block migration\n      (LP: #917615)\n    - [ae280ca] Deleted floating ips can cause instance delete to fail\n      (LP: #1038266)\n\nnova (2012.1.3+stable-20120824-86fb7362-0ubuntu1) precise-proposed; urgency=low\n\n  * New upstream snapshot. (LP: #1041120)\n  * Dropped, superseded by new snapshot:\n    - debian/patches/CVE-2012-3447.patch: [d9577ce]\n    - debian/patches/CVE-2012-3371.patch: [25f5bd3]\n    - debian/patches/CVE-2012-3360+3361.patch: [b0feaff]\n  * Resynchronize with stable/essex (86fb7362):\n    - [86fb736] Libvirt driver reports incorrect error when volume-detach fails\n      (LP: #1029463)\n    - [272b98d] nova delete lxc-instance umounts the wrong rootfs (LP: #971621)\n    - [09217ab] Block storage connections are NOT restored on system reboot\n      (LP: #1036902)\n    - [d9577ce] CVE-2012-3361 not fully addressed (LP: #1031311)\n    - [e8ef050] pycrypto is unused and the existing code is potentially insecure\n      to use (LP: #1033178)\n    - [3b4ac31] cannot umount guestfs  (LP: #1013689)\n    - [f8255f3] qpid_heartbeat setting in ineffective (LP: #1030430)\n    - [413c641] Deallocation of fixed IP occurs before security group refresh\n      leading to potential security issue in error / race conditions\n      (LP: #1021352)\n    - [219c5ca] Race condition in network/deallocate_for_instance() leads to\n      security issue (LP: #1021340)\n    - [f2bc403] cleanup_file_locks does not remove stale sentinel files\n      (LP: #1018586)\n    - [4c7d671] Deleting Flavor currently in use by instance creates error\n      (LP: #994935)\n    - [7e88e39] nova testsuite errors on newer versions of python-boto (e.g.\n      2.5.2) (LP: #1027984)\n    - [80d3026] NoMoreFloatingIps: Zero floating ips available after repeatedly\n      creating and destroying instances over time (LP: #1017418)\n    - [4d74631] Launching with source groups under load produces lazy load error\n      (LP: #1018721)\n    - [08e5128] API 'v1.1/{tenant_id}/os-hosts' does not return a list of hosts\n      (LP: #1014925)\n    - [801b94a] Restarting nova-compute removes ip packet filters (LP: #1027105)\n    - [f6d1f55] instance live migration should create virtual_size disk image\n      (LP: #977007)\n    - [4b89b4f] [nova][volumes] Exceeding volumes, gigabytes and floating_ips\n      quotas returns general uninformative HTTP 500 error (LP: #1021373)\n    - [6e873bc] [nova][volumes] Exceeding volumes, gigabytes and floating_ips\n      quotas returns general uninformative HTTP 500 error (LP: #1021373)\n    - [7b215ed] Use default qemu-img cluster size in libvirt connection driver\n    - [d3a87a2] Listing flavors with marker set returns 400 (LP: #956096)\n    - [cf6a85a] nova-rootwrap hardcodes paths instead of using\n      /sbin:/usr/sbin:/usr/bin:/bin (LP: #1013147)\n    - [2efc87c] affinity filters don't work if scheduler_hints is None\n      (LP: #1007573)\n    - [48e5f46] metadata injection is broken in xen (LP: #1022036)\n    - [25f5bd3] scheduler hang (DOS) possible with\n      DifferentHostFilter/SameHostFilter  (LP: #1017795)\n    - [1c1b858] cannot umount guestfs  (LP: #1013689)\n    - [835ba4f] not able to get host total memory in xen with libvirt\n      (LP: #1004298)\n    - [00e5104] Call to network_get_all_by_uuids missing 'db' (LP: #986922)\n    - [4c49df7] [nova][volumes] Exceeding volumes, gigabytes and floating_ips\n      quotas returns general uninformative HTTP 500 error (LP: #1021373)\n    - [19631f3] [nova][volumes] Exceeding volumes quotas logs\n      \"VolumeSizeTooLarge\" instead of \"VolumeLimitExceeded\"  (LP: #1020634)\n    - [b0feaff] Remote arbitrary file corruption / creation flaw via injected\n      files (LP: #1015531)\n    - [3cb6e57] NoMoreFixedIps: Zero fixed ips available. Nova seems leaking\n      them. (LP: #1014769)\n    - [5d8431b] ram_allocation_ratio does not work (LP: #1016273)\n    - [410060f] test_get_console_output_file requires sudo NOPASSWD\n      (LP: #992805)\n    - [33c2575] Stop/start a KVM instance with volumes attached produces an\n      error state (LP: #1013782)\n    - [6c01c01] Backport tox settings to unbreak jenkins jobs.\n    - [344125f] Set defaultbranch in .gitreview to stable/essex\n    - [9b789be] floating ips are not disassociated from instances on deletion\n      (LP: #997763)\n    - [d89c2f3] qpid timeout causing compute service to crash (LP: #999698)\n    - [caae0e9] floating ips do not display in 'nova list' after association to\n      instance (LP: #939122)\n    - [1dc9f19] impl_qpid doesn't ACK messages (LP: #1012374)\n    - [bc621bc] Restarting nova-network removes ip packet filters\n      (LP: #1000853)\n    - [7870157] Add caching to openstack.common.cfg\n    - [27133ee] Firewall rules from nova-compute are not refreshed after host\n      reboot (LP: #985162)\n    - [3ee026e] Source group based security group rule without protocol and port\n      causes failures (LP: #1010514)\n    - [f0a9f47] [SRU] dns_domains table mysql charset is 'latin1'. Should be\n      'utf8' (LP: #993663)\n    - [cc8fd97] euca-describe-keypair NonExistent returns 200 (LP: #1006664)\n    - [9f9e9da] Security groups fail to be set correctly if incorrect case is\n      used for protocol specification (LP: #985184)\n -- Adam Gandelman <email address hidden>   Mon, 27 Aug 2012 14:50:40 -0700", 
+            "date_created": "2012-09-03 15:18:08.793162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "The verification of this Stable Release Update has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regresssions.", 
+            "date_created": "2012-09-03 15:23:33.188553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "I still have a similar issue on Newton release using Designate.\n\nWhen adding an instance with a floating ip i can get both records set. When i de-associate the floating ip designate correctly removes it. when i destroy the instance (nova destroy) without explicit floating ip deassociation it doesn't get removed from designate record list.\n\nAny idea/workaround?", 
+            "date_created": "2017-06-23 13:15:51.561080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patrizio-bassi"
+        }
+    ]
+}

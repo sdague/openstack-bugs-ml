@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 09:05:36.701185+00:00", 
+    "description": "Setup:\nCentOS 6 + RDO Icehouse (code seems to be the same in trunk)\n\nWhen doing a nova migrate, the actual backing disk file is copied over with rsync. I assume the code came from this report\nhttps://bugs.launchpad.net/nova/+bug/1025259\n\nThe rsync code uses the \"-z\" flag for compression. This is probably fine for cases with lightly used disks. However, with a disk full of content, it gets very slow. Rsync is not multithreaded so with a single E5-2670v2 core, we get ~12MB/s transfer speed (CPU bound). With the modest compression that is achieved this is significantly slower than no compression.\n\nIf possible, some speed test should be done without compression for disk files with different content. There might not be a reason to use compression here at all.", 
+    "tags": [
+        "migration"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1478800", 
+    "owner": "https://api.launchpad.net/1.0/~mhorban", 
+    "id": 1478800, 
+    "index": 1716, 
+    "created": "2015-07-28 07:03:05.244337+00:00", 
+    "title": "Libvirt migrations with rsync are slow", 
+    "comments": [
+        {
+            "content": "Setup:\nCentOS 6 + RDO Icehouse (code seems to be the same in trunk)\n\nWhen doing a nova migrate, the actual backing disk file is copied over with rsync. I assume the code came from this report\nhttps://bugs.launchpad.net/nova/+bug/1025259\n\nThe rsync code uses the \"-z\" flag for compression. This is probably fine for cases with lightly used disks. However, with a disk full of content, it gets very slow. Rsync is not multithreaded so with a single E5-2670v2 core, we get ~12MB/s transfer speed (CPU bound). With the modest compression that is achieved this is significantly slower than no compression.\n\nIf possible, some speed test should be done without compression for disk files with different content. There might not be a reason to use compression here at all.", 
+            "date_created": "2015-07-28 07:03:05.244337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kalle-happonen"
+        }, 
+        {
+            "content": "Actually this is not live migration. It's \"nova migrate\", i.e. shut down vm, qemu-img convert, rsync over file, start vm. ", 
+            "date_created": "2015-07-28 12:18:52.067119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kalle-happonen"
+        }, 
+        {
+            "content": "I tested migration of instances with and without compress flag in rsync in\nnova/virt/libvirt/utils.py:copy_image function and figured out that migration without compression flag is faster.\nBecause now we transfer files between nodes in qcow2 format, so they already compressed and additional compression takes time.\nI can see two different solution:\n1. Remove compression flag from rsync command in nova/virt/libvirt/utils.py:copy_image function.\n2. Do not change nova's code at all but configure rsync using rsyncd.conf file. We can specify parameter \"dont compress\" with suffix \"_rbase\". Before executing rsync command image is renamed with adding \"_rbase\" suffix. With such global configuration we can avoid compressing image even with --compress option in rsync command.", 
+            "date_created": "2015-08-05 16:27:56.869858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mhorban"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/209957", 
+            "date_created": "2015-08-06 14:32:47.601120+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "How much faster is it without compression?  And how much CPU time is saved?\n\nDo you have test scripts and benchmark results that we can use to try and reproduce your results?", 
+            "date_created": "2015-08-06 16:39:08.594186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "Efficiency of rsync with compression depends on many variables: content type, processor speed on both sides, network speed, etc.\nSo I made an investigation for comparison rsync with and without compression.\nIn this test I used two qcow images with the same size 10Gb: \n1. image data consists of text files(copies of nova sources). This image could be compressed very well.\n2. image contains copies of ubuntu server iso image. This image couldn't be compressed well.\nIn test I used processors are Intel i5 2.5Ghz, network speed 1000 Mbps.\nIn my test I copied each of images with and without rsync compression.\nFor tests rsync  version 3.1.0  protocol version 31 was used.\nResults:\n1. rsync image with text data without compression:\nreal\t3m37.876s\nuser\t1m6.936s\nsys\t0m19.919s\nuser + sys = 87s\n\n2. rsync image with text data with compression:\nreal\t8m16.501s\nuser\t6m55.878s\nsys\t0m19.695s\nuser + sys = 436s\n\n3. rsync image with binary data without compression:\nreal\t3m37.846s\nuser\t1m6.098s\nsys\t0m20.485s\nuser + sys = 87s\n\n4. rsync image with binary data with compression:\nreal\t8m20.839s\nuser\t6m34.998s\nsys\t0m20.554s\nuser + sys = 416s\n\nAnalizing results:\n- I was wondering that rsync with compression faster for binary data than text data.\n- With described environment I obtained huge advantage of compression-free rsync for both images.\nSince rsync uses only one processor's core we can't not expect big improvement of compression speed soon.\nMy conclusion is that compression could be usefull for networks with speed less that 10Mb.\nSince network with such a slow performance are obsolete  rsync compression must be removed from code. Also this fix will allow us to decrease CPU consumption.", 
+            "date_created": "2015-08-20 10:57:59.584079+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mhorban"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/209957\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b7ad5a312a8cfbce60510f598a34da9358f25a4c\nSubmitter: Jenkins\nBranch:    master\n\ncommit b7ad5a312a8cfbce60510f598a34da9358f25a4c\nAuthor: Marian Horban <email address hidden>\nDate:   Wed Aug 26 09:41:02 2015 -0400\n\n    libvirt:Rsync compression removed\n    \n    During migration libvirt driver copies qcow image between nodes.\n    Compression ratio of qcow disk image is small because such type\n    of image doesn't  allocate the whole image space to a file. It\n    grows as data is added. But compression procedure takes many CPU\n    time.\n    \n    Closes-Bug: #1478800\n    Change-Id: Iabcbbb576f7e9411310c540badb805eb1bf21bf5\n", 
+            "date_created": "2015-09-10 17:50:41.112348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

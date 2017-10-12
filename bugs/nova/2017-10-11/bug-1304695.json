@@ -1,0 +1,70 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:29:42.474052+00:00", 
+    "description": "Instance is not using the correct volume snapshot file after reboot.\n\nSteps to recreate bug:\n1. Create a volume\n\n2. Attach volume to a running instance.\n\n3. Take an online snapshot of the volume.\nNote that the active volume used by the instance is now switched to volume-<uuid>.<snapshot-uuid>.\n\n4. Shutdown the instance.\n\n5. Start the instance.\nIf you invoke virsh dumpxml <instance>, you will see that it is re-attaching the base volume ( volume-<uuid>) to the instance and not the snapshot volume (volume-<uuid>.<snapshot-uuid>).  The expected behavior is to have the snapshot volume re-attach to the instance.\n\nThis bug will cause data corruption in the snapshot and volume.\n\n\n\n\nIt looks like the nova volume manager is using a stale copy of the block_device_mapping. The block_device_mapping needs to be refreshed in order for the updated volume snapshot to be used.\n\nOn power on, the nova manager (nova/compute/manager.py ) does:\n1. start_instance\n2. _power_on\n3. _get_instance_volume_block_device_info\n\nThe structure for this method is:\ndef _get_instance_volume_block_device_info(self, context, instance, refresh_conn_info=False, bdms=None):\n    if not bdms:\n        bdms = (block_device_obj.BlockDeviceMappingList.\n                    get_by_instance_uuid(context, instance['uuid']))\n        block_device_mapping = (\n            driver_block_device.convert_volumes(bdms) +\n            driver_block_device.convert_snapshots(bdms) +\n            driver_block_device.convert_images(bdms))\n    ....\nblock_device_obj.BlockDeviceMappingList.get_by_instance_uuid() goes and queries the database to construct the bdms, which will contain stale data.", 
+    "tags": [
+        "drivers", 
+        "glusterfs", 
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1304695", 
+    "owner": "https://api.launchpad.net/1.0/~thang-pham", 
+    "id": 1304695, 
+    "index": 3871, 
+    "created": "2014-04-08 21:51:41.853762+00:00", 
+    "title": "glusterfs: Instance is not using the correct volume snapshot file after reboot", 
+    "comments": [
+        {
+            "content": "Instance is not using the correct volume snapshot file after reboot.\n\nSteps to recreate bug:\n1. Create a volume\n\n2. Attach volume to a running instance.\n\n3. Take an online snapshot of the volume.\nNote that the active volume used by the instance is now switched to volume-<uuid>.<snapshot-uuid>.\n\n4. Shutdown the instance.\n\n5. Start the instance.\nIf you invoke virsh dumpxml <instance>, you will see that it is re-attaching the base volume ( volume-<uuid>) to the instance and not the snapshot volume (volume-<uuid>.<snapshot-uuid>).  The expected behavior is to have the snapshot volume re-attach to the instance.\n\nThis bug will cause data corruption in the snapshot and volume.\n\nI believe the main reason for this happening is contained in nova. i.e. nova/virt/libvirt/volume.py.  The LibvirtGlusterfsVolumeDriver.connect_volume() method does not know how to find the active volume file that is contained in volume-<uuid>.info.", 
+            "date_created": "2014-04-08 21:51:41.853762+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thang-pham"
+        }, 
+        {
+            "content": "This analysis does not sound quite right to me, but I could be missing something.  connect_volume() uses data['name'] to determine the filename.  This is populated with the info from the Cinder GlusterFS driver's initialize_connection(), which sets it correctly.\n\nThe responsibility for calculating which filename should be attached to the VM is purely on the Cinder side, Nova doesn't do that calculation.", 
+            "date_created": "2014-04-08 22:10:32.004558+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "You are correct.  I was only looking at where the file name came from in nova, but not the actual root source of the file name, which is in initialize_connection.", 
+            "date_created": "2014-04-09 01:35:10.031010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thang-pham"
+        }, 
+        {
+            "content": "I debugged this problem a bit more.  It looks like the nova volume manager is using a stale copy of the block_device_mapping.  The block_device_mapping needs to be refreshed in order for the updated volume snapshot to be used.\n\nOn power on, the nova manager (nova/compute/manager.py ) does:\n1. start_instance\n2. _power_on\n3. _get_instance_volume_block_device_info\n\nThe structure for this method is:\ndef _get_instance_volume_block_device_info(self, context, instance, refresh_conn_info=False, bdms=None):\n    if not bdms:\n        bdms = (block_device_obj.BlockDeviceMappingList.\n                    get_by_instance_uuid(context, instance['uuid']))\n        block_device_mapping = (\n            driver_block_device.convert_volumes(bdms) +\n            driver_block_device.convert_snapshots(bdms) +\n            driver_block_device.convert_images(bdms))\n    ....\nblock_device_obj.BlockDeviceMappingList.get_by_instance_uuid() goes and queries the database to construct the bdms, which will contain stale data.\n\nIn order for this to work properly, refresh_conn_info must be set to True.  However, since _get_instance_volume_block_device_info is used by everyone, I am not sure if setting refresh_conn_info = True is such a good solution, since it will affect other cinder drivers also.", 
+            "date_created": "2014-04-09 03:49:43.796572+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thang-pham"
+        }, 
+        {
+            "content": "Looking at it closer, I'd say that we just need to refresh the connection info once we are done with the snapshot.\n\nWe should be careful to avoid any race conditions tho, but basically what we need to do in both volume_snapshot_create and _delete methods of the libvirt driver is:\n\n  from nova.virt import block_device as driver_block_device\n  bdm = block_device_obj.BlockDeviceMapping.get_by_volume_id(\n                    context, volume_id)\n  driver_bdm = driver_block_device.DriverVolumeBlockDevice(bdm)\n  driver_bdm.refresh_connection_info(context, instance, self._volume_api, self)\n\nand you should be good to go.\n\nThe only caveat here is that refresh_connection_info will call out to Cinder's initialize_connection which may be problematic since the snapshot is in \"creating\" state. But nothing that a dumb polling loop won't solve (sigh). In reality we should probably rething these interactions.\n", 
+            "date_created": "2014-04-10 14:48:17.597959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Nikola: Thank you for the pointer :)  I will try out your advice above.", 
+            "date_created": "2014-04-10 14:54:50.605949+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thang-pham"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/87432", 
+            "date_created": "2014-04-15 03:06:52.160891+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/87432\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=329b594436aad814e43740ea26841342a8772aff\nSubmitter: Jenkins\nBranch:    master\n\ncommit 329b594436aad814e43740ea26841342a8772aff\nAuthor: Thang Pham <email address hidden>\nDate:   Mon Apr 14 22:47:06 2014 -0400\n\n    libvirt: Refresh volume connection_info after volume snapshot\n    \n    The following patch is related to the guest assisted snapshot\n    functionality.  When you take a snapshot of a volume\n    (e.g. GlusterFS) attached to a running instance, a new snapshot\n    file is created, i.e. volume-<uuid>.<snapshot-uuid>.  The\n    instance uses this file as the active volume.  If you shutdown\n    and restart the instance, nova will reattach the base volume\n    (volume-<uuid>) to the instance instead of the snapshot volume\n    (volume-<uuid>.<snapshot-uuid>).  The expected behavior is to\n    have the snapshot volume reattach to the instance.  This is\n    caused by stale data being returned from the database when\n    _get_instance_volume_block_device_info is called during\n    _power_on.  To fix this bug, this patch calls\n    refresh_connection_info to update the database in both\n    volume_snapshot_create and _volume_snapshot_delete methods of the\n    libvirt driver.\n    \n    Change-Id: I0f340a3f879580e7981d97863bc299e33d71aa84\n    Closes-Bug: #1304695\n", 
+            "date_created": "2014-05-17 23:12:25.773460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/98255", 
+            "date_created": "2014-06-05 21:19:23.195870+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/98255\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=96212b194d390c4de9298376aefe84e3a70008de\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 96212b194d390c4de9298376aefe84e3a70008de\nAuthor: Thang Pham <email address hidden>\nDate:   Mon Apr 14 22:47:06 2014 -0400\n\n    libvirt: Refresh volume connection_info after volume snapshot\n    \n    The following patch is related to the guest assisted snapshot\n    functionality.  When you take a snapshot of a volume\n    (e.g. GlusterFS) attached to a running instance, a new snapshot\n    file is created, i.e. volume-<uuid>.<snapshot-uuid>.  The\n    instance uses this file as the active volume.  If you shutdown\n    and restart the instance, nova will reattach the base volume\n    (volume-<uuid>) to the instance instead of the snapshot volume\n    (volume-<uuid>.<snapshot-uuid>).  The expected behavior is to\n    have the snapshot volume reattach to the instance.  This is\n    caused by stale data being returned from the database when\n    _get_instance_volume_block_device_info is called during\n    _power_on.  To fix this bug, this patch calls\n    refresh_connection_info to update the database in both\n    volume_snapshot_create and _volume_snapshot_delete methods of the\n    libvirt driver.\n    \n    Conflicts:\n    \tnova/tests/virt/libvirt/test_libvirt.py\n    \n    Change-Id: I0f340a3f879580e7981d97863bc299e33d71aa84\n    Closes-Bug: #1304695\n", 
+            "date_created": "2014-07-31 14:13:02.799970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

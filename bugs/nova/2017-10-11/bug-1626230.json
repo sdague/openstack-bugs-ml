@@ -1,0 +1,44 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2016-10-17 10:20:17.720422+00:00", 
+    "description": "When an instance is evacuated an attempt to rebuild it on a different host is made.  If the instance spawn method in the driver fails and raises and exception then the instance is placed in an error state.  However the instance is still recorded a being on the source node but depending on how far through the spawn instance related files will be present and the instance may be running on the target.\n\nThe xenAPI driver cleans up the instance artefact's if spawn fails but not\nso the libvirt driver.\n\nIn the case where compute nodes do not use shared storage a subsequent attempt to evacuate the instance to the same target will fail because the instance directory is already present.\n\nThe use of reset-state and then evacuate to another node will enable the successful evacuation of the instance.  However the 'orphaned' files and running instance on the original target will need to be cleaned up manually.\n\nWe could update the instance's host once the claim is complete on the target.  In this case in the event of a failure to spawn it will effectively have evacuated so the files on the original host will be cleaned up when that node is restored.\n\nHowever maybe we should address this by bring the libvirt driver into line\nwith the XenAPI driver and getting it to clean up resources associated with\nan instance that fails to spawn?  Will raise a blueprint for this.", 
+    "tags": [
+        "libvirt", 
+        "rebuild"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1626230", 
+    "owner": "https://api.launchpad.net/1.0/~paul-carlton2", 
+    "id": 1626230, 
+    "index": 813, 
+    "created": "2016-09-21 19:07:01.241665+00:00", 
+    "title": "instance artefacts are not removed by libvirt driver if it fails to spawn", 
+    "comments": [
+        {
+            "content": "When an instance is evacuated an attempt to rebuild it on a different host is made.  If the instance spawn method in the libvirt driver (probably true for other drivers too) fails and raises and exception then the instance is placed in an error state.  However the instance is still recorded a being on the source node but depending on how far through the spawn instance related files will be present and the instance may be running on the target.\n\nIn the case where compute nodes do not use shared storage a subsequent attempt to evacuate the instance to the same target will fail because the instance directory is already present.\n\nThe use of reset-state and then evacuate to another node will enable the successful evacuation of the instance.  However the 'orphaned' files and running instance on the original target will need to be cleaned up manually.\n\nI'd recommend we update the instance's host once the claim is complete on the target.  In this case in the event of a failure to spawn it will effectively have evacuated so the files on the original host will be cleaned up when that node is restored.", 
+            "date_created": "2016-09-21 19:07:01.241665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-carlton2"
+        }, 
+        {
+            "content": "Okay, to be honest, at first glance, I thought it was not really a bugfix because the evacuate operation is an admin policy and reset-state is exactly here to reconcile the VM state so that an operator could still fix that.\n\nThe real problem I see with setting the instance.host field before calling the driver is that all of our API actions do that *after* the driver is called, which would mean a different behaviour.\n\nSee, I'm torn. Sure, we could fix that specific issue and create a tech debt, but I'm more in favor of having the libvirt driver being more robust and be able to delete the temporary resource it created in case of any error. Like you said, that rather looks like a blueprint to me.", 
+            "date_created": "2016-09-23 10:06:32.279455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Looking at this further I think there is a way to fix the immediate issue with evacuate by catching the exception raised by spawn in the compute manager and calling the driver again to destroy the instance and delete the files (if they are not on shared storage). This can be achieved by passing the on_shared_storage setting to _rebuild_default_impl in the compute manager and catching the spawn error and cleaning up if it is an evacuate as follows\n\n            try:\n                self.driver.spawn(context, instance, image_meta, injected_files,\n                                  admin_password, network_info=network_info,\n                                  block_device_info=new_block_device_info)\n            except exception as e:\n                if recreate:\n                    driver.destory(context, instance, network_info,\n                                   new_block_device_info,\n                                   destroy_disks=not on_shared_storage)\n                raise e\n\nChanging the libvirt driver to clean up instances when spawn fails will not work. Trouble is driver spawn doesn't know if it is part of a rebuild for evacuate or normal rebuild, boot or unshelve and worse still it doesn't know if the instance files are on shared storage.  Also, libvirt users are currently used to a failed boot/rebuild leaving the instance partially booted. A valid operator action is to deal with the instance being in error state following a spawn failure by looking at the compute manager log and if the instance is defined but not running try and start it, in the past I've found this has helped me to work out why it failed to spawn.\n\n", 
+            "date_created": "2016-09-23 10:36:21.440818+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paul-carlton2"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/375623", 
+            "date_created": "2016-09-23 17:02:25.305161+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Given your last paragraph, I'm wondering whether it's really a bug, but we could probably just be discussing into the Gerrit change. For the moment, putting Low.", 
+            "date_created": "2016-09-29 09:22:09.049914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }
+    ]
+}

@@ -1,0 +1,46 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-09-07 07:21:06.826786+00:00", 
+    "description": "Nova sends a request for port unbind with binding host \"\" and this can sometimes lead to a problem when nova's cache is different than Neutron's view of instance-port mappings.\n\nSteps\n1. Create a neutron port\n2. Create a VM and launch instance with this port\n3. Shutdown nova compute and neutron agents on compute node where this VM was spawned\n4. Unbind port from VM and delete the VM(Notice offline delete is a DB operation as request cant be completed on compute node as it is down)\n5. Now create a new VM with same port on a different compute node\n6. Bring up nova compute on the first node\n\nAfter 30 minutes the running deleted instance reap runs and detects a VM in libvirt which is not present in nova database. It cleans up the VM but in the process it unbinds the pre-existing port which is now attached to a completely different VM on a different compute node\n\nRoot cause: nova unbind request does not check if port is bound to current instance from Neutron standpoint", 
+    "tags": [], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1634269", 
+    "owner": "https://api.launchpad.net/1.0/~akalambu", 
+    "id": 1634269, 
+    "index": 835, 
+    "created": "2016-10-17 21:16:18.538266+00:00", 
+    "title": "Incorrect port unbind request on instance delete", 
+    "comments": [
+        {
+            "content": "Nova sends a request for port unbind with binding host \"\" and this can sometimes lead to a problem when nova's cache is different than Neutron's view of instance-port mappings.\n\nSteps\n1. Create a neutron port\n2. Create a VM and launch instance with this port\n3. Shutdown nova compute and neutron agents on compute node where this VM was spawned\n4. Unbind port from VM and delete the VM(Notice offline delete is a DB operation as request cant be completed on compute node as it is down)\n5. Now create a new VM with same port on a different compute node\n6. Bring up nova compute on the first node\n\nAfter 30 minutes the running deleted instance reap runs and detects a VM in libvirt which is not present in nova database. It cleans up the VM but in the process it unbinds the pre-existing port which is now attached to a completely different VM on a different compute node\n\nRoot cause: nova unbind request does not check if port is bound to current instance from Neutron standpoint", 
+            "date_created": "2016-10-17 21:16:18.538266+00:00", 
+            "author": "https://api.launchpad.net/1.0/~akalambu"
+        }, 
+        {
+            "content": "Tried following fix seemed to work\ndiff --git a/nova/network/neutronv2/api.py b/nova/network/neutronv2/api.py\nindex 7192031..c526393 100644\n--- a/nova/network/neutronv2/api.py\n+++ b/nova/network/neutronv2/api.py\n@@ -1170,7 +1170,11 @@ class API(base_api.NetworkAPI):\n         ports = set(ports) - ports_to_skip\n \n         # Reset device_id and device_owner for the ports that are skipped\n-        self._unbind_ports(context, ports_to_skip, neutron)\n+        # Only unbind port if neutron sees this port as bound\n+        if data.get('ports', []):\n+            self._unbind_ports(context, ports_to_skip, neutron)\n+        else:\n+            LOG.debug(\"Skipping port unbind as neutron does not see any ports attached\")\n         # Delete the rest of the ports\n         self._delete_ports(neutron, instance, ports, raise_if_fail=True)", 
+            "date_created": "2016-10-17 21:21:05.039812+00:00", 
+            "author": "https://api.launchpad.net/1.0/~akalambu"
+        }, 
+        {
+            "content": "Marking as Low priority as I don't see this as anything more than a corner case.", 
+            "date_created": "2017-01-12 19:47:23.898868+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "This is a means to re-use the port (and its allocated address and MAC) without deleting the port and creating a new one with the same address and MAC.  Obviously, you can't create a port before deletion with the same address and MAC, but you also can't create the port reliably after deletion because you can lose either address to another port - it's a race condition.\n\nIn the original test case, the issue was a host going down cauing a VM failure.  The VM doesn't delete promptly on a freshly downed host (and deleting a VM takes an uncertain amount of time in any case), so it's impossible to free the port by conventional means, and replacing the VM requires recycling its address.", 
+            "date_created": "2017-01-12 23:17:21.028882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:49:33.114957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Found open reviews for this bug in gerrit, setting to In Progress. \n\nreview: https://review.openstack.org/387687 in branch: master\n", 
+            "date_created": "2017-06-29 11:45:29.775612+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

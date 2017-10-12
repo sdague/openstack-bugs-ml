@@ -1,0 +1,48 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:05:04.350940+00:00", 
+    "description": "During a tempest run, when a compute node's usage stats are updated on the DB as part of resource claiming for an instance spawn, we hit a DBDeadlock exception:\n\nFile \".../nova/compute/manager.py\", line 1002, in _build_instance\n\u00a0with rt.instance_claim(context, instance, limits):\n\u00a0\u00a0\u00a0\u00a0File \".../nova/openstack/common/lockutils.py\", line 248, in inner\n\u00a0return f(*args, **kwargs)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/compute/resource_tracker.py\", line 126, in instance_claim\n\u00a0self._update(elevated, self.compute_node)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/compute/resource_tracker.py\", line 429, in _update\n\u00a0context, self.compute_node, values, prune_stats)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/conductor/api.py\", line 240, in compute_node_update\n\u00a0prune_stats)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/conductor/rpcapi.py\", line 363, in compute_node_update\n\u00a0prune_stats=prune_stats)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/rpcclient.py\", line 85, in call\n\u00a0return self._invoke(self.proxy.call, ctxt, method, **kwargs)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/rpcclient.py\", line 63, in _invoke\n\u00a0return cast_or_call(ctxt, msg, **self.kwargs)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/openstack/common/rpc/proxy.py\", line 126, in call\n\u00a0result = rpc.call(context, real_topic, msg, timeout)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/openstack/common/rpc/__init__.py\", line 139, in call\n\u00a0return _get_impl().call(CONF, context, topic, msg, timeout)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/openstack/common/rpc/impl_kombu.py\", line 816, in call\n\u00a0rpc_amqp.get_connection_pool(conf, Connection))\n\u00a0\u00a0\u00a0\u00a0File \".../nova/openstack/common/rpc/amqp.py\", line 574, in call\n\u00a0rv = list(rv)\n\u00a0\u00a0\u00a0\u00a0File \".../nova/openstack/common/rpc/amqp.py\", line 539, in __iter__\n\u00a0raise result\n\u00a0\u00a0RemoteError: Remote error: DBDeadlock (OperationalError) (1213, 'Deadlock found when trying to get lock; try restarting transaction') 'UPDATE compute_nodes SET updated_at=%s, hypervisor_version=%s WHERE compute_nodes.id = %s' (datetime.datetime(2013, 11, 20, 18, 28, 19, 525920), u'5.1.0 1)\n\n(A more complete log is at http://paste.openstack.org/raw/53702/)\n\nCan someone characterize the conditions under which this type of errors can occur?\n\nPerhaps sqlchemy.api.compute_node_update() needs the @_retry_on_deadlock treatment?", 
+    "tags": [
+        "db"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1253455", 
+    "owner": "https://api.launchpad.net/1.0/~garyk", 
+    "id": 1253455, 
+    "index": 1323, 
+    "created": "2013-11-20 22:37:08.858618+00:00", 
+    "title": "Compute node stats update may lead to DBDeadlock", 
+    "comments": [
+        {
+            "content": "When claiming resources for spawning an instance, \n\nDuring a tempest run, when a compute node's usage stats are updated on the DB as part of resource claiming for an instance spawn, we hit a DBDeadlock exception.\n\nTraceback (most recent call last):\n   File \"/opt/stack/nova/nova/compute/manager.py\", line 1002, in _build_instance\n    with rt.instance_claim(context, instance, limits):\n       File \"/opt/stack/nova/nova/openstack/common/lockutils.py\", line 248, in inner\n    return f(*args, **kwargs)\n       File \"/opt/stack/nova/nova/compute/resource_tracker.py\", line 126, in instance_claim\n    self._update(elevated, self.compute_node)\n       File \"/opt/stack/nova/nova/compute/resource_tracker.py\", line 429, in _update\n    context, self.compute_node, values, prune_stats)\n       File \"/opt/stack/nova/nova/conductor/api.py\", line 240, in compute_node_update\n    prune_stats)\n       File \"/opt/stack/nova/nova/conductor/rpcapi.py\", line 363, in compute_node_update\n    prune_stats=prune_stats)\n       File \"/opt/stack/nova/nova/rpcclient.py\", line 85, in call\n    return self._invoke(self.proxy.call, ctxt, method, **kwargs)\n       File \"/opt/stack/nova/nova/rpcclient.py\", line 63, in _invoke\n    return cast_or_call(ctxt, msg, **self.kwargs)\n       File \"/opt/stack/nova/nova/openstack/common/rpc/proxy.py\", line 126, in call\n    result = rpc.call(context, real_topic, msg, timeout)\n       File \"/opt/stack/nova/nova/openstack/common/rpc/__init__.py\", line 139, in call\n    return _get_impl().call(CONF, context, topic, msg, timeout)\n       File \"/opt/stack/nova/nova/openstack/common/rpc/impl_kombu.py\", line 816, in call\n    rpc_amqp.get_connection_pool(conf, Connection))\n       File \"/opt/stack/nova/nova/openstack/common/rpc/amqp.py\", line 574, in call\n    rv = list(rv)\n       File \"/opt/stack/nova/nova/openstack/common/rpc/amqp.py\", line 539, in __iter__\n    raise result\n     RemoteError: Remote error: DBDeadlock (OperationalError) (1213, 'Deadlock found when trying to get lock; try restarting transaction') 'UPDATE compute_nodes SET updated_at=%s, hypervisor_version=%s WHERE compute_nodes.id = %s' (datetime.datetime(2013, 11, 20, 18, 28, 19, 525920), u'5.1.0 1)\n\n(A more complete log is at http://paste.openstack.org/raw/53702/)\n\nCan someone characterize the conditions under which this type of errors can occur?\n\nPerhaps sqlchemy.api.compute_node_update() needs the @_retry_on_deadlock treatment?", 
+            "date_created": "2013-11-20 22:37:08.858618+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "Another issue reported that is similar to this is:\n\nhttps://bugs.launchpad.net/nova/+bug/1250836", 
+            "date_created": "2013-11-20 22:48:14.190678+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/58215", 
+            "date_created": "2013-11-25 08:08:53.971882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/58215\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=74268d329fccea295b3a5e64f6b8637c661481c0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 74268d329fccea295b3a5e64f6b8637c661481c0\nAuthor: Gary Kotton <email address hidden>\nDate:   Mon Nov 25 00:06:30 2013 -0800\n\n    Enable compute_node_update to tolerate deadlocks\n    \n    When running the CI there were cases when the aformentioned method would\n    throw a DBDeadlock exception.\n    \n    Change-Id: I98d1a804c51e1bf3bb96193d82ffe7e5d064e134\n    Closes-bug: #1253455\n", 
+            "date_created": "2014-01-25 17:16:44.848963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/75825", 
+            "date_created": "2014-02-24 10:29:14.757602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/75825\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=656452548b2d8d654a25fc27476cd77a9b8a9172\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 656452548b2d8d654a25fc27476cd77a9b8a9172\nAuthor: Gary Kotton <email address hidden>\nDate:   Mon Nov 25 00:06:30 2013 -0800\n\n    Enable compute_node_update to tolerate deadlocks\n    \n    When running the CI there were cases when the aformentioned method would\n    throw a DBDeadlock exception.\n    \n    Change-Id: I98d1a804c51e1bf3bb96193d82ffe7e5d064e134\n    Closes-bug: #1253455\n", 
+            "date_created": "2014-03-14 00:56:19.693196+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

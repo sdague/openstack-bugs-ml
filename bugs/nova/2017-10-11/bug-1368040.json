@@ -1,0 +1,88 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2015-04-01 14:19:27.494286+00:00", 
+    "description": "The choice is used for security here,  could we find out other more security methods to generate randomness?\n\n# NOTE(jerdfelt): Some password policies require at least one character\n# from each group of symbols, so start off with one random character\n # from each symbol group\n password = [random.choice(s) for s in symbolgroups] --------------> This line has described issue\n# If length < len(symbolgroups), the leading characters will only\n # be from the first length groups. Try our best to not be predictable\n # by shuffling and then truncating.\n\n \n\n\n# then fill with random characters from all symbol groups\nsymbols = ''.join(symbolgroups)\n password.extend([random.choice(symbols) for _i in xrange(length)]) --------------> This line has described issue\n\n # finally shuffle to ensure first x characters aren't from a\n # predictable group", 
+    "tags": [
+        "security"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1368040", 
+    "owner": "None", 
+    "id": 1368040, 
+    "index": 5148, 
+    "created": "2014-09-11 06:06:47.715547+00:00", 
+    "title": "random.choice in /cinder/volume/utils.py may has potential security issue", 
+    "comments": [
+        {
+            "content": "The choice is used for security here,  could we find out other more security methods to generate randomness?\n\n# NOTE(jerdfelt): Some password policies require at least one character\n# from each group of symbols, so start off with one random character\n # from each symbol group\n password = [random.choice(s) for s in symbolgroups] --------------> This line has described issue\n# If length < len(symbolgroups), the leading characters will only\n # be from the first length groups. Try our best to not be predictable\n # by shuffling and then truncating.\n\n \n\n\n# then fill with random characters from all symbol groups\nsymbols = ''.join(symbolgroups)\n password.extend([random.choice(symbols) for _i in xrange(length)]) --------------> This line has described issue\n\n # finally shuffle to ensure first x characters aren't from a\n # predictable group", 
+            "date_created": "2014-09-11 06:06:47.715547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhangyun"
+        }, 
+        {
+            "content": "The same method used in /nova/virt/disk/api.py:\n\n'ABCDEFGHIJKLMNOPQRSTUVWXYZ'\n '0123456789./')\n salt = 16 * ' '\n return ''.join([random.choice(salt_set) for c in salt])  --------------> This line has described issue\n\n\ndef _set_passwd(username, admin_passwd, passwd_data, shadow_data):", 
+            "date_created": "2014-09-11 06:09:34.889711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhangyun"
+        }, 
+        {
+            "content": "Sorry, Zhang, but I can't find an issue. Can you exactly tell what issue you're referring to? Are you saying that we should use more secure ways of generating passwords instead of doing it the way generate_password() is doing?", 
+            "date_created": "2014-09-11 11:12:00.352953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rushiagr"
+        }, 
+        {
+            "content": "I'm not sure why you believe this is a bug.", 
+            "date_created": "2014-09-11 12:13:23.415050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I think Zhang's point is that \"random\" is not using a secure RNG, so the keys generated with it might be \"more predictable\" than true randomness and therefore attackable, depending on what they are used for.\r\n\r\nThis feels like an interesting security strengthening, but I'm not sure there currently is an exploitable vulnerability here, so no need for a security advisory ?", 
+            "date_created": "2014-09-11 12:29:42.388354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Both nova and cinder have a generate_password function, so I assume it was copied from one to the other, and has been allowed to diverge. Nova's version is better in that it makes use of random.SystemRandom(). Cinder's version of generate_password should also use random.SystemRandom to improve the security of this function. Maybe the function should be moved into oslo-incubator since it's shared.\n\nHere's nova: http://git.openstack.org/cgit/openstack/nova/tree/nova/utils.py?id=8aaf9059dadc2d275c0d0bd873fb27161c770bfd#n288\n\nHere's cinder: http://git.openstack.org/cgit/openstack/cinder/tree/cinder/volume/utils.py?id=69b4cfd09c61da1ccd9c9587dcd043240bc3e9d0#n412\n", 
+            "date_created": "2014-09-11 17:51:28.844599+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/121193", 
+            "date_created": "2014-09-12 18:15:10.776839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "A change a few months ago in bug 1319639 took us from using random.SystemRandom() to pycrypto's random().  This reverses it.  Which one do we want...?", 
+            "date_created": "2014-09-12 18:24:17.445821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "So I have the same issue here that Eric Harney pointed out above.  Also, I've asked as Brant pointed out in comment #5 that perhaps rather than chasing these back and forth between projects I'd rather see something agreed upon and proposed to oslo utils and shared.", 
+            "date_created": "2014-09-12 20:29:53.903979+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Eric and John, I am sorry, I wasn't aware that we had moved away from pycrypto recently.  I had one of your users asking if we could sync up with what Nova was doing.  I wasn't sure if we had enough time to try moving this into Oslo, but I can give it a shot if that is the preferred solution.  If we do that, however, I am thinking that we will be moving back to Nova's solution.  Does that make sense?", 
+            "date_created": "2014-09-12 21:22:02.649137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsbryant"
+        }, 
+        {
+            "content": "Change abandoned by Jay Bryant (<email address hidden>) on branch: master\nReview: https://review.openstack.org/121193\nReason: Going to investigate moving this to oslo instead so that Nova and Cinder stay in sync.", 
+            "date_created": "2014-09-12 21:35:35.424015+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I didn't look closely enough at this and so didn't see that a cryptographically secure random number generator was being used already. With that, I don't think there's a problem in cinder, so I'd be fine with just closing this.\n\nThe problem with duplicate code that should be shared seems like it would be a different wishlist bug.", 
+            "date_created": "2014-09-12 22:22:45.757207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blk-u"
+        }, 
+        {
+            "content": "Brant, so if I were to move this to a common code base, is the solution that Cinder is currently using the better solution?", 
+            "date_created": "2014-09-12 22:33:46.148062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsbryant"
+        }, 
+        {
+            "content": "I propose the VMT treat this as a hardening fix unless you can provide evidence of an exploitable vulnerability here. We will switch it on Thursday if nobody complains before then.", 
+            "date_created": "2014-09-15 14:37:00.360477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }
+    ]
+}

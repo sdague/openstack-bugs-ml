@@ -1,0 +1,164 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:26:36.593317+00:00", 
+    "description": "nova rescue of VM on vmWare will create a additional VM ($ORIGINAL_ID-rescue), but after that, the original VM has status ACTIVE. This leads to  \n\n[root@jhenner-node ~(keystone_admin)]# nova unrescue foo\nERROR: Cannot 'unrescue' while instance is in vm_state stopped (HTTP 409) (Request-ID: req-792cabb2-2102-47c5-9b15-96c74a9a4819)\n\nthe original can be deleted, which then causes leaking of the -rescue VM.", 
+    "tags": [
+        "compute", 
+        "vmware"
+    ], 
+    "importance": "High", 
+    "heat": 266, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1269418", 
+    "owner": "https://api.launchpad.net/1.0/~garyk", 
+    "id": 1269418, 
+    "index": 1366, 
+    "created": "2014-01-15 13:35:43.756846+00:00", 
+    "title": "[OSSA 2014-017] nova rescue doesn't put VM into RESCUE status on vmware (CVE-2014-2573)", 
+    "comments": [
+        {
+            "content": "nova rescue of VM on vmWare will create a additional VM ($ORIGINAL_ID-rescue), but after that, the original VM has status ACTIVE. This leads to  \n\n[root@jhenner-node ~(keystone_admin)]# nova unrescue foo\nERROR: Cannot 'unrescue' while instance is in vm_state stopped (HTTP 409) (Request-ID: req-792cabb2-2102-47c5-9b15-96c74a9a4819)\n\nthe original can be deleted, which then causes leaking of the -rescue VM.", 
+            "date_created": "2014-01-15 13:35:43.756846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jhenner"
+        }, 
+        {
+            "content": "This doesn't seem to be a VC driver issue, I have tried this with the libvirt driver and the same problem happens. The state of the VM is not being set correctly.", 
+            "date_created": "2014-01-17 00:55:54.939997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~maithem"
+        }, 
+        {
+            "content": "https://bugzilla.redhat.com/show_bug.cgi?id=1055531", 
+            "date_created": "2014-01-20 14:09:35.729828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jhenner"
+        }, 
+        {
+            "content": "Looking into potential security implications.", 
+            "date_created": "2014-03-03 08:09:15.664587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'm not convinced the leaking of the rescue VM is a security issue. Does it let the user circumvent its quota and the extra VMs could be used to overload compute nodes without generating any cost ?", 
+            "date_created": "2014-03-03 15:27:13.196872+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This seems specific to vmware, adding vmware tag.", 
+            "date_created": "2014-03-04 09:14:03.414794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "@John: comment #1 says libvirt is also affected ?", 
+            "date_created": "2014-03-04 11:14:39.887188+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@John - that's why i removed it because of comment #1", 
+            "date_created": "2014-03-04 17:39:15.742840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "I have checked that this bug allows the user to pass the limits, so this can lead to DOS and also may lead to consuming more resources than has been paid for.\n\nfor i in {1..10}; do\n  nova boot --image cirros-0.3.1-x86_64-disk.vmdk --flavor m1.micro foo-$i;\ndone\n\n# Wait for them to spin-up to ACTIVE state. The limit is 10VMs. No more VMs can be spun up by thi tenant.\n\n\nfor i in {1..10}; do\n  nova rescue foo-$i;\ndone\n\n\nfor i in {1..10}; do\n  nova delete foo-$i;\ndone\n \n# *-rescue machines are still there, in running state \n# -- consuming RAM and disk space\n# Goto the begining. We can spin-up 10 more VMs.\n\nI have also checked that this problem is not present when using the libvirt/KVM VMs on local disk. The -rescue disk-file is created in the directory of the VM, which gets removed when the VM is being deleted. That holds for Grizzly and Havana release.", 
+            "date_created": "2014-03-12 15:43:02.590549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jhenner"
+        }, 
+        {
+            "content": "If Jaroslav's analysis is correct than I think we should move to get a CVE assigned for this. (ttx do you agree?). \n\nI've drafted an impact analysis (below). I'm not sure about the versions. I'm assuming this was introduced by this commit: 8db2f23a43cf8aff21d7ef07af742383c275dd76, however I will need a developer to confirm this problem and the cause. \n\n------\n\nTitle: Nova VMWare driver leaks rescued images\nReporter: Jaroslav Henner (Red Hat)\nProducts: Nova \nVersions: 2013.2 \n\nDescription: \nJaroslav Henner from Red Hat reported a vulnerability in Nova. By \nrequesting Nova place an image into rescue, then deleting                       \nthe image an authenticated user my exceed their quota. This can \nresult in a denial of service via excessive resource consumption. \nOnly setups using the Nova VMWare driver are affected.", 
+            "date_created": "2014-03-13 04:11:48.013521+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Correct, the problem is specific to VMware. More specifically if a instance ins deleted after a resuce then a rescus VM will still exist on the backend.", 
+            "date_created": "2014-03-13 13:32:37.852892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/80284", 
+            "date_created": "2014-03-13 13:57:43.628760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Impact description looks good. I would add a comma between \"the image\" and \"an authenticated user\", for clarity.\nAlso would be good to get confirmation on the affected versions.", 
+            "date_created": "2014-03-17 16:16:58.948658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Grant, looks like it should be \"Versions: from 2013.2 to 2013.2.2\" (assuming it does not affect releases prior to Havana and will be fixed in the 2013.2.3 stable branch point release).", 
+            "date_created": "2014-03-17 16:18:28.840886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "@garyk Should this change also be backported to Havana? ", 
+            "date_created": "2014-03-20 22:32:36.552055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "We'll need an havana backport, but maybe wait for the patch to make it to master first to avoid duplication of work", 
+            "date_created": "2014-03-24 15:10:56.552171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This seems to be having some difficulties getting through the gate. Can we please get some more eyes on this? ", 
+            "date_created": "2014-03-31 04:55:10.547025+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "master patch blocked on vmware CI. Will need to be backported to milestone-proposed and stable/havana", 
+            "date_created": "2014-04-07 14:13:51.445773+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/80284\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=efb66531bc37ee416778a70d46c657608ca767af\nSubmitter: Jenkins\nBranch:    master\n\ncommit efb66531bc37ee416778a70d46c657608ca767af\nAuthor: Gary Kotton <email address hidden>\nDate:   Thu Mar 13 06:53:58 2014 -0700\n\n    VMware: ensure rescue instance is deleted when instance is deleted\n    \n    If the user creates a rescue instance and then proceeded to delete\n    the original instance then the rescue instance would still be up\n    and running on the backend.\n    \n    This patch ensures that the rescue instance is cleaned up if\n    necessary.\n    \n    The vmops unrescue method has a new parameter indicating if\n    the original VM should be powered on.\n    \n    Change-Id: I3c1d0b1d003392b306094b80ea1ac99377441fbf\n    Closes-bug: 1269418\n", 
+            "date_created": "2014-04-19 23:50:33.587504+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/89217", 
+            "date_created": "2014-04-20 05:32:58.586274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Anyone up for a stable/havana backport ?", 
+            "date_created": "2014-04-22 14:10:56.198471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'm working on a backport of the original patch written by Gary Kotton , currently running tests.", 
+            "date_created": "2014-04-23 14:28:03.508133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkrinner"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/90696", 
+            "date_created": "2014-04-28 11:25:48.534174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Backport reviews are in progress here -\n\nhttps://review.openstack.org/#/c/89762/\nhttps://review.openstack.org/#/c/89768/\n\nProposed fix above for stable/havana abandoned. ", 
+            "date_created": "2014-04-30 05:03:39.779330+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Above links are for stable/havana.\nFor referenc, here are the icehouse ones:\nhttps://review.openstack.org/#/c/88514/ (now outdated)\nhttps://review.openstack.org/#/c/89217/", 
+            "date_created": "2014-05-06 14:13:31.867550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/89217\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ffcb17678c7e5409a1f12a09945b18e8879a677d\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit ffcb17678c7e5409a1f12a09945b18e8879a677d\nAuthor: Gary Kotton <email address hidden>\nDate:   Thu Mar 13 06:53:58 2014 -0700\n\n    VMware: ensure rescue instance is deleted when instance is deleted\n    \n    If the user creates a rescue instance and then proceeded to delete\n    the original instance then the rescue instance would still be up\n    and running on the backend.\n    \n    This patch ensures that the rescue instance is cleaned up if\n    necessary.\n    \n    The vmops unrescue method has a new parameter indicating if\n    the original VM should be powered on.\n    \n    Closes-bug: 1269418\n    (cherry picked from commit efb66531bc37ee416778a70d46c657608ca767af)\n    \n    Conflicts:\n    \n    \tnova/virt/vmwareapi/vmops.py\n    \n    Change-Id: I3c1d0b1d003392b306094b80ea1ac99377441fbf\n", 
+            "date_created": "2014-05-29 08:35:39.644477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/89768\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b3cc3f62a60662e5bb82136c0cfa464592a6afe9\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit b3cc3f62a60662e5bb82136c0cfa464592a6afe9\nAuthor: Gary Kotton <email address hidden>\nDate:   Thu Mar 13 06:53:58 2014 -0700\n\n    VMware: ensure rescue instance is deleted when instance is deleted\n    \n    If the user creates a rescue instance and then proceeded to delete\n    the original instance then the rescue instance would still be up\n    and running on the backend.\n    \n    This patch ensures that the rescue instance is cleaned up if\n    necessary.\n    \n    The vmops unrescue method has a new parameter indicating if\n    the original VM should be powered on.\n    \n    Closes-bug: 1269418\n    (cherry picked from commit efb66531bc37ee416778a70d46c657608ca767af)\n    \n    Conflicts:\n    \n    \tnova/tests/virt/vmwareapi/test_vmwareapi.py\n    \tnova/virt/vmwareapi/vmops.py\n    \n    Change-Id: I3c1d0b1d003392b306094b80ea1ac99377441fbf\n", 
+            "date_created": "2014-05-29 08:36:00.699892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "It fails to unrescue when the vmware VM is in powered-on state and also it seems to be leaking when the vm is in ERROR state.\n\n# nova boot --image cirros-0.3.1-x86_64-disk.vmdk --flavor m1.tiny foo\n# nova list\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| ID                                   | Name | Status | Task State | Power State | Networks                 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| c1ed3110-a054-420c-bc70-0bdb254fcc8c | foo  | ACTIVE | -          | Running     | novanetwork=192.168.32.5 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n# nova rescue foo\n[root@jhenner-node-permanent-7v0 ~(keystone_admin)]# nova list\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| ID                                   | Name | Status | Task State | Power State | Networks                 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| c1ed3110-a054-420c-bc70-0bdb254fcc8c | foo  | ACTIVE | rescuing   | Running     | novanetwork=192.168.32.5 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n\n******* Wait until the -rescue VM gets powered on, then the nova seems to switch the state:\n\n[root@jhenner-node-permanent-7v0 ~(keystone_admin)]# nova list\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| ID                                   | Name | Status | Task State | Power State | Networks                 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| c1ed3110-a054-420c-bc70-0bdb254fcc8c | foo  | RESCUE | -          | Shutdown    | novanetwork=192.168.32.5 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n# nova unrescue foo\n# nova list\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| ID                                   | Name | Status | Task State | Power State | Networks                 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| c1ed3110-a054-420c-bc70-0bdb254fcc8c | foo  | RESCUE | unrescuing | Shutdown    | novanetwork=192.168.32.5 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n[root@jhenner-node-permanent-7v0 ~(keystone_admin)]# nova list\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| ID                                   | Name | Status | Task State | Power State | Networks                 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n| c1ed3110-a054-420c-bc70-0bdb254fcc8c | foo  | ERROR  | -          | Shutdown    | novanetwork=192.168.32.5 |\n+--------------------------------------+------+--------+------------+-------------+--------------------------+\n\n\n# nova delete foo\n\n******* this leaves the -rescue VM in the vcenter.\n\n# rpm -q openstack-nova-compute\nopenstack-nova-compute-2014.1-7.el7ost.noarch\n", 
+            "date_created": "2014-06-30 16:26:26.616524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jhenner"
+        }, 
+        {
+            "content": "This issue has been closed. Any incomplete fixes / regressions should be raised in a new (private) bug referencing this one. ", 
+            "date_created": "2014-07-07 23:02:23.218496+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }
+    ]
+}

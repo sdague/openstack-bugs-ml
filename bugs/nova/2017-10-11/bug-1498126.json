@@ -1,0 +1,35 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-01-20 22:18:40.641541+00:00", 
+    "description": "All of these are being reported upon code inspection - I have yet to confirm all of these as they are in fact edge cases and subtle race conditions:\n\n* We update the instance.host field to the value of the destination_node in resize_migration which runs on the source host. (https://github.com/openstack/nova/blob/1df8248b6ad7982174c417abf80070107eac8909/nova/compute/manager.py#L3750)  This means that in between that DB write,  and changing the flavor and applying the migration context (which happens in finish_resize ran on destination host) all resource tracking runs on the destination host will be wrong (they will use the instance record and thus use the wrong .\n\n* There is very similar racy-ness in the revert_resize path as described in the following comment (https://github.com/openstack/nova/blob/1df8248b6ad7982174c417abf80070107eac8909/nova/compute/manager.py#L3448) - we should fix that too.\n\n* drop_move_claim method makes sense only when called on the source node, so it's name should be reflected to change that. It's really an optimization where we free the resources sooner than the next RT pass which will not see the migration as in progress. This should be documented better\n\n* drop_move_claim looks up the new_flavor to compare it with the flavor that was used to track the migration, but on the source node it's certain to be the old_flavor. Thus as it stands now drop_move_claim  (only ran on source nodes) doesn't do anything. Not a big deal, but we should probably fix it.", 
+    "tags": [
+        "compute", 
+        "resize", 
+        "resource-tracker"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1498126", 
+    "owner": "None", 
+    "id": 1498126, 
+    "index": 4354, 
+    "created": "2015-09-21 18:36:53.848758+00:00", 
+    "title": "Inconsistencies with resource tracking in the case of resize operation.", 
+    "comments": [
+        {
+            "content": "All of these are being reported upon code inspection - I have yet to confirm all of these as they are in fact edge cases and subtle race conditions:\n\n* We update the instance.host field to the value of the destination_node in resize_migration which runs on the source host. (https://github.com/openstack/nova/blob/1df8248b6ad7982174c417abf80070107eac8909/nova/compute/manager.py#L3750)  This means that in between that DB write,  and changing the flavor and applying the migration context (which happens in finish_resize ran on destination host) all resource tracking runs on the destination host will be wrong (they will use the instance record and thus use the wrong .\n\n* There is very similar racy-ness in the revert_resize path as described in the following comment (https://github.com/openstack/nova/blob/1df8248b6ad7982174c417abf80070107eac8909/nova/compute/manager.py#L3448) - we should fix that too.\n\n* drop_move_claim method makes sense only when called on the source node, so it's name should be reflected to change that. It's really an optimization where we free the resources sooner than the next RT pass which will not see the migration as in progress. This should be documented better\n\n* drop_move_claim looks up the new_flavor to compare it with the flavor that was used to track the migration, but on the source node it's certain to be the old_flavor. Thus as it stands now drop_move_claim  (only ran on source nodes) doesn't do anything. Not a big deal, but we should probably fix it.", 
+            "date_created": "2015-09-21 18:36:53.848758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Just thought I'd mention that I just finished investigating an issue that turned out to be the first item above, so it's a practical problem rather than theoretical.\n\nWe had a race (in kilo, but with very similar code to what is in liberty) between instances being migrated that are in the RESIZE_MIGRATED state (so the host/node have been updated but the numa_topology is stale) and the resource audit running on the destination.\n\nThe audit sees the instance and processes it in _update_usage_from_instances() but using the stale instance.numa_topology, thus possibly accounting for the wrong host CPUs. \n\nWe've just submitted a local workaround that modifies _update_usage_from_instances() to ignore instances with a task_state of  RESIZE_MIGRATED.  (So that they get handled by _update_usage_from_migrations().   So far it seems to help.", 
+            "date_created": "2015-10-02 19:15:34.639105+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "As there is no patch submitted by the assignee for long time, removing the assignee.", 
+            "date_created": "2017-01-20 22:18:28.003037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anusha-unnam"
+        }
+    ]
+}

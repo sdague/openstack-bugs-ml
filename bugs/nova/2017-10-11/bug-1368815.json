@@ -1,0 +1,243 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2016-07-19 08:14:34.904521+00:00", 
+    "description": "==========================================================\nImpact: occasional image corruption (any format on local filesystem)\nTest case: see the qemu-img command below\nRegression potential: this cherrypicks a patch from upstream to a not-insignificantly older qemu source tree.  While the cherrypick seems sane, it's possible that there are subtle interactions with the other delta.  I'd really like for a full qa-regression-test qemu testcase to be run against this package.\n==========================================================\n\n-- Found in releases qemu-2.0.0, qemu-2.0.2, qemu-2.1.0. Tested on Ubuntu 14.04 using Ext4 filesystems.\n\nThe command\n\n\u00a0\u00a0qemu-img convert -O raw inputimage.qcow2 outputimage.raw\n\nintermittently creates corrupted output images, when the input image is not yet fully synchronized to disk. While the issue has actually been discovered in operation of of OpenStack nova, it can be reproduced \"easily\" on command line using\n\n\u00a0\u00a0cat $SRC_PATH > $TMP_PATH && $QEMU_IMG_PATH convert -O raw $TMP_PATH $DST_PATH && cksum $DST_PATH\n\non filesystems exposing this behavior. (The difficult part of this exercise is to prepare a filesystem to reliably trigger this race. On my test machine some filesystems are affected while other aren't, and unfortunately I haven't found the relevant difference between them, yet. Possible it's timing issues completely out of userspace control ...)\n\nThe root cause, however, is the same as in\n\n\u00a0\u00a0http://lists.gnu.org/archive/html/coreutils/2011-04/msg00069.html\n\nand it can be solved the same way as suggested in\n\n\u00a0\u00a0http://lists.gnu.org/archive/html/coreutils/2011-04/msg00102.html\n\nIn qemu, file block/raw-posix.c use the FIEMAP_FLAG_SYNC, i.e change\n\n\u00a0\u00a0\u00a0\u00a0f.fm.fm_flags = 0;\n\nto\n\n\u00a0\u00a0\u00a0\u00a0f.fm.fm_flags = FIEMAP_FLAG_SYNC;\n\nAs discussed in the thread mentioned above, retrieving a page cache coherent map of file extents is possible only after fsync on that file.\n\nSee also\n\n\u00a0\u00a0https://bugs.launchpad.net/nova/+bug/1350766\n\nIn that bug report filed against nova, fsync had been suggested to be performed by the framework invoking qemu-img. However, as the choice of fiemap -- implying this otherwise unneeded fsync of a temporary file  -- is not made by the caller but by qemu-img, I agree with the nova bug reviewer's objection to put it into nova. The fsync should instead be triggered by qemu-img utilizing the FIEMAP_FLAG_SYNC, specifically intended for that purpose.", 
+    "tags": [
+        "fiemap", 
+        "nova", 
+        "openstack", 
+        "qemu-img", 
+        "verification-done-trusty", 
+        "verification-done-utopic"
+    ], 
+    "importance": "High", 
+    "heat": 36, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1368815", 
+    "owner": "https://api.launchpad.net/1.0/~o-tony", 
+    "id": 1368815, 
+    "index": 1606, 
+    "created": "2014-09-12 14:58:23.021797+00:00", 
+    "title": "qemu-img convert intermittently corrupts output images", 
+    "comments": [
+        {
+            "content": "-- Found in releases qemu-2.0.0, qemu-2.0.2, qemu-2.1.0. Tested on Ubuntu 14.04 using Ext4 filesystems.\n\nThe command\n\n  qemu-img convert -O raw inputimage.qcow2 outputimage.raw\n\nintermittently creates corrupted output images, when the input image is not yet fully synchronized to disk. While the issue has actually been discovered in operation of of OpenStack nova, it can be reproduced \"easily\" on command line using\n\n  cat $SRC_PATH > $TMP_PATH && $QEMU_IMG_PATH convert -O raw $TMP_PATH $DST_PATH && cksum $DST_PATH\n\non filesystems exposing this behavior. (The difficult part of this exercise is to prepare a filesystem to reliably trigger this race. On my test machine some filesystems are affected while other aren't, and unfortunately I haven't found the relevant difference between them, yet. Possible it's timing issues completely out of userspace control ...)\n\nThe root cause, however, is the same as in\n\n  http://lists.gnu.org/archive/html/coreutils/2011-04/msg00069.html\n\nand it can be solved the same way as suggested in\n\n  http://lists.gnu.org/archive/html/coreutils/2011-04/msg00102.html\n\nIn qemu, file block/raw-posix.c use the FIEMAP_FLAG_SYNC, i.e change \n\n    f.fm.fm_flags = 0;\n\nto\n\n    f.fm.fm_flags = FIEMAP_FLAG_SYNC;\n\nAs discussed in the thread mentioned above, retrieving a page cache coherent map of file extents is possible only after fsync on that file.\n\nSee also\n\n  https://bugs.launchpad.net/nova/+bug/1350766\n\nIn that bug report filed against nova, fsync had been suggested to be performed by the framework invoking qemu-img. However, as the choice of fiemap -- implying this otherwise unneeded fsync of a temporary file  -- is not made by the caller but by qemu-img, I agree with the nova bug reviewer's objection to put it into nova. The fsync should instead be triggered by qemu-img utilizing the FIEMAP_FLAG_SYNC, specifically intended for that purpose.", 
+            "date_created": "2014-09-12 14:58:23.021797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~michael-steffens-b"
+        }, 
+        {
+            "content": "Is there a minimum version of qemu that would be required to use the FIEMAP_FLAG_SYNC flag?", 
+            "date_created": "2014-09-12 15:13:41.537568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The affected code was introduced with version 1.2.0. However, due to https://bugs.launchpad.net/qemu/+bug/1193628 I can't build these old releases to verify whether they actually expose the same behaviour.", 
+            "date_created": "2014-09-14 21:04:42.030554+00:00", 
+            "author": "https://api.launchpad.net/1.0/~michael-steffens-b"
+        }, 
+        {
+            "content": "It seems the dust settles a bit: Found the relevant difference between my various filesystems, and how to reproduce the failure: Susceptible filesystems don't have the extent feature of ext4 enabled.\n\nYou can create such a filesystem using\n\n  mke2fs -t ext4 -O ^extent /dev/...\n  mount /mnt /dev/...\n \nAdapting the command line example provided above you can see\n\n  rm -f /mnt/tmp.qcow2\n  cat $SRC_PATH > /mnt/tmp.qcow2 && qemu-img convert -O raw  /mnt/tmp.qcow /mnt/tmp.qcow\n  cksum  /mnt/tmp.qcow\n\ncreating corrupt (usually nullified) result images. By inserting a sleep of at least 33 seconds between the cat command and the qemu-img invocation I'm getting proper output.\n\nTo me it's unclear now, where the actual defect is located. Creating ext4 filesystems with certain features disabled (such as the exetent tree) is apparently supported and ok. Is the fiemap ioctl supposed to handle this gracefully, for example by assuming FIEMAP_FLAG_SYNC in absence of an extent tree? Or are clients such as qemu-img supposed to always FIEMAP_FLAG_SYNC to be safe?", 
+            "date_created": "2014-09-15 10:08:41.703266+00:00", 
+            "author": "https://api.launchpad.net/1.0/~michael-steffens-b"
+        }, 
+        {
+            "content": "I see seek hole is supported in the latest qemu-img so I would reorder so that's tried first like:\n\n    if lseek(SEEK_HOLE) == ENOTSUP\n        use_that\n        if fiemap(FIEMAP_FLAG_SYNC)\n            use_that", 
+            "date_created": "2014-09-15 10:30:50.126746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "The fallback cascade P\u00e1draig mentions is already implemented in qemu-2.1.0, in function raw_co_get_block_status. Just swap\n\n  ret = try_fiemap( ... )\n\nand\n\n  ret = try_seek_hole( ... )\n\nto reverse the order. I can confirm that it works just fine on 3.13 kernel (all version since 3.1, according to lseek(2)), while older versions will fall back to fiemap, which needs to be protected with FIEMAP_FLAG_SYNC in try_fiemap, to be safe.\n\nThis should work under all conditions, and avoid redundant syncs where possible, right?\n\n  ", 
+            "date_created": "2014-09-15 12:52:28.919295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~michael-steffens-b"
+        }, 
+        {
+            "content": "Marking as High since duplicate bug 1350766 was marked High.", 
+            "date_created": "2014-09-15 15:16:25.704332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "openstack review at:\n  https://review.openstack.org/#/c/123957/\n\nQemu patches at:\n  http://patchwork.ozlabs.org/patch/393494/ ; and\n  http://patchwork.ozlabs.org/patch/393495/", 
+            "date_created": "2014-09-30 04:51:44.394885+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "FWIW the following 2 commits in qemu master resolve the issue for qemu-img.\n\n  http://git.qemu.org/?p=qemu.git;a=commit;h=38c4d0aea3e1264c86e282d99560330adf2b6e25\n  http://git.qemu.org/?p=qemu.git;a=commit;h=7c15903789953ead14a417882657d52dc0c19a24\n\nIf possible they should be back ported to trusty and utopic.\n\nYou'll also need something like:\n\n  http://git.qemu.org/?p=qemu.git;a=commit;h=4f11aa8a40351b28c0e67c7276e0003b38cc46ac\n\nbefore my 2 patches.", 
+            "date_created": "2014-10-22 23:21:02.798997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Thanks for the information.  Looks like we can apply these in debian too.", 
+            "date_created": "2014-10-23 18:22:07.855729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Status changed to 'Confirmed' because the bug affects multiple users.", 
+            "date_created": "2014-10-27 05:27:36.088409+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "This bug was fixed in the package qemu - 2.1+dfsg-4ubuntu7\n\n---------------\nqemu (2.1+dfsg-4ubuntu7) vivid; urgency=medium\n\n  * Apply two patches to fix intermittent qemu-img corruption\n    (LP: #1368815)\n    - 501-block-raw-posix-fix-disk-corruption-in-try-fiemap\n    - 502-block-raw-posic-use-seek-hole-ahead-of-fiemap\n -- Serge Hallyn <email address hidden>   Wed, 29 Oct 2014 22:31:43 -0500", 
+            "date_created": "2014-10-30 06:40:38.346905+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Hi Serge,\n\n\nIs there any chance these fixes will go into trusty?", 
+            "date_created": "2014-11-20 22:42:25.265680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Hi Tony,\n\nyes, I've uploaded a proposed fix for trusty-proposed earlier today.  It should be available for testing as soon as it is accepted.", 
+            "date_created": "2014-11-21 04:17:48.231378+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Awesome.\n\nThanks!", 
+            "date_created": "2014-11-21 04:47:36.659335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Hello Michael, or anyone else affected,\n\nAccepted qemu into utopic-proposed. The package will build now and be available at http://launchpad.net/ubuntu/+source/qemu/2.1+dfsg-4ubuntu6.2 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2014-11-25 17:22:26.666371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "Hello Michael, or anyone else affected,\n\nAccepted qemu into trusty-proposed. The package will build now and be available at http://launchpad.net/ubuntu/+source/qemu/2.0.0+dfsg-2ubuntu1.8 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2014-11-25 17:24:00.005317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "Tested qemu-utils  2.0.0+dfsg-2ubuntu1.8. Successful.", 
+            "date_created": "2014-12-01 08:23:42.917300+00:00", 
+            "author": "https://api.launchpad.net/1.0/~michael-steffens-b"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for qemu has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2014-12-08 18:40:40.965643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "This bug was fixed in the package qemu - 2.0.0+dfsg-2ubuntu1.8\n\n---------------\nqemu (2.0.0+dfsg-2ubuntu1.8) trusty-proposed; urgency=medium\n\n  * debian/qemu-system-x86.qemu-kvm.upstart: create /dev/kvm in a\n    container. (LP: #1370199)\n  * Cherrypick upstream patch to fix intermittent qemu-img corruption\n    (LP: #1368815)\n    - 501-block-raw-posix-fix-disk-corruption-in-try-fiemap\n    - (note - 502-block-raw-posic-use-seek-hole-ahead-of-fiemap (which was\n      also needed in utopic) appears to be unneeded here as the code being\n      changed has not yet been switched to using try_fiemap)\n -- Serge Hallyn <email address hidden>   Thu, 20 Nov 2014 11:24:51 -0600", 
+            "date_created": "2014-12-08 18:46:11.819714+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "@Michael,\n\nby any chance would you be albe to test on utopic?", 
+            "date_created": "2014-12-10 16:38:12.338535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "I couldn't reproduce the bug on the old qemu myself, however Michael has verified the (same) fix on trusty, and the full qa-regression-test passed for me on utopic-proposed.  So I would request that we call this verification-done.", 
+            "date_created": "2014-12-10 18:32:34.849643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Looking at the fixes, I also see the following commits remove the above changes, which could mean we might encounter this again:\nc4875e5 raw-posix: SEEK_HOLE suffices, get rid of FIEMAP\nd1f06fe raw-posix: The SEEK_HOLE code is flawed, rewrite it\n\nNote there is also a related issue:\nbug 1292234\nSo far testing with the proposed qemu version or upstream I still encounter issues on ext4 w/ ^extent and ext3 filesystems.", 
+            "date_created": "2014-12-10 20:34:29.173689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "Filed a separate issue for MOS https://bugs.launchpad.net/mos/+bug/1401261", 
+            "date_created": "2014-12-10 20:50:11.704728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dmitrymex"
+        }, 
+        {
+            "content": "Hi Chris,\nMarkus' rework will not reintroduce this bug as it completely removes all fiemap code.\n\nbug 129224 is a different issue, I'll comment on that bug.\n\nYou say: you encounter issues with upstream with ^extent and ext3 filesystems.  Just to be clear: Are you saying that *this* bug is still a problem for you?\n\nif it's a different bug then I write it up and I'll take a look.", 
+            "date_created": "2014-12-10 21:54:12.513988+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Tony,\n\nYea, its a different bug. I tested with the above patched package and upstream qemu from git, and I can still hit bug 129224. I was hoping this also fixed my issue, but unfortunately it seems to be a different issue that occurs when using the same types of filesystems. I have a solid reproducer on my desk so let me know which experiments / areas of code / etc I should look at.", 
+            "date_created": "2014-12-11 03:54:14.463878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "Just to clarify it's bug 1292234 in the previous comment.", 
+            "date_created": "2014-12-11 03:57:50.199640+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "Chris,\nI've read through 1292234 and I'll have a play with your reproducer locally and see if I can gain any insight.\n\nI'm sorry my fix didn't help 1292234, but glad you can't hit 1368815 with upstream, I was kinda having kittens here ;P", 
+            "date_created": "2014-12-11 04:47:30.449997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "This bug was fixed in the package qemu - 2.1+dfsg-4ubuntu6.2\n\n---------------\nqemu (2.1+dfsg-4ubuntu6.2) utopic-proposed; urgency=medium\n\n  * Apply two patches to fix intermittent qemu-img corruption\n    (LP: #1368815)\n    - 501-block-raw-posix-fix-disk-corruption-in-try-fiemap\n    - 502-block-raw-posic-use-seek-hole-ahead-of-fiemap\n -- Serge Hallyn <email address hidden>   Thu, 20 Nov 2014 16:33:09 -0600", 
+            "date_created": "2014-12-11 17:53:20.548285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "I'm happy to tackle to also fix cinder with a version of the nova fix (for consistency).  I propose waiting until the nova fix lands", 
+            "date_created": "2014-12-12 01:56:48.842937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "I'd elevate this to high so it matches nova and ubuntu but I don't have permissions to do so.", 
+            "date_created": "2014-12-12 01:58:00.402653+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/141259", 
+            "date_created": "2014-12-12 03:28:26.191815+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "> - 501-block-raw-posix-fix-disk-corruption-in-try-fiemap\n>   - (note - 502-block-raw-posic-use-seek-hole-ahead-of-fiemap (which was\n>     also needed in utopic) appears to be unneeded here as the code being\n>      changed has not yet been switched to using try_fiemap)\n\nActually such a enforces fsync and drastically reduces the performance of conversion.\nI propose to use seek_hole instead of FIEMAP (which is basically what \n 502-block-raw-posic-use-seek-hole-ahead-of-fiemap does). \n", 
+            "date_created": "2014-12-16 12:31:06.532053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~asheplyakov"
+        }, 
+        {
+            "content": "The second part of the fix (which does not reduce the performance) for qemu 2.0 (apparently uploading two patches at once is not so easy)", 
+            "date_created": "2014-12-16 12:33:31.866093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~asheplyakov"
+        }, 
+        {
+            "content": "Patchg 0500-block-raw-posix-Try-both-FIEMAP-and-SEEK_HOLE.patch appears to be part of a bigger re-write of the related code.   and is ON TOP of the patches already applied in this bug.\n\n\nNo doubt the rewirtten code is \"better\" but backporting it contains more risk than the 2 simple fixes I already nominated.", 
+            "date_created": "2014-12-16 22:00:08.473922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "> Patch 0500-block-raw-posix-Try-both-FIEMAP-and-SEEK_HOLE.patch appears to be part of a bigger re-write\n> of the related code. and is ON TOP of the patches already applied in this bug.\n\nYep, sorry for not mentioning this. As far as I understand qemu-2.1 package contains this partially rewritten\ncode too (without any recent changes like disabling FIEMAP completely and rewriting the code using SEEK_HOLE).\n\n> No doubt the rewirtten code is \"better\" but backporting it contains more risk than the 2 simple fixes I already nominated.\n\nCan we completely disable the FIEMAP code and pretend that all blocks are allocated? I'm afraid fsync'ing 100+ GB\nfiles might be even slower than ignoring the sparseness.", 
+            "date_created": "2014-12-17 06:44:21.841372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~asheplyakov"
+        }, 
+        {
+            "content": "Change abandoned by John Griffith (<email address hidden>) on branch: master\nReview: https://review.openstack.org/141259", 
+            "date_created": "2014-12-21 19:29:18.350783+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/143575", 
+            "date_created": "2014-12-23 00:44:59.763195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Mike Perez (<email address hidden>) on branch: master\nReview: https://review.openstack.org/143575\nReason: 1 month, no update.", 
+            "date_created": "2015-01-26 15:27:44.995679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tony Breeds (<email address hidden>) on branch: master\nReview: https://review.openstack.org/123957\nReason: The main distros we care about have landed or are in progress.", 
+            "date_created": "2015-01-28 00:41:56.351545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Marking as Wont-Fix.", 
+            "date_created": "2015-02-12 15:09:52.985248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Change abandoned by Mike Perez (<email address hidden>) on branch: master\nReview: https://review.openstack.org/143575\nReason: No activity for over a month.", 
+            "date_created": "2015-05-08 22:29:45.950587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Closing based on the assumption that a working qemu-img is available now.", 
+            "date_created": "2015-10-30 01:03:02.555822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "According to comment #8 the fixes have been included in the upstream QEMU repository, so setting the status to \"Fix released\" now.", 
+            "date_created": "2016-07-19 08:14:33.494060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~th-huth"
+        }
+    ]
+}

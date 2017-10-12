@@ -1,0 +1,76 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-10-15 09:54:48.945440+00:00", 
+    "description": "Keystone launched through wsgi was not picking up the connection string in /etc/keystone/keystone.conf.  Manual run of keystone-all identified that there was a collision with /usr/share/keystone/keystone-dist.conf which contains an entry for connection in [database].\n\nCommented out the line in keystone-dist.conf and restarted apache.  Correct connection string was then picked up from /etc/keystone/keystone.conf.\n\nCentOS 7 minimal install\nFollowed install guide for Kilo.\nEncountered error Access denied keystone@localhost at step of creating openstack service identity because the wrong credentials from the .conf conflict were being passed to mariadb.", 
+    "tags": [], 
+    "importance": "Critical", 
+    "heat": 36, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1456441", 
+    "owner": "https://api.launchpad.net/1.0/~jamielennox", 
+    "id": 1456441, 
+    "index": 248, 
+    "created": "2015-05-19 04:08:37.991581+00:00", 
+    "title": "keystone wsgi does not read files in /etc/keystone/*", 
+    "comments": [
+        {
+            "content": "Keystone launched through wsgi was not picking up the connection string in /etc/keystone/keystone.conf.  Manual run of keystone-all identified that there was a collision with /usr/share/keystone/keystone-dist.conf which contains an entry for connection in [database].\n\nCommented out the line in keystone-dist.conf and restarted apache.  Correct connection string was then picked up from /etc/keystone/keystone.conf.\n\nCentOS 7 minimal install\nFollowed install guide for Kilo.\nEncountered error Access denied keystone@localhost at step of creating openstack service identity because the wrong credentials from the .conf conflict were being passed to mariadb.", 
+            "date_created": "2015-05-19 04:08:37.991581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fleance"
+        }, 
+        {
+            "content": "After encountering further issues connecting to mysql I have found that when keystone is launched via wsgi it doesn't appear to be reading /etc/keystone/keystone.conf at all.  If I launch keystone-all it correctly picks up /etc/keystone/keystone.conf and I was able to add the openstack identity user.\n\nWhen launched from httpd it appears to be connecting to some database because the error it replies with is 'no such table token' but it's not connecting to the string defined in /etc/keystone/keystone.conf but at this time I don't know what DB it's talking to or what conf file(s) it's reading from.", 
+            "date_created": "2015-05-20 05:08:25.157257+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fleance"
+        }, 
+        {
+            "content": "It looks like the wsgi launcher is only picking up the /usr/share/keystone/keystone-dist.conf file plus the /usr/share/keystone/keystone-dist-paste.ini for paste deploy.\n\nIt does look like there is supposed to be a backwards compatibility check for keystone.conf in keystone/config.py but it's not picking up the file in /etc/keystone.\n\nI was able to implement a work-a-round by implementing the edits presented in the Kilo install guide for /etc/keystone/keystone.conf into the /usr/share/keystone-dist-paste.ini file and when launched from wsgi it is picking up the required fields and appears to be working.\n\nI am not sure if this would be considered a bug in paste deploy not picking up the legacy(?) keystone.conf file or if there is a discrepancy in the install guide.\n\nBelow is the file I used in /usr/share/keystone/keystone-dist.conf:\n\n[DEFAULT]\nadmin_token = ADMIN_TOKEN\nlog_file = /var/log/keystone/keystone.log\nuse_stderr = false\n\n[database]\nconnection = mysql://keystone:MYSQL_PASS@controller/keystone\n#connection_debug = 100\n#connection_trace = true\n\n[memcache]\nservers = localhost:11211\n\n[revoke]\ndriver = keystone.contrib.revoke.backends.sql.Revoke\n\n[token]\nprovider = keystone.token.providers.uuid.Provider\ndriver = keystone.token.persistence.backends.memcache.Token\n\n[paste_deploy]\nconfig_file=/usr/share/keystone/keystone-dist-paste.ini\n", 
+            "date_created": "2015-05-20 06:27:22.132182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fleance"
+        }, 
+        {
+            "content": "So, after encountering an error with keystone not seeing policy.json I believe that I've narrowed down the root cause of all of these issues boiling down to in the current package (at least for CentOS 7) keystone launched through wsgi is done with the working directory = /usr/share/keystone and not /etc/keystone.   If I copy/create the necessary files from /etc/keystone to /usr/share/keystone it appears to be happy then.\n\nAgain, not sure if this should indeed be working out of the /etc/keystone directory and is a bug or if the implementation changed in this release and the documentation is lagging behind.", 
+            "date_created": "2015-05-20 07:34:50.753489+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fleance"
+        }, 
+        {
+            "content": "The same issue affects the installation of glance. \n \nIn my case it had been necessary to copy the contents of the files \n/etc/keystone/keystone.conf\n/etc/glance/glance-api.conf\n/etc/glance/glance-registry.conf\n\ninto, respectively, the files:\n/usr/share/keystone/keystone-dist.conf\n/usr/share/glance/glance-api-dist.conf\n/usr/share/glance/glance-registry-dist.conf\n\nadding, respectively, also the lines in section [paste_deploy]:\nconfig_file = /usr/share/keystone/keystone-dist-paste.ini\nconfig_file = /usr/share/glance/glance-api-dist-paste.ini\nconfig_file = /usr/share/glance/glance-registry-dist-paste.ini\n\nMoreover, it had been necessary copying the contents of the other files in folders /etc/keystone, /etc/glance into the folders /usr/share/keystone, /usr/share/glance. I'm not sure if it is necessary to copy all the file inside them. I'm only sure about the files with name \"policy.json\".\n\nAfter moving/copying files, remember to give the right permissions to keystone and glance:\n chown -R keystone:keystone /usr/share/keystone/\n chown -R glance:glance /usr/share/glance/\n", 
+            "date_created": "2015-05-20 16:47:52.133652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andreagardiman"
+        }, 
+        {
+            "content": "Installation guide of kilo suggests this configuration:\n    WSGIDaemonProcess keystone-public processes=5 threads=1 user=keystone display-name=%{GROUP}\n\nHowever RDO's openstack-keystone package has following permission for /etc/keystone:\n  drwxr-x---    2 root    keystone                    0 May  1 01:05 /etc/keystone\n\nSo the directory is not searchable for wsgi worker process with user=keystone,group=apache.\n\nYou might want to add 'group=keystone' in /etc/httpd/conf.d/wsgi-keystone.conf:\n    WSGIDaemonProcess keystone-public processes=5 threads=1 user=keystone group=keystone display-name=%{GROUP}\n", 
+            "date_created": "2015-05-22 07:40:45.336334+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-nomura"
+        }, 
+        {
+            "content": "This is a critical Red Hat packaging issue that has been verified by multiple users.\n\nI've verified the solution in comment #10 works.", 
+            "date_created": "2015-05-22 18:07:22.805124+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Please match puppet-keystone:\nhttps://github.com/stackforge/puppet-keystone/blob/master/manifests/wsgi/apache.pp", 
+            "date_created": "2015-05-28 09:20:55.102397+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Why is status Invalid, as comment 10 says, group=keystone should be added to httpd/wsgi-keystone.conf", 
+            "date_created": "2015-06-02 22:31:58.296467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/187800", 
+            "date_created": "2015-06-02 22:42:41.019732+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Sorry, Alan! I didn't think there was any action for the projects to take to address this bug. I didn't realize Red Hat was packaging the example httpd configuration in keystone (nor that it had this issue).", 
+            "date_created": "2015-06-03 19:32:18.706832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/187800\nCommitted: https://git.openstack.org/cgit/openstack/keystone/commit/?id=0058b6e64ff2a9c79a6b972a7676a827a49fab71\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0058b6e64ff2a9c79a6b972a7676a827a49fab71\nAuthor: Alan Pevec <email address hidden>\nDate:   Wed Jun 3 00:36:43 2015 +0200\n\n    Run WSGI with group=keystone\n    \n    This matches puppet-keystone[*] and is required for distributions\n    which properly restricted access to /etc/keystone\n    \n    [*] https://github.com/stackforge/puppet-keystone/blob/master/manifests/wsgi/apache.pp#L167\n    \n    Closes-Bug: #1456441\n    \n    Change-Id: I7a80bdf1c1efaedfeba7d2834a858e3617f6529e\n", 
+            "date_created": "2015-06-04 02:33:00.530383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

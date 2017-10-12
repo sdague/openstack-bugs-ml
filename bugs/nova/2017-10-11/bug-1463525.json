@@ -1,0 +1,139 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-23 16:28:16.117250+00:00", 
+    "description": "This came up as a discussion point in the nova IRC channel today because someone was talking about adding encryption support to Ceph in Nova and I pointed out that there is already a ceph job that runs the tempest luks/cryptsetup encrypted volume tests successfully, so why aren't those failing if it's not supported today?\n\nWe got looking at the code and logs and found that when nova tries to get volume encryption metadata from cinder for rbd-backed instances, nothing comes back so nova isn't doing anything with volume encryption using it's providers (luks / cryptsetup).\n\nChange https://review.openstack.org/#/c/189799/ in nova adds logging to see this:\n\nConfirmed that for LVM backed Cinder we get something back:\n\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full/c3ee602/logs/screen-n-cpu.txt.gz#_2015-06-09_18_18_18_078\n\nFor Ceph we don't:\n\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full-ceph/353db23/logs/screen-n-cpu.txt.gz#_2015-06-09_18_21_16_723\n\nThis might be working as designed, I'm not sure, but I'm opening the bug to track the effort since if you think you have encrypted volumes when using ceph and nova you're probably not, so there is a false sense of security here which is a bug.", 
+    "tags": [
+        "ceph", 
+        "volumes"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 62, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1463525", 
+    "owner": "None", 
+    "id": 1463525, 
+    "index": 1706, 
+    "created": "2015-06-09 18:51:21.426302+00:00", 
+    "title": "There is no volume encryption support for rbd-backed volumes", 
+    "comments": [
+        {
+            "content": "This came up as a discussion point in the nova IRC channel today because someone was talking about adding encryption support to Ceph in Nova and I pointed out that there is already a ceph job that runs the tempest luks/cryptsetup encrypted volume tests successfully, so why aren't those failing if it's not supported today?\n\nWe got looking at the code and logs and found that when nova tries to get volume encryption metadata from cinder for rbd-backed instances, nothing comes back so nova isn't doing anything with volume encryption using it's providers (luks / cryptsetup).\n\nChange https://review.openstack.org/#/c/189799/ in nova adds logging to see this:\n\nConfirmed that for LVM backed Cinder we get something back:\n\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full/c3ee602/logs/screen-n-cpu.txt.gz#_2015-06-09_18_18_18_078\n\nFor Ceph we don't:\n\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full-ceph/353db23/logs/screen-n-cpu.txt.gz#_2015-06-09_18_21_16_723\n\nThis might be working as designed, I'm not sure, but I'm opening the bug to track the effort since if you think you have encrypted volumes when using ceph and nova you're probably not, so there is a false sense of security here which is a bug.", 
+            "date_created": "2015-06-09 18:51:21.426302+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I've dug through the cinder API as much as I know how and I'm not seeing anything volume driver-specific going on where the mapping between the encryption table and the volume_type (that tempest is creating) isn't being created properly, and I poked through the logs as much as I could but I'm not seeing where things are breaking down, but apparently cinder is not finding that mapping (or making that connection for the volume) so that when we query the cinder API we get nothing back.", 
+            "date_created": "2015-06-09 21:26:18.640248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Not sure if this is related, but in the ceph job I see that rbd_secret_uuid is set in nova.conf:\n\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full-ceph/353db23/logs/etc/nova/nova.conf.txt.gz\n\nrbd_secret_uuid = 279b555f-cc0f-4a58-9e1d-6137a66a78df\n\nBut it's not set in cinder.conf in the [ceph] group:\n\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full-ceph/353db23/logs/etc/cinder/cinder.conf.txt.gz\n\n[ceph]\nrbd_max_clone_depth = 5\nrbd_flatten_volume_from_snapshot = False\nrbd_uuid = 279b555f-cc0f-4a58-9e1d-6137a66a78df\nrbd_user = cinder\nrbd_pool = volumes\nrbd_ceph_conf =\nvolume_driver = cinder.volume.drivers.rbd.RBDDriver\nvolume_backend_name = ceph", 
+            "date_created": "2015-06-09 21:38:34.035484+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "From the docs here (which are a bit old, goes up to Juno):\n\nhttp://ceph.com/docs/master/rbd/rbd-openstack/\n\nSounds like rbd_secret_uuid should also be set in cinder.conf, but I'm not sure if cephx authentication is enabled in this job or not.", 
+            "date_created": "2015-06-09 21:48:28.059777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "rbd_secret_uuid is just an identifier for looking up ceph's auth key in libvirt. It is unrelated to encryption.", 
+            "date_created": "2015-06-09 21:49:14.301692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdurgin"
+        }, 
+        {
+            "content": "I noticed in the logging of the nova debug change related to this that the volume coming back to nova has encrypted=True but the connection_info['data'] dict doesn't:\n\nWith this change I noticed that nothing is being logged anymore, yet the warning above wasn't being logged either.\n\nApparently that's because the connection_info['data'] dict doesn't contain the 'encrypted' key in the ceph case:\n\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full-ceph/353db23/logs/screen-n-cpu.txt.gz#_2015-06-09_18_21_16_723\n\nHowever, the volume does have the encrypted value set to True:\nhttp://logs.openstack.org/99/189799/2/check/check-tempest-dsvm-full-ceph/353db23/logs/screen-n-cpu.txt.gz#_2015-06-09_18_21_16_217\n\nSo it seems we have some issues with the connection_info coming back from the cinder API after initializing the connection, cinder doesn't thing the volume is encrypted - maybe in the ceph case it's not, hence the bug.", 
+            "date_created": "2015-06-10 02:48:36.398605+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I see the issue in the cinder rbd driver, comparing it to the lvm iscsi module's initialize_connection method, that sets the 'encrypted' value in the connection_info['data'] properties returned:\n\nhttps://github.com/openstack/cinder/blob/master/cinder/volume/targets/iscsi.py#L153\n\nThe rbd volume driver in cinder doesn't do that, so nova doesn't see it and try to use it.  I'm not sure why the rbd driver in cinder doesn't do that, but setting it to true will trigger nova to get the encryption metadata and try to use the cryptsetup/luks modules in nova and that will probably blow up.", 
+            "date_created": "2015-06-10 02:59:06.816685+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/189799\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c13588517a270bd8349c084c1f210598917180d4\nSubmitter: Jenkins\nBranch:    master\n\ncommit c13588517a270bd8349c084c1f210598917180d4\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Tue Jun 9 17:08:20 2015 +0100\n\n    volume: log which encryptor class is being used\n    \n    After resolving which encryptor class to use with a cinder\n    volume, record it in the logs for easier debugging.\n    \n    Related-Bug: #1463525\n    \n    Change-Id: Ic753b11a48cb2c17c24c6636a456f00966f7c8ab\n", 
+            "date_created": "2015-06-10 05:15:41.446769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I made the rbd driver give back the encryption data and indeed the encryption tests blow up in nova:\n\nhttp://logs.openstack.org/53/190053/2/check/check-tempest-dsvm-full-ceph/69019dc/console.html#_2015-06-10_10_52_15_110\n\nWill chat on IRC later on how to fix this in nova.", 
+            "date_created": "2015-06-10 11:21:48.007898+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zoltan"
+        }, 
+        {
+            "content": "FWIW, the fact that the tempest encryption job is currently passing on Ceph shows a serious bug in the cinder APIs, and possibly nova too.\n\nIf the client has requested encrypted storage, and the volume driver in cinder cannot support that, then it is unacceptable to simply ignore the encryption request - we should be reporting that back as a fatal error and /not/ continuing unencrypted.\n\nSimilarly if cinder reports encryption for a volume, and nova is unable to use that, we must ensure Nova reports an error at VM boot time, or volume attach.", 
+            "date_created": "2015-06-10 13:25:10.061394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "What would be the best way to communicate from Nova's side that for the given hypervisor with the given cinder volume driver encryption support is not implemented?\n\nIf we were to make the code path fail if someone requests encrypted volumes but the cinder side doesn't supply the required metadata that would basically block the gate as -ceph is voting?", 
+            "date_created": "2015-06-11 13:48:42.153526+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zoltan"
+        }, 
+        {
+            "content": "I have a related cinder change here to pass the encrypted flag back in connection_info from the rbd volume driver:\n\nhttps://review.openstack.org/#/c/193673/\n\nI expect that to make nova fail in the ceph job.", 
+            "date_created": "2015-06-19 19:08:45.900941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is what it looks like when cinder says the volume is encrypted but nova isn't ready to handle it and doesn't set the 'device_path' key in the connection_info dict:\n\nhttp://logs.openstack.org/73/193673/1/check/check-tempest-dsvm-full-ceph/f296b16/logs/screen-n-cpu.txt.gz?level=TRACE#_2015-06-19_19_49_34_821", 
+            "date_created": "2015-06-20 18:44:18.572221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "2015-06-19 19:49:34.821 ERROR nova.volume.encryptors [req-b49ee6e6-4938-4838-875b-d89c66788619 TestEncryptedCinderVolumes-960229319 TestEncryptedCinderVolumes-401534610] Error instantiating nova.volume.encryptors.cryptsetup.CryptsetupEncryptor: 'device_path'\n2015-06-19 19:49:34.821 ERROR nova.virt.libvirt.driver [req-b49ee6e6-4938-4838-875b-d89c66788619 TestEncryptedCinderVolumes-960229319 TestEncryptedCinderVolumes-401534610] [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397] Failed to attach volume at mountpoint: /dev/vdb\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397] Traceback (most recent call last):\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]   File \"/opt/stack/new/nova/nova/virt/libvirt/driver.py\", line 1081, in attach_volume\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]     encryption)\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]   File \"/opt/stack/new/nova/nova/virt/libvirt/driver.py\", line 1032, in _get_volume_encryptor\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]     **encryption)\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]   File \"/opt/stack/new/nova/nova/volume/encryptors/__init__.py\", line 48, in get_volume_encryptor\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]     **kwargs)\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]   File \"/usr/local/lib/python2.7/dist-packages/oslo_utils/importutils.py\", line 38, in import_object\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]     return import_class(import_str)(*args, **kwargs)\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]   File \"/opt/stack/new/nova/nova/volume/encryptors/cryptsetup.py\", line 38, in __init__\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397]     self.symlink_path = connection_info['data']['device_path']\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397] KeyError: 'device_path'\n2015-06-19 19:49:34.821 1027 ERROR nova.virt.libvirt.driver [instance: f6474d57-6e1c-425a-b34d-25f7d3baa397] ", 
+            "date_created": "2015-06-20 18:44:28.218132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related nova change which handles the cinder change to set the encrypted key in connection_info for the rbd volume driver:\n\nhttps://review.openstack.org/#/c/193830/\n\n^ changes the KeyError to a VolumeEncryptionNotSupported exception.", 
+            "date_created": "2015-06-20 20:38:43.331176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Tempest change to make the encrypted cinder volume scenario test configurable (supported or not):\n\nhttps://review.openstack.org/#/c/193831/", 
+            "date_created": "2015-06-20 21:28:36.350667+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related devstack change to configure tempest: https://review.openstack.org/#/c/193834/\n\nRelated devstack-gate change to configure devstack: https://review.openstack.org/#/c/193835/", 
+            "date_created": "2015-06-20 22:11:40.923632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Our team ran into this issue a while back and reported it..I think it was marked invalid. Looking for the number to link it. It affects all cinder drivers. ", 
+            "date_created": "2015-06-22 17:37:38.883979+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ramy-asselin"
+        }, 
+        {
+            "content": "Found the bug: https://bugs.launchpad.net/tempest/+bug/1440227", 
+            "date_created": "2015-06-22 17:39:52.739052+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ramy-asselin"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/193673\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=ba6f4037ab982b3bcf2de48cb51f919b3f37cbaf\nSubmitter: Jenkins\nBranch:    master\n\ncommit ba6f4037ab982b3bcf2de48cb51f919b3f37cbaf\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Jun 19 11:25:43 2015 -0700\n\n    Set encrypted key in connection_info during initialize\n    \n    There are encrypted volume tests in Tempest which are passing\n    in the ceph job but the encryption providers in nova (luks and\n    cryptsetup) are not actually being called in nova because the\n    'encrypted' key isn't being set in connection_info for the Rbd\n    volume driver, and nova is keying off that value to determine\n    if it needs to run it's encryption providers.\n    \n    So the tests are passing in the ceph job but it's a total false\n    positive and the API should actually fail - either the cinder\n    API to create the encrypted volumes if the Rbd volume driver in\n    Cinder doesn't support encryption, or the volume attach call in\n    nova if it can't encrypt the connected volume, either way the\n    test should fail until that support is baked into nova.\n    \n    I'm not aware of any kind of 'supports_encryption' or 'encryptable'\n    capability flag for cinder volume drivers, but that might be\n    needed for the volume create API to fail if trying to create a\n    volume from an encrypted volume type where the volume driver\n    itself doesn't support encryption - but maybe it's only a nova\n    problem since nova has the encryption providers.\n    \n    This is fixed generically in the VolumeManager's\n    initialize_connection method where we check for the encrypted\n    flag being set in the volume driver method and if not, the\n    manager sets it based on the volume.encryption_key_id value.\n    We do this globally since there are other volume drivers besides\n    rbd that aren't setting the encrypted key in connection_info,\n    but we test rbd in the gate via the ceph job so most of the\n    bug tracking is around validation of the ceph job.\n    \n    Related Nova change: I8efc2628b09d4e9e59831353daa080b20e17ccde\n    \n    Depends-On: I8548d41095513b9e669f773e3f35353e9228ead9\n    \n    DocImpact: Attaching 'encrypted' RBD volumes to a Nova server\n               instance created from the libvirt virt driver will fail\n               since RBD volume encryption is not currently supported in\n               Nova's libvirt driver.\n    \n    Closes-Bug: #1440227\n    Related-Bug: #1463525\n    \n    Change-Id: I03f8cae05cc117e14f7482115de685fc9f3fa54a\n", 
+            "date_created": "2015-07-09 18:36:00.451926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/206576", 
+            "date_created": "2015-07-28 15:03:37.481268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/193830\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ac8a7e91e33abe4089cafb2ffa0509b5ce02039c\nSubmitter: Jenkins\nBranch:    master\n\ncommit ac8a7e91e33abe4089cafb2ffa0509b5ce02039c\nAuthor: Matt Riedemann <email address hidden>\nDate:   Sat Jun 20 13:33:06 2015 -0700\n\n    Handle KeyError when volume encryption is not supported\n    \n    When attaching a volume, after the connection is initialized to the\n    volume in Cinder, the nova.volume.encryptors.get_encryption_metadata\n    method is called to get encryption metadata for the volume. That call is\n    based on the 'encrypted' key in connection_info['data'] returned from\n    the os-initialize_connection Cinder API.\n    \n    However, just because the volume has an encryption key in Cinder does\n    not mean that the corresponding volume driver in Nova supports\n    encrypting the volume, like in the case of RBD volumes.\n    \n    Tempest has tests for encrypted volumes which succeed today in the Ceph\n    job but they are actually false positives since without Cinder change\n    I03f8cae05cc117e14f7482115de685fc9f3fa54a, the 'encrypted' key is not\n    set in the connection_info dict and Nova doesn't attempt encryption of\n    the volume during attach.\n    \n    The Ceph job fails when encrypted=True is in connection_info because\n    cryptsetup (and luks which extends cryptsetup) requires the\n    'device_path' key in the connection_info dict, which is set when\n    connecting the volume during attach via the corresponding Nova volume\n    driver. In the case of RBD and libvirt, the LibvirtNetVolumeDriver is\n    used and the 'device_path' key isn't set, so a KeyError is raised when\n    trying to construct the CryptsetupEncryptor or LuksEncryptor objects.\n    \n    This change adds a check in CryptsetupEncryptor such that if the\n    device_path is not in connection_info, a VolumeEcnryptionNotSupported\n    error is raised rather than KeyError.\n    \n    Note that this doesn't fix the encrypted volume tests in Tempest. Those\n    tests fail due to a timeout waiting for the volume status to be 'in-use'\n    which doesn't happen since the compute manager rolls back the\n    reservation on the volume when the error occurs. The Tempest tests will\n    have to be skipped in the Ceph job until volume encryption is supported\n    for RBD in Nova, which will be a separate set of changes.\n    \n    Related-Bug: #1463525\n    \n    Change-Id: I8efc2628b09d4e9e59831353daa080b20e17ccde\n", 
+            "date_created": "2015-08-10 11:29:41.662170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/206576\nReason: The spec isn't going to be approved for mitaka, we're waiting for qemu native rbd encryption so might as well abandon this.", 
+            "date_created": "2015-12-30 02:07:25.678302+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This appears to have been fixed on the Cinder side with Matt's Cinder patch referenced above. If there is more work to do on the Cinder side please reopen.", 
+            "date_created": "2016-09-30 18:56:56.346733+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }
+    ]
+}

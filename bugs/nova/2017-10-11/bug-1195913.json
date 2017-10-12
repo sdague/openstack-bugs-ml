@@ -1,0 +1,64 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:56:10.482552+00:00", 
+    "description": "When using a 4K block sized volume created in Cinder, it attaches to the instance no problem and partitions can be created and there are no issues with formatting the partition.  However when attempting to mount the volume an IO Error occurs and the mount fails.\n\nThis behavior has been seen on KVM/Libvirt and happens on various instances (Ubuntu, Cirros, Fedora etc).  I suspect there's something in the block-size parameter of the libvirt attach XML that's either missing or incorrect, I'll try looking into this but wanted to get this out incase somebody already knows what might be going on here.", 
+    "tags": [
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1195913", 
+    "owner": "https://api.launchpad.net/1.0/~cfb-n", 
+    "id": 1195913, 
+    "index": 1146, 
+    "created": "2013-06-28 22:09:25.253486+00:00", 
+    "title": "Mounting 4K block size Cinder Volume on instance fails", 
+    "comments": [
+        {
+            "content": "When using a 4K block sized volume created in Cinder, it attaches to the instance no problem and partitions can be created and there are no issues with formatting the partition.  However when attempting to mount the volume an IO Error occurs and the mount fails.\n\nThis behavior has been seen on KVM/Libvirt and happens on various instances (Ubuntu, Cirros, Fedora etc).  I suspect there's something in the block-size parameter of the libvirt attach XML that's either missing or incorrect, I'll try looking into this but wanted to get this out incase somebody already knows what might be going on here.", 
+            "date_created": "2013-06-28 22:09:25.253486+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Looking at this again I *believe* the issue is that we're not doing any specifications on blkio logical_block_size or physical_block_size so it's always passed in as the default, so 4K fails??\n\nI'm wondering if what's needed as an additional option to the attach which specifies these values and an entry in libvirt/config.py to set and build the XML for them.", 
+            "date_created": "2013-06-28 22:49:18.054262+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "John,\n\nI think you are correct. As a quick point of data what is the block size current reported as in one of these effected VMs?\n\nAs an example:\n\n[root@cfb-test-1 ]# cat /sys/block/sda/queue/logical_block_size\n512\n[root@cfb-test-1 ]# cat /sys/block/sda/queue/physical_block_size\n512\n\nIn order to implement it we would need to get the virtual and physical block size from cinder. \n\nHow does cinder store this today? In volume_metadata?\n\nIt looks like right now we simply call initialize_connection via cinder client and use the info in that call to build the mapping. If its in metadata with a fixed key name we could update our cinder wrapper to get the metadata and add it to the connection info before passing it along. ", 
+            "date_created": "2013-06-30 06:03:16.209241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cfb-n"
+        }, 
+        {
+            "content": "Hey Chet,\n\nYep, so this is indeed what's going on, (the queue files show 512 by the way).  \n\nI was going to hack something in to the config file and more importantly as you point out the block_size in Cinder's provider location.  Currently we don't pass anything here, so I'll need to create an item for Cinder and add optional:\n    logical_block_size=4096\n    physical_block_size=4096\n\n\n\n", 
+            "date_created": "2013-06-30 13:37:29.263180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "For reference I've added the Cinder bug: 1196248", 
+            "date_created": "2013-06-30 13:52:47.886910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "John,\n\nHappy to help.\n\nSeems like we need changes to cinder (probably generically and per driver?), some cinder client updates, and the nova updates for libvirt.\n\nDivide and conquer and meet in the middle? I can start working on the nova pieces (doesn't look too difficult), and can help out on the cinder side at your direction?\n\nAs this be observed as a problem on any other hypervisors?", 
+            "date_created": "2013-06-30 14:13:32.864947+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cfb-n"
+        }, 
+        {
+            "content": "Chet,\n\nSounds great!!  I'll start working on the cinder/cinder-client fixes tomorrow and ping you on IRC.  My initial thought on the Cinder side is to add the columns mentioned to the volume reference object.  This would be driver specific, not certain how I want to pass that back up to the manager but I'll think about that a bit and keep you updated.\n\nI think it would be ideal if this was added similar to the provider_location column we already use, it would be optional metadata that's triggered by the drivers on volume-create.  It would be nice if for default we just don't fill anything in here, and only modify it for devices that request/use something other than 512.\n\nAnyway, thanks a bunch!  Divide and Conquer sounds great to me :)", 
+            "date_created": "2013-06-30 14:34:59.618549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "John,\n\nCompletely agree with the optional data approach. I will update the libvirt driver to only add the elements to the XML if we have them defined in the volume info. I will start working on the approach in the drivers and will assume that the data will be available via calls we make today. Once we iron out exactly how to get the info from cinder I can update if needed, but I can at least finish up the driver side as discussed.\n\nI'm cburgess on IRC and in the dev and nova channels regularly. I'll catch up with you via IRC on Monday. ", 
+            "date_created": "2013-06-30 16:54:56.682365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cfb-n"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/35214\nCommitted: http://github.com/openstack/nova/commit/b6eb64497836608a804e69b208bb4312fed0c049\nSubmitter: Jenkins\nBranch:    master\n\ncommit b6eb64497836608a804e69b208bb4312fed0c049\nAuthor: Chet Burgess <email address hidden>\nDate:   Fri Jun 28 21:21:36 2013 +0000\n\n    Support setting block size for block devices\n    \n    cinder now supports backend with different block sizes. Sometimes\n    we need to set a specific block size or operations against the\n    backend will result in I/O errors. Additionally its a good idea\n    to tune the block sizes to the correct size as it can improve I/O\n    performance.\n    \n    The basic disk configuration for libvrit now supports setting the\n    logical and physical block size of devices.  The block size info\n    is stored in connection_info of the block_device_mapping table\n    for later use.\n    \n    By default it does not set the block sizes which defaults to\n    512 bytes.\n    \n    DocImpact:\n    This feature requires libvirt 0.10.2+ and the QEMU or KVM\n    hypervisor. If a volume has a custom block size, cinder considers\n    it required. As such the hypervisor and libvirt version are\n    checked during the attach_volume call. If the hypervisor is not\n    supported or the libvirt version is too old the attach is\n    aborted and an exception is raised.\n    \n    Change-Id: I77adc96b340680218f82bbef8f9ec14711d26a7f\n    Fixes Bug #1195913\n", 
+            "date_created": "2013-08-09 22:59:06.063734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

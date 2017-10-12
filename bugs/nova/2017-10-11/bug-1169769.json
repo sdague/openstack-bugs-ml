@@ -1,0 +1,77 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-03-29 15:52:06.192947+00:00", 
+    "description": "Story:\n\nA host has a power fluctuation and reboots.\n\nThe VM state in the DB is Active.\nThe VM state in the driver is Shutoff.\n\nThe sysadmin goes in to xenserver and xe starts all the instances.\n\nnova.compute.manager.Manager._run_image_cache_manager_pass runs,\n\u00a0\u00a0it finds that the DB vs driver states are incompatible,\n\u00a0\u00a0it says the driver is kind, and updates the DB\n\nnow all the VMs that sysadmin started are down again.\n\n-----\nWork around:\n\nAfter host reboots, shut down the compute service, start the VMs, start the compute service\n\n-----\nBackground:\n\nThere used to be an option: 'start_guests_on_host_boot'\n\nThe trouble with it was that it started VMs, even if the DB state was suspended.\n\nIt was removed here: https://review.openstack.org/#/c/16698/\n\n------\nSuggested fix:\n\nRe-add a nova.conf option: 'start_guests_on_host_boot'\n\nBut make it submit to the DB state, and only start a guest if it is labeled as running in the DB.", 
+    "tags": [
+        "doc", 
+        "host", 
+        "reboot", 
+        "vm", 
+        "xenserver"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1169769", 
+    "owner": "None", 
+    "id": 1169769, 
+    "index": 1347, 
+    "created": "2013-04-16 23:54:09.928023+00:00", 
+    "title": "start guests on host reboot", 
+    "comments": [
+        {
+            "content": "Story:\n\nA host has a power fluctution and reboots.\n\nThe VM state in the DB is Active.\nThe VM state in the driver is Shutoff.\n\nThe sysadmin goes in to xenserver and xe creates all the instances.\n\nnova.compute.manager.Manager._run_image_cache_manager_pass runs,\n  it finds that the DB vs driver states are incompatible,\n  it says the driver is kind, and updates the DB\n\nnow all the VMs that sysadmin started are down again.\n\n-----\nWork around:\n\nAfter host reboots, shut down the compute service, start the VMs, start the compute service\n\n-----\nBackground:\n\nThere used to be an option: 'start_guests_on_host_boot'\n\nThe trouble with it was that it started VMs, even if the DB state was suspended.\n\nIt was removed here: https://review.openstack.org/#/c/16698/\n\n------\nSuggested fix:\n\nRe-add a nova.conf option: 'start_guests_on_host_boot'\n\nBut make it submit to the DB state, and only start a guest if it is labeled as running in the DB.", 
+            "date_created": "2013-04-16 23:54:09.928023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~msherborne+openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/27034", 
+            "date_created": "2013-04-17 01:07:57.077100+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So the trouble seems to be with the xenapi only so far.\n\nOrder of events:\n\nhost starts\ncompute node starts\nnova.service..calls init_host\n  init_host starts powering up hosts\n    nova.virt.xenapi..resume_state_on_host_boot\n      virt.xenapi.vmops.power_on then _start\n        xenapi.start_on      <== This is asynchronous\nnova.service calls self.periodic_tasks, which eventualy calls compute.manager._sync_power_states\n\n_sync_power_states finds that the instances haven't actually powered up yet and tells the DB that they are down and calls conductor.compute_stop .. which calls nova.compute.api..stop .. which shuts down the VM, even though its starting to power up.\n  ", 
+            "date_created": "2013-04-19 02:38:39.862786+00:00", 
+            "author": "https://api.launchpad.net/1.0/~msherborne+openstack"
+        }, 
+        {
+            "content": "I've asked the reporter to attach a log file if it happens again. I believe this has been fixed already between when it was reported and when I started working on it.", 
+            "date_created": "2013-04-20 01:10:30.185457+00:00", 
+            "author": "https://api.launchpad.net/1.0/~msherborne+openstack"
+        }, 
+        {
+            "content": "Looking through commits from 4/16 to 4/20 I don't find anything was changed to address this issue.\n\nI checked xenserver docs and it says api calls are by default synchronous i.e. VM.start won't return until the vm has started booting:\n\nhttp://docs.vmd.citrix.com/XenServer/4.0.1/sdk/ch04.html#id2538437\n\nDuring _sync_power_states, the power state of the vm is queried using VM.get_record and the issue you saw implies that after a vm has started booting, its power_state from VM.get_record isn't necessarily \"Running.\" I'm not familiar with xenserver vm power state transitions, is this expected that once boot has started it's not necessarily \"Running?\"\n\nThe available states are:\n\nhttp://docs.vmd.citrix.com/XenServer/4.1.0/1.0/en_gb/api/docs/html/API/Classes/VM/Fields/power_state.html\nhttps://github.com/openstack/nova/blob/master/nova/virt/xenapi/vm_utils.py#L134", 
+            "date_created": "2013-05-09 02:50:21.568526+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "I am guessing this is no longer being worked on.", 
+            "date_created": "2013-09-18 15:51:14.003966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Hi John,\n\nI'm not working on that right any more.\n\n\nOn Wed, Sep 18, 2013 at 10:51 AM, John Garbutt <email address hidden> wrote:\n\n> I am guessing this is no longer being worked on.\n>\n> ** Description changed:\n>\n>   Story:\n>\n>   A host has a power fluctuation and reboots.\n>\n>   The VM state in the DB is Active.\n>   The VM state in the driver is Shutoff.\n>\n> - The sysadmin goes in to xenserver and xe creates all the instances.\n> + The sysadmin goes in to xenserver and xe starts all the instances.\n>\n>   nova.compute.manager.Manager._run_image_cache_manager_pass runs,\n>     it finds that the DB vs driver states are incompatible,\n>     it says the driver is kind, and updates the DB\n>\n>   now all the VMs that sysadmin started are down again.\n>\n>   -----\n>   Work around:\n>\n>   After host reboots, shut down the compute service, start the VMs, start\n>   the compute service\n>\n>   -----\n>   Background:\n>\n>   There used to be an option: 'start_guests_on_host_boot'\n>\n>   The trouble with it was that it started VMs, even if the DB state was\n>   suspended.\n>\n>   It was removed here: https://review.openstack.org/#/c/16698/\n>\n>   ------\n>   Suggested fix:\n>\n>   Re-add a nova.conf option: 'start_guests_on_host_boot'\n>\n>   But make it submit to the DB state, and only start a guest if it is\n>   labeled as running in the DB.\n>\n> ** Changed in: nova\n>      Assignee: Matthew Sherborne (msherborne+openstack) => (unassigned)\n>\n> --\n> You received this bug notification because you are subscribed to the bug\n> report.\n> https://bugs.launchpad.net/bugs/1169769\n>\n> Title:\n>   start guests on host reboot\n>\n> Status in OpenStack Compute (Nova):\n>   Confirmed\n>\n> Bug description:\n>   Story:\n>\n>   A host has a power fluctuation and reboots.\n>\n>   The VM state in the DB is Active.\n>   The VM state in the driver is Shutoff.\n>\n>   The sysadmin goes in to xenserver and xe starts all the instances.\n>\n>   nova.compute.manager.Manager._run_image_cache_manager_pass runs,\n>     it finds that the DB vs driver states are incompatible,\n>     it says the driver is kind, and updates the DB\n>\n>   now all the VMs that sysadmin started are down again.\n>\n>   -----\n>   Work around:\n>\n>   After host reboots, shut down the compute service, start the VMs,\n>   start the compute service\n>\n>   -----\n>   Background:\n>\n>   There used to be an option: 'start_guests_on_host_boot'\n>\n>   The trouble with it was that it started VMs, even if the DB state was\n>   suspended.\n>\n>   It was removed here: https://review.openstack.org/#/c/16698/\n>\n>   ------\n>   Suggested fix:\n>\n>   Re-add a nova.conf option: 'start_guests_on_host_boot'\n>\n>   But make it submit to the DB state, and only start a guest if it is\n>   labeled as running in the DB.\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1169769/+subscriptions\n>\n", 
+            "date_created": "2013-09-19 03:11:03+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matt-sherborne"
+        }, 
+        {
+            "content": "This seems to fight with how a user might shutdown a VM, and we need to respect that.", 
+            "date_created": "2014-03-07 17:01:54.237794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I'm having trouble understanding this bug report and how it differs from what resume_guests_state_on_host_boot already provides?\n\nWhat is needed that isn't already provided by resume_guests_state_on_host_boot?", 
+            "date_created": "2014-04-23 22:01:11.368627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "The official tag \"documentation\" got changed to \"doc\" to match it\nwith the bug reports which get generated by merged commits with a\n\"DocImpact\" in the commit message.", 
+            "date_created": "2016-03-03 13:37:40.542529+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "I think comment #8 is right. Looks like this is implemented with \ncommit [1] and should work through [2] as requested in the original\ndescription.\n\nIf there are any questions left, feel free to contact me (markus_z)\nin the IRC channel #openstack-nova\n\nReferences:\n[1] https://git.openstack.org/cgit/openstack/nova/commit/?id=ba4946d0d3c73e5d9f67f42203d103bf98563458\n[2] https://github.com/openstack/nova/blob/af8d078d97a4ce7be48fa20572164f0cc79cbd21/nova/compute/manager.py#L1177-L1185", 
+            "date_created": "2016-03-29 15:52:05.444525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

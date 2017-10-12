@@ -1,0 +1,151 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-10-06 08:05:01.539467+00:00", 
+    "description": "When live-migrating a VM the QEMU send 5 RARP packets in order to allow re-learning of the new location of the VM's MAC address.\nHowever the VIF creation scheme between nova-compute and neutron-ovs-agent drops these RARPs:\n1. nova creates a port on OVS but without the internal tagging. \n2. At this stage all the packets that come out from the VM, or QEMU process it runs in, will be dropped.\n3. The QEMU sends five RARP packets in order to allow MAC learning. These packets are dropped as described in #2.\n4. In the meanwhile neutron-ovs-agent loops every POLLING_INTERVAL and scans for new ports. Once it detects a new port is added. it will read the properties of the new port, and assign the correct internal tag, that will allow connection of the VM.\n\nThe flow above suggests that:\n1. RARP packets are dropped, so MAC learning takes much longer and depends on internal traffic and advertising by the VM.\n2. VM is disconnected from the network for a mean period of POLLING_INTERVAL/2\n\nSeems like this could be solved by direct messages between nova vif driver and neutron-ovs-agent", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 64, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1414559", 
+    "owner": "https://api.launchpad.net/1.0/~sahid-ferdjaoui", 
+    "id": 1414559, 
+    "index": 5402, 
+    "created": "2015-01-26 07:54:02.548673+00:00", 
+    "title": "OVS drops RARP packets by QEMU upon live-migration - VM temporarily disconnected", 
+    "comments": [
+        {
+            "content": "When live-migrating a VM the QEMU send 5 RARP packets in order to allow re-learning of the new location of the VM's MAC address.\nHowever the VIF creation scheme between nova-compute and neutron-ovs-agent drops these RARPs:\n1. nova creates a port on OVS but without the internal tagging. \n2. At this stage all the packets that come out from the VM, or QEMU process it runs in, will be dropped.\n3. The QEMU sends five RARP packets in order to allow MAC learning. These packets are dropped as described in #2.\n4. In the meanwhile neutron-ovs-agent loops every POLLING_INTERVAL and scans for new ports. Once it detects a new port is added. it will read the properties of the new port, and assign the correct internal tag, that will allow connection of the VM.\n\nThe flow above suggests that:\n1. RARP packets are dropped, so MAC learning takes much longer and depends on internal traffic and advertising by the VM.\n2. VM is disconnected from the network for a mean period of POLLING_INTERVAL/2\n\nSeems like this could be solved by direct messages between nova vif driver and neutron-ovs-agent", 
+            "date_created": "2015-01-26 07:54:02.548673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liaz"
+        }, 
+        {
+            "content": "Also encounterd in my environment.\nI use ovs + vlan mode, after live migrated , vm send  RARP packets. But the RARP packets are not taking vlan tag, so they can't send to outer.", 
+            "date_created": "2015-05-08 08:33:08.637323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hellochosen"
+        }, 
+        {
+            "content": "hi i have been looking into this today and have not been able to reproduce.\n\ni have been testing with the head of master and each time i live migrate i a receiving the RAAP on the appropriate vlan tag.\n\ni have not found a specific commit as of yet that fixes this issue but it appears to be resolved on the current master.\n\ncan you re validate or provided more information.\n\n\nif not i think this can be marked as invalid as the behavior is no longer present.", 
+            "date_created": "2015-08-25 19:47:39.479145+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-k-mooney"
+        }, 
+        {
+            "content": "i will try to revalidate with larger fedora vms running iperf to try and generate some more cpu,memory and network load in the vms i am live-migrating to see if that effect the result tomorrow.", 
+            "date_created": "2015-08-25 20:10:24.052557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-k-mooney"
+        }, 
+        {
+            "content": "i have tried to recreate this bug using both nano cirrius images and\na 4 cpu 1GB Ubuntu image and have not been able to reproduce the behavior sited.\n\ni used the the cirros nano image to test live migrating  a very small vm which should have a very short time scale.\nin the larger image i ran and iperf server and a iperf client connected over the loopback interface to generate a lot of cup load and memory load to test a longer migrations.\n\nbringing up the br-int interface and sniffing for RARP packets show that the RARP packets are correctly vlan tagged in both cases.\n\nsudo tshark -V -i br-int rarp\n...\nFrame 11: 64 bytes on wire (512 bits), 64 bytes captured (512 bits) on interface 0\n    Interface id: 0\n    Encapsulation type: Ethernet (1)\n    Arrival Time: Aug 26, 2015 11:36:39.533142000 IST\n    [Time shift for this packet: 0.000000000 seconds]\n    Epoch Time: 1440585399.533142000 seconds\n    [Time delta from previous captured frame: 0.350099000 seconds]\n    [Time delta from previous displayed frame: 0.350099000 seconds]\n    [Time since reference or first frame: 465.125834000 seconds]\n    Frame Number: 11\n    Frame Length: 64 bytes (512 bits)\n    Capture Length: 64 bytes (512 bits)\n    [Frame is marked: False]\n    [Frame is ignored: False]\n    [Protocols in frame: eth:vlan:arp]\nEthernet II, Src: fa:16:3e:47:8b:b0 (fa:16:3e:47:8b:b0), Dst: Broadcast (ff:ff:ff:ff:ff:ff)\n    Destination: Broadcast (ff:ff:ff:ff:ff:ff)\n        Address: Broadcast (ff:ff:ff:ff:ff:ff)\n        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)\n        .... ...1 .... .... .... .... = IG bit: Group address (multicast/broadcast)\n    Source: fa:16:3e:47:8b:b0 (fa:16:3e:47:8b:b0)\n        Address: fa:16:3e:47:8b:b0 (fa:16:3e:47:8b:b0)\n        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)\n        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)\n    Type: 802.1Q Virtual LAN (0x8100)\n802.1Q Virtual LAN, PRI: 0, CFI: 0, ID: 1\n    000. .... .... .... = Priority: Best Effort (default) (0)\n    ...0 .... .... .... = CFI: Canonical (0)\n    .... 0000 0000 0001 = ID: 1\n    Type: RARP (0x8035)\n    Padding: 0000000000000000000000000000\n    Trailer: 00000000\nAddress Resolution Protocol (reverse request)\n    Hardware type: Ethernet (1)\n    Protocol type: IP (0x0800)\n    Hardware size: 6\n    Protocol size: 4\n    Opcode: reverse request (3)\n    Sender MAC address: fa:16:3e:47:8b:b0 (fa:16:3e:47:8b:b0)\n    Sender IP address: 0.0.0.0 (0.0.0.0)\n    Target MAC address: fa:16:3e:47:8b:b0 (fa:16:3e:47:8b:b0)\n    Target IP address: 0.0.0.0 (0.0.0.0)\n\nunless the original reporter can provide more information on how to reproduce  \ni will mark this as invalid at the end of the week as it appeares to be fixed.\n", 
+            "date_created": "2015-08-26 18:24:02.330326+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-k-mooney"
+        }, 
+        {
+            "content": "marking as invalid as the bug cannot be reproduced.\nplease reopen if this is still an issue for you and you  can provide more info on how to recreate.", 
+            "date_created": "2015-08-31 11:22:16.540708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-k-mooney"
+        }, 
+        {
+            "content": "We have a bug reported from our customers about this, and we have been able to reproduce it in our testing environments without any problems -- there is a noticeable pause in network connectivity of the guest right after migration.\n\nWe have a bug for it: https://bugs.launchpad.net/nova/+bug/1511430", 
+            "date_created": "2015-11-17 15:24:13.850739+00:00", 
+            "author": "https://api.launchpad.net/1.0/~deshipu"
+        }, 
+        {
+            "content": "One note: this is much more noticeable when running a guest with an older kernel -- it's several dozen seconds with RHEL6 but only fractions of a second with RHEL7 guest.", 
+            "date_created": "2015-11-17 15:26:34.859111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~deshipu"
+        }, 
+        {
+            "content": "Reproduction logs:\nhttps://github.com/mangelajo/oslogmerger/blob/master/contrib/debug-live-migration/logs/mergedlogs-packets.log#L1283 (right where VM is suspended on one host, and resumed on the other)\n\nHow to reproduce (example):\nhttps://github.com/mangelajo/oslogmerger/blob/master/contrib/debug-live-migration/debug-live-migration.yaml", 
+            "date_created": "2015-11-18 12:06:16.255112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mangelajo"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/246898", 
+            "date_created": "2015-11-18 12:20:23.491138+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Nova patch: https://review.openstack.org/246910/", 
+            "date_created": "2015-11-19 08:18:20.307047+00:00", 
+            "author": "https://api.launchpad.net/1.0/~obondarev"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/281137", 
+            "date_created": "2016-02-17 09:30:42.076825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/297170", 
+            "date_created": "2016-03-24 13:57:28.319120+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sergey Belous (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/297170", 
+            "date_created": "2016-03-24 13:58:06.347985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/281137\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=62bcfc595dc49a7035b95daadc72e8744c48c8e7\nSubmitter: Jenkins\nBranch:    master\n\ncommit 62bcfc595dc49a7035b95daadc72e8744c48c8e7\nAuthor: Oleg Bondarev <email address hidden>\nDate:   Tue Feb 16 19:10:03 2016 +0300\n\n    Add ability to filter migrations by instance uuid\n    \n    This will be used by dependent patch.\n    \n    Partial-Bug: #1414559\n    Change-Id: I20470487287fa2a7aa919507073f75181368c3c0\n", 
+            "date_created": "2016-05-10 12:00:25.199261+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/246898\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=b7c303ee0a16a05c1fdb476dc7f4c7ca623a3f58\nSubmitter: Jenkins\nBranch:    master\n\ncommit b7c303ee0a16a05c1fdb476dc7f4c7ca623a3f58\nAuthor: Oleg Bondarev <email address hidden>\nDate:   Wed Nov 18 12:15:09 2015 +0300\n\n    Notify nova with network-vif-plugged in case of live migration\n    \n     - during live migration on pre migration step nova plugs instance\n       vif device on the destination compute node;\n     - L2 agent on destination host detects new device and requests device\n       info from server;\n     - server does not change port status since port is bound to another\n       host (source host);\n     - L2 agent processes device and sends update_device_up to server;\n     - again server does not update status as port is bound to another host;\n    \n    Nova notifications are sent only in case port status change so in this case\n    no notifications are sent.\n    \n    The fix is to explicitly notify nova if agent reports device up from a host\n    other than port's current host.\n    \n    This is the fix on neutron side, the actual fix of the bug is on nova side:\n    change-id Ib1cb9c2f6eb2f5ce6280c685ae44a691665b4e98\n    \n    Closes-Bug: #1414559\n    Change-Id: Ifa919a9076a3cc2696688af3feadf8d7fa9e6fc2\n", 
+            "date_created": "2016-07-25 21:55:03.519291+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Let's look at backportability, I agree.", 
+            "date_created": "2016-07-26 10:16:52.830042+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mangelajo"
+        }, 
+        {
+            "content": "We are hitting the same issue with the neutron ml2 linuxbridge driver. As pointed out by Andreas Scheuring in https://review.openstack.org/#/c/246910/ nova just creates the bridge but does not plug the physical interface to it. If the VM migration succeeds in a short time, then the RARP packets are sent out before the neutron-linuxbridge-agent loop to detect new interfaces had a chance to detect the new interface and correctly set up the bridge's physical interface.", 
+            "date_created": "2016-08-22 14:46:15.779284+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gaudenz-debian"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/neutron 9.0.0.0b3 development milestone.", 
+            "date_created": "2016-09-01 20:02:42.872837+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/413555", 
+            "date_created": "2016-12-21 10:52:46.895092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/415190", 
+            "date_created": "2016-12-27 11:25:48.854987+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/415190", 
+            "date_created": "2017-03-16 21:16:59.521023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/246910\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 10:00:48.793647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/413555\nReason: This review is > 4 weeks without comment, and is not mergable in it's current state. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2017-08-01 10:01:30.920932+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/497457", 
+            "date_created": "2017-08-24 15:01:54.563041+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/506182\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=38b3d4e16ac76d97f64f264c68ef9b88d66e0324\nSubmitter: Jenkins\nBranch:    master\n\ncommit 38b3d4e16ac76d97f64f264c68ef9b88d66e0324\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Thu Sep 21 15:42:54 2017 +0200\n\n    ml2: fix update_device_up to send lm events with linux bridge\n    \n    In case of a live migration and with linux bridge the events are not\n    sent to Nova, because the port UUID returned by _device_to_port_id may\n    be a truncated UUID and the current plugin._get_port() can't find it.\n    \n    Related-Bug: #1414559\n    Change-Id: Icb039ae2d465e3822ab07ae4f9bc405c1362afba\n    Signed-off-by: Sahid Orentino Ferdjaoui <email address hidden>\n", 
+            "date_created": "2017-10-05 21:58:35.502857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/pike\nReview: https://review.openstack.org/510013", 
+            "date_created": "2017-10-06 08:04:59.862448+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

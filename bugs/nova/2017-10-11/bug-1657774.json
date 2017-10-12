@@ -1,0 +1,45 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-06-27 16:00:41.509066+00:00", 
+    "description": "Description\n===========\n\nIf a Keystone token issued for a admin user (e.g. ceilometer) is expired or revoked right after it's been validated by keystoneauthtoken_middleware in nova-api, but before it's validated by the very same middleware in neutron-server, nova-api will respond with 400 Bad Request instead of expected 401 Unauthorized, so that the original request can be properly retried after re-authentication. \n\n\nSteps to reproduce\n==================\n\nThe condition described above is easy to reproduce synthetically by putting breakpoints into Nova code and revoking a token. One can reproduce the very same problem in real life by running enough ceilometer polling agents.\n\nMake sure you use credentials of an admin user (e.g. admin or ceilometer in Devstack) and have at least 1 instance running (so that `nova list` triggers an HTTP request to neutron-server).\n\n1. Put a breakpoint on entering get_client() nova/network/neutronv2/api.py\n2. Do `nova list`\n3. Revoke the the issued token with `openstack token revoke $token` (you may also need to restart memcached to make sure token validation result is not cached)\n4. Continue execution of nova-api\n\nExpected result\n===============\n\nAs token is now invalid (expired or revoked), it's expected that nova-api responds with 401 Unauthorized, so that a client can handle this, re-authenticate and retry the original request.\n\nActual result\n=============\n\nnova-api responds with 400 Bad Request and outputs the following error into logs\n\n2017-01-19 15:02:09.952 595 ERROR nova.network.neutronv2.api [req-0c1558f5-9cc8-4411-9fb1-2fe7cb232725 admin admin] Neutron client was not able\n to generate a valid admin token, please verify Neutron admin credential located in nova.conf\n\nEnvironment\n===========\n\nDevstack, master (Ocata), nova HEAD at da54487edad28c87accbf6439471e7341b52ff48", 
+    "tags": [
+        "api", 
+        "neutron", 
+        "openstack-version.ocata"
+    ], 
+    "importance": "Undecided", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1657774", 
+    "owner": "https://api.launchpad.net/1.0/~vdrok", 
+    "id": 1657774, 
+    "index": 6631, 
+    "created": "2017-01-19 15:18:12.009928+00:00", 
+    "title": "Nova does not re-raise 401 Unauthorized received from Neutron for admin users", 
+    "comments": [
+        {
+            "content": "Description\n===========\n\nIf a Keystone token issued for a admin user (e.g. ceilometer) is expired or revoked right after it's been validated by keystoneauthtoken_middleware in nova-api, but before it's validated by the very same middleware in neutron-server, nova-api will respond with 400 Bad Request instead of expected 401 Unauthorized, so that the original request can be properly retried after re-authentication. \n\n\nSteps to reproduce\n==================\n\nThe condition described above is easy to reproduce synthetically by putting breakpoints into Nova code and revoking a token. One can reproduce the very same problem in real life by running enough ceilometer polling agents.\n\nMake sure you use credentials of an admin user (e.g. admin or ceilometer in Devstack) and have at least 1 instance running (so that `nova list` triggers an HTTP request to neutron-server).\n\n1. Put a breakpoint on entering get_client() nova/network/neutronv2/api.py\n2. Do `nova list`\n3. Revoke the the issued token with `openstack token revoke $token` (you may also need to restart memcached to make sure token validation result is not cached)\n4. Continue execution of nova-api\n\nExpected result\n===============\n\nAs token is now invalid (expired or revoked), it's expected that nova-api responds with 401 Unauthorized, so that a client can handle this, re-authenticate and retry the original request.\n\nActual result\n=============\n\nnova-api responds with 400 Bad Request and outputs the following error into logs\n\n2017-01-19 15:02:09.952 595 ERROR nova.network.neutronv2.api [req-0c1558f5-9cc8-4411-9fb1-2fe7cb232725 admin admin] Neutron client was not able\n to generate a valid admin token, please verify Neutron admin credential located in nova.conf\n\nEnvironment\n===========\n\nDevstack, master (Ocata), nova HEAD at da54487edad28c87accbf6439471e7341b52ff48", 
+            "date_created": "2017-01-19 15:18:12.009928+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/422696", 
+            "date_created": "2017-01-19 15:28:25.590761+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "example of a nasty traceback in n-cpu that I suspect is related to this bug\n\nhttp://logs.openstack.org/08/440308/1/check/gate-grenade-dsvm-ironic-inspector-ubuntu-xenial/7274f12/logs/old/screen-n-cpu.txt.gz?#_2017-03-02_11_16_32_358\n\nand which actually fails a deletion of VM (in this case it was a instance on Ironic node).", 
+            "date_created": "2017-03-03 11:29:04.427989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pshchelo"
+        }, 
+        {
+            "content": "I hit the same issue on stable/ocata. The \"Neutron client was not able to generate a valid admin token, please verify Neutron admin credential located in nova.conf\" error is intended to be output, and HTTP 400 raised, when the session auth is using the neutron auth parameters from nova.conf. Unfortunately this code is also being hit in one case where the session auth only has a token rather than the admin auth parameters from conf, making it unable to re-authenticate. That case is when nova.network.neutronv2.api.get_client has admin=False, context.is_admin=True, and context.auth_token is set. In that case, admin auth is not used [1] but the ClientWrapper is told that an admin context was used [2].\n\n[1] https://github.com/openstack/nova/blob/stable/ocata/nova/network/neutronv2/api.py#L136\n[2] https://github.com/openstack/nova/blob/stable/ocata/nova/network/neutronv2/api.py#L154\n", 
+            "date_created": "2017-03-17 15:14:43.950321+00:00", 
+            "author": "https://api.launchpad.net/1.0/~edmondsw"
+        }, 
+        {
+            "content": "Automatically discovered version ocata in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 16:00:40.795487+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

@@ -1,0 +1,76 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-12-09 20:20:25.135794+00:00", 
+    "description": "When use LibvirtHybridOVSBridgeDriver as libvirt_vif_driver, instance could not obtain an IP address by DHCP.\nIt seems vif named qvoXXXX made by the driver does not forward any packet to OVS bridge.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1053312", 
+    "owner": "https://api.launchpad.net/1.0/~salvatore-orlando", 
+    "id": 1053312, 
+    "index": 822, 
+    "created": "2012-09-20 09:58:43.526492+00:00", 
+    "title": "instance can't obtain IP address by DHCP when using LibvirtHybridOVSBridgeDriver", 
+    "comments": [
+        {
+            "content": "When use LibvirtHybridOVSBridgeDriver as libvirt_vif_driver, instance could not obtain an IP address by DHCP.\nIt seems vif named qvoXXXX made by the driver does not forward any packet to OVS bridge.", 
+            "date_created": "2012-09-20 09:58:43.526492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ykaneko0929"
+        }, 
+        {
+            "content": "When an instance fails to obtain an IP address from DHCP, OVS has a port \"qvo****\" but the port cannot be seen as a bridge port. More precisely, \"ovs-vsctl show\" contains \"qvo****\" in br-int, but \"brctl show br-int\" or \"ovs-ofctl show br-int\" does not contain \"qvo****\". It is very strange behavior.\n\nWhen nova-compute launches an instance on KVM, vif driver plug() is called twice\naccorrding to the nova-compute log: http://paste.openstack.org/show/21031/.\n\nLibvirtHybridOVSBridgeDriver plug() calles nova.network.linux_net._create_veth_pair()\nto create veth pair. _create_veth_pair() checks whether the specified device exists\nand in case the device exists it first deletes the device and (re)creates it.\nIt may be a cause of the problem.\n\nAfter I changed plug() in Hybrid vif driver not to call _create_veth_pair() when the veth pair already exists, this issue is addressed. I will post a patch to apply this change soon.\n\nNote that I am not sure why plug() method of VIF driver is called twice, and the above solution may be a workaround for this bug.", 
+            "date_created": "2012-09-20 18:37:15.265598+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "My workaround patch is here: http://paste.openstack.org/show/21033/\nBut it is a good chance to identify the original reason (plug is called twice during launching an instance).\n\nSimilar discussion is also here: bug 1053457.\n", 
+            "date_created": "2012-09-20 19:18:53.751858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "plug should be idempotent, so your fix makes sense to me. That said, we should investigate why it is getting called twice.", 
+            "date_created": "2012-09-20 19:54:04.479527+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I found plug operation to be actually potentially called twice - at least for the libvirt virt driver\n\nspawn --> to_xml --> get_guest_config --> plug (used for adding device info to VM configuration)\nspawn --> _create_domain_and_network --> plug_vifs --> plug (the \"real\" plug action)\n\nTherefore we need the call to be idempotent, as stated by Vish, and we should take this patch.\n\nHowever, this still do not quite explain why the behaviour is apparently not deterministic (or at least we have users confirming it works and other users say it doesn't work, and finally also users saying it works at times!)\n\nSee bug 1053457 as potentially related", 
+            "date_created": "2012-09-20 20:34:57.896050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "amotoki: please propose the patch to gerrit.", 
+            "date_created": "2012-09-20 20:52:14.724962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/13434", 
+            "date_created": "2012-09-21 01:18:02.931863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/13434\nCommitted: http://github.com/openstack/nova/commit/577ba6267994baecd5f9e05105624536d320cc9b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 577ba6267994baecd5f9e05105624536d320cc9b\nAuthor: Akihiro MOTOKI <email address hidden>\nDate:   Fri Sep 21 10:08:43 2012 +0900\n\n    Ensure hybrid driver creates veth pair only once.\n    \n    Fixes bug 1053312\n    \n    This commit fixes a bug that an instance can't obtain IP address by DHCP\n    when using LibvirtHybridOVSBridgeDriver. When nova-compute launches an\n    instance on KVM, vif driver plug() may be called twice and this causes\n    a behavior that a port of OVS cannot seen as a bridge port. So this patch\n    make sure create_veth_pair() is not called if a port already exists.\n    \n    Change-Id: I76792df9f0dd28224d7d57989bf1e8ecadb92606\n", 
+            "date_created": "2012-09-21 19:27:22.340763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/13495", 
+            "date_created": "2012-09-21 20:13:24.368499+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/13495\nCommitted: http://github.com/openstack/nova/commit/3254f58359479e31935928f61dd46628ae60df6a\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit 3254f58359479e31935928f61dd46628ae60df6a\nAuthor: Akihiro MOTOKI <email address hidden>\nDate:   Fri Sep 21 10:08:43 2012 +0900\n\n    Ensure hybrid driver creates veth pair only once.\n    \n    Fixes bug 1053312\n    \n    This commit fixes a bug that an instance can't obtain IP address by DHCP\n    when using LibvirtHybridOVSBridgeDriver. When nova-compute launches an\n    instance on KVM, vif driver plug() may be called twice and this causes\n    a behavior that a port of OVS cannot seen as a bridge port. So this patch\n    make sure create_veth_pair() is not called if a port already exists.\n    \n    Change-Id: I76792df9f0dd28224d7d57989bf1e8ecadb92606\n    (cherry picked from commit 577ba6267994baecd5f9e05105624536d320cc9b)\n", 
+            "date_created": "2012-09-21 21:47:10.737964+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "/nova/virt/libvirt/vif.py has the patch. But still see the issue on the compute node. Compute node dhcp fails and cannot ping the instance eth0 ip. when change libvirt_vif_driver from nova.virt.libvirt.vif.LibvirtHybridOVSBridgeDriver to nova.virt.libvirt.vif.LibvirtOpenVswitchDriver, ping works.\n\nsetup is 2 node grizzly configuration.\n\npsl let me know if there is anything that i may be missing.\n\n", 
+            "date_created": "2013-12-09 19:36:33.359252+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bsaravana"
+        }, 
+        {
+            "content": "after adding qvo* interface manually to ovs-vsctl, dhcp and ping works fine. can you pls let me know why it was not added in the first place?", 
+            "date_created": "2013-12-09 20:20:23.653135+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bsaravana"
+        }
+    ]
+}

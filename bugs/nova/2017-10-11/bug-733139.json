@@ -1,0 +1,21 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2011-04-21 07:14:45.311453+00:00", 
+    "description": "There's a chance of a race when refreshing security groups while destroying an instance.\n\nrefresh_security_group_rules works roughly like so:\n\nfor instance in instances:\n    with iptables_semaphore:\n        remove_filters_for_instance(instance)\n        add_filters_for_instance(instance)\niptables.apply()\n\nunfilter_instance (which is called when terminating an instance) works roughly like so:\nif instance in self.instances:\n    del self.instances[instance]\n    remove_filters_for_instance(instance)\n    iptables.apply()\n\nMost of the time, it works fine. However, if something is holding the\niptables semaphore, refresh_security_group_rules will have taken the\nvalue from instances and is sitting around waiting for the semaphore to\nbe released. In the mean time, unfilter_instances may have gone and\nremoved the filters for the instance. Once the semaphore is released,\nrefresh_security_group_rules attempts to removes the filters for the\ninstance. This is essentially a no-op since they're already gone. Then\nit adds the rules back. Unfortunately, this doesn't just clutter the\niptables rules, but it actually prevents any traffic from reaching the\nnext instance that gets the same IP, because there will be an iptables\nrule sitting around matching the IP and applying the filters for the now\ndead instance, but since the instance is dead, it has no security\ngroups, so the only filter in place is the fallback which says to drop\neverything.\n\nThere's another race (this same thing could happen in between unfilter_instance checking for the instance in instances and its removing it from self.instances), but it doesn't apply to our threading model (context switches between greenthreads can't happen in that situation). I'll fix that in the same go anyway, just in case we ever go natively threaded.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/733139", 
+    "owner": "https://api.launchpad.net/1.0/~soren", 
+    "id": 733139, 
+    "index": 2306, 
+    "created": "2011-03-11 09:18:44.124214+00:00", 
+    "title": "Removing an instance while refreshing security groups is racy", 
+    "comments": [
+        {
+            "content": "There's a chance of a race when refreshing security groups while destroying an instance.\n\nrefresh_security_group_rules works roughly like so:\n\nfor instance in instances:\n    with iptables_semaphore:\n        remove_filters_for_instance(instance)\n        add_filters_for_instance(instance)\niptables.apply()\n\nunfilter_instance (which is called when terminating an instance) works roughly like so:\nif instance in self.instances:\n    del self.instances[instance]\n    remove_filters_for_instance(instance)\n    iptables.apply()\n\nMost of the time, it works fine. However, if something is holding the\niptables semaphore, refresh_security_group_rules will have taken the\nvalue from instances and is sitting around waiting for the semaphore to\nbe released. In the mean time, unfilter_instances may have gone and\nremoved the filters for the instance. Once the semaphore is released,\nrefresh_security_group_rules attempts to removes the filters for the\ninstance. This is essentially a no-op since they're already gone. Then\nit adds the rules back. Unfortunately, this doesn't just clutter the\niptables rules, but it actually prevents any traffic from reaching the\nnext instance that gets the same IP, because there will be an iptables\nrule sitting around matching the IP and applying the filters for the now\ndead instance, but since the instance is dead, it has no security\ngroups, so the only filter in place is the fallback which says to drop\neverything.\n\nThere's another race (this same thing could happen in between unfilter_instance checking for the instance in instances and its removing it from self.instances), but it doesn't apply to our threading model (context switches between greenthreads can't happen in that situation). I'll fix that in the same go anyway, just in case we ever go natively threaded.", 
+            "date_created": "2011-03-11 09:18:44.124214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }
+    ]
+}

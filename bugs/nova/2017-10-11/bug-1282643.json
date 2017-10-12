@@ -1,0 +1,55 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:45:04.502773+00:00", 
+    "description": "## What we did:\n\nWe were trying to use block migration in a setup that use LVM as libvirt storage:\n\nnova live-migrate --block-migrate <uuid> <host-name>\n\n## Current Result:\n\nNothing happens, no migration, but in libvirtd.log of the destination hypervisor we saw:\n\n\u00a0\u00a0\u00a0error : virNetClientProgramDispatchError:175 : Failed to open file '/dev/instances/instance-0000015f_disk': No such file or directory\n\nthe /dev/instances/instance-0000015f_disk is the root disk of our instance.\n\n## What we found:\n\nAfter a bit of wondering in the code of nova, we saw that nova in the destination host actually fails to create the instance resources. This should have been done as part of pre_live_migration RPC call, but this one doesn't receive any disks in the disk_info argument (https://github.com/openstack/nova/blob/stable/havana/nova/virt/libvirt/driver.py#L4132) except the config disk. We found that this due to the fact that LVM disks (e.g. root disk) are skipped by driver.get_instance_disk_info method, specially by this line https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L4585-L4587, which skip any disk that is not a file thinking that it must be a block storage which not true because LVM disk are created as a block type (https://github.com/openstack/nova/blob/stable/havana/nova/virt/libvirt/imagebackend.py#L358), snippets for the libvirt.xml below:\n\n\u00a0<devices>\n\u00a0\u00a0\u00a0\u00a0<disk type=\"block\" device=\"disk\">\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<driver name=\"qemu\" type=\"raw\" cache=\"none\"/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<source dev=\"/dev/instances/instance-00000163_disk\"/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<target bus=\"virtio\" dev=\"vda\"/>\n\u00a0\u00a0\u00a0\u00a0</disk>\n\u00a0\u00a0\u00a0\u00a0<disk type=\"file\" device=\"cdrom\">\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<driver name=\"qemu\" type=\"raw\" cache=\"none\"/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<source file=\"/var/lib/nova/instances/6ed79840-c850-498f-9607-ffa92e7cf944/disk.config\"/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<target bus=\"ide\" dev=\"hdd\"/>\n\u00a0\u00a0\u00a0\u00a0</disk>\n\u00a0\u00a0\u00a0\u00a0<interface type=\"bridge\">\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<mac address=\"fa:16:3e:f0:61:24\"/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<model type=\"virtio\"/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<source bridge=\"brqe914da2f-c4\"/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<target dev=\"tap258425f6-9b\"/>\n\u00a0\u00a0\u00a0\u00a0</interface>\n\u00a0\u00a0\u00a0\u00a0<serial type=\"file\">\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<source path=\"/var/lib/nova/instances/6ed79840-c850-498f-9607-ffa92e7cf944/console.log\"/>\n\u00a0\u00a0\u00a0\u00a0</serial>\n\u00a0\u00a0\u00a0\u00a0<serial type=\"pty\"/>\n\u00a0\u00a0\u00a0\u00a0<input type=\"tablet\" bus=\"usb\"/>\n\u00a0\u00a0\u00a0\u00a0<graphics type=\"vnc\" autoport=\"yes\" keymap=\"en-us\" listen=\"0.0.0.0\"/>\n\u00a0\u00a0</devices>", 
+    "tags": [
+        "compute", 
+        "libvirt", 
+        "live-migration"
+    ], 
+    "importance": "High", 
+    "heat": 28, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1282643", 
+    "owner": "https://api.launchpad.net/1.0/~daniel-genin", 
+    "id": 1282643, 
+    "index": 1399, 
+    "created": "2014-02-20 15:42:24.610482+00:00", 
+    "title": "block/live migration doesn't work with LVM as libvirt storage", 
+    "comments": [
+        {
+            "content": "## What we did\n\nWe were trying to use block migration in a setup that use LVM as libvirt storage:\n\nnova live-migrate --block <uuid> <host-name>\n\n## Current Result:\n\nNothing happen,no migration, but in libvirtd.log of the destination hypervisor we saw:\n\n   error : virNetClientProgramDispatchError:175 : Failed to open file '/dev/instances/instance-0000015f_disk': No such file or directory\n\n\nthe /dev/instances/instance-0000015f_disk is the root disk of our instance.\n\n## What we found:\n\nAfter a bit of wondering in the code of nova, we saw that nova in the destination host actually fail to create instance resources, this should have been done as part of pre_live_migration RPC call, but this one doesn't receive any disks in the disk_info argument (https://github.com/openstack/nova/blob/stable/havana/nova/virt/libvirt/driver.py#L4132) except the config disk, and we found that this due to the fact that LVM disks (e.g. root disk) are skipped by driver.get_instance_disk_info method, specially by this line https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L4585-L4587, which skip any disk that is not a file thinking that it must be a block storage which not true because LVM disk are created as a block type (https://github.com/openstack/nova/blob/stable/havana/nova/virt/libvirt/imagebackend.py#L358), snippets for the libvirt.xml below:\n\n <devices>\n    <disk type=\"block\" device=\"disk\">\n      <driver name=\"qemu\" type=\"raw\" cache=\"none\"/>\n      <source dev=\"/dev/instances/instance-00000163_disk\"/>\n      <target bus=\"virtio\" dev=\"vda\"/>\n    </disk>\n    <disk type=\"file\" device=\"cdrom\">\n      <driver name=\"qemu\" type=\"raw\" cache=\"none\"/>\n      <source file=\"/var/lib/nova/instances/6ed79840-c850-498f-9607-ffa92e7cf944/disk.config\"/>\n      <target bus=\"ide\" dev=\"hdd\"/>\n    </disk>\n    <interface type=\"bridge\">\n      <mac address=\"fa:16:3e:f0:61:24\"/>\n      <model type=\"virtio\"/>\n      <source bridge=\"brqe914da2f-c4\"/>\n      <target dev=\"tap258425f6-9b\"/>\n    </interface>\n    <serial type=\"file\">\n      <source path=\"/var/lib/nova/instances/6ed79840-c850-498f-9607-ffa92e7cf944/console.log\"/>\n    </serial>\n    <serial type=\"pty\"/>\n    <input type=\"tablet\" bus=\"usb\"/>\n    <graphics type=\"vnc\" autoport=\"yes\" keymap=\"en-us\" listen=\"0.0.0.0\"/>\n  </devices>", 
+            "date_created": "2014-02-20 15:42:24.610482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mouadino"
+        }, 
+        {
+            "content": "I'm not sure that the underlying libvirt knows how to migration lvm disks either though, so even if we got this working in get_instance_disk_info I think you might be out of luck.", 
+            "date_created": "2014-03-03 02:52:20.426734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Perhaps we should do something similar to https://review.openstack.org/#/c/73387/4?", 
+            "date_created": "2014-03-06 21:15:57.972453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sross-7"
+        }, 
+        {
+            "content": "Fix proposed under https://review.openstack.org/#/c/80029/\n\n(Sorry but Gerrit didn't do it automatically)", 
+            "date_created": "2014-03-12 18:40:05.346848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mouadino"
+        }, 
+        {
+            "content": "What version of libvirt/qemu is being tested?", 
+            "date_created": "2014-06-26 15:28:55.601076+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is a duplicate of https://bugs.launchpad.net/nova/+bug/1270305. As Michael mentioned libvirt driver does not have code for migrating LVM volumes. If you would like to implement this unquestionably useful and important feature you will need to submit a blueprint to nova-spec, since it is going to involve substantial modification of libvirt migration code. In the mean time, I have submitted a \"fix\" that raises a not implemented exception https://review.openstack.org/#/c/73387/.", 
+            "date_created": "2014-07-24 18:50:40.335585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "Fix committed https://review.openstack.org/#/c/73387/", 
+            "date_created": "2014-08-18 13:21:47.050630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }
+    ]
+}

@@ -1,0 +1,73 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2017-02-16 12:56:04.035580+00:00", 
+    "description": "This report is maybe not a bug but I found useful to share what happens in TripleO since this commit:\nhttps://review.openstack.org/#/c/319379/\n\nWe are unable to deploy the overcloud nodes anymore (in other words, create servers with Nova / Ironic).\n\nNova Conductor sends this message:\n\"No host-to-cell mapping found for selected host\"\nhttp://logs.openstack.org/31/426231/1/check-tripleo/gate-tripleo-ci-centos-7-ovb-ha/915aeba/logs/undercloud/var/log/nova/nova-conductor.txt.gz#_2017-01-27_19_21_56_348\n\nAnd it sounds like the compute host is not registered:\nhttp://logs.openstack.org/31/426231/1/check-tripleo/gate-tripleo-ci-centos-7-ovb-ha/915aeba/logs/undercloud/var/log/nova/nova-compute.txt.gz#_2017-01-27_18_56_56_543\n\nNova Config is available here:\nhttp://logs.openstack.org/31/426231/1/check-tripleo/gate-tripleo-ci-centos-7-ovb-ha/915aeba/logs/etc/nova/nova.conf.txt.gz\n\nThat's all the details I have now, feel free for more details if needed.", 
+    "tags": [
+        "promotion-blocker"
+    ], 
+    "importance": "Undecided", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1660160", 
+    "owner": "None", 
+    "id": 1660160, 
+    "index": 6644, 
+    "created": "2017-01-29 16:57:48.552924+00:00", 
+    "title": "No host-to-cell mapping found for selected host", 
+    "comments": [
+        {
+            "content": "This report is maybe not a bug but I found useful to share what happens in TripleO since this commit:\nhttps://review.openstack.org/#/c/319379/\n\nWe are unable to deploy the overcloud nodes anymore (in other words, create servers with Nova / Ironic).\n\nNova Conductor sends this message:\n\"No host-to-cell mapping found for selected host\"\nhttp://logs.openstack.org/31/426231/1/check-tripleo/gate-tripleo-ci-centos-7-ovb-ha/915aeba/logs/undercloud/var/log/nova/nova-conductor.txt.gz#_2017-01-27_19_21_56_348\n\nAnd it sounds like the compute host is not registered:\nhttp://logs.openstack.org/31/426231/1/check-tripleo/gate-tripleo-ci-centos-7-ovb-ha/915aeba/logs/undercloud/var/log/nova/nova-compute.txt.gz#_2017-01-27_18_56_56_543\n\nNova Config is available here:\nhttp://logs.openstack.org/31/426231/1/check-tripleo/gate-tripleo-ci-centos-7-ovb-ha/915aeba/logs/etc/nova/nova.conf.txt.gz\n\nThat's all the details I have now, feel free for more details if needed.", 
+            "date_created": "2017-01-29 16:57:48.552924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~emilienm"
+        }, 
+        {
+            "content": "Note: a revert of https://review.openstack.org/#/c/319379/ worked for TripleO and we are enable to spawn the overcloud again.", 
+            "date_created": "2017-01-29 16:58:37.847231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~emilienm"
+        }, 
+        {
+            "content": "Something in your config has been preventing compute nodes from creating their compute node records for much longer than the referenced patch has been in place. I picked a random older run and found the same compute node record create failure:\n\n http://logs.openstack.org/95/422795/4/check/gate-tripleo-ci-centos-7-undercloud/9d4dda4/logs/var/log/nova/nova-compute.txt.gz#_2017-01-20_15_58_59_030\n\nThe referenced patch does require those compute node records, just like many other pieces of nova (your resource tracking will be wrong without it) but it is only related in as much as it requires them to be there in order to boot an instance. The ComputeNode records are very fundamental to Nova and have been for years, before cellsv2 was even a thing.\n\nWithout the compute node records, the discover_hosts step will not be able to create HostMapping records for the compute nodes, which is what the \"No host-to-cell mapping\" message is about.\n\nSo, this is, IMHO, not a Nova bug but just something config-related on the tripleo side. I'm not sure what exactly would cause that compute node record create failure, but I expect it's something minor.", 
+            "date_created": "2017-01-29 17:44:03.465386+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Looks like from that linked CI run, nova-compute can't make a connection to Ironic so we can't get nodes and thus don't create compute_nodes records in the main nova database:\n\nhttp://logs.openstack.org/95/422795/4/check/gate-tripleo-ci-centos-7-undercloud/9d4dda4/logs/var/log/nova/nova-compute.txt.gz#_2017-01-20_15_59_49_174", 
+            "date_created": "2017-01-29 18:33:50.769183+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Dan Smith,\n\nNova VMs \"hang\" in \"scheduling\" state in current case, so Nova has bug for sure. It should never leave its resources in transitional states forever.", 
+            "date_created": "2017-01-30 16:49:59.817595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Dan Smith,\n\nalso you can look at CI logs results searching for message \"No compute node record for\" here:\n\nhttp://logstash.openstack.org/#dashboard/file/logstash.json?query=message%3A%5C%22No%20compute%20node%20record%20for%5C%22\n\nSo, there is tremendous amount of CI jobs that have such \"misconfiguration\". About 3000 hits per 6 hours when I searched it.\n\nSo, definitely have trouble here.", 
+            "date_created": "2017-01-30 17:02:08.357160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "From Dan Smith: likely this will fix this issue: https://review.openstack.org/#/c/425273\n", 
+            "date_created": "2017-01-30 22:15:54.210552+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Change [1] for Manila project solved problem, proof is here - [2].\n\nProblem is in very late creation of cell0 [3]. So, if some devstack plugin tries to create Nova VM with disabled Nova cell services we get this error. Now, it can be workarounded creating Nova VMs in \"test-config\" section of devstack run.\n\n[1] https://review.openstack.org/#/c/426737/4/devstack/plugin.sh\n[2] http://logs.openstack.org/37/426737/4/check/gate-manila-tempest-dsvm-generic-no-share-servers-ubuntu-xenial-nv/8e008c9/logs/devstacklog.txt.gz\n[3] https://github.com/openstack-dev/devstack/blob/3bdeed06/stack.sh#L1371", 
+            "date_created": "2017-01-30 22:22:03.756646+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vponomaryov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/427534", 
+            "date_created": "2017-02-01 03:01:34.651143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/427534\nCommitted: https://git.openstack.org/cgit/openstack/tripleo-common/commit/?id=f6c286dbe882111b8de3b4f53391f1e96ad2d120\nSubmitter: Jenkins\nBranch:    master\n\ncommit f6c286dbe882111b8de3b4f53391f1e96ad2d120\nAuthor: Oliver Walsh <email address hidden>\nDate:   Wed Feb 1 02:51:15 2017 +0000\n\n    Fix race in undercloud cell_v2 host discovery\n    \n    Ensure that the ironic nodes have been picked up by the nova resource tracker\n    before running nova-manage cell_v2 host discovery.\n    \n    Also adds logging of the verbose command output to mistral engine log.\n    \n    Change-Id: I4cc67935df8f37cdb2d8b0bfd96cf90eb7a6ce25\n    Closes-Bug: #1660160\n", 
+            "date_created": "2017-02-01 21:11:56.734585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/tripleo-common 5.8.0 release.", 
+            "date_created": "2017-02-16 12:56:03.240286+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

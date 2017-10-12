@@ -1,0 +1,64 @@
+{
+    "status": "Expired", 
+    "last_updated": "2015-06-29 04:17:45.842735+00:00", 
+    "description": "Hello,\n\n    When resizing a VM, ssh will fail unless libvirt/driver.py is patched ...  There's many ways to work around this bug but for the sake of security, a private/public key should be used.   I'm not quite sure the live_migration_uri is still used in Icehouse but it used to be used.\n\n'-i', '/var/lib/nova/.ssh/libvirt',  \n\nThis only has to be done when no shared storage is used.\n\nThanks,\nDave", 
+    "tags": [
+        "libvirt", 
+        "resize"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1442401", 
+    "owner": "None", 
+    "id": 1442401, 
+    "index": 5500, 
+    "created": "2015-04-09 23:04:06.274016+00:00", 
+    "title": "When resizing a VM, ssh will fail unless libvirt/driver.py is patched", 
+    "comments": [
+        {
+            "content": "Hello,\n\n    When resizing a VM, ssh will fail unless libvirt/driver.py is patched ...  There's many ways to work around this bug but for the sake of security, a private/public key should be used.   I'm not quite sure the live_migration_uri is still used in Icehouse but it used to be used.\n\n'-i', '/var/lib/nova/.ssh/libvirt',  \n\nThis only has to be done when no shared storage is used.\n\nThanks,\nDave", 
+            "date_created": "2015-04-09 23:04:06.274016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "The actual patch for this would look more like this:\n5009:/usr/lib/python2.6/site-packages/nova/virt/libvirt/driver.py\n            utils.execute('ssh','-o','StrictHostKeyChecking=no','-i', '/var/lib/nova/.ssh/libvirt', dest, 'mkdir', '-p', inst_base)\n\nI know that StrictHostKeyChecking=no is bad but unless we develop something clever (like an automated ssh-key generation and exchange with nova) this is the FAST way to go around this issue.\n\nThanks,\nDave", 
+            "date_created": "2015-04-10 04:30:39.904399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Idea #2:   Why not have nova use rabbitmq/RPC/etc in order to get the destination node to simply create the folder?  Using ssh to create a single folder is kind of risky since lot's of things must happen in order for this to work .... like having nova user shell to /bin/bash instead of /sbin/nologin and having keys here and there in order to have a successfull resize/live-migration.\n\n", 
+            "date_created": "2015-04-10 04:32:25.017413+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "We also need this:\n\n/usr/lib/python2.6/site-packages/nova/virt/libvirt/utils.py\n\"            execute('scp', '-o','StrictHostKeyChecking=no','-i', '/var/lib/nova/.ssh/libvirt', src, dest)\"\n\nin case of non shared storage...", 
+            "date_created": "2015-04-14 15:22:52.636531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "David,\n\nYou don't mention how exactly tested this? Do you have a clear reproducer how you arrived here?\n\n\nI just tested from today's git on a single node DevStack with the below \ncommits, and I'm able to resize (up) an instance just fine:\n\n  cinder:\n  6cbc882 (Merge \"Storwize driver should only report active wwpn port\", 2015-04-21)\n  devstack:\n  4ab283f (Merge \"Add response time to keystone access log\", 2015-04-21)\n  glance:\n  00d84d1 (Merge \"Revert \"Reduce DB calls when getting an image\"\", 2015-04-16)\n  keystone:\n  fbf8985 (Merge \"Updated from global requirements\", 2015-04-20)\n  neutron:\n  e51ff45 (Merge \"Fix test discovery for api and functional paths\", 2015-04-22)\n  nova:\n  2141620 (Merge \"Fix max_number for migrate_flavor data\", 2015-04-21)\n  requirements:\n  b0ced14 (Merge \"Bump PyECLib version from 1.0.3 to 1.0.7\", 2015-04-20)\n\nTest\n----\n\n(1) Boot a Nova instance:\n\n  $ nova keypair-add oskey1 > oskey1.priv\n  $ chmod 600 oskey1.priv\n  $ nova boot --flavor 1 --key_name oskey1 \\\n      --image cirros-0.3.3-x86_64-disk cirrvm1\n  \n  $ nova list\n  +--------------------------------------+---------+--------+------------+-------------+------------------+\n  | ID                                   | Name    | Status | Task State | Power State | Networks         |\n  +--------------------------------------+---------+--------+------------+-------------+------------------+\n  | ae6d5bbb-d843-4a3b-a633-7f00c7fbacb5 | cirrvm1 | ACTIVE | -          | Running     | private=10.1.0.3 |\n  +--------------------------------------+---------+--------+------------+-------------+------------------+\n\n\n(2) Check the flavor of the instance:\n\n  $ nova show cirrvm1 | grep flavor | awk '{print $4}';\n  m1.tiny\n\n\n(3)  Find the disk associated with the Nova instance:\n\n  $ sudo virsh list\n   Id    Name                           State\n  ----------------------------------------------------\n   2     instance-00000001              running\n  \n  \n  $ sudo virsh domblklist 2\n  Target     Source\n  ------------------------------------------------\n  vda        /home/kashyapc/src/cloud/data/nova/instances/ae6d5bbb-d843-4a3b-a633-7f00c7fbacb5/disk\n\n\n(4) Check the size of the disk:\n\n  $ ls -lash /home/kashyapc/src/cloud/data/nova/instances/ae6d5bbb-d843-4a3b-a633-7f00c7fbacb5/disk\n  1.6M -rw-r--r--. 1 qemu qemu 1.6M Apr 22 09:36 /home/kashyapc/src/cloud/data/nova/instances/ae6d5bbb-d843-4a3b-a633-7f00c7fbacb5/disk\n\n\n(5) Resize the instance to 'm1.small' (from 'm1.tiny'):\n\n  $ nova resize --poll cirrvm1  m1.small\n  \n  Server resizing... 100% complete\n  Finished\n\n  $ nova list\n  +--------------------------------------+---------+---------------+------------+-------------+------------------+\n  | ID                                   | Name    | Status        | Task State | Power State | Networks         |\n  +--------------------------------------+---------+---------------+------------+-------------+------------------+\n  | ae6d5bbb-d843-4a3b-a633-7f00c7fbacb5 | cirrvm1 | VERIFY_RESIZE | -          | Running     | private=10.1.0.3 |\n  +--------------------------------------+---------+---------------+------------+-------------+------------------+\n\n  $ nova resize-confirm cirrvm1\n\n\n(6) Check the (new) size of the disk associated with the Nova instance:\n\n  $ ls -lash /home/kashyapc/src/cloud/data/nova/instances/ae6d5bbb-d843-4a3b-a633-7f00c7fbacb5/disk\n  19M -rw-r--r--. 1 qemu qemu 19M Apr 22 09:46 /home/kashyapc/src/cloud/data/nova/instances/ae6d5bbb-d843-4a3b-a633-7f00c7fbacb5/disk", 
+            "date_created": "2015-04-22 14:01:03.094258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "What is the exact version of nova you're running this against?  I'm assuming icehouse given the comment \"I'm not quite sure the live_migration_uri is still used in Icehouse but it used to be used.\" but can you please confirm?\n\nWe test live block migration in the gate on master and stable/kilo now so those should be working fine.\n\nWe also test resize with shared storage in the ceph job on master and stable/kilo so those should also be fine.\n\nCan you give more specifics about your configuration (nova.conf), topology/environment and recreate steps?", 
+            "date_created": "2015-04-22 14:06:45.665633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "In devstack, is it on the same server?  Do you allow password/keyless authentication?  We're not allowing password/keyless here.", 
+            "date_created": "2015-04-29 17:51:43.105089+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Since SSH requires authentication, all \"ssh\" related commands will fail with an authentication failure ....", 
+            "date_created": "2015-04-29 17:52:47.483665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2015-06-29 04:17:42.881972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ]
+}

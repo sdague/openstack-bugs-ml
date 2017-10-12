@@ -1,0 +1,65 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2014-07-10 17:30:46.853227+00:00", 
+    "description": "Bug 1250049 reported a problem with automatically disabling/enabling a host via the libvirt driver, but rather than fix it the right way, i.e. add a new column to the Service table which indicates if an admin intentionally disabled the host or if nova detected a fail and did it automatically, a hack was done instead to prefix the 'disabled_reason' with \"AUTO:\" and build some logic in the driver around that.\n\nThe problem with that approach is the ComputeFilter in the scheduler can't perform any kind of retry logic around that if needed, i.e. bug 1257644.\n\nRight now if the ComputeFilter encounters a disabled host, it just logs it at debug level and skips it.  If the host was automatically disabled because of a connection fail, we should at least log that as a warning in the scheduler (like we do now for hosts that haven't checked in for awhile) - or possibly build some retry logic around that to make it more robust in case the connection fail is just a hiccup that quickly resolves itself.\n\nOne could maybe argue that some kind of connection retry logic could be built into the libvirt driver instead, I wouldn't be against that.", 
+    "tags": [
+        "db", 
+        "libvirt", 
+        "scheduler"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1258625", 
+    "owner": "https://api.launchpad.net/1.0/~jichenjc", 
+    "id": 1258625, 
+    "index": 1454, 
+    "created": "2013-12-06 19:15:44.641658+00:00", 
+    "title": "Need some kind of 'auto' boolean column in the Service table", 
+    "comments": [
+        {
+            "content": "Bug 1250049 reported a problem with automatically disabling/enabling a host via the libvirt driver, but rather than fix it the right way, i.e. add a new column to the Service table which indicates if an admin intentionally disabled the host or if nova detected a fail and did it automatically, a hack was done instead to prefix the 'disabled_reason' with \"AUTO:\" and build some logic in the driver around that.\n\nThe problem with that approach is the ComputeFilter in the scheduler can't perform any kind of retry logic around that if needed, i.e. bug 1257644.\n\nRight now if the ComputeFilter encounters a disabled host, it just logs it at debug level and skips it.  If the host was automatically disabled because of a connection fail, we should at least log that as a warning in the scheduler (like we do now for hosts that haven't checked in for awhile) - or possibly build some retry logic around that to make it more robust in case the connection fail is just a hiccup that quickly resolves itself.\n\nOne could maybe argue that some kind of connection retry logic could be built into the libvirt driver instead, I wouldn't be against that.", 
+            "date_created": "2013-12-06 19:15:44.641658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/80885", 
+            "date_created": "2014-03-17 03:32:31.572603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/86767", 
+            "date_created": "2014-04-11 03:58:01.929996+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/86797", 
+            "date_created": "2014-04-11 05:43:25.609383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/86869", 
+            "date_created": "2014-04-11 11:20:10.215363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/86885", 
+            "date_created": "2014-04-11 12:33:23.640398+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/87150", 
+            "date_created": "2014-04-14 01:33:33.975242+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reposting some detailed comments from the review:\n\nTalked with Dan Smith a bit this morning about this bug. For historical context, libvirt dropping the connection and auto-disabling the host was a pretty significant gate failure late last year when I wrote the bug, and I wrote it based on how hard it was to identify and track the issue with logstash, specifically because the scheduler was dumping a debug message when the host was disabled regardless of whether or not it was auto-disabled or not.\n\nSo that led me to think that we should update the service table to add a column for auto-disabled and then the scheduler could check that and log appropriately when the host was down, i.e. warning rather than debug. Then we could fingerprint that in elastic-recheck.\n\nLooking back, there must have been a reason I was focused on the scheduler log, and that's probably because the error that shows up in the compute logs from the libvirt driver are not specific enough to the connection dropping, so maybe we need to strengthen the logging that happens in the libvirt driver when this fails. I did fix an issue in the libvirt driver at the time with this:\n\nhttps://review.openstack.org/#/c/60563/\n\nThat callback code was logging an error, but there have since been changes related to that because we're not supposed to be doing logging in those native threads since it can cause deadlocks, jswarren fixed that here:\n\nhttps://review.openstack.org/#/c/79617/\n\nSo now we should be getting the warning here, but it's probably very generic:\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/virt/libvirt/driver.py?id=2014.1.rc2#n582\n\ne.g. \"libvirtError: Unable to read from monitor: Connection reset by peer\".\n\nAnyway, the rest of bug 1258625 was talking about putting retry logic in the scheduler or in the libvirt driver when the connection is not available - so maybe that's the appropriate fix to chase here. I think the vmware driver is already doing some retry logic on connection issues, it seems the libvirt driver could be doing the same - disable the host and then retry for awhile to see if libvirt will come back up, then enable the host so the scheduler can use it again.\n\nDan's point was that the scheduler should be isolated from this logic - if the host is disabled the scheduler skips it. In a single compute environment this is a bad failure, but in multi-compute deployment (i.e. production cloud) it should be less of an issue.\nI still like the idea of moving the \"AUTO:\" prefix into the services table with a boolean column, but it's not worth it just to make a log message in the scheduler log go from debug to warning level.\n\nSo to summarize, it's probably more worthwhile to pursue better error diagnosis and auto-recovery in the libvirt driver for the intermittent connection drop than put in all this code for the scheduler to use it.\n\nBesides, when we get a newer version of libvirt in the gate (see blueprint support-libvirt-1x), the intermittent connection drop might be a non-issue. For all I know, maybe the fix here https://review.openstack.org/#/c/79617/ already cleans up some of the problem.", 
+            "date_created": "2014-04-15 14:41:52.235969+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Change abandoned by jichenjc (<email address hidden>) on branch: master\nReview: https://review.openstack.org/87150", 
+            "date_created": "2014-07-07 03:33:16.239125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

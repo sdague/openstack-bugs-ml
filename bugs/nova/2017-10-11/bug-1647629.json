@@ -1,0 +1,39 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-12-08 01:51:38.766983+00:00", 
+    "description": "When I try to boot an instance with '--nic auto', a network isn't created\nautomatically.  In neutron side, in order to automatically allocate\nnetwork/subnet/router, following network is necessary in advance:\n\n    * router:external is True(it means an external network)\n    * is_default is True\n    * subnet is associated\n\nHowever, if I prepared above default network, nova doesn't call\n'_can_auto_allocate_network'[1].  As a result, the VM instance is attached that\nexternal network.(not generated a network automatically)\n\n[1] https://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L1532\n\n[Steps to reproduce]\n1. Delete all network/subnet/port/router in neutron\n\n2. Try to create an instance\n  $ nova boot --flavor 1 --image 198384a2-9ece-4d24-a509-4ce02f183b63 vm1 --nic auto\n\nERROR (BadRequest): Unable to automatically allocate a network for project c8607bb7e4334b43aede76831b91ca03 (HTTP 400) (Request-ID: req-2d4088f6-d9aa-492d-a645-02327a058a47)\nIn n-api.log, we can see following error message:\nError message: {\"NeutronError\": {\"message\": \"Deployment error: No default router:external network.\", \"type\": \"AutoAllocationFailure\", \"detail\": \"\"}}\n\n3. I see.  OK, let's create default external network(router:external)\n  $ neutron net-create public --is_default --router:external --shared\n  $ neutron subnet-create public --subnetpool a811bf33-dacc-42b9-b44a-d424f37023df\n\n4. Try it again 'nova boot'\n  $ nova boot --flavor 1 --image 198384a2-9ece-4d24-a509-4ce02f183b63 vm1 --nic auto\n\n5. You can check the result with 'nova list'\n  $ nova list\n+--------------------------------------+------+--------+------------+-------------+-----------------+\n| ID                                   | Name | Status | Task State | Power State | Networks        |\n+--------------------------------------+------+--------+------------+-------------+-----------------+\n| 4e83f9d0-acbf-4440-8563-17dd6ec0cde5 | vm1  | BUILD  | spawning   | NOSTATE     | public=10.0.0.9 |\n+--------------------------------------+------+--------+------------+-------------+-----------------+", 
+    "tags": [
+        "auto-allocate-topology", 
+        "neutron"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1647629", 
+    "owner": "https://api.launchpad.net/1.0/~y-furukawa-2", 
+    "id": 1647629, 
+    "index": 6571, 
+    "created": "2016-12-06 09:29:28.966335+00:00", 
+    "title": "auto_allocate_network is not called when external shared network exists", 
+    "comments": [
+        {
+            "content": "When I try to boot an instance with '--nic auto', a network isn't created\nautomatically.  In neutron side, in order to automatically allocate\nnetwork/subnet/router, following network is necessary in advance:\n\n    * router:external is True(it means an external network)\n    * is_default is True\n    * subnet is associated\n\nHowever, if I prepared above default network, nova doesn't call\n'_can_auto_allocate_network'[1].  As a result, the VM instance is attached that\nexternal network.(not generated a network automatically)\n\n[1] https://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L1532\n\n[Steps to reproduce]\n1. Delete all network/subnet/port/router in neutron\n\n2. Try to create an instance\n  $ nova boot --flavor 1 --image 198384a2-9ece-4d24-a509-4ce02f183b63 vm1 --nic auto\n\nERROR (BadRequest): Unable to automatically allocate a network for project c8607bb7e4334b43aede76831b91ca03 (HTTP 400) (Request-ID: req-2d4088f6-d9aa-492d-a645-02327a058a47)\nIn n-api.log, we can see following error message:\nError message: {\"NeutronError\": {\"message\": \"Deployment error: No default router:external network.\", \"type\": \"AutoAllocationFailure\", \"detail\": \"\"}}\n\n3. I see.  OK, let's create default external network(router:external)\n  $ neutron net-create public --is_default --router:external --shared\n  $ neutron subnet-create public --subnetpool a811bf33-dacc-42b9-b44a-d424f37023df\n\n4. Try it again 'nova boot'\n  $ nova boot --flavor 1 --image 198384a2-9ece-4d24-a509-4ce02f183b63 vm1 --nic auto\n\n5. You can check the result with 'nova list'\n  $ nova list\n+--------------------------------------+------+--------+------------+-------------+-----------------+\n| ID                                   | Name | Status | Task State | Power State | Networks        |\n+--------------------------------------+------+--------+------------+-------------+-----------------+\n| 4e83f9d0-acbf-4440-8563-17dd6ec0cde5 | vm1  | BUILD  | spawning   | NOSTATE     | public=10.0.0.9 |\n+--------------------------------------+------+--------+------------+-------------+-----------------+", 
+            "date_created": "2016-12-06 09:29:28.966335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~y-furukawa-2"
+        }, 
+        {
+            "content": "You're getting the public external network because you marked it as shared=True so it's pulled in here:\n\nhttps://github.com/openstack/nova/blob/a67af1f110f160861f5cbbff987766c46d60198a/nova/network/neutronv2/api.py#L343\n\nAnd you pass this check for the external shared network on the compute:\n\nhttps://github.com/openstack/nova/blob/a67af1f110f160861f5cbbff987766c46d60198a/nova/network/neutronv2/api.py#L466\n\nSo the port for the server gets created in that network. I'm not sure what else you expect to happen here.", 
+            "date_created": "2016-12-07 19:43:08.828801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hi Matt, thanks for your reply.  I understood that following condition should be satisfied to run auto_allocate_topology.\n\n1. There is no networks in a target project(ex. \"demo\" project)\n2. There is a network in different project with following conditions(ex. in \"admin\" project:\n    * \"router:external\" is True(it is equal to external network)\n    * \"is_default\" is True\n    * A subnet is associated with the network\n\nAfter that, I executed \"nova boot\" with \"--nic auto\" into \"demo\" project.  As a result, auto_allocated_network is generated.", 
+            "date_created": "2016-12-08 01:50:48.510654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~y-furukawa-2"
+        }, 
+        {
+            "content": "^^^\n    * \"shared\" is False", 
+            "date_created": "2016-12-08 01:51:38.332065+00:00", 
+            "author": "https://api.launchpad.net/1.0/~y-furukawa-2"
+        }
+    ]
+}

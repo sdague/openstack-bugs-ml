@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 11:16:20.715765+00:00", 
+    "description": "ephemeral device creation when using LVM devices does not cause the resulting filesystem to get newfs'd\n\nReading through nova code:\nin utils.py/LibvirtDriver/_create_image\n            fn = functools.partial(self._create_ephemeral,\n                                   fs_label='ephemeral0',\n                                   os_type=instance[\"os_type\"])\nthen:\n            image('disk.local').cache(fetch_func=fn,\n                                      filename=fname,\n                                      size=size,\n                                      ephemeral_size=ephemeral_gb)\nis called\n\ncache() then calls imagebackend.py/Lvm/create_image\ncreate_image() then calls libvirt_utils.create_lvm_image, which creates the LVM\nprepare_template() is then called, leading us cache.call_if_not_exists\ncall_if_not_exists contains the following check:\n            if not os.path.exists(target):\nsince create_image has already created the lvm device, the /dev/ entry exists and therefore our fetch_func (self._create_ephemeral) never gets called, and no filesystem is created on the ephemeral device.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1083424", 
+    "owner": "https://api.launchpad.net/1.0/~rkhardalian", 
+    "id": 1083424, 
+    "index": 887, 
+    "created": "2012-11-27 03:46:13.538185+00:00", 
+    "title": "ephemeral devices on LVM don't get mkfs'd", 
+    "comments": [
+        {
+            "content": "ephemeral device creation when using LVM devices does not cause the resulting filesystem to get newfs'd\n\nReading through nova code:\nin utils.py/LibvirtDriver/_create_image\n            fn = functools.partial(self._create_ephemeral,\n                                   fs_label='ephemeral0',\n                                   os_type=instance[\"os_type\"])\nthen:\n            image('disk.local').cache(fetch_func=fn,\n                                      filename=fname,\n                                      size=size,\n                                      ephemeral_size=ephemeral_gb)\nis called\n\ncache() then calls imagebackend.py/Lvm/create_image\ncreate_image() then calls libvirt_utils.create_lvm_image, which creates the LVM\nprepare_template() is then called, leading us cache.call_if_not_exists\ncall_if_not_exists contains the following check:\n            if not os.path.exists(target):\nsince create_image has already created the lvm device, the /dev/ entry exists and therefore our fetch_func (self._create_ephemeral) never gets called, and no filesystem is created on the ephemeral device.", 
+            "date_created": "2012-11-27 03:46:13.538185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~78luphr0rnk2nuqimstywepozxn9kl19tqh0tx66b5dki1xxsh5mkz9gl21a5rlwfnr8jn6ln0m3jxne2k9x1ohg85w3jabxlrqbgszpjpwcmvk-launchpad"
+        }, 
+        {
+            "content": "I have an absolutely hackish patch for this, that I'm 100% sure isn't the right way. \n\nIn, call_if_not_exists I changed:\nif not os.path.exists(target):\nto\nif not os.path.exists(target) and 'ephemeral_size' not in kwargs:\nand\n    def _create_ephemeral(self, target, ephemeral_size, fs_label, os_type):\n        if not os.path.exists(target):\n                self._create_local(target, ephemeral_size)\n        disk.mkfs(os_type, fs_label, target)\nThis is bad, but it works :)", 
+            "date_created": "2012-11-27 17:34:35.910813+00:00", 
+            "author": "https://api.launchpad.net/1.0/~78luphr0rnk2nuqimstywepozxn9kl19tqh0tx66b5dki1xxsh5mkz9gl21a5rlwfnr8jn6ln0m3jxne2k9x1ohg85w3jabxlrqbgszpjpwcmvk-launchpad"
+        }, 
+        {
+            "content": "Is there any progress on this? \n", 
+            "date_created": "2013-02-28 16:59:38.349158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stuart-stent"
+        }, 
+        {
+            "content": "I've been working with this code lately so I'll take a stab at fixing this.", 
+            "date_created": "2013-02-28 22:02:38.609500+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "I've been thinking about this and wonder whether we should be doing a mkfs at all.  Doing so means we're making an assumption that the instance is running Linux.  If the instance happens to be targeted for Windows, that filesystem we just built is completely useless.  Even with non-LVM backed instances, we rely on cloud-init (or similar guest-level automation) to setup ephemeral devices.  So, unless I have misunderstood the report, I don't see a problem here.\n\nTL;DR: I don't think we should be doing anything with ephemeral via Nova aside from providing the instance a usable block device.", 
+            "date_created": "2013-03-01 01:31:52.244399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "Vish just pointed out that we're conditionally mkfs'ing based on image metadata.  Thus, this bug is valid and we should be doing the same for LVM.", 
+            "date_created": "2013-03-01 01:35:24.009219+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/23253", 
+            "date_created": "2013-03-01 09:02:46.041366+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/23253\nCommitted: http://github.com/openstack/nova/commit/8bd8da476c9e7718cea6552e767ea51727d28418\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8bd8da476c9e7718cea6552e767ea51727d28418\nAuthor: Rafi Khardalian <email address hidden>\nDate:   Fri Mar 1 08:53:52 2013 +0000\n\n    Fix ephemeral devices on LVM don't get mkfs'd\n    \n    Fixes bug 1083424\n    \n    Updated imagebackend to run the necessary callback conditionally\n    based on whether LVM is configured for use and ephemeral_size is\n    defined. The callback function was updated not to invoke qemu-img\n    for LVM, since the ephemeral disk is already present/created via\n    LVM. Lastly, the mkfs call had to be changed to be run as root,\n    since we are dealing with raw devices.\n    \n    Change-Id: Ieb1febb0ea086f8e5063d92ca376d349fcd43a43\n", 
+            "date_created": "2013-03-09 02:28:42.736926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

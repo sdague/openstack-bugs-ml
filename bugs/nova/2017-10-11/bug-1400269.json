@@ -1,0 +1,69 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-05-13 17:26:36.806058+00:00", 
+    "description": "Get error if delete flavor before delete instance.\nThis is caused by ironic driver in nova.\nWe have below code in _cleanup_deploy function in nova/virt/ironic/driver.py\nif flavor is None:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# TODO(mrda): It would be better to use instance.get_flavor() here\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# but right now that doesn't include extra_specs which are required\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0flavor = objects.Flavor.get_by_id(context,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0instance['instance_type_id'])\nSo if the flavor is deleted before we destroy bare metal node, we get FlavorNotFoud exception without handling.\n\n\nAt same time, I found the flavor is used to clean deploy ramdisk/kernel in driver_info, which was plan to remove in Kilo, are we ready for that?", 
+    "tags": [
+        "in-stable-juno", 
+        "juno-backport-potential"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1400269", 
+    "owner": "https://api.launchpad.net/1.0/~pmurray", 
+    "id": 1400269, 
+    "index": 5312, 
+    "created": "2014-12-08 10:11:40.889956+00:00", 
+    "title": "unable to destroy bare-metal instance when flavor is deleted", 
+    "comments": [
+        {
+            "content": "Get error if delete flavor before delete instance.\nThis is caused by ironic driver in nova.\nWe have below code in _cleanup_deploy function in nova/virt/ironic/driver.py\nif flavor is None:\n            # TODO(mrda): It would be better to use instance.get_flavor() here\n            # but right now that doesn't include extra_specs which are required\n            flavor = objects.Flavor.get_by_id(context,\n                                              instance['instance_type_id'])\nSo if the flavor is deleted before we destroy bare metal node, we get FlavorNotFoud exception without handling.\nI prefer to add to log and ignore the exception to solve this one.\n\nAt same time, I found the flavor is used to clean deploy ramdisk/kernel in driver_info, which was plan to remove in Kilo, are we ready for that?", 
+            "date_created": "2014-12-08 10:11:40.889956+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tan-lin-good"
+        }, 
+        {
+            "content": "Thank you for reporting. This bug should be fixed within Nova tree, as to my best knowledge Ironic is not even aware of flavor concept.", 
+            "date_created": "2014-12-08 13:21:57.940322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }, 
+        {
+            "content": "I can confirm this error on a very recent nova+ironic. While some nodes were failing deploy, I deleted and re-created the flavor to have less disk requirement, and now I cannot delete the instances:\n\n+--------------------------------------+---------------------------------------------------------------------------------------------+\n| Property                             | Value                                                                                       |\n+--------------------------------------+---------------------------------------------------------------------------------------------+\n| OS-DCF:diskConfig                    | MANUAL                                                                                      |\n| OS-EXT-AZ:availability_zone          | nova                                                                                        |\n| OS-EXT-SRV-ATTR:host                 | seed                                                                                        |\n| OS-EXT-SRV-ATTR:hypervisor_hostname  | 772af6ac-d053-47cf-88b5-3cce94191bb4                                                        |\n| OS-EXT-SRV-ATTR:instance_name        | instance-00000001                                                                           |\n| OS-EXT-STS:power_state               | 0                                                                                           |\n| OS-EXT-STS:task_state                | deleting                                                                                    |\n| OS-EXT-STS:vm_state                  | error                                                                                       |\n| OS-SRV-USG:launched_at               | -                                                                                           |\n| OS-SRV-USG:terminated_at             | -                                                                                           |\n| accessIPv4                           |                                                                                             |\n| accessIPv6                           |                                                                                             |\n| config_drive                         |                                                                                             |\n| created                              | 2014-12-11T10:27:04Z                                                                        |\n| fault                                | {\"message\": \"Flavor 7 could not be found.\", \"code\": 404, \"created\": \"2014-12-11T10:37:51Z\"} |\n| flavor                               | baremetal (82f959f5-b20e-44b2-9604-f68abc19e214)                                            |\n| hostId                               | e7fd3fa395a116811e038357c0c1fc0f37af09d8c600294e1631a1d6                                    |\n| id                                   | 44a7bb32-9563-492a-b20e-1354193651d2                                                        |\n| image                                | overcloud-compute (6250ce83-56f6-4b5f-8bcd-d3f170b9b7ae)                                    |\n| key_name                             | default                                                                                     |\n| metadata                             | {}                                                                                          |\n| name                                 | ci-overcloud-NovaCompute0-rwvmd5ld5p7k                                                      |\n| os-extended-volumes:volumes_attached | []                                                                                          |\n| status                               | ERROR                                                                                       |\n| tenant_id                            | 6c7831f11fc944ce89fdfe09205f1f7d                                                            |\n| updated                              | 2014-12-11T10:37:51Z                                                                        |\n| user_id                              | 74c6f23f576544fcad95de5498dada0d                                                            |\n+--------------------------------------+---------------------------------------------------------------------------------------------+\n", 
+            "date_created": "2014-12-11 16:59:25.414657+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/141104", 
+            "date_created": "2014-12-11 17:20:48.201138+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/142123", 
+            "date_created": "2014-12-16 14:52:41.426214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Devananda's comments in https://review.openstack.org/141104 note that there are no log messages warning about the changes related to ramdisk/kernal, so it has to be left for now. So this fix should be done anyway.\n\nThe fix https://review.openstack.org/142123 does that single change to address this bug.", 
+            "date_created": "2014-12-18 18:00:05.543358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/142123\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c4eab7062301b8f3b2de2358c589aee4c53074ef\nSubmitter: Jenkins\nBranch:    master\n\ncommit c4eab7062301b8f3b2de2358c589aee4c53074ef\nAuthor: Paul Murray <email address hidden>\nDate:   Tue Dec 16 14:20:32 2014 +0000\n\n    Fix ironic delete fails when flavor deleted\n    \n    The ironic virt driver looks up the flavor of an instance\n    when it is going to delete it. This is to obtain extra\n    specs details that are not available in the instance details.\n    If the flavor has been deleted this lookup fails and causes\n    the delete to fail.\n    \n    The fix makes the lookup include deleted flavors. Note that\n    extra specs handling is changing in nova, so this code is\n    likely to become obsolete when they are available by\n    other means.\n    \n    Change-Id: I47ba78abfe60e82226acc6a17752db503d9f21d8\n    Co-Authored-By: Nicholas Randon <email address hidden>\n    Co-Authored-By: Phil Day <email address hidden>\n    Closes-Bug: #1400269\n", 
+            "date_created": "2014-12-19 14:47:29.823246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/143132", 
+            "date_created": "2014-12-19 16:33:51.146736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/143132\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ee66c0436ba969adae519fa5033b8da0fd04a30f\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit ee66c0436ba969adae519fa5033b8da0fd04a30f\nAuthor: Paul Murray <email address hidden>\nDate:   Tue Dec 16 14:20:32 2014 +0000\n\n    Fix ironic delete fails when flavor deleted\n    \n    The ironic virt driver looks up the flavor of an instance\n    when it is going to delete it. This is to obtain extra\n    specs details that are not available in the instance details.\n    If the flavor has been deleted this lookup fails and causes\n    the delete to fail.\n    \n    The fix makes the lookup include deleted flavors. Note that\n    extra specs handling is changing in nova, so this code is\n    likely to become obsolete when they are available by\n    other means.\n    \n    Change-Id: I47ba78abfe60e82226acc6a17752db503d9f21d8\n    Co-Authored-By: Nicholas Randon <email address hidden>\n    Co-Authored-By: Phil Day <email address hidden>\n    Closes-Bug: #1400269\n    (cherry picked from commit c4eab7062301b8f3b2de2358c589aee4c53074ef)\n    Conflicts:\n            nova/tests/unit/virt/ironic/test_driver.py\n            nova/virt/ironic/driver.py\n", 
+            "date_created": "2014-12-24 11:41:06.179292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/141104\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-05-13 17:26:36.243223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

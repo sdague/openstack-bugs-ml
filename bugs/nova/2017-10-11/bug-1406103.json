@@ -1,0 +1,34 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-04-01 15:56:29.651838+00:00", 
+    "description": "Summary:\nWhen live-migrating a virtual machine from a compute node to another one with the same bios uuid, libvirt would fail the migration because of the bios uuid checking.\n\nnova-compute.log from the source node:\n2014-12-27 05:23:19.889 1923 ERROR nova.virt.libvirt.driver [-] [instance: a0c91586-afaf-49d7-8799-0a17e3087c56] Live Migration failure: internal error: Attempt to migrate guest to the same host 564d1e3d-01e7-fd2e-0185-625ea40bd715\n\nScenario:\nWhen cloning a new compute node from an existing one, bios uuid usually remains the same, this issue happens when launching a live-migration between two compute nodes with the same bios uuid.\nBoth nodes should be based on KVM, libvirt.\n\nLocation:\n*********************************************************************\nLibvirt 1.2.2\npath: /src/qemu/qemu_migration.c\nfunction: static int qemuMigrationCookieXMLParse(qemuMigrationCookiePtr mig, virQEMUDriverPtr driver, xmlDocPtr doc, xmlXPathContextPtr ctxt, unsigned int flags)\nline: 825:\nif (STREQ(mig->remoteHostname, mig->localHostname))\n{\n\tvirReportError(VIR_ERR_INTERNAL_ERROR, _(\"Attempt to migrate guest to the same host %s\"), mig->remoteHostname);\n\tgoto error;\n}\n\nline 842:\nif (memcmp(mig->remoteHostuuid, mig->localHostuuid, VIR_UUID_BUFLEN) == 0)\n{\n\tvirReportError(VIR_ERR_INTERNAL_ERROR, _(\"Attempt to migrate guest to the same host %s\"), tmp);\n\tgoto error;\n}\n*********************************************************************\nnova Icehouse\n/nova/conductor/tasks/live_migrate.py\nclass: LiveMigrationTask\nfunction: def _check_destination_is_not_source(self):\nline 102:\ndef _check_destination_is_not_source(self):\n        if self.destination == self.source:\n            raise exception.UnableToMigrateToSelf(\n                    instance_id=self.instance.uuid, host=self.destination)\n*********************************************************************\nFrom above we can see that libvirt checks both the hostnames and bios uuids of both hosts, but nova only checks the hostnames.\n\nRequest:\nThe error message from libvirt is obscure and not that helpful, because it's hard for an admin to tell what 564d1e3d-01e7-fd2e-0185-625ea40bd715 is, and the bios uuid is not a commonly known concept.\nOpenStack's same host checking should be consistent with libvirt's checkings, no matter whether allowing for the same bios uuid nodes or not. At least a clear error message should be given.", 
+    "tags": [
+        "libvirt", 
+        "migrate"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1406103", 
+    "owner": "None", 
+    "id": 1406103, 
+    "index": 5348, 
+    "created": "2014-12-28 13:56:16.162806+00:00", 
+    "title": "Live migration fails because of libvirt's bios uuid checking", 
+    "comments": [
+        {
+            "content": "Summary:\nWhen live-migrating a virtual machine from a compute node to another one with the same bios uuid, libvirt would fail the migration because of the bios uuid checking.\n\nnova-compute.log from the source node:\n2014-12-27 05:23:19.889 1923 ERROR nova.virt.libvirt.driver [-] [instance: a0c91586-afaf-49d7-8799-0a17e3087c56] Live Migration failure: internal error: Attempt to migrate guest to the same host 564d1e3d-01e7-fd2e-0185-625ea40bd715\n\nScenario:\nWhen cloning a new compute node from an existing one, bios uuid usually remains the same, this issue happens when launching a live-migration between two compute nodes with the same bios uuid.\nBoth nodes should be based on KVM, libvirt.\n\nLocation:\n*********************************************************************\nLibvirt 1.2.2\npath: /src/qemu/qemu_migration.c\nfunction: static int qemuMigrationCookieXMLParse(qemuMigrationCookiePtr mig, virQEMUDriverPtr driver, xmlDocPtr doc, xmlXPathContextPtr ctxt, unsigned int flags)\nline: 825:\nif (STREQ(mig->remoteHostname, mig->localHostname))\n{\n\tvirReportError(VIR_ERR_INTERNAL_ERROR, _(\"Attempt to migrate guest to the same host %s\"), mig->remoteHostname);\n\tgoto error;\n}\n\nline 842:\nif (memcmp(mig->remoteHostuuid, mig->localHostuuid, VIR_UUID_BUFLEN) == 0)\n{\n\tvirReportError(VIR_ERR_INTERNAL_ERROR, _(\"Attempt to migrate guest to the same host %s\"), tmp);\n\tgoto error;\n}\n*********************************************************************\nnova Icehouse\n/nova/conductor/tasks/live_migrate.py\nclass: LiveMigrationTask\nfunction: def _check_destination_is_not_source(self):\nline 102:\ndef _check_destination_is_not_source(self):\n        if self.destination == self.source:\n            raise exception.UnableToMigrateToSelf(\n                    instance_id=self.instance.uuid, host=self.destination)\n*********************************************************************\nFrom above we can see that libvirt checks both the hostnames and bios uuids of both hosts, but nova only checks the hostnames.\n\nRequest:\nThe error message from libvirt is obscure and not that helpful, because it's hard for an admin to tell what 564d1e3d-01e7-fd2e-0185-625ea40bd715 is, and the bios uuid is not a commonly known concept.\nOpenStack's same host checking should be consistent with libvirt's checkings, no matter whether allowing for the same bios uuid nodes or not. At least a clear error message should be given.", 
+            "date_created": "2014-12-28 13:56:16.162806+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hsluoyz"
+        }, 
+        {
+            "content": "1) the code listed here is in conductor, openstack is not only for libvirt\n2) if libvirt's log is obscure, maybe we  can fix in libvirt, openstack itself can't check everything ,should delegate to \n     low layer component, from openstack point of view, it did the check with the info he knows", 
+            "date_created": "2015-02-12 14:16:52.992722+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "OK, this bug has been forwarded to libvirt community, see below for tracking.\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1192123", 
+            "date_created": "2015-02-12 16:24:50.604906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hsluoyz"
+        }
+    ]
+}

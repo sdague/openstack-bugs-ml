@@ -1,0 +1,38 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2011-09-22 12:52:08.963139+00:00", 
+    "description": "I've just loaded a full disk qcow2 image from [1] to nova. I've noticed that the disk is not \"resized up\" as it is if a partition image is loaded. (Note related bug 833265)\n\nIe, given these 2 images, both running as 'm1.small' in this cloud:\nami-00000067 private  smoser-bucket/oneiric-server-cloudimg-amd64-disk1.qcow2.manifest.xml\nami-00000066 public   smoser-ubuntu-images-testing/ubuntu-oneiric-daily-amd64-server-20110829.img.manifest.xml\n\nWhere:\n$ qemu-img info oneiric-server-cloudimg-amd64-disk1.qcow2\nimage: oneiric-server-cloudimg-amd64-disk1.qcow2\nfile format: qcow2\nvirtual size: 2.0G (2147483648 bytes)\ndisk size: 194M\ncluster_size: 65536\n\nAn m1.small instance launched from the qcow2 disk gets:\n$ df -h /\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/vda1             2.0G  575M  1.3G  31% /\n$ grep . /proc/partitions\nmajor minor  #blocks  name\n 253        0    2097152 vda\n 253        1    2088450 vda1\n 253       16   20971520 vdb\n\nBut a m1.small instance launched from the partition image (ami-00000066) gets:\n$ df -h /\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/vda              9.9G  576M  8.8G   7% /\n$ grep . /proc/partitions\nmajor minor  #blocks  name\n 253        0   10485760 vda\n 253       16   20971520 vdb\n\nNote, I'm not expecting nova to rewrite the partition table and then attempt to resize the partition filesystems inside.  I explicitly do not want that.  I am asking that nova simply grow the disk, extending it with zeros.\n\nThe Ubuntu images have code that will rewrite the partition table on first boot if the disk is larger than the first partition [2], so all that is needed is to grow the disk.\n\n[1] https://cloud-images.ubuntu.com/server/oneiric/current/\n[2] http://ubuntu-smoser.blogspot.com/2011/03/todo-start-1104-instance-with-larger.html", 
+    "tags": [
+        "server-o-rs"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/836759", 
+    "owner": "https://api.launchpad.net/1.0/~smoser", 
+    "id": 836759, 
+    "index": 2527, 
+    "created": "2011-08-29 15:00:49.355249+00:00", 
+    "title": "nova does not grow qcow disk images correctly", 
+    "comments": [
+        {
+            "content": "I've just loaded a full disk qcow2 image from [1] to nova. I've noticed that the disk is not \"resized up\" as it is if a partition image is loaded. (Note related bug 833265)\n\nIe, given these 2 images, both running as 'm1.small' in this cloud:\nami-00000067 private  smoser-bucket/oneiric-server-cloudimg-amd64-disk1.qcow2.manifest.xml\nami-00000066 public   smoser-ubuntu-images-testing/ubuntu-oneiric-daily-amd64-server-20110829.img.manifest.xml\n\nWhere:\n$ qemu-img info oneiric-server-cloudimg-amd64-disk1.qcow2\nimage: oneiric-server-cloudimg-amd64-disk1.qcow2\nfile format: qcow2\nvirtual size: 2.0G (2147483648 bytes)\ndisk size: 194M\ncluster_size: 65536\n\nAn m1.small instance launched from the qcow2 disk gets:\n$ df -h /\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/vda1             2.0G  575M  1.3G  31% /\n$ grep . /proc/partitions\nmajor minor  #blocks  name\n 253        0    2097152 vda\n 253        1    2088450 vda1\n 253       16   20971520 vdb\n\nBut a m1.small instance launched from the partition image (ami-00000066) gets:\n$ df -h /\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/vda              9.9G  576M  8.8G   7% /\n$ grep . /proc/partitions\nmajor minor  #blocks  name\n 253        0   10485760 vda\n 253       16   20971520 vdb\n\nNote, I'm not expecting nova to rewrite the partition table and then attempt to resize the partition filesystems inside.  I explicitly do not want that.  I am asking that nova simply grow the disk, extending it with zeros.\n\nThe Ubuntu images have code that will rewrite the partition table on first boot if the disk is larger than the first partition [2], so all that is needed is to grow the disk.\n\n[1] https://cloud-images.ubuntu.com/server/oneiric/current/\n[2] http://ubuntu-smoser.blogspot.com/2011/03/todo-start-1104-instance-with-larger.html", 
+            "date_created": "2011-08-29 15:00:49.355249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Scott: thanks for the info there.  I thought it was using truncate to expand the image, but it may not be doing so, especially in the case of a qcow2 disk.", 
+            "date_created": "2011-08-29 18:22:22.519082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I just verified, that if I pass a full disk image, it does use truncate to resize the disk.  However, that is insufficient if the format is other than 'raw'.\n\nI downloaded an Ubuntu qcow image, then ran:\n qemu-image convert -O raw $input $output.raw\n cloud-publish-image --type image $output.raw ....\n\nAnd then, inside, I see:\n\nubuntu@ubuntu:~$ df -h /\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/vda1             9.9G  576M  8.8G   7% /\nubuntu@ubuntu:~$ cat /proc/partitions \nmajor minor  #blocks  name\n\n 253        0   10485760 vda\n 253        1   10474380 vda1\n 253       16   20971520 vdb\n\n\nAnd in console output, I see:\n GROWROOT: CHANGED: partition=1 start=16065 old: size=4176900 end=4192965 new: size=20948760,end=20964825\n", 
+            "date_created": "2011-08-30 10:50:05.818763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "qemu-img resize should be able to resize 'raw' images also.  So, for this specific bug, I think that it is sufficient to do:\n\n--- nova/virt/disk.py\t2011-08-23 05:17:51 +0000\n+++ nova/virt/disk.py\t2011-08-30 10:51:34 +0000\n@@ -58,7 +58,7 @@\n     file_size = os.path.getsize(image)\n     if file_size >= size:\n         return\n-    utils.execute('truncate', '-s', size, image)\n+    utils.execute('qemu-img', 'resize', image, size)\n     # NOTE(vish): attempts to resize filesystem\n     utils.execute('e2fsck', '-fp', image, check_exit_code=False)\n     utils.execute('resize2fs', image, check_exit_code=False)\n", 
+            "date_created": "2011-08-30 10:53:37.080078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }
+    ]
+}

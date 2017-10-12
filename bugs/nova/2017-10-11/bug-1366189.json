@@ -1,0 +1,101 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-07-13 19:42:40.046860+00:00", 
+    "description": "When the message passed to mask_password() contains non-ASCII characters the line: \n\n      message = six.text_type(message) \n\nfails with: \n\n      UnicodeDecodeError: 'ascii' codec can't decode byte 0xe9 in position 128: ordinal not in range(128)", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1366189", 
+    "owner": "None", 
+    "id": 1366189, 
+    "index": 5139, 
+    "created": "2014-09-05 20:53:48.944076+00:00", 
+    "title": "mask_password doesn't handle non-ASCII characters", 
+    "comments": [
+        {
+            "content": "When the message passed to mask_password() contains non-ASCII characters the line: \n\n      message = six.text_type(message) \n\nfails with: \n\n      UnicodeDecodeError: 'ascii' codec can't decode byte 0xe9 in position 128: ordinal not in range(128)", 
+            "date_created": "2014-09-05 20:53:48.944076+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "We could modify the use of six.text_type to specify an encoding and then to only call it if it needs to be done: \n\n     if not isinstance(message, six.text_type):\n         message = six.text_type(message, 'utf8')\n\nDoes that imply that we may need to do this anywhere that six.text_type is used?  \n\nAnother option would be to set the default encoding to 'utf8' if we are running in Python 2.x, but I see a lot of debate about whether that's a good idea or not.", 
+            "date_created": "2014-09-05 20:55:28.044246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "Forcing the default encoding is definitely not a good idea. The function to do that is removed from Python's sys module on startup to prevent doing that.\n\nSpecifying an encoding inside mask_password() is no good either, since we don't actually know right encoding to use.\n\nWhere are we seeing byte strings containing non-ASCII characters? Those callers should probably be updated to use unicode strings themselves, and on up the stack.\n\nWe can also look at whether mask_password actually requires us to be doing the unicode conversion. Would the function work (or at least not throw an error) if we skipped that?", 
+            "date_created": "2014-09-06 12:35:26.709166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "I'll follow up on where the non-ASCII characters are coming from.   I think is is due to translation, which makes me wonder why it wasn't unicode already.\n\nIt seems like it would be appropriate to remove it.   I suspect that the thinking when adding it was that you could get a i18n._Message object passed in, but that would actually be an incorrect usage, since the mask_password should be called on the message after it has been translated and the replacement text applied.", 
+            "date_created": "2014-09-08 21:23:00.510285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "I'll bet you're right about the use with Message objects.", 
+            "date_created": "2014-09-08 21:26:08.231415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Looking at it their are two cases where mask_password is being called: \n    (checked: Nova, Neutron, Cinder, Keystone)\n\n   (1) on a message being logged: \n            msg = _(\"Action: '%(action)s', body: \"\n                    \"%(body)s\") % {'action': action,\n                                   'body': unicode(body, 'utf-8')}\n            LOG.debug(logging.mask_password(msg))\n\n   (2) on stdout and stderr (processutils.py):\n                (stdout, stderr) = result\n                sanitized_stdout = strutils.mask_password(stdout)\n                sanitized_stderr = strutils.mask_password(stderr)\n\n    We're seeing this problem in case #2.    This includes a bug opened against cinder: https://bugs.launchpad.net/cinder/+bug/1368527\n\n     I looked at simply removing the call to six.text_type and the concern is the case where an i18n._Message is being used in case (1) due to lazy translation being enabled.   The i18n._Message contains two versions of the message.  One that is the message with the replacement text applied and the other is the original message with the replacement not applied, but saved for application after translation.    If the six.text_type coercion isn't done I believe the mask_password code will run and will modify the message with the replacement text applied, but not to the other.  This means that if the returned i18n._Message object is translated it would return an unmasked version of the message.\n\n    So it seems like the safest solution would be to modify mask_password() to only coerce to a six.text_type if the message is an instance of the i18n._Message object, but this exposes an internal object of oslo.i18n.    This is a big change and since I don't see any cases where it isn't sent to logging, I don't think this is an issue at this time. \n\n    So my inclination is to remove the coercion to six.text_type, but I am still concerned because there are places in the code where we call six.text_type on exceptions.   We've removed the use of str() when logging them, but when string operators are called on them we replaced str() with six.text_type().    So are we assuming that our exceptions contain unicode?   If so, then we should have processutils.py doing the decode on stdout and strerr before it is used to create the exception, which would mean it could be done before calling mask_password, which would also fix this failure.", 
+            "date_created": "2014-09-12 16:42:16.506980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "Discussion i n #openstack-oslo (http://eavesdrop.openstack.org/irclogs/%23openstack-oslo/%23openstack-oslo.2014-09-15.log) starting at 2014-09-15T15:25:56.\n\nFor Juno going to modify mask_password() to ignore the decode error when coercing.   For Kilo going to look at modifying processutils to decode the messages.", 
+            "date_created": "2014-09-15 15:51:17.399827+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "Where a _Message() is logged, the caller should invoke mask_password() on the value that is passed into the _Message (body, in the example given).\n\nWhere we're logging the output of commands (or the commands themselves), processutils should ensure that it passes a unicode string to mask_password().\n\nIt would be interesting to see what happened if we raised an error if mask_password is given a byte string instead of a unicode object. I suspect that would expose a lot of places where we are not properly decoding byte strings.", 
+            "date_created": "2014-09-15 15:51:20.064663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "For now we are going to make mask_password ignore the decoding error and work on the byte string, but in kilo we need to think about that and fix the callers.\n", 
+            "date_created": "2014-09-15 15:52:50.269265+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Related bug https://bugs.launchpad.net/cinder/+bug/1368527", 
+            "date_created": "2014-09-15 17:58:42.672525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Fix in incubator: https://review.openstack.org/121632", 
+            "date_created": "2014-09-16 12:27:00.869606+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "oslo.utils fix: https://review.openstack.org/121657", 
+            "date_created": "2014-09-16 12:30:30.573785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "In Trove due to this issue installation of database on Fedora image doesn't work.", 
+            "date_created": "2014-10-20 13:31:18.228673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sgotliv"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/131279\nCommitted: https://git.openstack.org/cgit/openstack/ceilometer/commit/?id=470ba0a26a8a15211639331d040812b47d745106\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 470ba0a26a8a15211639331d040812b47d745106\nAuthor: James Carey <email address hidden>\nDate:   Mon Oct 27 14:38:25 2014 -0700\n\n    Sync strutils from oslo-incubator for mask_password fix\n    \n    This sync pulls in:\n       1131b56 Enable mask_password to handle byte code strings\n    \n    This is needed because Ceilometer commands are hitting the same\n    problem Cinder was hitting in bug 1368527 which was fixed\n    by this strutils update in bug 1366189.\n    \n    This is not needed in kilo because in kilo Ceilometer has moved\n    to using the oslo.utils library, which has this fix in it.\n    \n    Closes-bug: #1366189\n    Change-Id: I4aacbe8d44f0ae2a649294652a388fbd5e15b4c9\n", 
+            "date_created": "2014-11-27 23:23:25.140603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "For trove, see https://review.openstack.org/#/c/141880/", 
+            "date_created": "2014-12-19 20:59:30.038119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amrith"
+        }, 
+        {
+            "content": "The commit that will get us the fix (I believe) is https://review.openstack.org/#/c/141081/ which is part of the 141880 chain of fixes.", 
+            "date_created": "2014-12-19 21:57:57.534161+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amrith"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/141880\nCommitted: https://git.openstack.org/cgit/openstack/trove/commit/?id=6ea94c4bf73993535625cb6a440919aabcfbb7c6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6ea94c4bf73993535625cb6a440919aabcfbb7c6\nAuthor: Amrith Kumar <email address hidden>\nDate:   Mon Dec 15 13:59:10 2014 -0500\n\n    resync oslo-incubator code\n    \n    This commit syncs the following oslo incubator modules used by Trove\n    and all dependent changes.\n    \n    __init__.py\n    \n    6b048e79 Let oslotest manage the six.move setting for mox\n    \n    context.py\n    \n    411ba356 Simplify is_user_context method\n    9b73877b Add a RequestContext.from_dict method\n    85d1ce6e Python 3: enable tests/unit/middleware/test_request_id.py\n    c0d357bb Add model_query() to db.sqlalchemy.utils module\n    \n    eventlet_backdoor.py\n    \n    a3220c51 add list_opts to all modules with configuration options\n    5d40e143 Remove code that moved to oslo.i18n\n    90ae24bf Remove redundant default=None for config options\n    fcf517d7 Update oslo log messages with translation domains\n    ad17a697 Fix filter() usage due to python 3 compability\n    8b2b0b74 Use hacking import_exceptions for gettextutils._\n    12bcdb71 Remove vim header\n    \n    log.py\n    \n    943cb94a Merge \"Make use_syslog=True log to syslog via /dev/log\"\n    8345204c Merge \"add list_opts to all modules with configuration options\"\n    ac4330dd Make use_syslog=True log to syslog via /dev/log\n    df774ff4 Import PublishErrorsHandler from oslo.messaging\n    a3220c51 add list_opts to all modules with configuration options\n    6c706c5c Delete graduated serialization files\n    5d40e143 Remove code that moved to oslo.i18n\n    6ff6b4b4 Switch oslo-incubator to use oslo.utils and remove old modules\n    aa744115 log: add missing space in error message\n    037dee00 Set stevedore log level to WARN by default\n    759bd879 Merge \"Set keystonemiddleware and routes.middleware to log on WARN level\"\n    71d072f1 Merge \"Except socket.error if syslog isn't running\"\n    37c00918 Add unicode coercion of logged messages to ContextFormatter\n    66144135 Correct coercion of logged message to unicode\n    \n    loopingcall.py\n    \n    5d40e143 Remove code that moved to oslo.i18n\n    e3773930 Changes calcuation of variable delay\n    ab5d5f1c Use timestamp in loopingcall\n    bc48099a Log the function name of looping call\n    fb4e863c Remove deprecated LoopingCall\n    fcf517d7 Update oslo log messages with translation domains\n    8b2b0b74 Use hacking import_exceptions for gettextutils._\n    12bcdb71 Remove vim header\n    \n    service.py\n    \n    5d40e143 Remove code that moved to oslo.i18n\n    6ede600f rpc, notifier: remove deprecated modules\n    \n    threadgroup.py\n    \n    1523f000 threadgroup: don't log GreenletExit\n    5a1a0166 Make stop_timers() method public\n    fdc88831 Add graceful stop function to ThreadGroup.stop\n    5f8ace05 Merge \"threadgroup: use threading rather than greenthread\"\n    2d06d6ca Simple typo correction\n    4d18b57a threadgroup: use threading rather than greenthread\n    25ff65e9 Make wait & stop methods work on all threads\n    12bcdb71 Remove vim header\n    9d3c34b5 Add a link method to Thread\n    \n    versionutils.py\n    \n    5d40e143 Remove code that moved to oslo.i18n\n    1c3ecfcd Enhance versionutils.deprecated to work with classes\n    7d42c107 Merge \"Add Kilo release name to versionutils\"\n    9a462718 Add Kilo release name to versionutils\n    a2ad3a25 Allow deprecated decorator to specify no plan for removal\n    05ae498b Add JUNO as a target to versionutils module\n    de4adbc4 pep8: fixed multiple violations\n    \n    Closes-Bug: #1366189\n    Change-Id: I2289452a9b838e22bb6d4dd1a854fbeb326042d2\n", 
+            "date_created": "2015-02-04 02:19:06.270075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

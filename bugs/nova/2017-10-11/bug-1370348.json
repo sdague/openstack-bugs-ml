@@ -1,0 +1,81 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:12:47.290762+00:00", 
+    "description": "When trying to boot an instance with a port using vnic_type=macvtap and vif_type=hw_veb I get this error in Compute log:\n\nTRACE nova.compute.manager  mlibvirtError: unsupported configuration: an interface of type 'direct' is requesting a vlan tag, but that is not supported for this type of connection", 
+    "tags": [
+        "in-stable-juno", 
+        "juno-backport-potential", 
+        "libvirt", 
+        "pci-passthrough"
+    ], 
+    "importance": "Medium", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1370348", 
+    "owner": "https://api.launchpad.net/1.0/~baoli", 
+    "id": 1370348, 
+    "index": 4044, 
+    "created": "2014-09-17 06:11:38.359078+00:00", 
+    "title": "Using macvtap vnic_type is not working with vif_type=hw_veb", 
+    "comments": [
+        {
+            "content": "When trying to boot an instance with a port using vnic_type=macvtap and vif_type=hw_veb I get this error in Compute log:\n\nTRACE nova.compute.manager  mlibvirtError: unsupported configuration: an interface of type 'direct' is requesting a vlan tag, but that is not supported for this type of connection", 
+            "date_created": "2014-09-17 06:11:38.359078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itzikb1"
+        }, 
+        {
+            "content": "Can you say which version of libvirt you are using here. ", 
+            "date_created": "2014-09-17 11:28:21.805835+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "So this Nova code appears to be just be plain broken & can't ever have worked in the config you request\n\nLibvirt code has this validation check\n\n    if (virDomainNetGetActualVlan(iface)) {\n        /* vlan configuration via libvirt is only supported for\n         * PCI Passthrough SR-IOV devices and openvswitch bridges.\n         * otherwise log an error and fail\n         */\n        if (!(actualType == VIR_DOMAIN_NET_TYPE_HOSTDEV ||\n              (actualType == VIR_DOMAIN_NET_TYPE_BRIDGE &&\n               virtport && virtport->virtPortType\n               == VIR_NETDEV_VPORT_PROFILE_OPENVSWITCH))) {\n            if (netdef) {\n                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,\n                               _(\"an interface connecting to network '%s' \"\n                                 \"is requesting a vlan tag, but that is not \"\n                                 \"supported for this type of network\"),\n                               netdef->name);\n            } else {\n                virReportError(VIR_ERR_CONFIG_UNSUPPORTED,\n                               _(\"an interface of type '%s' \"\n                                 \"is requesting a vlan tag, but that is not \"\n                                 \"supported for this type of connection\"),\n                               virDomainNetTypeToString(iface->type));\n            }\n            goto error;\n\n\nThe 'hw_veb'  VIF type has two ways to be configured, either using 'hostdev' mode or 'direct' mode.  Only the 'hostdev' mode will support use of a vlan, but Nova configures it unconditionally even for 'direct' mode.\n\nOne possible fix is to change \n\ndef set_vif_host_backend_hw_veb(conf, net_type, devname, vlan,\n                                tapname=None):\n    \"\"\"Populate a LibvirtConfigGuestInterface instance\n    with host backend details for an device that supports hardware\n    virtual ethernet bridge.\n    \"\"\"\n\n    conf.net_type = net_type\n    if net_type == 'direct':\n        conf.source_mode = 'passthrough'\n        conf.source_dev = pci_utils.get_ifname_by_pci_address(devname)\n        conf.driver_name = 'vhost'\n    else:\n        conf.source_dev = devname\n        conf.model = None\n    conf.vlan = vlan\n    if tapname:\n        conf.target_dev = tapname\n\n\nTo be\n\ndef set_vif_host_backend_hw_veb(conf, net_type, devname, vlan,\n                                tapname=None):\n    \"\"\"Populate a LibvirtConfigGuestInterface instance\n    with host backend details for an device that supports hardware\n    virtual ethernet bridge.\n    \"\"\"\n\n    conf.net_type = net_type\n    if net_type == 'direct':\n        conf.source_mode = 'passthrough'\n        conf.source_dev = pci_utils.get_ifname_by_pci_address(devname)\n        conf.driver_name = 'vhost'\n       conf.vlan = vlan\n    else:\n        conf.source_dev = devname\n        conf.model = None\n\n    if tapname:\n        conf.target_dev = tapname\n\n\nie, only set the vlan attribute for the hostdev mode.\n\nI've no idea if such a fix is *semantically* correct though in terms of what Neutron expects.\n\nCould you try such a change though and report back if it works correctly.\n", 
+            "date_created": "2014-09-17 11:35:53.785919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "libvirt version is 1.2.2\n\nChanged to:\ndef set_vif_host_backend_hw_veb(conf, net_type, devname, vlan,\n                                tapname=None):\n    \"\"\"Populate a LibvirtConfigGuestInterface instance\n    with host backend details for an device that supports hardware\n    virtual ethernet bridge.\n    \"\"\"\n\n    conf.net_type = net_type\n    if net_type == 'direct':\n        conf.source_mode = 'passthrough'\n        conf.source_dev = pci_utils.get_ifname_by_pci_address(devname)\n        conf.driver_name = 'vhost'\n    else:\n        conf.source_dev = devname\n        conf.model = None\n        conf.vlan = vlan\n    if tapname:\n        conf.target_dev = tapname\n\nAnd it works.\nCan I push this fix?\n\nThere is a need to add a the VLAN set in the Neutron side (i.e. Neutron Agent).", 
+            "date_created": "2014-09-22 20:46:16.468056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itzikb1"
+        }, 
+        {
+            "content": "Yes, I think moving 'conf.vlan = vlan' inside the else: is correct. \n\nIn the case of macvtap, the vlan interface needs to be created. This doesn't have to be done by neutron l2 agent, and can be achieved inside the vif driver. Check nova/network/linux_net.py, in which you can find how vlan interfaces are created for linux bridge (ensure_vlan()). However, it's not written as a generic routine such as create_tap_dev() that is inside the same module. \n\nCan we create a method in linux_net.py: create_vlan_interface(vlan_num, parent_interface, mac_addr, mtu), which then can be called by ensure_vlan() as well. This routine can be called by the vif driver when setting up macvtap for hw_veb.", 
+            "date_created": "2014-09-23 17:49:33.710838+00:00", 
+            "author": "https://api.launchpad.net/1.0/~baoli"
+        }, 
+        {
+            "content": "I am not sure if solution proposed by Robert is aligned with nova/ neutron separation of concerns. AFAIK neutron is expected to apply networking configuration to vnics created by nova. But following this, neutron agent will be required, while today there is an option to use SR-IOV without running neutron agent, i.e. Cisco VM-FEX.  Please advise. ", 
+            "date_created": "2014-09-24 12:18:16.191688+00:00", 
+            "author": "https://api.launchpad.net/1.0/~irenab"
+        }, 
+        {
+            "content": "Irena, if you check the method plug_ovs_hybrid() in vif.py, you will see that the vif driver creates a linux bridge, and adds ports in the integration bridge. Neutron later will add flows in the integration bridge and the downstream bridge to complete the data path setup (as done by the neutron agent). \n\nCertainly, there is no integration bridge anymore for SR-IOV. But it doesn't mean that nova shouldn't participate in the data path setup any more, IMO. macvtap requires a host networking interface (be it regular ethernet interface, or vlan interface) to be connected with, and such an interface either already exists or can be created/setup by nova.", 
+            "date_created": "2014-09-24 13:54:23.622092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~baoli"
+        }, 
+        {
+            "content": "I don't see a particular problem with nova creating the vlan device if that's what's needed", 
+            "date_created": "2014-09-30 12:36:47.238569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/126357", 
+            "date_created": "2014-10-06 17:01:52.892012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/126357\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=386e38198d63cf2dc45507ca7e4dc82f0bcd9bb9\nSubmitter: Jenkins\nBranch:    master\n\ncommit 386e38198d63cf2dc45507ca7e4dc82f0bcd9bb9\nAuthor: Robert Li <email address hidden>\nDate:   Mon Oct 6 12:48:07 2014 -0400\n\n    Support macvtap for vif_type being hw_veb\n    \n    This patch programs VLAN into a VF pci device, and properly\n    plug/unplug it into the instance.\n    \n    Change-Id: I85eb3c1347d057d1f292e747f950065b8f394147\n    Closes-Bug: 1370348\n    Co-Authored-By: Itzik Brown <email address hidden>\n", 
+            "date_created": "2014-12-08 13:44:01.534822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/151391", 
+            "date_created": "2015-01-29 21:36:59.831998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/151391\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4ea3c18b2a430d136a9826a086376526a85f4430\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 4ea3c18b2a430d136a9826a086376526a85f4430\nAuthor: Robert Li <email address hidden>\nDate:   Mon Oct 6 12:48:07 2014 -0400\n\n    Support macvtap for vif_type being hw_veb\n    \n    This patch programs VLAN into a VF pci device, and properly\n    plug/unplug it into the instance.\n    \n    Change-Id: I85eb3c1347d057d1f292e747f950065b8f394147\n    Closes-Bug: 1370348\n    Co-Authored-By: Itzik Brown <email address hidden>\n    (cherry picked from commit 386e38198d63cf2dc45507ca7e4dc82f0bcd9bb9)\n", 
+            "date_created": "2015-04-02 04:48:21.516600+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

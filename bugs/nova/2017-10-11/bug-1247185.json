@@ -1,0 +1,64 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-09-22 22:23:18.307073+00:00", 
+    "description": "Running stable/havana tempest against havana 2013.2 nova with this test:\n\ntempest/tempest/api/compute/images/test_images_oneserver.py:test_create_second_image_when_first_image_is_being_saved\n\nUsing the libvirt driver on x86_64 RHEL 6.5 fails with this:\n\nhttp://paste.openstack.org/show/50398/\n\nEssentially: Stderr: \"convert: invalid option -- 's'\\n\"\n\nThis is the code:\n\nhttps://github.com/openstack/nova/blob/2013.2/nova/virt/libvirt/utils.py#L549\n\nLooks like it's not a new change, it's just incompatible with the latest qemu-img:\n\nhttps://github.com/openstack/nova/commit/b216ed51914986087ea7dee57bc29904fda001a0\n\nLooks like in the latest qemu-img the snapshot was moved into it's own sub-command:\n\n[root@rhel62 ~]# qemu-img --help\nqemu-img version 0.12.1, Copyright (c) 2004-2008 Fabrice Bellard\nusage: qemu-img command [command options]\nQEMU disk image utility\n\nCommand syntax:\n  check [-f fmt] filename\n  create [-f fmt] [-o options] filename [size]\n  commit [-f fmt] [-t cache] filename\n  convert [-c] [-p] [-f fmt] [-t cache] [-O output_fmt] [-o options] [-S sparse_size] filename [filename2 [...]] output_filename\n  info [-f fmt] filename\n  snapshot [-l | -a snapshot | -c snapshot | -d snapshot] filename\n  rebase [-f fmt] [-t cache] [-p] [-u] -b backing_file [-F backing_fmt] filename\n  resize filename [+ | -]size", 
+    "tags": [
+        "in-stable-havana", 
+        "libvirt"
+    ], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1247185", 
+    "owner": "https://api.launchpad.net/1.0/~vpopovic", 
+    "id": 1247185, 
+    "index": 4255, 
+    "created": "2013-11-01 16:35:12.808362+00:00", 
+    "title": "libvirt extract snapshot fails if qemu-img >= 0.12.1", 
+    "comments": [
+        {
+            "content": "Running stable/havana tempest against havana 2013.2 nova with this test:\n\ntempest/tempest/api/compute/images/test_images_oneserver.py:test_create_second_image_when_first_image_is_being_saved\n\nUsing the libvirt driver on x86_64 RHEL 6.5 fails with this:\n\nhttp://paste.openstack.org/show/50398/\n\nEssentially: Stderr: \"convert: invalid option -- 's'\\n\"\n\nThis is the code:\n\nhttps://github.com/openstack/nova/blob/2013.2/nova/virt/libvirt/utils.py#L549\n\nLooks like it's not a new change, it's just incompatible with the latest qemu-img:\n\nhttps://github.com/openstack/nova/commit/b216ed51914986087ea7dee57bc29904fda001a0\n\nLooks like in the latest qemu-img the snapshot was moved into it's own sub-command:\n\n[root@rhel62 ~]# qemu-img --help\nqemu-img version 0.12.1, Copyright (c) 2004-2008 Fabrice Bellard\nusage: qemu-img command [command options]\nQEMU disk image utility\n\nCommand syntax:\n  check [-f fmt] filename\n  create [-f fmt] [-o options] filename [size]\n  commit [-f fmt] [-t cache] filename\n  convert [-c] [-p] [-f fmt] [-t cache] [-O output_fmt] [-o options] [-S sparse_size] filename [filename2 [...]] output_filename\n  info [-f fmt] filename\n  snapshot [-l | -a snapshot | -c snapshot | -d snapshot] filename\n  rebase [-f fmt] [-t cache] [-p] [-u] -b backing_file [-F backing_fmt] filename\n  resize filename [+ | -]size", 
+            "date_created": "2013-11-01 16:35:12.808362+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It is curious,  the '-s' works well on qemu-img-0.12.1.2-2.355.el6.x86_64 on RHEL6.4 even though qemu-img does not recommend the option 's'. On RHEL6.5 beta, it does not work. The version is qemu-img-0.12.1.2-2.402.el6.x86_64", 
+            "date_created": "2013-11-06 06:54:12.485806+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yuyangbj"
+        }, 
+        {
+            "content": "The version of qemu-img in RHEL 6.4 did list the '-s' option for the convert command although it didn't implement it and has been removed in the version shipped in RHEL 6.5 to avoid confusion. Even when using the '-s' option in RHEL 6.4, nova was extracting an snapshot from the image instead of doing it from an snapshot. This was working properly because  nova stops the instance before taking the snapshot so there is no danger on making a copy directly from the image instead of first doing an internal snapshot.\n\nBug 1242819 proposes the removal of this extra steps (create, extract and delete an internal snapshot) for libvirt, check the proposed patch for a more detailed explanation.", 
+            "date_created": "2013-11-06 14:06:26.025279+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "\nJust to add to Xavier's description, a few months ago, I was trying to understand [*] what kind of snapshots OpenStack tries to use (via 'nova image-create') and here's my notes\n\n  1. If the guest -- based on which snapshot is to be taken -- is running, nova calls libvirt\u2019s virsh managedsave, which saves and stops a running guest, to be restarted later from the saved state.\n\n  2. Next, it creates a qcow2 internal disk snapshot of the guest (now  offline).\n\n  3. Then, extracts the internal named snapshot from the qcow2 file & exports it to a RAW format and temporarily places in   $instances_path/snapshots.\n\n  4. Deletes the internal named snapshot from the qcow2 file.\n\n  5. Finally, uploads that image into OpenStack glance service \u2014 which can be confirmed by running glance image-list.\n\n\n[*] http://kashyapc.wordpress.com/2013/03/11/openstack-nova-image-create-under-the-hood/\n\n", 
+            "date_created": "2013-11-13 19:37:45.478998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/52363\nCommitted: http://github.com/openstack/nova/commit/8c985874c7885f31871204d3f83ce547fefc5fb6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8c985874c7885f31871204d3f83ce547fefc5fb6\nAuthor: Vladan Popovic <email address hidden>\nDate:   Thu Oct 17 07:41:20 2013 -0400\n\n    Remove unnecessary steps for cold snapshots\n    \n    Up until now when we created cold snapshots we were stopping the\n    instance, create an internal snapshot, extract the snapshot to a file\n    and then delete the internal snapshot before bringing up the instance.\n    \n    If the instance is shut down, there's no concurrent writer, so the image\n    can be directly extracted without taking an internal snapshot first,\n    because the snapshot and the current state are the same.\n    \n    In this patch the creation and deletion of the internal snapshot are\n    removed to eliminate the extra steps and optimize the creation of\n    snapshots a bit.\n    \n    Closes-Bug: #1242819\n    Closes-Bug: #1247185\n    \n    Change-Id: I429fa2e1e26aea321eecbf14edd11263fff525ae\n", 
+            "date_created": "2013-11-14 12:46:30.064799+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@kchamart quick note: with this patch, steps 2) and 4) are completely removed from the image backend", 
+            "date_created": "2013-11-14 13:07:48.299628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vpopovic"
+        }, 
+        {
+            "content": "Thanks Vladen, I noticed it from the commit message.", 
+            "date_created": "2013-11-23 12:54:56.876655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/78529", 
+            "date_created": "2014-03-06 06:58:03.081673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/78529\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d1356f7d2ab1fb3a91e7602153f0c8ce1073f1e5\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit d1356f7d2ab1fb3a91e7602153f0c8ce1073f1e5\nAuthor: QingXin Meng <email address hidden>\nDate:   Tue Mar 4 05:20:40 2014 -0800\n\n    Remove unnecessary steps for cold snapshots\n    \n    Up until now when we created cold snapshots we were stopping the\n    instance, create an internal snapshot, extract the snapshot to a file\n    and then delete the internal snapshot before bringing up the instance.\n    \n    If the instance is shut down, there's no concurrent writer, so the image\n    can be directly extracted without taking an internal snapshot first,\n    because the snapshot and the current state are the same.\n    \n    In this patch the creation and deletion of the internal snapshot are\n    removed to eliminate the extra steps and optimize the creation of\n    snapshots a bit.\n    \n    Closes-Bug: #1242819\n    Closes-Bug: #1247185\n    \n    Change-Id: I429fa2e1e26aea321eecbf14edd11263fff525ae\n    (cherry picked from commit 8c985874c7885f31871204d3f83ce547fefc5fb6)\n", 
+            "date_created": "2014-07-30 17:36:05.745956+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

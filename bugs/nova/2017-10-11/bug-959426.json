@@ -1,0 +1,108 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 11:09:21.201851+00:00", 
+    "description": "I've got a system where all the controller-type services (glance, api, scheduler, rabbit, etc) are all on the same machine as the mysql DB, and the compute nodes are on the same network. \n\nWhen I reboot my precise machine, the logs are full of \"could not connect to mysql\" errors, and half the services aren't running.  The upstart scripts should probably make an allowance for starting everything up after databases, or the services should re-try the connections for a while before giving up and crashing.", 
+    "tags": [
+        "canonistack"
+    ], 
+    "importance": "High", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/959426", 
+    "owner": "https://api.launchpad.net/1.0/~gandelman-a", 
+    "id": 959426, 
+    "index": 638, 
+    "created": "2012-03-19 15:53:16.284624+00:00", 
+    "title": "nova + glance services die if started before db is reachable", 
+    "comments": [
+        {
+            "content": "I've got a system where all the controller-type services (glance, api, scheduler, rabbit, etc) are all on the same machine as the mysql DB, and the compute nodes are on the same network. \n\nWhen I reboot my precise machine, the logs are full of \"could not connect to mysql\" errors, and half the services aren't running.  The upstart scripts should probably make an allowance for starting everything up after databases, or the services should re-try the connections for a while before giving up and crashing.", 
+            "date_created": "2012-03-19 15:53:16.284624+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nick-moffitt"
+        }, 
+        {
+            "content": "Status changed to 'Confirmed' because the bug affects multiple users.", 
+            "date_created": "2012-03-20 18:45:36.265601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "I just wasted three hours on this one. It is the same as the ubuntu bug \nhttps://bugs.launchpad.net/ubuntu/+source/nova/+bug/959426 \n\nMy path was as a successful diablo deployer/developer trying to get essex working using a single node to make it easier. Or so I thought. Many people will be hurt by this bug in the near future. It at least needs to be highlighted in the nova install docs if it is not fixed.", 
+            "date_created": "2012-03-22 21:29:12.405513+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "> or the services should re-try the connections for a while before giving up and crashing.\n\nIsn't this fixed in bug 943031 which should be in essex-rc1 ?", 
+            "date_created": "2012-03-23 10:07:06.390436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "This is not resolved by the fix for bug 943031 which, AFAICS, fixes the issue of an existing db connection going away.  The bug here is at service start up, ie starting nova-compute with a mysql server that is not up (yet) ends in:\n\n(nova): TRACE: OperationalError: (OperationalError) (2003, \"Can't connect to MySQL server on 'outo.home.base' (111)\") None None\n\nand a dead process.\n\nInitial setup of the database connection does not retry, and instead the service dies (quickly).   This can't really be worked around in packaging/upstart and shouldn't need to be, as a database is truly and external resource anyway.  In contrast, the rabbitmq connection initialization loops at start up if it cannot connect to its server, dumping tracebacks to nova-$foo.log but at least keeps the service up and makes a connection when the server appears.\n\n ", 
+            "date_created": "2012-03-23 17:03:57.705487+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "\nThe fix in bug 943031 was recently re-implemented in Glance @ https://review.openstack.org/#change,5552  While this change currently doesn't resolve the issue of an unreachable database on service startup, it can easily be extended to check the ability to actually connect thru the sqlalchemy engine at startup / during configure_db().   It's been mentioned that the same logic should be a part of nova or openstack-common as well.  If it lands there, it will also resolve this issue for nova.   \n\nMarking as critical in Ubuntu,  adding a task for Glance + tagging  essex-rc-potential as this is a serious issue for anyone expecting these services to start reliably.\n\nNote, Keystone seems to initialize its database lazily and not touch till a request comes in.  I'm not sure about quantum?", 
+            "date_created": "2012-03-23 23:45:48.632344+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5760", 
+            "date_created": "2012-03-24 01:28:39.952203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Note that this really has nothing to do with whether the services are all on the same host or not. The service being unavailable is not a terminal error, since this host and the other host(s) may be starting up in parallel (think massive powerfailure or complicated system bring-up). So retrying for a considerable amount of time seems to be the appropriate thing to do.", 
+            "date_created": "2012-03-24 14:40:36.651408+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "Yes. It could also happen that even after startup the connection is temporarily unavailable and the nova processes should not crash immediately. It should be noted that this problem did not happen ever (for me) in oneiric/diablo-stable and I was/am using a \"complicated system bring-up\". Right now I cannot reboot the machine running mysql and nova-scheduler because nova-scheduler crashes every time.", 
+            "date_created": "2012-03-26 14:08:00.195456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5760\nCommitted: http://github.com/openstack/glance/commit/12757d70fe6cf0d0fe6e46c5ee09a4f4d3efbd49\nSubmitter: Jenkins\nBranch:    master\n\ncommit 12757d70fe6cf0d0fe6e46c5ee09a4f4d3efbd49\nAuthor: Adam Gandelman <email address hidden>\nDate:   Fri Mar 23 18:23:54 2012 -0700\n\n    Ensure functional db connection in configure_db()\n    \n    During initial database setup, ensure we can physically connect\n    to the database and allow a failed connection to make use of the\n    new retry mechanism instead of registry startup failing outright.\n    \n    Fixes lp bug #959426.\n    \n    Change-Id: I1c87b19913c4204465e5d2027f2f184f0f358fd0\n", 
+            "date_created": "2012-03-27 22:38:33.557664+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/5911", 
+            "date_created": "2012-03-28 16:12:20.503198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5911\nCommitted: http://github.com/openstack/glance/commit/127101a44c0708ef26572abf98a025983ae35aa4\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit 127101a44c0708ef26572abf98a025983ae35aa4\nAuthor: Adam Gandelman <email address hidden>\nDate:   Fri Mar 23 18:23:54 2012 -0700\n\n    Ensure functional db connection in configure_db()\n    \n    During initial database setup, ensure we can physically connect\n    to the database and allow a failed connection to make use of the\n    new retry mechanism instead of registry startup failing outright.\n    \n    Fixes lp bug #959426.\n    \n    Change-Id: I1c87b19913c4204465e5d2027f2f184f0f358fd0\n", 
+            "date_created": "2012-03-28 21:09:55.325916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5939", 
+            "date_created": "2012-03-29 01:53:45.387016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5939\nCommitted: http://github.com/openstack/nova/commit/a4dd6b6f06d222f49bd0d2582dfe0f2925a1638f\nSubmitter: Jenkins\nBranch:    master\n\ncommit a4dd6b6f06d222f49bd0d2582dfe0f2925a1638f\nAuthor: Adam Gandelman <email address hidden>\nDate:   Wed Mar 28 18:52:41 2012 -0700\n\n    Ensure a functional database connection\n    \n    Allow retrying database connection in get_engine() at an interval.  Resolves\n    the issue of nova components erroring at startup if a database connection is\n    unavailable, particularly at boot. Borrowed from a similar commit to glance,\n    (https://review.openstack.org/#change,5552).\n    \n    Fixes Bug #959426 for nova.\n    \n    Update: * Properly return an engine (fixes tests)\n            * Setting sql_max_retries to -1 will retry infinitely\n            * Bumped options count in nova.conf.sample\n            * i18n log warning\n            * Add note to flag help about -1 == infinite\n            * Pep8 fix\n    \n    Change-Id: Id34eda9e0bad6b477a74e9a7d3575e513e6291d5\n", 
+            "date_created": "2012-03-30 23:20:38.880185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/6075", 
+            "date_created": "2012-04-02 10:04:02.658526+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/6075\nCommitted: http://github.com/openstack/nova/commit/ccb93c47370d774dc7b1959f2b2d038a4819855d\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit ccb93c47370d774dc7b1959f2b2d038a4819855d\nAuthor: Thierry Carrez <email address hidden>\nDate:   Mon Apr 2 11:55:35 2012 +0200\n\n    Ensure a functional database connection\n    \n    Allow retrying database connection in get_engine() at an interval.  Resolves\n    the issue of nova components erroring at startup if a database connection is\n    unavailable, particularly at boot. Borrowed from a similar commit to glance,\n    (https://review.openstack.org/#change,5552).\n    \n    This also fixes code duplication due to a half-backport of\n    commit 155ef7daab08d7f3fb8f7838df1d715bf1dc2f3f\n    \n    Fixes Bug #959426 for nova.\n    \n    Change-Id: Ifea94da8347714887c8cae02cc48288f3fa4fa7f\n", 
+            "date_created": "2012-04-02 13:51:30.936617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fixed in Ubuntu with rc2 upload (nova-2012.1~rc2-0ubuntu1)", 
+            "date_created": "2012-04-02 18:24:21.320507+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Fixed in Ubuntu as of glance-2012.1~rc2-0ubuntu1", 
+            "date_created": "2012-04-02 18:27:09.906172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }
+    ]
+}

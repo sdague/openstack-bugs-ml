@@ -1,0 +1,31 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 10:09:51.823177+00:00", 
+    "description": "When using the EC2 API with keystone (KSL) it appears that we store a dict of tenant information as the 'tenant_id' in the request context. This causes a slew of SQL errors in various nova services. For example the following is from the network.log:\n\n(nova.rpc.common): TRACE: ProgrammingError: (ProgrammingError) (1064, 'You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near \\': \"\\'d94c76d76d9f426eb62008d184de657f\\'\", u\\'enabled\\': \\'1\\', u\\'description\\': \\'NULL\\',\\' at line 4') 'SELECT count(*) AS count_1 \\nFROM (SELECT floating_ips.created_at AS floating_ips_created_at, floating_ips.updated_at AS floating_ips_updated_at, floating_ips.deleted_at AS floating_ips_deleted_at, floating_ips.deleted AS floating_ips_deleted, floating_ips.id AS floating_ips_id, floating_ips.address AS floating_ips_address, floating_ips.fixed_ip_id AS floating_ips_fixed_ip_id, floating_ips.project_id AS floating_ips_project_id, floating_ips.host AS floating_ips_host, floating_ips.auto_assigned AS floating_ips_auto_assigned, floating_ips.pool AS floating_ips_pool, floating_ips.interface AS floating_ips_interface \\nFROM floating_ips \\nWHERE floating_ips.deleted = %s AND floating_ips.project_id = %s AND floating_ips.auto_assigned = %s) AS anon_1' (0, {u'enabled': True, u'description': None, u'name': u'admin', u'id': u'd94c76d76d9f426eb62008d184de657f'}, 0)\n\n----\n\nThe fix seems to be to grab the tenant 'id' instead.\n\nGiven that '/ec2tokens'  is an un-versioned keystone extension I think it is acceptable to allow to change in this regard. Thus... I'm suggesting we change nova to match it:\n\n+++ b/nova/api/ec2/__init__.py\n@@ -307,7 +307,7 @@ class EC2KeystoneAuth(wsgi.Middleware):\n         try:\n             token_id = result['access']['token']['id']\n             user_id = result['access']['user']['id']\n-            project_id = result['access']['token']['tenant']\n+            project_id = result['access']['token']['tenant']['id']\n             roles = [role['name'] for role\n                      in result['access']['user']['roles']]\n         except (AttributeError, KeyError), e:", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/941119", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 941119, 
+    "index": 594, 
+    "created": "2012-02-25 21:42:50.124257+00:00", 
+    "title": "EC2 keystone auth middleware isn't setting project_id correctly", 
+    "comments": [
+        {
+            "content": "When using the EC2 API with keystone (KSL) it appears that we store a dict of tenant information as the 'tenant_id' in the request context. This causes a slew of SQL errors in various nova services. For example the following is from the network.log:\n\n(nova.rpc.common): TRACE: ProgrammingError: (ProgrammingError) (1064, 'You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near \\': \"\\'d94c76d76d9f426eb62008d184de657f\\'\", u\\'enabled\\': \\'1\\', u\\'description\\': \\'NULL\\',\\' at line 4') 'SELECT count(*) AS count_1 \\nFROM (SELECT floating_ips.created_at AS floating_ips_created_at, floating_ips.updated_at AS floating_ips_updated_at, floating_ips.deleted_at AS floating_ips_deleted_at, floating_ips.deleted AS floating_ips_deleted, floating_ips.id AS floating_ips_id, floating_ips.address AS floating_ips_address, floating_ips.fixed_ip_id AS floating_ips_fixed_ip_id, floating_ips.project_id AS floating_ips_project_id, floating_ips.host AS floating_ips_host, floating_ips.auto_assigned AS floating_ips_auto_assigned, floating_ips.pool AS floating_ips_pool, floating_ips.interface AS floating_ips_interface \\nFROM floating_ips \\nWHERE floating_ips.deleted = %s AND floating_ips.project_id = %s AND floating_ips.auto_assigned = %s) AS anon_1' (0, {u'enabled': True, u'description': None, u'name': u'admin', u'id': u'd94c76d76d9f426eb62008d184de657f'}, 0)\n\n----\n\nThe fix seems to be to grab the tenant 'id' instead.\n\nGiven that '/ec2tokens'  is an un-versioned keystone extension I think it is acceptable to allow to change in this regard. Thus... I'm suggesting we change nova to match it:\n\n+++ b/nova/api/ec2/__init__.py\n@@ -307,7 +307,7 @@ class EC2KeystoneAuth(wsgi.Middleware):\n         try:\n             token_id = result['access']['token']['id']\n             user_id = result['access']['user']['id']\n-            project_id = result['access']['token']['tenant']\n+            project_id = result['access']['token']['tenant']['id']\n             roles = [role['name'] for role\n                      in result['access']['user']['roles']]\n         except (AttributeError, KeyError), e:", 
+            "date_created": "2012-02-25 21:42:50.124257+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4538", 
+            "date_created": "2012-02-25 21:46:54.010055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/4538\nCommitted: http://github.com/openstack/nova/commit/e2be2d8238c906de430611d4d0c1187b8699e87b\nSubmitter: Jenkins\nBranch:    master\n\ncommit e2be2d8238c906de430611d4d0c1187b8699e87b\nAuthor: Dan Prince <email address hidden>\nDate:   Sat Feb 25 16:43:34 2012 -0500\n\n    Update EC2KeystoneAuth to grab tenant 'id'.\n    \n    Updates the EC2KeystoneAuth middleware so that it supports\n    formatting changes to the Keystone /ec2tokens extension.\n    Instead of setting project_id to a tenant dict this change\n    correctly sets it to an id.\n    \n    Fixes LP Bug #941119.\n    \n    Change-Id: I318ed594929162eafb5d7c3d8b9583cb109b73d4\n", 
+            "date_created": "2012-02-26 21:13:50.989916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

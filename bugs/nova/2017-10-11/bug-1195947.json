@@ -1,0 +1,129 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:12:45.653248+00:00", 
+    "description": "Due to re-scheduler mechanism, when a user tries to \n create (in error) an instance using a volume\n which is already in use by another instance,\nthe error is correctly detected, but the recovery code\n will incorrectly affect the original instance.\n\nNeed to raise exception directly when the situation above occurred.\n\n------------------------\n------------------------\nWe can create VM1 with BDM-volumes (for example, one volume we called it \u201cVol-1\u201d).\n\nBut when the attached-volume (Vol-1..) involved in BDM parameters to create a new VM2, due to VM re-scheduler mechanism, the volume will change to attach on the new VM2 in Nova & Cinder, instead of raise an \u201cInvalidVolume\u201d exception of \u201cVol-1 is already attached on VM1\u201d.\n\nIn actually, Vol-1 both attached on VM1 and VM2 on hypervisor. But when you operate Vol-1 on VM1, you can\u2019t see any corresponding changes on VM2\u2026\n\nI reproduced it and wrote in the doc. Please check the attachment for details~\n\n-------------------------\nI checked on the Nova codes, the problem is caused by VM re-scheduler mechanism:\n\nNow Nova will check the state of BDM-volumes from Cinder now [def _setup_block_device_mapping() in manager.py]. If any state is \u201cin-use\u201d, this request will fail, and trigger VM re-scheduler.\n\nAccording to existing processes in Nova, before VM re-scheduler, it will shutdown VM and detach all BDM-volumes in Cinder for rollback [def _shutdown_instance() in manager.py]. As the result, the state of Vol-1 will change from \u201cin-use\u201d to \u201cavailable\u201d in Cinder. But, there\u2019re nothing detach-operations on the Nova side\u2026\n\nTherefore, after re-scheduler, it will pass the BDM-volumes checking in creating VM2 on the second time, and all VM1\u2019s BDM-volumes (Vol-1) will be possessed by VM2 and are recorded in Nova & Cinder DB. But Vol-1 is still attached on VM1 on hypervisor, and will also attach on VM2 after VM creation success\u2026\n\n---------------\n\nMoreover, the problem mentioned-above will occur when \u201cdelete_on_termination\u201d of BDMs is \u201cFalse\u201d. If the flag is \u201cTrue\u201d, all BDM-volumes will be deleted in Cinder because the states are already changed from \u201cin-use\u201d to \u201cavailable\u201d before [def _cleanup_volumes() in manager.py].\n(P.S. Success depends on the specific implementation of Cinder Driver)\n\nThanks~", 
+    "tags": [
+        "bdm", 
+        "createvm"
+    ], 
+    "importance": "High", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1195947", 
+    "owner": "https://api.launchpad.net/1.0/~wingwj", 
+    "id": 1195947, 
+    "index": 1147, 
+    "created": "2013-06-29 03:19:47.798741+00:00", 
+    "title": "VM re-scheduler mechanism will cause BDM-volumes conflict", 
+    "comments": [
+        {
+            "content": "We can create VM1 with BDM-volumes (for example, one volume we called it \u201cVol-1\u201d). \n\nBut when the attached-volume (Vol-1..) involved in BDM parameters to create a new VM2, due to VM re-scheduler mechanism, the volume will change to attach on the new VM2 in Nova & Cinder, instead of raise an \u201cInvalidVolume\u201d exception of \u201cVol-1 is already attached on VM1\u201d.\n\nIn actually, Vol-1 both attached on VM1 and VM2 on hypervisor. But when you operate Vol-1 on VM1, you can\u2019t see any corresponding changes on VM2\u2026\n\n\nI reproduced it and wrote in the doc. Please check the attachment for details~ \n\n-------------------------\nI checked on the Nova codes, the problem is caused by VM re-scheduler mechanism:\n\nNow Nova will check the state of BDM-volumes from Cinder now [def _setup_block_device_mapping() in manager.py]. If any state is \u201cin-use\u201d, this request will fail, and trigger VM re-scheduler.\n\nAccording to existing processes in Nova, before VM re-scheduler, it will shutdown VM and detach all BDM-volumes in Cinder for rollback [def _shutdown_instance() in manager.py]. As the result, the state of Vol-1 will change from \u201cin-use\u201d to \u201cavailable\u201d in Cinder. But, there\u2019re nothing detach-operations on the Nova side\u2026\n\nTherefore, after re-scheduler, it will pass the BDM-volumes checking in creating VM2 on the second time, and all VM1\u2019s BDM-volumes (Vol-1) will be possessed by VM2 and are recorded in Nova & Cinder DB. But Vol-1 is still attached on VM1 on hypervisor, and will also attach on VM2 after VM creation success\u2026\n\n---------------\n\nMoreover, the problem mentioned-above will occur when \u201cdelete_on_termination\u201d of BDMs is \u201cFalse\u201d. If the flag is \u201cTrue\u201d, all BDM-volumes will be deleted in Cinder because the states are already changed from \u201cin-use\u201d to \u201cavailable\u201d before [def _cleanup_volumes() in manager.py]. \n(P.S. Success depends on the specific implementation of Cinder Driver)\n\n\nThanks~", 
+            "date_created": "2013-06-29 03:19:47.798741+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-06-29 03:19:47.798741+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "We can add a new \u201cInvalidVolume\u201dexception branch processing in _run_instance(). If it occurred, raise the exception directly to instead of re-scheduler. \nThat\u2019s the easiest way in my opinion. \n\nThe new patch begins at line 987, is based on the master branch version on Jun,29th. Plz check it~\n\nThanks~", 
+            "date_created": "2013-06-29 04:22:41.653022+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "We can add a new \u201cInvalidVolume\u201dexception branch processing in _run_instance(). If it occurred, raise the exception directly to instead of re-scheduler.\nThat\u2019s the easiest way in my opinion.\n\nThe new patch I made is based on the master branch version on Jun,29th. Plz check the test-doc~~\n\nThanks~\n", 
+            "date_created": "2013-06-29 04:34:02.250743+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Here is the patch I made. Plz check it.\n\nThanks~", 
+            "date_created": "2013-06-29 09:14:59.924457+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Wow - this is pretty horrible!!!\n\nThanks for reporting this, and doing a fix. I will comment more there.", 
+            "date_created": "2013-07-22 11:37:27.499579+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Since the review wasn't picked up by LP - here it is: https://review.openstack.org/#/c/38073", 
+            "date_created": "2013-07-22 11:40:33.893092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "I can't seem to repoduce this actually.\n\nNova will block this in the API since 24fffd9d8b77e9b71e8013fc22c172f76bb4e84c on master, and this was backported to both Grizzly and Folsom stable branches. ", 
+            "date_created": "2013-07-22 12:58:49.846159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Oooops - looks like I spoke too soon on this one - there is a race condition there.\n\nIf you fire off the two requests close to each other - but not like in the attached doc - the API will *NOT* see it as attached (depending on the race of course) and it will error out on the compute side, and detach the volume from inderneath the running instance.\n\nTo reporoduce try:\n\nfor x in 1 2; do nova boot --image 539b1a8a-f5f5-4f1b-afa0-f371337def9f --flavor 1 --block-device-mapping vdc=<VOLUME_ID>:None:1: testvm; done; watch nova list;\n\nand see the volume become briefly attached and then unavailable as the other instance errors out and cleans it up in _reschedule_on_error.\n\nWe might need to come up with something different to avoid this completely.", 
+            "date_created": "2013-07-22 15:17:36.938950+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "s/unavailable/available again/ in the previous comment\n", 
+            "date_created": "2013-07-22 17:25:08.132092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "I spost the patch to Gerrit, plz check it~\nhttps://review.openstack.org/#/c/38073/", 
+            "date_created": "2013-07-25 09:36:43.902833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "I post the patch to Gerrit, plz check it~\nhttps://review.openstack.org/#/c/38073/", 
+            "date_created": "2013-07-25 09:39:49.825293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/54916\nCommitted: http://github.com/openstack/nova/commit/a2487116d583e189dcbfe6f665ba360bf147163f\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit a2487116d583e189dcbfe6f665ba360bf147163f\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Fri Nov 1 13:37:13 2013 +0100\n\n    Prevent rescheduling on block device failure\n    \n    Due to a race condition - it is possible for more instances to race for\n    the same volume. In such a scenario, the one that fails will get\n    rescheduled, and in the process detach the volume of a successful\n    instance.\n    \n    To prevent this, this patch makes nova not reschedule on block device\n    failures. This is actually reasonable behaviour as block device failures\n    are rarely related to the compute host itself and so rescheduling is not\n    usually useful.\n    \n    This is a stable/havana only fix! This same issue is addressed on the\n    master branch by Iefab71047996b7cc08107794d5bc628c11680a70.\n    \n    Closes-bug: 1195947\n    \n    Change-Id: I6b68965ac65cdb0e1da3b44e83428f056b1693aa\n", 
+            "date_created": "2013-12-10 01:05:05.642026+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "We were hoping that https://blueprints.launchpad.net/nova/+spec/remove-cast-to-schedule-run-instance would be making Icehouse, but sadly that did not happen, so I believe it is reasonable to propose the Havana fix that is already merged to the Icehouse tree as well.", 
+            "date_created": "2014-03-17 07:37:33.113952+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "wingwj - can you propose this fix then quickly?  we are closing down on all but shipstoppers/regressions very soon", 
+            "date_created": "2014-03-18 21:21:54.953836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "this bug could be pushed to icehouse-rc-potential if not merged by 2/24 12pm UTC", 
+            "date_created": "2014-03-18 21:34:39.232224+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "Hi Nikola & Tracy,\n\nI got your message. I'll use the Nikola's Havana patch to fix this issue ASAP.", 
+            "date_created": "2014-03-19 02:40:44.545190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Hi Tracy,\n\nSorry for my late reply first.\n\nI've already updated the patch for bug/1195947 on\nhttps://review.openstack.org/#/c/38073/.\nPlease review it.\n\nThanks~\n\n\nOn Wed, Mar 19, 2014 at 5:34 AM, Tracy Jones <email address hidden> wrote:\n\n> this bug could be pushed to icehouse-rc-potential if not merged by 2/24\n> 12pm UTC\n>\n> --\n> You received this bug notification because you are subscribed to the bug\n> report.\n> https://bugs.launchpad.net/bugs/1195947\n>\n> Title:\n>   VM re-scheduler mechanism will cause BDM-volumes conflict\n>\n> Status in OpenStack Compute (Nova):\n>   In Progress\n> Status in OpenStack Compute (nova) havana series:\n>   Fix Released\n>\n> Bug description:\n>   Due to re-scheduler mechanism, when a user tries to\n>    create (in error) an instance using a volume\n>    which is already in use by another instance,\n>   the error is correctly detected, but the recovery code\n>    will incorrectly affect the original instance.\n>\n>   Need to raise exception directly when the situation above occurred.\n>\n>   ------------------------\n>   ------------------------\n>   We can create VM1 with BDM-volumes (for example, one volume we called it\n> \"Vol-1\").\n>\n>   But when the attached-volume (Vol-1..) involved in BDM parameters to\n>   create a new VM2, due to VM re-scheduler mechanism, the volume will\n>   change to attach on the new VM2 in Nova & Cinder, instead of raise an\n>   \"InvalidVolume\" exception of \"Vol-1 is already attached on VM1\".\n>\n>   In actually, Vol-1 both attached on VM1 and VM2 on hypervisor. But\n>   when you operate Vol-1 on VM1, you can't see any corresponding changes\n>   on VM2...\n>\n>   I reproduced it and wrote in the doc. Please check the attachment for\n>   details~\n>\n>   -------------------------\n>   I checked on the Nova codes, the problem is caused by VM re-scheduler\n> mechanism:\n>\n>   Now Nova will check the state of BDM-volumes from Cinder now [def\n>   _setup_block_device_mapping() in manager.py]. If any state is \"in-\n>   use\", this request will fail, and trigger VM re-scheduler.\n>\n>   According to existing processes in Nova, before VM re-scheduler, it\n>   will shutdown VM and detach all BDM-volumes in Cinder for rollback\n>   [def _shutdown_instance() in manager.py]. As the result, the state of\n>   Vol-1 will change from \"in-use\" to \"available\" in Cinder. But,\n>   there're nothing detach-operations on the Nova side...\n>\n>   Therefore, after re-scheduler, it will pass the BDM-volumes checking\n>   in creating VM2 on the second time, and all VM1's BDM-volumes (Vol-1)\n>   will be possessed by VM2 and are recorded in Nova & Cinder DB. But\n>   Vol-1 is still attached on VM1 on hypervisor, and will also attach on\n>   VM2 after VM creation success...\n>\n>   ---------------\n>\n>   Moreover, the problem mentioned-above will occur when\n> \"delete_on_termination\" of BDMs is \"False\". If the flag is \"True\", all\n> BDM-volumes will be deleted in Cinder because the states are already\n> changed from \"in-use\" to \"available\" before [def _cleanup_volumes() in\n> manager.py].\n>   (P.S. Success depends on the specific implementation of Cinder Driver)\n>\n>   Thanks~\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1195947/+subscriptions\n>\n", 
+            "date_created": "2014-03-19 03:48:08+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "I also posted a patch for this https://review.openstack.org/#/c/80945/\n\nI have no idea why it did not get picked up by LP. At this moment we can use either.", 
+            "date_created": "2014-03-19 09:26:40.601629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "I think we can mark this as fix released since Nikola's patch got merged\n\nhttps://review.openstack.org/#/c/80945/", 
+            "date_created": "2014-03-19 14:44:05.423782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "Tracy - I assume you meant \"fix committed\" (fix released is usually for once the release is actually cut).", 
+            "date_created": "2014-03-19 14:59:11.038956+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/80945\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8f932311da19ea9de7ba1b344484ccdb748f5786\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8f932311da19ea9de7ba1b344484ccdb748f5786\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Fri Nov 1 13:37:13 2013 +0100\n\n    Prevent rescheduling on block device failure\n    \n    Due to a race condition - it is possible for more instances to race for\n    the same volume. In such a scenario, the one that fails will get\n    rescheduled, and in the process detach the volume of a successful\n    instance.\n    \n    To prevent this, this patch makes nova not reschedule on block device\n    failures. This is actually reasonable behaviour as block device failures\n    are rarely related to the compute host itself and so rescheduling is not\n    usually useful.\n    \n    This bug does not exist in the new boot code in the manager which will\n    be used once remove-cast-to-schedule-run-instance bp lands (see\n    Iefab71047996b7cc08107794d5bc628c11680a70). However, it is now clear\n    that this will not be merged for Icehouse, so this patch is a\n    \"forward port\" of a patch we already applied to stable/havana.\n    \n    Closes-bug: #1195947\n    \n    Change-Id: I6b68965ac65cdb0e1da3b44e83428f056b1693aa\n", 
+            "date_created": "2014-03-20 06:35:40.057854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

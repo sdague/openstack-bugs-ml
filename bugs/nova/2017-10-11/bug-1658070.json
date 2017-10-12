@@ -1,0 +1,220 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-01 08:26:40.878221+00:00", 
+    "description": "When we try evacuate SR-IOV vm on concret host the VM is in ERROR state\n\nSteps to reproduce:\n1) Download trusty image\n2) Create image\n3) Create vf port:\nneutron port-create <net> --binding:vnic-type direct --device_owner nova-compute --name sriov\n4) Boot vm on this port:\nnova boot vm --flavor m1.small --image 1ff0759c-ea85-4909-a711-70fd6b71ad23 --nic port-id=cfc947be-1975-42f3-95bd-f261a2eccec0 --key-name vm_key\n5) Sgut down node with vm\n6) Evacuate vm:\nnova evacuate vm node-5.test.domain.local\nExpected result:\n VM evacuates on the 5th node\nActual result:\n VM in error state\n\nWorkaround:\nWe can evacuate without pointing the host just nova evacuate vm\n\nEnvironment:\n#785 snap\n2 controllers? 2 compute with SR-IOV", 
+    "tags": [
+        "area-nova", 
+        "customer-found", 
+        "sla1"
+    ], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1658070", 
+    "owner": "https://api.launchpad.net/1.0/~guang-yee", 
+    "id": 1658070, 
+    "index": 2023, 
+    "created": "2017-01-20 12:03:44.295063+00:00", 
+    "title": "Failed SR_IOV evacuation with host", 
+    "comments": [
+        {
+            "content": "When we try evacuate SR-IOV vm on concret host the VM is in ERROR state\n\nSteps to reproduce:\n1) Download trusty image\n2) Create image\n3) Create vf port:\nneutron port-create <net> --binding:vnic-type direct --device_owner nova-compute --name sriov\n4) Boot vm on this port:\nnova boot vm --flavor m1.small --image 1ff0759c-ea85-4909-a711-70fd6b71ad23 --nic port-id=cfc947be-1975-42f3-95bd-f261a2eccec0 --key-name vm_key\n5) Sgut down node with vm\n6) Evacuate vm:\nnova evacuate vm node-5.test.domain.local\nExpected result:\n VM evacuates on the 5th node\nActual result:\n VM in error state\n\nWorkaround:\nWe can evacuate without pointing the host just nova evacuate vm\n\nEnvironment:\n#785 snap\n2 controllers? 2 compute with SR-IOV", 
+            "date_created": "2017-01-20 12:03:44.295063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kkuznetsova"
+        }, 
+        {
+            "content": "Kristina, could you please attach a diagnostic snapshot or at the very least nova-compute logs?", 
+            "date_created": "2017-01-20 12:31:45.888212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "The message for error vm:\nPort update failed for port cfc947be-1975-42f3-95bd-f261a2eccec0: Unable to correlate PCI slot 0000:81:11.7 \n\nin nova code: https://github.com/openstack/nova/blob/065cd6a8d69c1ec862e5b402a3150131f35b2420/nova/network/neutronv2/api.py#L2411\n\nFor evacuation with host pci_mapping is empty\n\n", 
+            "date_created": "2017-01-20 13:01:59.622679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kkuznetsova"
+        }, 
+        {
+            "content": "Which release of nova is this?", 
+            "date_created": "2017-05-17 00:58:20.505464+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I guess this would be Mitaka?", 
+            "date_created": "2017-05-17 00:59:18.977839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Could this be related to bug https://bugs.launchpad.net/nova/+bug/1512880 which was fixed in nova in newton?", 
+            "date_created": "2017-05-17 01:03:51.289754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It could be that when you're specifying a host and bypassing the scheduler, the target host isn't actually setup properly for the migration (evacuation to the target host) and when you don't specify the host, the scheduler is picking a proper host based on the filters.", 
+            "date_created": "2017-05-17 01:06:57.307843+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "(12:43:57 PM) gyee_: I am curious why we are using NopClaim if host is specified https://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2771\n(12:44:22 PM) gyee_: does specifying a host implies force evacuate?\n(12:49:08 PM) gyee_: meanwhile if SR-IOV is enabled, we are trying to get the PCI mapping via the migration context, which is only populated at rebuild_claim. https://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L2462\n(12:51:32 PM) mriedem: https://github.com/openstack/nova/commit/dc0221d7240326a2d1b467e2a367bebb7e764e61 added that code in the compute manager about the nop claim, which implies resources were already claimed, but i'd have to dig into that\n\nThe rebuild_instance method in the nova compute manager handles both rebuilds on the same host and evacuates to another host. If you force the evacuate to a specific host, we bypass some code in the nova-api and nova-conductor services and call directly into the compute on the target host and hit this code which makes it so we don't do a resource claim (which sets up the pci mappings on the instance.migration_context as part of the move claim):\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2767-L2771\n\nThat ^ code is really there for rebuild operations where we don't need a resource claim because we've already claimed resources on the original host, but it got confused with this forced evacuate to a target host scenario, and we never end up claiming resources on the target host.\n\nI think all we have to do is modify that conditional to be:\n\nif scheduled_node is not None or recreate:", 
+            "date_created": "2017-05-17 18:25:17.596570+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The force evacuate to target host change in the API was added in the 2.29 microversion which goes back to newton:\n\nhttps://github.com/openstack/nova/commit/86706785ff251b841dff3590dc60f6b4834d7b7e", 
+            "date_created": "2017-05-17 18:28:39.092239+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm not totally sure how this happens if the --force option isn't specified with the nova evacuate command, because of this code in the API:\n\nhttps://github.com/openstack/nova/blob/8d492c76d53f3fcfacdd945a277446bdfe6797b0/nova/compute/api.py#L4115\n\nSo if a host is specified by force is not, then the API sets a requested destination to that host for the scheduler and nulls out the host value, which is checked in conductor here:\n\nhttps://github.com/openstack/nova/blob/8d492c76d53f3fcfacdd945a277446bdfe6797b0/nova/conductor/manager.py#L743\n\nWhich would call the scheduler to pick a host and set the node variable here:\n\nhttps://github.com/openstack/nova/blob/8d492c76d53f3fcfacdd945a277446bdfe6797b0/nova/conductor/manager.py#L770\n\nWhich gets passed to the compute as the scheduled_node variable which is used to determine if we should do a claim or not.", 
+            "date_created": "2017-05-17 18:35:58.480270+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Ah gyee pointed out in IRC that if you're using microversion<2.29 then force is passed to the compute API code as None:\n\nhttps://github.com/openstack/nova/blob/stable/newton/nova/api/openstack/compute/evacuate.py#L92\n\nAnd then this fails because force is not False, it's None:\n\nhttps://github.com/openstack/nova/blob/stable/newton/nova/compute/api.py#L3784", 
+            "date_created": "2017-05-17 18:38:58.626347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The regression was introduced in Newton:\n\nhttps://github.com/openstack/nova/commit/86706785ff251b841dff3590dc60f6b4834d7b7e", 
+            "date_created": "2017-05-17 18:43:37.367723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Eli Qiao (taget-9) is looking into this and will push a fix. Assigning to him.", 
+            "date_created": "2017-05-18 06:32:19.931444+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Eli Qiao, will you be pushing a patch anytime soon? Otherwise, I can handle it. Please let me known.\n", 
+            "date_created": "2017-05-18 17:54:08.036241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~guang-yee"
+        }, 
+        {
+            "content": "@guang-yee, I'v submited the patch already https://review.openstack.org/#/c/465895/\nnot sure why launch pad doens't link it here.", 
+            "date_created": "2017-05-19 00:58:09.294443+00:00", 
+            "author": "https://api.launchpad.net/1.0/~taget-9"
+        }, 
+        {
+            "content": "The original poster's version of Nova was 13.1.2, which is Mitaka. Therefore all the --force stuff and microversions discussion is irrelevant (since microversion 2.29 was added in Newton).\n\nSo, the bug here is the migrate routine is not accounting for a change in PCI address on the destination host and is effectively attempting to launch the workload on the destination host with the source host's PCI addresses, which clearly will not work unless, by luck, the destination host has the exact same PCI addresses and those addresses are available.\n\nThe solution is to backport the patch that Matt referred to above that fixes this issue in Newton and beyond:\n\n https://bugs.launchpad.net/nova/+bug/1512880\n\nMarking this as a duplicate of 1512880.", 
+            "date_created": "2017-05-19 01:28:19.419794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Jay, see comment 7, I think there is also a problem here with evacuate when a host is specified:\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2767-L2771", 
+            "date_created": "2017-05-19 01:31:45.655568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Change abandoned by Eli Qiao (<email address hidden>) on branch: master\nReview: https://review.openstack.org/465895\nReason: Please the comments of the bug which is made by Jay", 
+            "date_created": "2017-05-19 01:32:50.426273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/466143", 
+            "date_created": "2017-05-19 01:56:20.468699+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I don't understand why this bug is marked as a duplicate of bug 1512880. Evacuation still failed when SR-IOV is enabled and host is specified. I tested my patch on the nodes with SR-IOV enabled and it seem to work fine.\n", 
+            "date_created": "2017-05-25 20:10:12.905296+00:00", 
+            "author": "https://api.launchpad.net/1.0/~guang-yee"
+        }, 
+        {
+            "content": "I agree with Guang Yee; via code inspection in the compute manager's rebuild method there is an obvious issue with not doing a rebuild claim during evacuate in certain cases.", 
+            "date_created": "2017-05-25 20:40:08.927789+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/468219", 
+            "date_created": "2017-05-26 00:25:25.440747+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/468227", 
+            "date_created": "2017-05-26 01:14:46.358086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/466143\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a2b0824aca5cb4a2ae579f625327c51ed0414d35\nSubmitter: Jenkins\nBranch:    master\n\ncommit a2b0824aca5cb4a2ae579f625327c51ed0414d35\nAuthor: Guang Yee <email address hidden>\nDate:   Thu May 18 16:38:16 2017 -0700\n\n    make sure to rebuild claim on recreate\n    \n    On recreate where the instance is being evacuated to a different node,\n    we should be rebuilding the claim so the migration context is available\n    when rebuilding the instance.\n    \n    Change-Id: I53bdcf8edf640e97b4632ef7a093f14a6e3845e4\n    Closes-Bug: 1658070\n", 
+            "date_created": "2017-05-26 16:32:05.225182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "A customer has hit the same issue in MOS 9.2\nCould you please backport the fix for Mitaka series?", 
+            "date_created": "2017-05-30 13:48:06.013118+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arubtsov"
+        }, 
+        {
+            "content": "sla1 for 9.0-updates", 
+            "date_created": "2017-05-30 13:48:20.238779+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arubtsov"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b2 development milestone.", 
+            "date_created": "2017-06-08 21:51:54.029549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/468219\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=e221784560c71eeab7c5eeeb42e7c6e910d29340\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit e221784560c71eeab7c5eeeb42e7c6e910d29340\nAuthor: Guang Yee <email address hidden>\nDate:   Thu May 18 16:38:16 2017 -0700\n\n    make sure to rebuild claim on recreate\n    \n    On recreate where the instance is being evacuated to a different node,\n    we should be rebuilding the claim so the migration context is available\n    when rebuilding the instance.\n    \n    Change-Id: I53bdcf8edf640e97b4632ef7a093f14a6e3845e4\n    Closes-Bug: 1658070\n    (cherry picked from commit a2b0824aca5cb4a2ae579f625327c51ed0414d35)\n", 
+            "date_created": "2017-06-12 10:50:42.529181+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: 9.0/mitaka\nChange author: Denis V. Meltsaykin <email address hidden>\nReview: https://review.fuel-infra.org/35612", 
+            "date_created": "2017-06-13 14:43:04.243557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fuel-devops-robot"
+        }, 
+        {
+            "content": "Reviewed: https://review.fuel-infra.org/35612\nSubmitter: Pkgs Jenkins <email address hidden>\nBranch: 9.0/mitaka\n\nCommit: 06bb2fcb21b1531b7f434f7502b50a9751ef93aa\nAuthor: Guang Yee <email address hidden>\nDate: Thu Jun 15 11:13:34 2017\n\nmake sure to rebuild claim on recreate\n\nOn recreate where the instance is being evacuated to a different node,\nwe should be rebuilding the claim so the migration context is available\nwhen rebuilding the instance.\n\nConflicts:\n      nova/compute/manager.py\n      nova/tests/unit/compute/test_compute.py\n      nova/tests/unit/compute/test_compute_mgr.py\n\nNOTE(mriedem): There are a few issues here:\n\n1. I5aaa869f2e6155964827e659d18e2bcaad9d866b changed the LOG.info\n   method to not pass a context in Ocata.\n2. I57233259065d887b38a79850a05177fcbbdfb8c3 changed some tests in\n   test_compute_manager in Ocata, but is irrelevant here.\n3. The bigger change isn't a merge conflict but in Ocata the compute\n   manager code was all refactored so that the _get_resource_tracker\n   method no longer needed a nodename passed to it. In Newton, however,\n   if we're force evacuating (scenario 3) then we don't have a scheduled_node\n   passed to the rebuild_instance method and in this case we need to\n   lookup the nodename for the host we're currently on. To resolve this,\n   some existing code that handles this case is moved up where it is\n   needed to get the resource tracker so we can get the rebuild_claim method.\n   We let any ComputeHostNotFound exception raise up in this case rather than\n   log it because without the compute node we can't make the rebuild claim and\n   we need to fail. Tests are adjusted accordingly for this.\n4. The fake instances in Mitaka are still created manually, so node\n   field needs to be added explicitly.\n\nChange-Id: I53bdcf8edf640e97b4632ef7a093f14a6e3845e4\nCloses-Bug: 1658070\n(cherry picked from commit a2b0824aca5cb4a2ae579f625327c51ed0414d35)\n(cherry picked from commit ea90c60b07534a46541c55432389f2d50b5b7d0a)\n(cherry picked from commit 0f2d87416eff1e96c0fbf0f4b08bf6b6b22246d5)\n", 
+            "date_created": "2017-06-15 13:08:51.634204+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fuel-devops-robot"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.6 release.", 
+            "date_created": "2017-06-19 12:45:44.314016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "After applying https://review.fuel-infra.org/#/c/35612/6/ the issue still persists in Mitaka.\n\nThe following details are observed:\n1) After a VM is deleted or moved to another host, the MAC address associated to specific VF is not getting cleaned up.\nhttp://paste.openstack.org/show/ZisERfh0iDMxv5bBX8HW/\n\n2) On performing nova migration or nova evacuation multiple times the same mac address is getting mapped to multiple VF\u2019s on the compute which might be due to improper cleaning of mac from old VF\u2019s.\nhttp://paste.openstack.org/show/zJL6RJvlDz7ukQcomy6q/", 
+            "date_created": "2017-06-26 11:12:21.941455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arubtsov"
+        }, 
+        {
+            "content": "Please disregard the previous comment - I misunderstood the verification status.\nThe patch has resolved the issue related to evacuation.\nTherefore, I'm setting the status back to \"Fix Committed\"\n\nRegarding the mentioned MAC-addresses issue, I've filed a separate bug report:\nhttps://bugs.launchpad.net/mos/+bug/1700702", 
+            "date_created": "2017-06-27 09:37:59.540218+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arubtsov"
+        }, 
+        {
+            "content": "Can't reproduce bug on our test environment due to lack of appropriate HW. As I understand, fix was verified, so I move bug to \"Fix released\".", 
+            "date_created": "2017-06-27 10:40:13.660077+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ibumarskov"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/468227\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0f2d87416eff1e96c0fbf0f4b08bf6b6b22246d5\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 0f2d87416eff1e96c0fbf0f4b08bf6b6b22246d5\nAuthor: Guang Yee <email address hidden>\nDate:   Thu May 18 16:38:16 2017 -0700\n\n    make sure to rebuild claim on recreate\n    \n    On recreate where the instance is being evacuated to a different node,\n    we should be rebuilding the claim so the migration context is available\n    when rebuilding the instance.\n    \n    Conflicts:\n          nova/compute/manager.py\n          nova/tests/unit/compute/test_compute_mgr.py\n    \n    NOTE(mriedem): There are a few issues here:\n    \n    1. I5aaa869f2e6155964827e659d18e2bcaad9d866b changed the LOG.info\n       method to not pass a context in Ocata.\n    2. I57233259065d887b38a79850a05177fcbbdfb8c3 changed some tests in\n       test_compute_manager in Ocata, but is irrelevant here.\n    3. The bigger change isn't a merge conflict but in Ocata the compute\n       manager code was all refactored so that the _get_resource_tracker\n       method no longer needed a nodename passed to it. In Newton, however,\n       if we're force evacuating (scenario 3) then we don't have a scheduled_node\n       passed to the rebuild_instance method and in this case we need to\n       lookup the nodename for the host we're currently on. To resolve this,\n       some existing code that handles this case is moved up where it is\n       needed to get the resource tracker so we can get the rebuild_claim method.\n       We let any ComputeHostNotFound exception raise up in this case rather than\n       log it because without the compute node we can't make the rebuild claim and\n       we need to fail. Tests are adjusted accordingly for this.\n    \n    Change-Id: I53bdcf8edf640e97b4632ef7a093f14a6e3845e4\n    Closes-Bug: 1658070\n    (cherry picked from commit a2b0824aca5cb4a2ae579f625327c51ed0414d35)\n    (cherry picked from commit ea90c60b07534a46541c55432389f2d50b5b7d0a)\n", 
+            "date_created": "2017-07-06 17:40:31.846836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.8 release.", 
+            "date_created": "2017-08-28 09:55:25.207579+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: mcp/1.0/mitaka\nChange author: Guang Yee <email address hidden>\nReview: https://review.fuel-infra.org/36367", 
+            "date_created": "2017-08-30 16:48:19.445117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fuel-devops-robot"
+        }, 
+        {
+            "content": "Change abandoned by Vladyslav Drok <email address hidden> on branch: mcp/1.0/mitaka\nReview: https://review.fuel-infra.org/36367", 
+            "date_created": "2017-08-30 18:37:33.320118+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fuel-devops-robot"
+        }, 
+        {
+            "content": "Change restored by Vladyslav Drok <email address hidden> on branch: mcp/1.0/mitaka\nReview: https://review.fuel-infra.org/36367", 
+            "date_created": "2017-08-31 17:38:27.702568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fuel-devops-robot"
+        }, 
+        {
+            "content": "Reviewed: https://review.fuel-infra.org/36367\nSubmitter: Pkgs Jenkins <email address hidden>\nBranch: mcp/1.0/mitaka\n\nCommit: 72b644f37b7f52d1b80cb1f774ee7b991a903167\nAuthor: Guang Yee <email address hidden>\nDate: Thu Aug 31 17:38:34 2017\n\nmake sure to rebuild claim on recreate\n\nOn recreate where the instance is being evacuated to a different node,\nwe should be rebuilding the claim so the migration context is available\nwhen rebuilding the instance.\n\nConflicts:\n      nova/compute/manager.py\n      nova/tests/unit/compute/test_compute.py\n      nova/tests/unit/compute/test_compute_mgr.py\n\nNOTE(mriedem): There are a few issues here:\n\n1. I5aaa869f2e6155964827e659d18e2bcaad9d866b changed the LOG.info\n   method to not pass a context in Ocata.\n2. I57233259065d887b38a79850a05177fcbbdfb8c3 changed some tests in\n   test_compute_manager in Ocata, but is irrelevant here.\n3. The bigger change isn't a merge conflict but in Ocata the compute\n   manager code was all refactored so that the _get_resource_tracker\n   method no longer needed a nodename passed to it. In Newton, however,\n   if we're force evacuating (scenario 3) then we don't have a scheduled_node\n   passed to the rebuild_instance method and in this case we need to\n   lookup the nodename for the host we're currently on. To resolve this,\n   some existing code that handles this case is moved up where it is\n   needed to get the resource tracker so we can get the rebuild_claim method.\n   We let any ComputeHostNotFound exception raise up in this case rather than\n   log it because without the compute node we can't make the rebuild claim and\n   we need to fail. Tests are adjusted accordingly for this.\n4. The fake instances in Mitaka are still created manually, so node\n   field needs to be added explicitly.\n\nPROD ticket: https://mirantis.jira.com/browse/PROD-14350\n\nChange-Id: I53bdcf8edf640e97b4632ef7a093f14a6e3845e4\nCloses-Bug: 1658070\n(cherry picked from commit a2b0824aca5cb4a2ae579f625327c51ed0414d35)\n(cherry picked from commit ea90c60b07534a46541c55432389f2d50b5b7d0a)\n(cherry picked from commit 0f2d87416eff1e96c0fbf0f4b08bf6b6b22246d5)\n", 
+            "date_created": "2017-09-01 08:26:40.241537+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fuel-devops-robot"
+        }
+    ]
+}

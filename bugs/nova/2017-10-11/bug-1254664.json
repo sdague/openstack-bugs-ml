@@ -1,0 +1,33 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:02:36.116189+00:00", 
+    "description": "I created a flavor with quotas on the network bandwidth and created a VM with this flavor: upload limited 1 MB/sec, download limited to 500 kB/sec. The limits are ignored: copy from DevStack to the VM is faster than 13 MB/sec.\n\nI'm using Neutron with Open vSwitch (OVS) for the network.\n\nIt looks like a regression in nova/virt/libvirt/vif.py. According to a colleague, it was maybe introduced when the OVS, LinuxBridge and HyperV classes were merged into one LibvirtGenericVIFDriver class. designer.set_vif_bandwidth_config() is only called for bridge types:\n\n- get_config_ovs_hybrid()\n- get_config_ivs_hybrid()\n- network_model.VIF_TYPE_BRIDGE\n\nCommand to create the flavor and create a VM with this flavor:\n---\nnova flavor-create --ephemeral=1 victor_test_vif 50 256 1 1\nnova flavor-key victor_test_vif set quota:vif_inbound_average=1000\nnova flavor-key victor_test_vif set quota:vif_inbound_peak=1000\nnova flavor-key victor_test_vif set quota:vif_outbound_peak=500\nnova flavor-key victor_test_vif set quota:vif_outbound_average=500\nnova boot --flavor=victor_test_vif --image=cirros-0.3.1-x86_64-uec victor_test\n---\n\nCommand to start a small and fast TCP server on DevStack, uploading a file of 10 MB:\n---\nip netns\n# copy the qrouter-xxx name\nsudo ip netns exec qrouter-128db593-a0db-40c3-84c7-e6383d40c75f bash\n\n# following commands are executed in the qrouter namespace to reach the VM network\ndd if=/dev/urandom of=random10MB bs=1024 count=10240\nnc -l 0.0.0.0 12345 < random\n---\n\nCommand to download the file on the VM:\n---\ntime nc 10.0.0.1 12345 > /dev/null\n---\n\nCurrent result: timing smaller than 1 second (faster than 10 MB/sec)\n\nExpected result: timing higher than 10 second (1 MB/sec or slower)\n\n\nThe problem is that the <bandwidth> tag is not generated in the libvirt.xml file of the VM.\n\nI will provide a patch.", 
+    "tags": [
+        "network"
+    ], 
+    "importance": "Undecided", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1254664", 
+    "owner": "https://api.launchpad.net/1.0/~victor-stinner", 
+    "id": 1254664, 
+    "index": 4310, 
+    "created": "2013-11-25 10:46:23.668633+00:00", 
+    "title": "Network quotas are ignored by libvirt when Open vSwitch is used", 
+    "comments": [
+        {
+            "content": "I created a flavor with quotas on the network bandwidth and created a VM with this flavor: upload limited 1 MB/sec, download limited to 500 kB/sec. The limits are ignored: copy from DevStack to the VM is faster than 13 MB/sec.\n\nI'm using Neutron with Open vSwitch (OVS) for the network.\n\nIt looks like a regression in nova/virt/libvirt/vif.py. According to a colleague, it was maybe introduced when the OVS, LinuxBridge and HyperV classes were merged into one LibvirtGenericVIFDriver class. designer.set_vif_bandwidth_config() is only called for bridge types:\n\n- get_config_ovs_hybrid()\n- get_config_ivs_hybrid()\n- network_model.VIF_TYPE_BRIDGE\n\nCommand to create the flavor and create a VM with this flavor:\n---\nnova flavor-create --ephemeral=1 victor_test_vif 50 256 1 1\nnova flavor-key victor_test_vif set quota:vif_inbound_average=1000\nnova flavor-key victor_test_vif set quota:vif_inbound_peak=1000\nnova flavor-key victor_test_vif set quota:vif_outbound_peak=500\nnova flavor-key victor_test_vif set quota:vif_outbound_average=500\nnova boot --flavor=victor_test_vif --image=cirros-0.3.1-x86_64-uec victor_test\n---\n\nCommand to start a small and fast TCP server on DevStack, uploading a file of 10 MB:\n---\nip netns\n# copy the qrouter-xxx name\nsudo ip netns exec qrouter-128db593-a0db-40c3-84c7-e6383d40c75f bash\n\n# following commands are executed in the qrouter namespace to reach the VM network\ndd if=/dev/urandom of=random10MB bs=1024 count=10240\nnc -l 0.0.0.0 12345 < random\n---\n\nCommand to download the file on the VM:\n---\ntime nc 10.0.0.1 12345 > /dev/null\n---\n\nCurrent result: timing smaller than 1 second (faster than 10 MB/sec)\n\nExpected result: timing higher than 10 second (1 MB/sec or slower)\n\n\nThe problem is that the <bandwidth> tag is not generated in the libvirt.xml file of the VM.\n\nI will provide a patch.", 
+            "date_created": "2013-11-25 10:46:23.668633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~victor-stinner"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/58290", 
+            "date_created": "2013-11-25 14:15:23.499766+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/58290\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=497bdfec93d696c7200a71b85a0680d99ce07bb9\nSubmitter: Jenkins\nBranch:    master\n\ncommit 497bdfec93d696c7200a71b85a0680d99ce07bb9\nAuthor: Victor Stinner <email address hidden>\nDate:   Fri Nov 22 17:47:05 2013 +0100\n\n    Fix LibvirtGenericVIFDriver.get_config() for quota\n    \n    When Nova is used with Neutron and Open vSwitch, network quotas on the\n    bandwidth are ignored by libvirt: the \"<bandwidth>\" tag is not generated in\n    libvirt.xml of the virtual machine. This change fixes this issue but also for\n    the network types: \"bridge\", \"network\" and \"direct\".\n    \n    Commands to create the flavor with download limited to 1 MB/sec and create a\n    virtual machine with this flavor:\n    ---\n    nova flavor-create --ephemeral=1 victor_test_vif 50 256 1 1\n    nova flavor-key victor_test_vif set quota:vif_inbound_average=1000\n    nova boot --flavor=victor_test_vif --image=cirros-0.3.1-x86_64-uec victor_test\n    ---\n    \n    Commands to upload a file to this virtual machine with SCP to check that the\n    bandwidth is limited to 1 MB/sec (replace 10.0.0.3 with the IP of the virtual\n    machine):\n    ---\n    ip netns\n    sudo ip netns exec qrouter-128db593-a0db-40c3-84c7-e6383d40c75f bash\n    \n    dd if=/dev/urandom of=random10MB bs=1024 count=10240\n    scp random10M cirros@10.0.3:\n    ---\n    \n    Change-Id: I0f0111fc79fe90900e38df022034b208f1129088\n    Closes-Bug: #1254664\n", 
+            "date_created": "2013-12-13 17:53:08.564202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

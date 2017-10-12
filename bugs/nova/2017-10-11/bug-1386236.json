@@ -1,0 +1,93 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:11:26.846654+00:00", 
+    "description": "When creating a flavor which includes \"hw:numa_nodes\": \"1\", all instances booted with this flavor are always pinned to NUMA node0.  Multiple instances end up on node0 and no instances are on node1.  Our expectation was that instances would be balanced across NUMA nodes.\n\nTo recreate:  \n\n1) Ensure you have a compute node with at least 2 sockets\n2) Create a flavor with vcpus and memory which fits within one socket\n3) Add the flavor key: nova flavor-key <flavor> set hw:numa_nodes=1\n4) Boot more than 1 instances\n5) Verify where the vcpus are pinned", 
+    "tags": [
+        "in-stable-juno"
+    ], 
+    "importance": "High", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1386236", 
+    "owner": "https://api.launchpad.net/1.0/~ndipanov", 
+    "id": 1386236, 
+    "index": 1644, 
+    "created": "2014-10-27 14:48:28.231069+00:00", 
+    "title": "NUMA scheduling will not attempt to pack an instance onto a host", 
+    "comments": [
+        {
+            "content": "When creating a flavor which includes \"hw:numa_nodes\": \"1\", all instances booted with this flavor are always pinned to NUMA node0.  Multiple instances end up on node0 and no instances are on node1.  Our expectation was that instances would be balanced across NUMA nodes.\n\nTo recreate:  \n\n1) Ensure you have a compute node with at least 2 sockets\n2) Create a flavor with vcpus and memory which fits within one socket\n3) Add the flavor key: nova flavor-key <flavor> set hw:numa_nodes=1\n4) Boot more than 1 instances\n5) Verify where the vcpus are pinned", 
+            "date_created": "2014-10-27 14:48:28.231069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~atheurer"
+        }, 
+        {
+            "content": "The current NUMA code in Juno has a mistakenly limited bit of logic whereby guest NUMA node  N is *always* placed on host NUMA node N.  Talking with Nikola, this should be fairly straightforward to rectify and he indicates he'll fix this while working on the CPU pinning work.", 
+            "date_created": "2014-10-27 15:53:15.248475+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Giving a bit more details here - the fix will consist of 3 parts:\n\n1) Add the logic that will try to pack the instances onto cores. A similar logic is already added to the (currently under review so likely to change) CPU Pinning patches - namely this https://review.openstack.org/#/c/129266/11/nova/virt/hardware.py\n\nThe proposal is to add the 'get_pinning_for_instance' method to the VirtNUMAHostTopology, that will go throught all the available permutations of it's own cells of the length of instance cells and find one that fits, it will then assign those IDs to the instance cells (this is what we would just default to ascending order form 0, and is causing this bug)\n\n2) Make sure that the scheduler is using this data in consume_from_instance\n\n3) Make sure that the compute service once it recalculates it on the boot requests saves it in the DB.", 
+            "date_created": "2014-11-03 10:31:27.982454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/133946", 
+            "date_created": "2014-11-12 12:57:48.898097+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/133998", 
+            "date_created": "2014-11-12 16:38:03.215656+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/135403", 
+            "date_created": "2014-11-18 19:54:35.916281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/133946\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d13205fb6036a6c7d66de350cb226dd0f9ee12d9\nSubmitter: Jenkins\nBranch:    master\n\ncommit d13205fb6036a6c7d66de350cb226dd0f9ee12d9\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Wed Nov 12 13:43:27 2014 +0100\n\n    Add support for fitting instance NUMA nodes onto a host\n    \n    This commit adds the methods needed to enable fitting instances onto\n    NUMA nodes. It adds fit_instance_to_host() method to the\n    VirtNUMAHostTopology class that will do the fitting returning the\n    instance topology with it's cells assigned to the cells of a given host.\n    \n    This method will be used in the scheduler and claims and will obsolete\n    the need for claim_test method which will be removed in subsequent\n    commits.\n    \n    It is worth noting that after we transition filter and claims to use the\n    methods added to this patch - it will no longer be possible for an\n    NUMA-aware instance to be over-committed against itself no matter what the\n    over-subscription ratios are.\n    \n    Change-Id: I5fb6814778c2790cdd8892f756a33763b8f4a712\n    Partial-bug: #1386236\n", 
+            "date_created": "2014-11-19 20:47:49.661080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/135403\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a59e1a9c7e54efaadc39d366772972463855dfc7\nSubmitter: Jenkins\nBranch:    master\n\ncommit a59e1a9c7e54efaadc39d366772972463855dfc7\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Nov 18 20:45:28 2014 +0100\n\n    Make Instance.save() update numa_topology\n    \n    This is needed so that we can actually update the given topology with\n    the updated data after a successful claim.\n    \n    Deleting it will also be needed when we actually make the resize work\n    properly for instances with NUMA topology, so we add it here as well.\n    \n    We do not expose the new InstanceNUMATopology methods as @remotable to\n    avoid having to bump the object version thus making this an easier\n    backport target. This is OK since they are only called from\n    Instance.save() which is @remotable, and can be trivially made remotable\n    should this be needed later (causing a version bump that need not be\n    backported).\n    \n    Change-Id: I64ff2d00ca20bd065bb17ebaa9c40b64b8cbb817\n    Partial-bug: #1386236\n", 
+            "date_created": "2014-11-21 10:28:17.588255+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/133998\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=53099f3bf23d0d160fc690a90cf4f32506adf076\nSubmitter: Jenkins\nBranch:    master\n\ncommit 53099f3bf23d0d160fc690a90cf4f32506adf076\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Wed Nov 12 17:14:01 2014 +0100\n\n    Instances with NUMA will be packed onto hosts\n    \n    This patch makes the NUMATopologyFilter and instance claims on the\n    compute host use instance fitting logic to allow for actually packing\n    instances onto NUMA capable hosts.\n    \n    This also means that the NUMA placement that is calculated during a\n    successfull claim will need to be updated in the database to reflect the\n    host NUMA cell ids the instance cells will be pinned to.\n    \n    Using fit_instance_to_host() to decide weather an instance can land\n    on a host makes the NUMATopologyFilter code cleaner as it now fully\n    re-uses all the logic in VirtNUMAHostTopology and\n    VirtNUMATopologyCellUsage classes.\n    \n    Change-Id: Ieabafea73b4d566f4194ca60be38b6415d8a8f3d\n    Closes-bug: #1386236\n", 
+            "date_created": "2014-11-21 10:29:48.498116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/137683", 
+            "date_created": "2014-11-27 17:21:24.084619+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/137685", 
+            "date_created": "2014-11-27 17:21:39.441143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/137686", 
+            "date_created": "2014-11-27 17:21:48.084912+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/137683\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=27d071f44f080d50ac291de2cb9385934b400ccd\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 27d071f44f080d50ac291de2cb9385934b400ccd\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Wed Nov 12 13:43:27 2014 +0100\n\n    Add support for fitting instance NUMA nodes onto a host\n    \n    This commit adds the methods needed to enable fitting instances onto\n    NUMA nodes. It adds fit_instance_to_host() method to the\n    VirtNUMAHostTopology class that will do the fitting returning the\n    instance topology with it's cells assigned to the cells of a given host.\n    \n    This method will be used in the scheduler and claims and will obsolete\n    the need for claim_test method which will be removed in subsequent\n    commits.\n    \n    It is worth noting that after we transition filter and claims to use the\n    methods added to this patch - it will no longer be possible for an\n    NUMA-aware instance to be over-committed against itself no matter what the\n    over-subscription ratios are.\n    \n    Partial-bug: #1386236\n    (cherry picked from commit d13205fb6036a6c7d66de350cb226dd0f9ee12d9)\n    \n    Conflicts:\n    \tnova/tests/unit/virt/test_hardware.py\n    \n    Change-Id: I5fb6814778c2790cdd8892f756a33763b8f4a712\n", 
+            "date_created": "2014-12-04 05:54:45.500028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/137685\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ccb7ef2b017edd1d192b597310c0688e690a9175\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit ccb7ef2b017edd1d192b597310c0688e690a9175\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Nov 18 20:45:28 2014 +0100\n\n    Make Instance.save() update numa_topology\n    \n    This is needed so that we can actually update the given topology with\n    the updated data after a successful claim.\n    \n    Deleting it will also be needed when we actually make the resize work\n    properly for instances with NUMA topology, so we add it here as well.\n    \n    We do not expose the new InstanceNUMATopology methods as @remotable to\n    avoid having to bump the object version thus making this an easier\n    backport target. This is OK since they are only called from\n    Instance.save() which is @remotable, and can be trivially made remotable\n    should this be needed later (causing a version bump that need not be\n    backported).\n    \n    Partial-bug: #1386236\n    (cherry picked from commit a59e1a9c7e54efaadc39d366772972463855dfc7)\n    \n    Conflicts:\n    \tnova/tests/unit/objects/test_instance.py\n    \n    Change-Id: I64ff2d00ca20bd065bb17ebaa9c40b64b8cbb817\n", 
+            "date_created": "2014-12-04 06:01:45.249982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/137686\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ee00c8015ca2c71095ffd87c190a47f22c4f73fb\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit ee00c8015ca2c71095ffd87c190a47f22c4f73fb\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Wed Nov 12 17:14:01 2014 +0100\n\n    Instances with NUMA will be packed onto hosts\n    \n    This patch makes the NUMATopologyFilter and instance claims on the\n    compute host use instance fitting logic to allow for actually packing\n    instances onto NUMA capable hosts.\n    \n    This also means that the NUMA placement that is calculated during a\n    successfull claim will need to be updated in the database to reflect the\n    host NUMA cell ids the instance cells will be pinned to.\n    \n    Using fit_instance_to_host() to decide weather an instance can land\n    on a host makes the NUMATopologyFilter code cleaner as it now fully\n    re-uses all the logic in VirtNUMAHostTopology and\n    VirtNUMATopologyCellUsage classes.\n    \n    Closes-bug: #1386236\n    (cherry picked from commit 53099f3bf23d0d160fc690a90cf4f32506adf076)\n    \n    Conflicts:\n    \tnova/compute/manager.py\n    \tnova/tests/unit/compute/test_claims.py\n    \tnova/tests/unit/compute/test_resource_tracker.py\n    \tnova/virt/hardware.py\n    \n    Change-Id: Ieabafea73b4d566f4194ca60be38b6415d8a8f3d\n", 
+            "date_created": "2014-12-04 14:02:57.428360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

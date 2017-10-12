@@ -1,0 +1,206 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-24 04:46:08.448577+00:00", 
+    "description": "Grant Murphy (<email address hidden>) conducted an audit of OpenStack and reported the following potential XML related vulnerabilities. These may well not be exploitable, we need to doublecheck them.\n\n===================================================\nIssue #1 (CWE-776) - Widespread and inconsistent usage of XML libraries that are vulnerable to various XML resource exhaustion attack vectors. This was mostly addressed in bug 1100282 however I can still find instances of minidom.parseString used directly in contributors code:\n\nnova/nova/virt/libvirt/driver.py\n1640:         dom = minidom.parseString(xml)\n1657:         dom = minidom.parseString(xml)\n\nnova/nova/virt/xenapi/vm_utils.py\n1501:        rrd = minidom.parseString(xml)\n1542:        doc = minidom.parseString(xml)\n\nnova/nova/api/openstack/compute/contrib/security_groups.py\n542:                    root = minidom.parseString(req.body)\n\nnova/nova/api/openstack/compute/contrib/security_group_default_rules.py\n76:\t     dom = minidom.parseString(string)\n\ncinder/cinder/api/contrib/backups.py\n85:         dom = minidom.parseString(string)\n104:        dom = minidom.parseString(string)\n\ncinder/cinder/api/contrib/volume_transfer.py\n65:        dom = minidom.parseString(string)\n83:        dom = minidom.parseString(string)\n\nFurthermore there are inconsistencies in the fix between components. For example in Quantum they use a ProtectedXMLParser in quantum/quantum/wsgi.py for XMLDeserialization. The implementation is as follows:\n\nclass ProtectedXMLParser(etree.XMLParser):\n    def __init__(self, *args, **kwargs):\n        etree.XMLParser.__init__(self, *args, **kwargs)\n        self._parser.StartDoctypeDeclHandler = self.start_doctype_decl\n\n    def start_doctype_decl(self, name, sysid, pubid, internal):\n        raise ValueError(_(\"Inline DTD forbidden\"))\n\n    def doctype(self, name, pubid, system):\n        raise ValueError(_(\"Inline DTD forbidden\"))\n\nAlthough etree.XMLParser does not automatically expand external entities by default it is vulnerable to billion laughs and quadratic blowup according to the diffusedxml documentation. (I'm not sure this is still accurate though).\n\nFor consistency alone I would recommend shifting these libraries across the board:\n - https://pypi.python.org/pypi/defusedxml/\n - https://pypi.python.org/pypi/defusedexpat/\n\n========================================================\nIssue #2 (CWE-112)- Missing schema validation. There are several instances where XML data is processed from an external source that is not validated against an XML schema. This is a best practice that should be considered.\n\n========================================================\nIssue #3 (Probably not a bug)- HTTP parameters used directly in XML output. The output appears to use sax.xhtml_escape so in theory is safe. Could use a whitelist reject unexpected input.\n\nThe case I'm specifically talking about is the BucketHandler class in nova/nova/objectstore/s3server.py. This does:\n\n  prefix = self.request.params.get(\"prefix\", \"\")\n  marker = self.request.params.get(\"marker\", \"\")\n\nAnd uses these values directly in render_xml (results sent to end user).\nThis one is probably harmless but thought I'd mention it anyway.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 266, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1190229", 
+    "owner": "https://api.launchpad.net/1.0/~mikal", 
+    "id": 1190229, 
+    "index": 1122, 
+    "created": "2013-06-12 13:20:37.977085+00:00", 
+    "title": "[OSSA 2013-023] Potential unsafe XML usage (CVE-2013-4179, CVE-2013-4202)", 
+    "comments": [
+        {
+            "content": "Grant Murphy (<email address hidden>) conducted an audit of OpenStack and reported the following potential XML related vulnerabilities. These may well not be exploitable, we need to doublecheck them.\n\n===================================================\nIssue #1 (CWE-776) - Widespread and inconsistent usage of XML libraries that are vulnerable to various XML resource exhaustion attack vectors. This was mostly addressed in bug 1100282 however I can still find instances of minidom.parseString used directly in contributors code:\n\nnova/nova/virt/libvirt/driver.py\n1640:         dom = minidom.parseString(xml)\n1657:         dom = minidom.parseString(xml)\n\nnova/nova/virt/xenapi/vm_utils.py\n1501:        rrd = minidom.parseString(xml)\n1542:        doc = minidom.parseString(xml)\n\nnova/nova/api/openstack/compute/contrib/security_groups.py\n542:                    root = minidom.parseString(req.body)\n\nnova/nova/api/openstack/compute/contrib/security_group_default_rules.py\n76:\t     dom = minidom.parseString(string)\n\ncinder/cinder/api/contrib/backups.py\n85:         dom = minidom.parseString(string)\n104:        dom = minidom.parseString(string)\n\ncinder/cinder/api/contrib/volume_transfer.py\n65:        dom = minidom.parseString(string)\n83:        dom = minidom.parseString(string)\n\nFurthermore there are inconsistencies in the fix between components. For example in Quantum they use a ProtectedXMLParser in quantum/quantum/wsgi.py for XMLDeserialization. The implementation is as follows:\n\nclass ProtectedXMLParser(etree.XMLParser):\n    def __init__(self, *args, **kwargs):\n        etree.XMLParser.__init__(self, *args, **kwargs)\n        self._parser.StartDoctypeDeclHandler = self.start_doctype_decl\n\n    def start_doctype_decl(self, name, sysid, pubid, internal):\n        raise ValueError(_(\"Inline DTD forbidden\"))\n\n    def doctype(self, name, pubid, system):\n        raise ValueError(_(\"Inline DTD forbidden\"))\n\nAlthough etree.XMLParser does not automatically expand external entities by default it is vulnerable to billion laughs and quadratic blowup according to the diffusedxml documentation. (I'm not sure this is still accurate though).\n\nFor consistency alone I would recommend shifting these libraries across the board:\n - https://pypi.python.org/pypi/defusedxml/\n - https://pypi.python.org/pypi/defusedexpat/\n\n========================================================\nIssue #2 (CWE-112)- Missing schema validation. There are several instances where XML data is processed from an external source that is not validated against an XML schema. This is a best practice that should be considered.\n\n========================================================\nIssue #3 (Probably not a bug)- HTTP parameters used directly in XML output. The output appears to use sax.xhtml_escape so in theory is safe. Could use a whitelist reject unexpected input.\n\nThe case I'm specifically talking about is the BucketHandler class in nova/nova/objectstore/s3server.py. This does:\n\n  prefix = self.request.params.get(\"prefix\", \"\")\n  marker = self.request.params.get(\"marker\", \"\")\n\nAnd uses these values directly in render_xml (results sent to end user).\nThis one is probably harmless but thought I'd mention it anyway.", 
+            "date_created": "2013-06-12 13:20:37.977085+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Analysis in Nova:\r\n\r\nnova/nova/virt/libvirt/driver.py\r\nWhat's getting parsed is XML from libvirt, not user-provided XML requests. So that's safe.\r\n\r\nnova/nova/virt/xenapi/vm_utils.py\r\nWhat's getting parsed is XML from XenServer, not user-provided XML requests, so that's safe.\r\n\r\nnova/nova/api/openstack/compute/contrib/security_groups.py\r\nWhile most calls use xmlutil.safe_minidom_parse_string (which is safe), there is one call in _extend_servers that still uses minidom.parseString(req.body) and therefore looks vulnerable.\r\n\r\nnova/nova/api/openstack/compute/contrib/security_group_default_rules.py\r\nUses pure minidom in its XML deserializer, so probably vulnerable.\r\n", 
+            "date_created": "2013-06-17 12:09:08.223802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Quantum analysis:\r\nMy understanding is that million laughs/quadratic blowup needs DTD evaluation, and the ProtectedXMLParser protects against reading an included DTD, so that sounds safe.\r\n\r\nI agree that more consistency across the board would be welcome though.", 
+            "date_created": "2013-06-17 12:12:46.731301+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Looks vulnerable to me (contributed backups API extension)", 
+            "date_created": "2013-06-17 12:15:15.691896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Adding nova-core and cinder-core for help patching", 
+            "date_created": "2013-06-20 12:40:52.235039+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Any patches should also include test case which validates that no code in GIT uses the vulnerable APIs, so we don't regress in this yet again.", 
+            "date_created": "2013-06-21 10:43:51.014982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "We should push a minimal patch to fix the vulnerabilities first, that we can backport to stable branches.\nThen for Havana and beyond we should push defusedxml parsers across the board.", 
+            "date_created": "2013-06-21 12:50:13.311322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "A patch for nova is attached.", 
+            "date_created": "2013-07-04 05:51:10.522927+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Could we have a patch for Cinder ?", 
+            "date_created": "2013-07-09 12:44:15.476385+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "cinder patch here", 
+            "date_created": "2013-07-12 17:06:11.723671+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Looks good, could we have a cinder-core pre-approval here ? Patch is trivial so one should be enough", 
+            "date_created": "2013-07-15 14:02:47.911073+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "We need nova-core pre-approval on Mikal's patch too.", 
+            "date_created": "2013-07-15 14:03:08.708384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+2 On nova patch", 
+            "date_created": "2013-07-15 14:24:41.484254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Proposed impact description:\n\nTitle:  Denial of Service using XML entities in some Nova and Cinder extensions\nReporter: Grant Murphy (Red Hat)\nProducts: Nova, Cinder\nAffects: Grizzly\n\nDescription:\nGrant Murphy from Red Hat reported that vulnerabilities in XML request parsers were not fully patched in OSSA 2013-004. By leveraging XML entity expansion in specific extensions, an unauthenticated attacker may still consume excessive resources on the Nova or Cinder API servers, resulting in a denial of service and potentially a crash. Only Nova setups making use of the security group extension in Grizzly are affected. Only Cinder setups making use of the backups or volume transfer API extension in Grizzly are affected.\n", 
+            "date_created": "2013-07-15 14:49:59.560795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The affected code was present in Grizzly but not in Folsom.", 
+            "date_created": "2013-07-15 14:51:12.424392+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thierry's impact description in comment #14 looks sane to me.", 
+            "date_created": "2013-07-15 19:31:04.478601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Sorry, Thierry's impact description in comment #13 looks sane to me.", 
+            "date_created": "2013-07-15 19:31:37.234264+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "+2 on the cinder patch.", 
+            "date_created": "2013-07-15 20:02:42.113080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thingee"
+        }, 
+        {
+            "content": "CVE requested, no answer from Kurt yet", 
+            "date_created": "2013-07-19 10:23:03.448251+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sent CVE request again", 
+            "date_created": "2013-07-29 09:54:34.226808+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Refreshed nova/havana patch", 
+            "date_created": "2013-08-01 13:40:58.711024+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "nova/grizzly patch backport", 
+            "date_created": "2013-08-01 13:56:24.386019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "cinder/grizzly patch backport", 
+            "date_created": "2013-08-01 14:00:26.229779+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "cinder/master/gate-devstack-vm-full: PASS\ncinder/grizzly/gate-devstack-vm-cinder: PASS\n\nmore tests tomorrow.", 
+            "date_created": "2013-08-01 15:32:38.490856+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Nova tests fail with:\n\nFile \"/opt/stack/new/nova/nova/api/openstack/compute/contrib/security_groups.py\", line 33, in <module>\n    from nova.openstack.common import xmlutils\nImportError: cannot import name xmlutils", 
+            "date_created": "2013-08-02 09:13:08.958952+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "missing a file in the grizzly backport. New version attached", 
+            "date_created": "2013-08-02 11:41:35.333440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "nova/master/gate-devstack-vm-full: PASS\nnova/grizzly/gate-devstack-vm-full: PASS\n", 
+            "date_created": "2013-08-02 11:42:05.350861+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Version that doesn't fail pep8", 
+            "date_created": "2013-08-02 12:12:29.970436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Version that doesn't fail pep8", 
+            "date_created": "2013-08-02 12:15:56.414989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "cinder/master/py27: PASS\ncinder/master/pep8: PASS\nnova/grizzly/py27: PASS\nnova/grizzly/pep8: PASS\nnova/master/py27: PASS\nnova/master/pep8: PASS\n", 
+            "date_created": "2013-08-02 12:24:47.211064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sent to downstream stakeholders\r\nProposed public disclosure date/time: Thursday, August 8, 1500UTC.", 
+            "date_created": "2013-08-02 12:29:44.627117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "From Kurt:\n\nPlease use CVE-2013-4179 for Denial of Service using XML entities in\nNova extensions\n\nPlease use CVE-2013-4202 for Denial of Service using XML entities in\nCinder extensions", 
+            "date_created": "2013-08-04 15:45:46.899002+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/40881", 
+            "date_created": "2013-08-08 15:02:09.592665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/40883", 
+            "date_created": "2013-08-08 15:02:44.158779+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/40881\nCommitted: http://github.com/openstack/cinder/commit/4ad95dba4fccbbc0df923dea0dc9e5c3ac9f4cc2\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4ad95dba4fccbbc0df923dea0dc9e5c3ac9f4cc2\nAuthor: Thierry Carrez <email address hidden>\nDate:   Thu Aug 8 12:13:52 2013 +0200\n\n    Use utils.safe_minidom_parse_string in extensions\n    \n    Use utils.safe_minidom_parse_string in extensions that were still\n    using potentially-unsafe minidom.\n    \n    Fixes bug 1190229\n    \n    Change-Id: I43afb2e188bbea99ea30fe6cb2eb1aeedc4ddfd4\n", 
+            "date_created": "2013-08-08 16:08:01.215225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "OSSA 2013-023", 
+            "date_created": "2013-08-08 16:13:10.287106+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/40883\nCommitted: http://github.com/openstack/cinder/commit/2023eecc4b1a35daf42a64fa01967ed12c7d017b\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 2023eecc4b1a35daf42a64fa01967ed12c7d017b\nAuthor: John Griffith <email address hidden>\nDate:   Thu Aug 8 12:10:30 2013 +0200\n\n    Use utils.safe_minidom_parse_string in extensions\n    \n    Use utils.safe_minidom_parse_string in extensions that were still\n    directly using potentially-unsafe minidom.\n    \n    Grizzly backport of John Griffith's master patch.\n    \n    Fixes bug 1190229\n    \n    Change-Id: I43afb2e188bbea99ea30fe6cb2eb1aeedc4ddfd4\n", 
+            "date_created": "2013-08-08 17:22:11.226269+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nI will be out of the office starting  2013-09-05 and will not return until\n2013-09-15.\n\nI will be on my marriage leave from 9/5 to 9/15, for any urgent issue\nplease call me before 9/7.\n\nFor daily work, please ask my scrum master Zhu Zhu for help.\nFor glance issue, please ask glance SME Feilong Wang for help.\nFor defect report, there will be no report next week.", 
+            "date_created": "2013-09-06 04:25:10+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yuyangbj"
+        }
+    ]
+}

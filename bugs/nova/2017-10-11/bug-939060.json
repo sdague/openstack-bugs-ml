@@ -1,0 +1,76 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 10:52:54.006762+00:00", 
+    "description": "When performing a live migration (kvm) when multi_host is set to True the following does not happen:\n\n1) The networks(bridge and vlan) on the destination node are not setup by nova-network.\n*) If this is not configured before the migration the instance will fail to start on the destination node and will rollback to the source node.\n\n2) dnsmasq is not updated on the destination node. \n*) dnsmasq hosts file is not updated on the migration destination and it will not reply to DHCP requests from the migrated instance.\n*) Additionally, DHCP requests will still be answered by the source migration node until a new instance is created on that compute node.  When that happens dnsmasq host files are re-written and dnsmasq is sent SIGHUP and it will no longer respond to DHCP requests from the migrated instance.\n\n\nIf both of the above occur the migrated instance will lose IP access upon the expiration of its lease.\n\nI have included a patch that will fix this in the short-term but a more elegant resolution is required.\n\nTested and fixed on diablo/stable.  This bug is also present in essex.", 
+    "tags": [], 
+    "importance": "Critical", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/939060", 
+    "owner": "https://api.launchpad.net/1.0/~vishvananda", 
+    "id": 939060, 
+    "index": 49, 
+    "created": "2012-02-22 22:33:40.458713+00:00", 
+    "title": "live migrations do not update dnsmasq entries or setup networking on destination node when using multi_host", 
+    "comments": [
+        {
+            "content": "When performing a live migration (kvm) when multi_host is set to True the following does not happen:\n\n1) The networks(bridge and vlan) on the destination node are not setup by nova-network.\n*) If this is not configured before the migration the instance will fail to start on the destination node and will rollback to the source node.\n\n2) dnsmasq is not updated on the destination node. \n*) dnsmasq hosts file is not updated on the migration destination and it will not reply to DHCP requests from the migrated instance.\n*) Additionally, DHCP requests will still be answered by the source migration node until a new instance is created on that compute node.  When that happens dnsmasq host files are re-written and dnsmasq is sent SIGHUP and it will no longer respond to DHCP requests from the migrated instance.\n\n\nIf both of the above occur the migrated instance will lose IP access upon the expiration of its lease.\n\nI have included a patch that will fix this in the short-term but a more elegant resolution is required.\n\nTested and fixed on diablo/stable.  This bug is also present in essex.", 
+            "date_created": "2012-02-22 22:33:40.458713+00:00", 
+            "author": "https://api.launchpad.net/1.0/~breu"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-02-22 22:33:40.458713+00:00", 
+            "author": "https://api.launchpad.net/1.0/~breu"
+        }, 
+        {
+            "content": "I discussed this a bit offline with the networking team.  It seems a little challenging to do the correct implementation for essex, but here is the basic plan:\n\nNotes below from Trey Morris:\n\nwe'll need to pull the network_setup functionality out of ip allocation/deallocation and add a callable trigger to that functionality to the network api. It looks like for allocate_ip the functionality is already split out into the _setup_network() function. We need to do something similar for deallocate_ip, like _teardown_network(), and create a setup_networks() function with a corresponding network_api call.\n\nsetup/unsetup_all could be optimized into one function with a default parameter, something like:\n\ndef setup_networks(self, context, teardown=False, **kwargs):\n    if teardown:\n        call_func = self._teardown_network\n    else:\n        call_func = self._setup_network\n\n    *pull instance variables from kwargs*\n     nw_info = self.get_instance_nw_info(instance_stuff...)\n     for vif in nw_info:\n         self.call_func(context, vif['network'])\n\n\n\nThe flow as I see it (from compute) would be\ndef live_migrate():\n    self.network_api.setup_networks(instance, teardown=True)\n    perform migrate as it was before\n    self.network_api.setup_networks(instance)\n\n\nallocate_fixed_ip would still call self._setup_network(context, network) and the single network would be configured just as it was before, and deallocate could do the same, only it would call self._teardown_network(context, network) instead of performing the teradown in-function.\n\nMy only addition might be that you would want to teardown the network on the old host after the migrate, which means you might have to pass the host in the call somewhere.\n\nIn the meantime the above patch will at least make things work.", 
+            "date_created": "2012-02-22 22:47:21.586271+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "apparently this affects resize as well.  And tr3buchet also discovered that deallocate is not working properly", 
+            "date_created": "2012-02-24 20:31:57.083990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4635", 
+            "date_created": "2012-02-28 17:09:35.089502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4646", 
+            "date_created": "2012-02-28 20:32:33.030188+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/4646\nCommitted: http://github.com/openstack/nova/commit/0c7a54b3b44f849bf397bb4068ab16c576c3559c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0c7a54b3b44f849bf397bb4068ab16c576c3559c\nAuthor: Trey Morris <email address hidden>\nDate:   Mon Feb 27 19:07:31 2012 -0600\n\n    Setup and teardown networks during migration\n    \n    * fixes lp939060\n    * live migration and resize nova appropriately setup\n      and teardown networking related to network hosts\n    * deallocate_fixed_ip is now run on the correct host\n      resulting in the network structures being torn down\n      correctly\n    \n    Change-Id: I2c86989ab7c6593bf346611cde8c043116d55bc5\n", 
+            "date_created": "2012-03-07 01:45:44.300080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5038", 
+            "date_created": "2012-03-07 20:21:20.747826+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5097", 
+            "date_created": "2012-03-08 20:54:47.277148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5097\nCommitted: http://github.com/openstack/nova/commit/81c1d70754543360e11e3aaba2ed403872b21302\nSubmitter: Jenkins\nBranch:    master\n\ncommit 81c1d70754543360e11e3aaba2ed403872b21302\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Thu Mar 8 12:51:36 2012 -0800\n\n    Clean up setup and teardown for dhcp managers\n    \n     * use update_dhcp on teardown, not release_dhcp\n     * clean up setup / teardown to not require vif and address\n     * make dnsmasq only configure allocated ips\n     * prepares the fix for bug 939060\n    \n    Change-Id: Ie85860c5549339befee74c951ccb0d72a92f6d6c\n", 
+            "date_created": "2012-03-10 04:07:38.203229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hrm, is this really still in progress or did the bot drink too much ?", 
+            "date_created": "2012-03-12 16:19:41.026632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5038\nCommitted: http://github.com/openstack/nova/commit/33def9e714fbd13a6dc4b755ade4841c971f7ae5\nSubmitter: Jenkins\nBranch:    master\n\ncommit 33def9e714fbd13a6dc4b755ade4841c971f7ae5\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Thu Mar 8 12:53:44 2012 -0800\n\n    Fix live-migration in multi_host network\n    \n     * call teardown after live migration\n     * call update a second time after migration for dhcp\n     * moves the instance state update into post_live_migrate\n     * completes the fix for bug 939060\n     * fixes bug 947326\n    \n    Change-Id: I042567573b9bb46381c5447aa08e83cd1916b225\n", 
+            "date_created": "2012-03-12 17:58:33.899975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

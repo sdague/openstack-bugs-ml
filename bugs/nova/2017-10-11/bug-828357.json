@@ -1,0 +1,71 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2011-09-22 12:53:01.285867+00:00", 
+    "description": "After bug 827598 is fixed , and there are filesystems already made on the ephemeral devices, it would be a very nice addition to label the filesystems with 'ephemeral0' or 'ephemeral1' corresponding to their block-device-mapping.\n\nThis would allow you to very easily add entries to fstab like:\nLABEL=ephemeral0 /mnt auto defaults 0 0\n\nRather than dealing with block-device-mapping which is likely to be wrong.\n\nThanks to ~ahasenack for this idea.", 
+    "tags": [], 
+    "importance": "Wishlist", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/828357", 
+    "owner": "https://api.launchpad.net/1.0/~yamahata", 
+    "id": 828357, 
+    "index": 1102, 
+    "created": "2011-08-17 21:00:29.922128+00:00", 
+    "title": "ephemeral device filesystems should be labeled with 'ephemeralX'", 
+    "comments": [
+        {
+            "content": "After bug 827598 is fixed , and there are filesystems already made on the ephemeral devices, it would be a very nice addition to label the filesystems with 'ephemeral0' or 'ephemeral1' corresponding to their block-device-mapping.\n\nThis would allow you to very easily add entries to fstab like:\nLABEL=ephemeral0 /mnt auto defaults 0 0\n\nRather than dealing with block-device-mapping which is likely to be wrong.\n\nThanks to ~ahasenack for this idea.", 
+            "date_created": "2011-08-17 21:00:29.922128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "So what you want is mkfs.ext3 -L ephemeral<N> <target device/file>\r\nIt's easy.\r\n", 
+            "date_created": "2011-08-18 21:58:05.872119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "I updated lp:~yamahata/nova/lp827598.\r\nCan you please check if that is what you wanted?\r\nIf so, I'll request for merge.\r\n", 
+            "date_created": "2011-08-19 01:22:37.130807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "Maybe I'm reading the diff wrong, but it looks to me like you have:\n  utils.execute('mkfs.ext3', '-l', fs_label, '-F', target)\n\nwhere you'd want:\n  utils.execute('mkfs.ext3', '-L', fs_label, '-F', target)\n\nSpecifically, the flag for label is upper case L , not lower case.\n", 
+            "date_created": "2011-08-22 13:11:09.633492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "A couple more things. I suspect volumes in windows instances are not formated with ext3.  I actually have never looked.  If you'd like I *can* dig that up, but the primary point would be that I suspect filesystems type is instance-OS specific (at least to the point of windows/linux).\n\nThe other thing is that mkfs on a large volume will take quite a while, so you'd most definitely want to consider that.  Maybe cache the volume after mkfs was done?", 
+            "date_created": "2011-08-22 13:13:54.080568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "\nOn Mon, Aug 22, 2011 at 01:11:09PM -0000, Scott Moser wrote:\n> Maybe I'm reading the diff wrong, but it looks to me like you have:\n>   utils.execute('mkfs.ext3', '-l', fs_label, '-F', target)\n> \n> where you'd want:\n>   utils.execute('mkfs.ext3', '-L', fs_label, '-F', target)\n> \n> Specifically, the flag for label is upper case L , not lower case.\n\nAh, good catch. I'll fix it.\n", 
+            "date_created": "2011-08-23 03:14:33+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "On Mon, Aug 22, 2011 at 01:13:54PM -0000, Scott Moser wrote:\n> A couple more things. I suspect volumes in windows instances are not\n> formated with ext3.  I actually have never looked.  If you'd like I\n> *can* dig that up, but the primary point would be that I suspect\n> filesystems type is instance-OS specific (at least to the point of\n> windows/linux).\n\nOkay, os_type is passed to libvirt driver. So we can choose which\nfile system to use. So which file system should be used?\n\nos_type\n   'linux' => mkfs.ext3\n              mkfs.ext3 -L <volume-label>\n\n   'windows' => mkfs.vfat\n                do we want to use\n                -n <volume-name>\n                -i <volume-id>\n\n                or\n\n                mkfs.ntfs\n                do we want to use\n                --label STRING\n                --fast: perform a quick format\n\n   other os  => We don't know. (Solaris, BSD* ...)\n                leave it uninitialized or make it user configurable?\n\n> The other thing is that mkfs on a large volume will take quite a while,\n> so you'd most definitely want to consider that.  Maybe cache the volume\n> after mkfs was done?\n\nFortunately the files is cached in /var/lib/nova/instance/_base/ as you\ndescribed.\nIf ext4 could be used, uninit_bg option could be used. It reduces mkfs\ntime much.\n", 
+            "date_created": "2011-08-23 03:32:44+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "Okay, I updated the branch with nova-trunk.\r\nIt implements options on how to mkfs a given ephemeral device depending on os_type.\r\nCan you please check it?", 
+            "date_created": "2011-08-23 07:13:58.446676+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "OK, after *way* to many failures, I finally succeeded in launching a windows m1.large instance with 2 ephemeral devices attached on amazon.\n\nEach of the block devices are formatted as NTFS and have no label.\n\nSo, I suggest making the default case NTFS and the comment able to change to vfat.\n", 
+            "date_created": "2011-08-23 13:52:44.294195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Thank you for confirming it. I changed the default value to use ntfs and did request-for-merge of the branch.\r\n", 
+            "date_created": "2011-08-24 02:08:49.973986+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "fix-committed at revno 1562.", 
+            "date_created": "2011-09-14 13:25:22.751638+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }
+    ]
+}

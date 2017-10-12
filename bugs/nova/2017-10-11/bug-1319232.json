@@ -1,0 +1,89 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-08-26 18:29:26.728286+00:00", 
+    "description": "Each periodic task can have a \"spacing\", which defines the minimum amount of time between executions of that task.  For example, a task with periodic_spacing=120 would execute no more often than once every 2 minutes.  Tasks that do not define an explicit spacing will be run every time the periodic task processor runs.  This is commonly loosely interpreted as \"every 60 seconds\", but in reality it's more complicated than that.\n\nAs a result of these \"complications\", we can actually end up running these tasks more frequently -- I've regularly observed them running every 20-30 seconds, and in several cases I've seen a task running just 1-2 seconds after it previously ran.  This consumes extra resources (CPU, database access, etc) without providing any real value.\n\nThe reason for these extra runs has to do with how the periodic task processor is implemented.  When there are multiple tasks with a defined spacing, they can get somewhat staggered and force the periodic task processor to run additional iterations.  Since tasks with no spacing run every time the periodic task processor runs, they get run more frequently than one would expect.\n\n\nMy proposed solution is to redefine the behavior of periodic tasks with no explicit spacing so that they run with the default interval (60 seconds).  The code change is simple -- in nova/openstack/common/periodic_task.py, change this code:\n\n        # A periodic spacing of zero indicates that this task should\n        # be run every pass\n        if task._periodic_spacing == 0:\n            task._periodic_spacing = None\n\nto:\n        # A periodic spacing of zero indicates that this task should\n        # be run at the default interval\n        if task._periodic_spacing == 0:\n            task._periodic_spacing = DEFAULT_INTERVAL\n\nThe actual runtime task processing code doesn't change -- this fix is basically the equivalent of finding every @periodic_task that doesn't have an explicit spacing, and setting spacing=60.  So it's very low risk.  Some may argue that this change in behavior could cause some task to behave differently than it used to.  However, there was never any guarantee that the task would run more often than every 60 seconds, and in many cases the tasks may already run less frequently than that (due to other long-running tasks).  So this change should not introduce any new issues related to the timing of task execution; it would only serve to make the timing more regular.", 
+    "tags": [
+        "compute", 
+        "oslo"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1319232", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1319232, 
+    "index": 3903, 
+    "created": "2014-05-14 02:24:12.515927+00:00", 
+    "title": "Periodic tasks run too frequently", 
+    "comments": [
+        {
+            "content": "Each periodic task can have a \"spacing\", which defines the minimum amount of time between executions of that task.  For example, a task with periodic_spacing=120 would execute no more often than once every 2 minutes.  Tasks that do not define an explicit spacing will be run every time the periodic task processor runs.  This is commonly loosely interpreted as \"every 60 seconds\", but in reality it's more complicated than that.\n\nAs a result of these \"complications\", we can actually end up running these tasks more frequently -- I've regularly observed them running every 20-30 seconds, and in several cases I've seen a task running just 1-2 seconds after it previously ran.  This consumes extra resources (CPU, database access, etc) without providing any real value.\n\nThe reason for these extra runs has to do with how the periodic task processor is implemented.  When there are multiple tasks with a defined spacing, they can get somewhat staggered and force the periodic task processor to run additional iterations.  Since tasks with no spacing run every time the periodic task processor runs, they get run more frequently than one would expect.\n\n\nMy proposed solution is to redefine the behavior of periodic tasks with no explicit spacing so that they run with the default interval (60 seconds).  The code change is simple -- in nova/openstack/common/periodic_task.py, change this code:\n\n        # A periodic spacing of zero indicates that this task should\n        # be run every pass\n        if task._periodic_spacing == 0:\n            task._periodic_spacing = None\n\nto:\n        # A periodic spacing of zero indicates that this task should\n        # be run at the default interval\n        if task._periodic_spacing == 0:\n            task._periodic_spacing = DEFAULT_INTERVAL\n\nThe actual runtime task processing code doesn't change -- this fix is basically the equivalent of finding every @periodic_task that doesn't have an explicit spacing, and setting spacing=60.  So it's very low risk.  Some may argue that this change in behavior could cause some task to behave differently than it used to.  However, there was never any guarantee that the task would run more often than every 60 seconds, and in many cases the tasks may already run less frequently than that (due to other long-running tasks).  So this change should not introduce any new issues related to the timing of task execution; it would only serve to make the timing more regular.", 
+            "date_created": "2014-05-14 02:24:12.515927+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arnoldje"
+        }, 
+        {
+            "content": "There was also some related discussion in the mailing list here:\n\nhttps://www.mail-archive.com/openstack-dev%40lists.openstack.org/msg15922.html", 
+            "date_created": "2014-05-14 11:46:06.504238+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related nova change here: https://review.openstack.org/#/c/72684/", 
+            "date_created": "2014-05-14 11:49:06.102704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/93767", 
+            "date_created": "2014-05-15 17:54:25.953710+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/93767\nCommitted: https://git.openstack.org/cgit/openstack/oslo-incubator/commit/?id=c63fd5a439f22cf32ebea951e6f3b150374004f9\nSubmitter: Jenkins\nBranch:    master\n\ncommit c63fd5a439f22cf32ebea951e6f3b150374004f9\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu May 15 07:51:43 2014 -0700\n\n    Make unspecified periodic spaced tasks run on default interval\n    \n    When there are multiple tasks with a defined spacing, they can get\n    somewhat staggered and force the periodic task processor to run\n    additional iterations. Since tasks with no spacing run every time the\n    periodic task processor runs, they get run more frequently than one\n    would expect.\n    \n    Some may argue that this change in behavior could cause some task to\n    behave differently than it used to. However, there was never any\n    guarantee that the task would run more often than every 60 seconds, and\n    in many cases the tasks may already run less frequently than that (due\n    to other long-running tasks). So this change should not introduce any\n    new issues related to the timing of task execution; it would only serve\n    to make the timing more regular.\n    \n    We should also make the default interval configurable but that's\n    reserved for a separate change.\n    \n    DocImpact: periodic tasks without a specific spacing interval will now\n    run on the default interval (currently every 60 seconds) rather than\n    whenever the task processor runs.\n    \n    UpgradeImpact: see above; periodic tasks without a specific spacing\n    interval will now run on the default interval which may be less\n    often than some tasks run now, but with this change they will run\n    on a more consistent interval.\n    \n    Closes-Bug: #1319232\n    Related-Bug: #1276203\n    Related-Bug: #1272830\n    \n    Change-Id: I4dd20f68175165d311fa4d3f459c86f2dcac911b\n", 
+            "date_created": "2014-05-22 22:47:02.343430+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/93520\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a324daab957d75b45ae2374d30b8ab39be587d7c\nSubmitter: Jenkins\nBranch:    master\n\ncommit a324daab957d75b45ae2374d30b8ab39be587d7c\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue May 13 15:10:03 2014 -0700\n\n    Sync periodic_task from oslo-incubator\n    \n    We have not updated periodic_task in over six months and we should have\n    commit 47c9d60657be4ad58afa3c7e3ef88885a595c4c3 in nova.\n    \n    Note that this does not include the gettextutils and log dependencies\n    since there are not functional changes in those modules needed for the\n    periodic_task changes synced in *and* more importantly, the changes\n    to gettextutils and log require pervasive changes to nova which should\n    happen when nova integrates with the oslo-i18n library for\n    blueprint i18n--messages.\n    \n    Further note that this does not include jsonutils due to some\n    issues introduced with a change for python 2.6 that impacts some of\n    the unit tests in Nova and how strings are encoded with simplejson.\n    The details for that issue are in bug 1314129.  The jsonutils changes\n    are not related to the periodic_task changes being synced in so the\n    dependency is not functionally required.\n    \n    periodic_task:\n    c63fd5a Make unspecified periodic spaced tasks run on default interval\n    f0dd798 Remove rendundant parentheses of cfg help strings\n    fcf517d Update oslo log messages with translation domains\n    051b9f3 Refactor unnecessary arithmetic ops in periodic_task\n    674cdaf Refactor if logic in periodic_task\n    b6b82c5 Use timestamp in periodic tasks\n    47c9d60 Don't share periodic_task instance data in a class attr\n    8b2b0b7 Use hacking import_exceptions for gettextutils._\n    c5a1088 Typos fix in db and periodic_task module\n    12bcdb7 Remove vim header\n    \n    Related-Bug: #1319232\n    \n    Change-Id: I5534e85ae8791c7c464357f7fd57b986ff74d092\n", 
+            "date_created": "2014-05-29 05:04:00.724375+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Added Cinder since there are at least two periodic tasks in Cinder that don't have specific spacing set.", 
+            "date_created": "2014-05-29 14:07:35.416424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Added Neutron since there are periodic tasks on the agents to sync up values with the server.", 
+            "date_created": "2014-05-29 14:12:47.729732+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "For neutron, specifically, L3, LBaaS, and metering agents.", 
+            "date_created": "2014-05-29 14:13:08.527801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/96499", 
+            "date_created": "2014-05-29 15:38:04.972272+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/96512", 
+            "date_created": "2014-05-29 16:19:45.509101+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/96499\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=741eb5f4d57ec8b9fe24196a635173714cd910ab\nSubmitter: Jenkins\nBranch:    master\n\ncommit 741eb5f4d57ec8b9fe24196a635173714cd910ab\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu May 29 07:33:16 2014 -0700\n\n    Sync periodic_task from oslo-incubator\n    \n    This is more or less to get commit c63fd5a from oslo into the core\n    projects which have several periodic tasks.  Neutron has periodic tasks\n    for L3, load balancing and metering agents to sync up state with the\n    server and most don't have specific spacing values set which can lead to\n    non-deterministic spacing of when the tasks run.\n    \n    Note that this does not include the gettextutils and log dependencies\n    since there are not functional changes in those modules needed for the\n    periodic_task changes synced in *and* more importantly, the changes\n    to gettextutils and log require pervasive changes to neutron which\n    should happen when neutron integrates with the oslo-i18n library for\n    blueprint i18n--messages.\n    \n    Further note that this does not include jsonutils due to some\n    issues introduced with a change for python 2.6 that impacts how strings\n    are encoded with simplejson. The details for that issue are in bug\n    1314129.  The jsonutils changes are not related to the periodic_task\n    changes being synced in so the dependency is not functionally required.\n    \n    The LbaasAgentManager extends PeriodicTasks but wasn't calling the\n    parent class init function, which was causing failures since commit\n    47c9d60 changed PeriodicTasks to init _periodic_last_run, so also\n    fixed that here.\n    \n    Changes:\n    \n    c63fd5a Make unspecified periodic spaced tasks run on default interval\n    f0dd798 Remove rendundant parentheses of cfg help strings\n    fcf517d Update oslo log messages with translation domains\n    051b9f3 Refactor unnecessary arithmetic ops in periodic_task\n    674cdaf Refactor if logic in periodic_task\n    b6b82c5 Use timestamp in periodic tasks\n    47c9d60 Don't share periodic_task instance data in a class attr\n    8b2b0b7 Use hacking import_exceptions for gettextutils._\n    \n    Related-Bug: #1319232\n    \n    Change-Id: Ib23e33326129be0dd952efde263f381d5aa2457f\n", 
+            "date_created": "2014-05-30 16:22:57.739335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/96512\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=132c4530713a6f404ce5ed01a9668519d69afe16\nSubmitter: Jenkins\nBranch:    master\n\ncommit 132c4530713a6f404ce5ed01a9668519d69afe16\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu May 29 08:45:55 2014 -0700\n\n    Sync periodic_task from oslo-incubator\n    \n    This is more or less to get commit c63fd5a from oslo into the core\n    projects which have several periodic tasks.  Cinder has periodic tasks\n    to sync up volume state with the server and they don't have specific\n    spacing values set which can lead to non-deterministic spacing of when\n    the tasks run.\n    \n    Note that this does not include the gettextutils and log dependencies\n    since there are not functional changes in those modules needed for the\n    periodic_task changes synced in *and* more importantly, the changes\n    to gettextutils and log require pervasive changes to cinder which\n    should happen when cinder integrates with the oslo-i18n library for\n    blueprint i18n--messages.\n    \n    Further note that this does not include jsonutils due to some\n    issues introduced with a change for python 2.6 that impacts how strings\n    are encoded with simplejson. The details for that issue are in bug\n    1314129.  The jsonutils changes are not related to the periodic_task\n    changes being synced in so the dependency is not functionally required.\n    \n    cinder.db.base.Base is also updated otherwise multiple inheritance\n    involving that class will not work, which impacts all of the classes\n    that extend cinder.manager.Manager which extends both cinder.db.Base\n    and PeriodicTasks, and commit 47c9d60 adds attributes to the __init__\n    for PeriodicTasks.  Nova had the same change with commit 5ae97ea.\n    \n    Changes:\n    \n    c63fd5a Make unspecified periodic spaced tasks run on default interval\n    f0dd798 Remove rendundant parentheses of cfg help strings\n    fcf517d Update oslo log messages with translation domains\n    051b9f3 Refactor unnecessary arithmetic ops in periodic_task\n    674cdaf Refactor if logic in periodic_task\n    b6b82c5 Use timestamp in periodic tasks\n    47c9d60 Don't share periodic_task instance data in a class attr\n    8b2b0b7 Use hacking import_exceptions for gettextutils._\n    c5a1088 Typos fix in db and periodic_task module\n    12bcdb7 Remove vim header\n    \n    Related-Bug: #1319232\n    \n    Change-Id: I13e8ac83bcd9e60a8eb05ed9cdfea00b9e5fb398\n", 
+            "date_created": "2014-06-18 19:13:24.662968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Cinder was fixed back in Juno: https://review.openstack.org/#/c/96512/", 
+            "date_created": "2015-08-26 18:29:14.915320+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

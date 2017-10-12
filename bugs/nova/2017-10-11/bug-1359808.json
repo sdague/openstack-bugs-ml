@@ -1,0 +1,79 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-12-09 13:10:22.986858+00:00", 
+    "description": "When listing ~4096 instances, the nova API (n-api) service has high CPU(100%)  usage because it does individual SELECTs,\nfor every server's block_device_mapping. This adds ~20-25 sec to the response time.\n\nPlease use more efficient way for getting the block_device_mapping, when multiple instance queried.\n\nThis line initiating the individual select:\nhttps://github.com/openstack/nova/blob/4b414adce745c07fbf2003ec25a5e554e634c8b7/nova/api/openstack/compute/contrib/extended_volumes.py#L32", 
+    "tags": [
+        "performance", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1359808", 
+    "owner": "https://api.launchpad.net/1.0/~diana-clarke", 
+    "id": 1359808, 
+    "index": 3995, 
+    "created": "2014-08-21 15:11:10.936388+00:00", 
+    "title": "extended_volumes slows down the nova instance list by 40..50%", 
+    "comments": [
+        {
+            "content": "When listing ~4096 instances, the nova API (n-api) service has high CPU(100%)  usage because it does individual SELECTs,\nfor every server's block_device_mapping.\n\nPlease use more efficient way for getting the block_device_mapping, when multiple instance queried.\n\nThis line initiating the individual select:\nhttps://github.com/openstack/nova/blob/4b414adce745c07fbf2003ec25a5e554e634c8b7/nova/api/openstack/compute/contrib/extended_volumes.py#L32", 
+            "date_created": "2014-08-21 15:11:10.936388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "The extra ~20-25% is neutron port listing, if neutron is enabled (+~9-10 sec).\nThe database itself is very fast. I can query the full tables under 0.02 sec.\n\nYou can boot up 4096 instances in BUILD scheduling->ERROR state even on a notebook/ or in small vm by stopping the n-sch.\n\n1. $ nova quota-update --instances -1 --cores -1 --ram -1 --floating-ips -1 --fixed-ips -1 <my-tenant> # as admin\n2. kill the n-sch (./rejoin-stack.sh Ctrl+A + \"  , select n-sch,  Ctrl+C , Ctr + A D)\n3. increase the  osapi_max_limit=10000    /etc/nova/nova.conf; (otherwise you just see 1000 instances, because the client does not gets the next page)\nrestart the n-api service\n\nsimilar to the n-sch stopping, but after the Ctrl+C, you need to press the UP arrow  and enter, basically restarting the previously terminated service\n\n4. create 4k instance\n$ nova boot test4k --min-count 4096 --max-count 4096 --flavor 42 --image cirros-0.3.2-x86_64-uec\n5. test\n$ time nova list | wc -l\n\n\nLooks like creating the full response is not fast even without the extended_volumes, but extended_volumes has the biggest contribution to the response time.\n\nThe above numbers seen at ~@2GHz physical machine with neutron icehouse.\n\nWith above n-sch killing method (all L2 vm in ERROR state), on VM on 3.4GHz with nova network, with latest master/juno I see ~22 sec with the unmodified extended_volumes, and 13 sec when the ExtendedVolumesController._extend_server replaced with a 'return'.\n\nWith the n-sch killing way the instances does not have all the normal attributes (like ip addresses), so it can be an another reason why it was faster this time.\n\nThe client warm up time ~1 sec and the authentication included in the time.", 
+            "date_created": "2014-08-23 13:41:58.843371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Per similar bugs I've found in here, performance improvements are really hard to track as bugs because they are a point in time behavior that doesn't really have a repeat scenario. We should take a push on specs for performance improvements. I think we all know that large numbers of API calls take a while, but what's acceptable is still up for debate.", 
+            "date_created": "2014-09-10 12:29:39.278332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "This bug points to the number of queries made, you do not really need to measure anything to see doing 4096 query in a loop is bad instead if doing only one (or smaller group).\n\nfor id in ids:\n SELECT attr from table where ID=id;\n\nvs.\n\n SELECT attr from table where ID in ids;\n\n\nMysql default max query size is 16777216 byte, so probably you can't specify significantly more than 256k uuid in one select statement. postgresql limit is bigger.\n", 
+            "date_created": "2014-10-17 06:43:39.684303+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Agreed we can do better, a for loop with individual queries is not the right approach.", 
+            "date_created": "2014-10-17 21:16:05.581358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Agree that this is more important than wishlist, and agree that it's an easily measurable thing we need to fix.\r\n\r\nPart of the problem is the design of our API infrastructure, as I understand it. It doesn't make it easy to do batch operations for things required by the extensions.\r\n\r\nOne way to fix this would be to expose the list of servers through the context provided to the extensions (where they get the server object they're going to operate on). Then, we could have a batch operation on the InstanceList (like we have now for fill_faults:\r\n\r\nhttps://github.com/openstack/nova/blob/master/nova/objects/instance.py#L780-L802\r\n\r\nThen the first call to the extension could effectively say \"hey, we're going to need BDMs\" (in this case) which would cause them to be pulled and efficiently stashed in some way the first time through the list, instead of one at a time. Right now, instance doesn't have a bdm property, AFAIK, so we'd need to correct that.\r\n\r\nThe other option would be to just stash a list of BDMs into the context object, but that would get messy over time for things other than BDMs, and would put the onus on the API instead of the model to do that demand-loading, which isn't ideal, IMHO.\r\n\r\nRegardless, we should fix this.", 
+            "date_created": "2014-10-17 21:37:15.720407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Another note: Several RDMS can be sensitive to the number of prepared statements he needs to handle. The orm or the application frequently split the set  to power of  4 or 5 (1,4,16,64,.. / 1,5,25,125..) number of element sets.  When the application requires less element than the fixed set size, it can fill the remaining elements with NULL when executing the statement.", 
+            "date_created": "2014-10-21 11:04:31.835411+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afazekas"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/229964", 
+            "date_created": "2015-10-01 15:34:57.131794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/229964\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=110bb30d0f2a183aa54ec1289a58a15ea26b0495\nSubmitter: Jenkins\nBranch:    master\n\ncommit 110bb30d0f2a183aa54ec1289a58a15ea26b0495\nAuthor: Diana Clarke <email address hidden>\nDate:   Thu Oct 1 11:33:14 2015 -0400\n\n    Replace N block_device_mapping queries with 1\n    \n    The ExtendedVolumes post-processing extension used to do N\n    block_device_mapping queries (one query per instance in a 'nova list').\n    Instead, do one block_device_mapping query with an IN clause of\n    instance UUIDs.\n    \n    Change-Id: I32a1bd0e05a7a938e531d00bedfab23a0bb68538\n    Partial-Bug: #1416132\n    Closes-Bug: #1359808\n", 
+            "date_created": "2015-11-13 13:30:39.469833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/245656", 
+            "date_created": "2015-11-16 08:04:19.930607+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b1 development milestone.", 
+            "date_created": "2015-12-02 16:17:12.971410+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Change abandoned by Sergey Nikitin (<email address hidden>) on branch: stable/liberty\nReview: https://review.openstack.org/245656", 
+            "date_created": "2015-12-09 13:10:21.762050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

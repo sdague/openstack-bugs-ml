@@ -1,0 +1,101 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 12:07:10.014532+00:00", 
+    "description": "The test run logged at http://logs.openstack.org/63/43863/1/gate/gate-nova-python26/a49f89c/ appears to have failed because the waits at http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n140 and http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n163 are unreliable. Instead these tests should probably use something like a waitpid with WNOHANG option poll loop where the worker processes are polled rather than waited for. This will allow the tests to use a much longer timeout as they will short circuit when all workers have exited.\n\nAdditionally, the try except at http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n106 may not work in all cases. If a timeout exception happens anywere else in the test this code will not be run. A fix for this problem would be to put the os.kill at http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n112 in a test cleanup rather than a test teardown so that it runs all the time and is forceful with the worker process killing. A bit bruteforce but hopefully that results in more consistent tests.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 36, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1218133", 
+    "owner": "https://api.launchpad.net/1.0/~hartsock", 
+    "id": 1218133, 
+    "index": 1198, 
+    "created": "2013-08-29 01:18:13.428611+00:00", 
+    "title": "MultiprocessWSGITest.test_terminate_sigterm fails because the wait for workers to die is unreliable.", 
+    "comments": [
+        {
+            "content": "The test run logged at http://logs.openstack.org/63/43863/1/gate/gate-nova-python26/a49f89c/ appears to have failed because the waits at http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n140 and http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n163 are unreliable. Instead these tests should probably use something like a waitpid with WNOHANG option poll loop where the worker processes are polled rather than waited for. This will allow the tests to use a much longer timeout as they will short circuit when all workers have exited.\n\nAdditionally, the try except at http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n106 may not work in all cases. If a timeout exception happens anywere else in the test this code will not be run. A fix for this problem would be to put the os.kill at http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/integrated/test_multiprocess_api.py#n112 in a test cleanup rather than a test teardown so that it runs all the time and is forceful with the worker process killing. A bit bruteforce but hopefully that results in more consistent tests.", 
+            "date_created": "2013-08-29 01:18:13.428611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cboylan"
+        }, 
+        {
+            "content": "set to high, mainly because flaky tests can cause serious disruption to the gate, and add big delays to work getting done", 
+            "date_created": "2013-08-29 21:30:00.673053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Hi folks.\n\nSo back in the day I used to write the C Posix programs and we would use signal traps on the manager and the worker processes. You would send a User sig1 from the manager process then the worker would trap and send back a user sig2 acknowledging it was alive and kicking. If you didn't get your user sig2 you knew the worker was dead or dumb. This was all based on the interrupts so even if the process was busy it should respond pretty quick.\n\nLet me do some digging and if I can figure out how to apply that here I'll do so.", 
+            "date_created": "2013-08-29 21:40:19.823158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I may post a few of these tactics as WIP. I've tried 3 different ways to handle these IPC errors. One manages to fix the timing bug, but alters the service contract so much it breaks several other unrelated tests. Another handles the IPC error in the test framework, but it introduces bugs in other tests that make timing assumptions.\n\nI may have to come back to a very simple fix that isn't very elegant but the short of the issue comes from the fact that Python swallows the signal's originating PID and the test harness has three tiers of interacting PID. The solution will probably be to come up with some way to allow child processes to communicate with grand-parent processes.", 
+            "date_created": "2013-09-04 15:47:49.759100+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I pushed a pep8 fix, so gerrit assigned me the bug, but this is hartsock's fix so assigning back to him.", 
+            "date_created": "2013-09-05 13:32:22.691413+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "See: https://review.openstack.org/#/c/45121/", 
+            "date_created": "2013-09-10 17:52:11.707820+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/45121\nCommitted: http://github.com/openstack/nova/commit/4468475c5a01a26deb8a7b039f633802844090da\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4468475c5a01a26deb8a7b039f633802844090da\nAuthor: hartsocks <email address hidden>\nDate:   Wed Sep 4 08:31:48 2013 -0700\n\n    MultiprocessWSGITest wait for workers to die bug\n    \n    MultiprocessWSGITest.test_terminate_sigterm\n    fails because the wait for workers to die is unreliable.\n    \n    Parent process can now wait on child or grand-child\n    processes to complete before moving on. This allows\n    for grand-child (aka worker) processes to take as much\n    time as they need to shutdown. NOTE: If the processes\n    still take too long, they will be killed by the test\n    framework throwing the \"TIMEOUT\" exception.\n    \n    Fixed pep8 issue with python3\n    \n    closes bug #1218133\n    \n    Change-Id: I0d2e34463860a8fa59d6eef0ffbf63341a002e3d\n", 
+            "date_created": "2013-09-11 18:13:18.856082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The above commit seem to break the tests, perhaps python 2.6 specific? The changes doesn't seem to catch or wait for the process to terminate, if SIGTERM is used.\n\nTraceback (most recent call last):\n  File \"nova/tests/integrated/test_multiprocess_api.py\", line 200, in test_terminate_sigterm\n    self._terminate_with_signal(signal.SIGTERM)\n  File \"nova/tests/integrated/test_multiprocess_api.py\", line 191, in _terminate_with_signal\n    self.assertFalse(workers, 'OS processes left %r' % workers)\n  File \"/usr/lib64/python2.6/unittest.py\", line 320, in failIf\n    if expr: raise self.failureException, msg\nAssertionError: OS processes left [3532]", 
+            "date_created": "2013-09-11 21:48:29.556424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bhuvan"
+        }, 
+        {
+            "content": "Did this happen while running with another bug? This doesn't make much sense unless something is respawning new processes. Can I see the log files?", 
+            "date_created": "2013-09-12 00:37:55.247798+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "The log file size is 7.6M. I'm unable to upload to pastebin. Here you go:\n  http://livecipher.com/1218133.log\n\nI think, the original timeout 5 seconds should be preserved. It takes few seconds before the process and the children to be killed, be it with SIGKILL or SIGTERM signals.\n\nIf you refer the logs, the SIGTERM is sent to PID 21656, possibly a parent, but complain the children [21658, 21659] are left.\n//\nsent launcher_process pid: 21656 signal: 15\n//\n\nIn case you need more info, let me know.", 
+            "date_created": "2013-09-12 01:47:47.257317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bhuvan"
+        }, 
+        {
+            "content": "The original bug report was that the processes *did not* reliably exit in 5 seconds, the phrase \"should probably use something like a waitpid\" leads to the idea of waiting for the process to exit.\n\nThe use of a wait times makes the assumption that some number of instructions will *always* take less than 5 seconds. This is a really bad assumption. For one thing, a system may have more than one program on it these days and that extra load might mean your process which normally took 4.99 seconds to complete took 5.001 seconds. In fact, I think that's what the original bug reporter was thinking about.\n\nI can't think why this would have worked in test (this was tested by myself and Jenkins before it committed wasn't it?) but doesn't work now. So I've written something that should be very utterly generic. If this mechanism doesn't work then the assumptions that the test are working with are broken. ", 
+            "date_created": "2013-09-12 03:31:01.355123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/46184", 
+            "date_created": "2013-09-12 03:51:12.730229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Important documentation:\nhttp://en.wikipedia.org/wiki/Zombie_process\n\n\"On Unix and Unix-like computer operating systems, a zombie process or defunct process is a process that has completed execution but still has an entry in the process table. This entry is still needed to allow the parent process to read its child's exit status.\"\n\nSo, you need to wait for the reap... not just the exit. os.waitpid only waits to the exit.", 
+            "date_created": "2013-09-12 22:02:45.103630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "This should be ready to go.", 
+            "date_created": "2013-09-19 00:23:55.645537+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/46184\nCommitted: http://github.com/openstack/nova/commit/51199e5d0ee4cef4ba620283ca360c2fa3caa116\nSubmitter: Jenkins\nBranch:    master\n\ncommit 51199e5d0ee4cef4ba620283ca360c2fa3caa116\nAuthor: hartsocks <email address hidden>\nDate:   Wed Sep 11 20:48:09 2013 -0700\n\n    MultiprocessWSGITest wait for workers to die bug\n    \n    MultiprocessWSGITest.test_terminate_sigterm\n    fails because the wait for workers to die is unreliable.\n    \n    Parent process can now wait on child or grand-child\n    processes to complete before moving on. This allows\n    for grand-child (aka worker) processes to take as much\n    time as they need to shutdown. NOTE: If the processes\n    still take too long, they will be killed by the test\n    framework throwing the \"TIMEOUT\" exception.\n    \n    Reverts to using a ping signal to child process\n    to determine if the child process is live. Waits for\n    the signal call to fail, signaling process death.\n    \n    closes bug #1218133\n    \n    Change-Id: I08e17005508fe412f462773f9ab212cf0f10382f\n", 
+            "date_created": "2013-09-19 20:44:57.808695+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "To close the loop, we do not face this issue https://bugs.launchpad.net/nova/+bug/1218133/comments/7 anymore with the new fix.\n\nThank you, Shawn!", 
+            "date_created": "2013-09-20 16:24:29.969649+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bhuvan"
+        }, 
+        {
+            "content": "I think my bug 1230338 may be a duplicate. I came to the conclusion that the use of waitpid() in the previous version was done from the wrong process - seems that this fix removes it and instead checks the worker via kill(pid, 0). That works for me too.", 
+            "date_created": "2013-09-27 15:47:12.233524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }
+    ]
+}
