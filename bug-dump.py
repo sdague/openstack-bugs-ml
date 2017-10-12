@@ -86,6 +86,8 @@ def collect_bugs(project_name):
 
         nova_status = 'Unknown'
         nova_owner = 'Unknown'
+        nova_openned = None
+        nova_closed = None
         comments = []
         for m in bug.messages:
             comments.append(
@@ -99,6 +101,8 @@ def collect_bugs(project_name):
             if task.bug_target_name == project_name:
                 nova_status = task.status
                 nova_owner = task.assignee
+                nova_openned = task.date_created
+                nova_closed = task.date_closed
                 break
         title = bug.title.replace('"', "'")
         title = title.replace("\n", "")
@@ -118,6 +122,11 @@ def collect_bugs(project_name):
             "comments": comments,
             "tags": bug.tags
         }
+        if nova_openned:
+            bug_data['openned'] = nova_openned
+        if nova_closed:
+            bug_data['closed'] = nova_closed
+
         try:
             path = fname
             if not os.path.isdir(os.path.dirname(path)):
