@@ -1,0 +1,70 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:53:40.156320+00:00", 
+    "description": "Using the latest Nova Ironic compute drivers (either from Ironic or Nova) I'm hitting scheduling ERRORS:\n\nSep 08 15:26:45 localhost nova-scheduler[29761]: 2014-09-08 15:26:45.620 29761 DEBUG nova.scheduler.filters.compute_capabilities_filter [req-9e34510e-268c-40de-8433-d7b41017b54e None] extra_spec requirement 'amd64' does not match 'x86_64' _satisfies_extra_specs /opt/stack/venvs/nova/lib/python2.7/site-packages/nova/scheduler/filters/compute_capabilities_filter.py:70\n\nI've gone ahead and patched in https://review.openstack.org/#/c/117555/.\n\nThe issue seems to be that ComputeCapabilitiesFilter does not itself canonicalize instance_types when comparing them which will breaks existing TripleO baremetal clouds using x86_64 (amd64).", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Critical", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1366859", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 1366859, 
+    "index": 206, 
+    "openned": "2014-09-08 15:35:08.772829+00:00", 
+    "created": "2014-09-08 15:35:08.772829+00:00", 
+    "title": "Ironic: extra_spec requirement 'amd64' does not match 'x86_64'", 
+    "comments": [
+        {
+            "content": "Using the latest Nova Ironic compute drivers (either from Ironic or Nova) I'm hitting scheduling ERRORS:\n\nSep 08 15:26:45 localhost nova-scheduler[29761]: 2014-09-08 15:26:45.620 29761 DEBUG nova.scheduler.filters.compute_capabilities_filter [req-9e34510e-268c-40de-8433-d7b41017b54e None] extra_spec requirement 'amd64' does not match 'x86_64' _satisfies_extra_specs /opt/stack/venvs/nova/lib/python2.7/site-packages/nova/scheduler/filters/compute_capabilities_filter.py:70\n\nI've gone ahead and patched in https://review.openstack.org/#/c/117555/.\n\nThe issue seems to be that ComputeCapabilitiesFilter does not itself canonicalize instance_types when comparing them which will breaks existing TripleO baremetal clouds using x86_64 (amd64).", 
+            "date_created": "2014-09-08 15:35:08.772829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Ah, so when returning a dict from get_available_resources, the Ironic driver is reporting the compute host architecture in two places\n\n - The 'supported_instances' list  ( [[<arch>, <vmmode>, <hvtype>]])\n - The 'cpu_arch' extra specs field\n\nThen the filter is matching on the extra specs field.\n\nThe canonicalization of architecture and back compat workarounds I put in place were only targetting the 'supported_instances' list information.\n\nThe failure you're reporting here is because we canonicalized the data put into the extra spec, but don't canonicalize the data when checking it in the ComputeCapabilitiesFilter\n\nI don't know much about Ironic, but I'm curious as to why it is reporting a cpu_arch extra specs field at all, given that we already have a well specified way to report the architecture via the 'supported_instances' list and the ImagePropertiesFilter filter which AFAICT should serve the same purpose.\n\nSo I can see 3 possible fixes here, in order of my preference\n\n - Remove the cpu_arch extra_specs entirely and just use ImagePropertiesFilter instead\n - Stop canonicalizing the data in the 'cpu_arch' extra specs field (but *still* canonicalize supported_instances)\n - Add hack to ComputeCapabilitiesFilter to canonicalize match data when looking at 'cpu_arch' extra_spec", 
+            "date_created": "2014-09-09 08:17:16.956402+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I'm all for using the ImagePropertiesFilter but we should deal with this in a manner that doesn't break existing installations (particularly TripleO) if possible. Given existing DB data formats and such I was already considering and hacking on option #2 (Stop canonicalizing the data in the 'cpu_arch' extra specs field (but *still* canonicalize supported_instances)) so if we agree this is doable then I think that might be the best solution.\n\nThe hack to the ComputeCapabilitiesFilter seems really dirty given it is a generic extra_specs filter already... so it is also my least favorite.", 
+            "date_created": "2014-09-09 11:36:48.951829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Ok, so lets do Option 2 for Juno to fix the immediate problem in least effort way. Then we can suggest use of cpu_arch extra specs be deprecated in Juno, to be removed in Kilo, to give Triple0 time to adapt.", 
+            "date_created": "2014-09-09 13:03:56.238172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/120099", 
+            "date_created": "2014-09-09 14:04:15.210766+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/120107", 
+            "date_created": "2014-09-09 14:27:02.348517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Dan Prince (<email address hidden>) on branch: master\nReview: https://review.openstack.org/120107\nReason: The Nova change is already posted here: https://review.openstack.org/#/c/120099/\n\nI had posted this so as not to break CI... after discussing this on IRC it sounds like the plan is to subclass the new Nova drivers in the old Ironic locations so as not to break things.", 
+            "date_created": "2014-09-09 16:51:21.308103+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/120555", 
+            "date_created": "2014-09-10 19:27:28.671283+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/120099\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5fd0500e7e262c602dc7bbbff456326598da41bc\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5fd0500e7e262c602dc7bbbff456326598da41bc\nAuthor: Dan Prince <email address hidden>\nDate:   Tue Sep 9 09:58:35 2014 -0400\n\n    Ironic: don't canonicalize extra_specs data\n    \n    Don't canonicalize the cpu_arch extra_specs field. This is important\n    because the scheduler filters which use extra specs don't canonicalize\n    things either and as such you'll have mismatched fields causing\n    instances not to get scheduled.\n    \n    This was recently changed as part of the Ironic -> Nova driver patch\n    series. We still want to canonicalize supported_instances though...\n    \n    Change-Id: I9342213b5433113816142b1f737119065e9f077f\n    Closes-bug: #1366859\n", 
+            "date_created": "2014-09-13 18:47:21.880181+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/120555\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f9b0b730e598c42c50b4c115fb3a4daa53b0ae61\nSubmitter: Jenkins\nBranch:    master\n\ncommit f9b0b730e598c42c50b4c115fb3a4daa53b0ae61\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Sep 10 12:21:36 2014 -0700\n\n    Adds a test for raw_cpu_arch in _node_resource\n    \n    Commit 5fd0500e7e262c602dc7bbbff456326598da41bc\n    makes it such that the cpu_arch is not\n    made canonical for scheduling, this adds a unit\n    test to cover the change.\n    \n    Change-Id: I89080a0178b1098c2a297b7268fad279ece680c2\n    Related-Bug: #1366859\n", 
+            "date_created": "2014-09-14 15:17:56.633978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-10-01 07:35:13.937095+00:00"
+}

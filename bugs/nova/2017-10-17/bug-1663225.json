@@ -1,0 +1,60 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2017-07-28 12:43:08.621133+00:00", 
+    "description": "Affected configuration: Ironic installation with Ironic driver for nova.\n\nIf nova-compute service is down at the moment of execution 'nova delete' for instance, nova marks instance as 'deleted' even node is continue to run.\n\nSteps to reproduce:\n1. Prepare ironic/nova\n2. Start instance (nova boot/openstack server create)\n3. Wait until 'ACTIVE' state for instance.\n4. Stop nova-compute\n5. Wait until it become 'down' in 'nova service-list'\n5. Execute 'nova delete' command for instance.\n6. Start nova-compute serivce\n\nExpected result:\n- Instance sits in the 'deleting' state until nova-compute is not come back.\n- Node switch to 'cleaning/available' as soon as nova-compute come back\n- Tenant instance (baremetal server) stops to operate as soon as nova-compute is up.\nnova-compute is up.\n\nActual result:\n- Instance deleted almost instantly regardless of nova-compute status.\n- Node keeps 'active' state with filled in 'Instance UUID' field.\n- Tenant instance (baremetal server) continue to work after nova-compute is up to \"running_deleted_instance_action\" time.\n\nI believe this is incorrect behavior, because it allows tenants to continue to use services regardless of nova report that there are no instances are allocated to tenant.\n\nAffected version: newton.\n\nP.S. Normally nova (with libvirt/kvm driver) would keep instance in 'deleting' state until nova-compute is not come back, and remove it from server (from libvirt). Only after that nova marks instance as deleted in database. Ironic driver should do the same.", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Undecided", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1663225", 
+    "owner": "None", 
+    "id": 1663225, 
+    "index": 7937, 
+    "openned": "2017-02-09 12:49:42.718187+00:00", 
+    "created": "2017-02-09 12:49:42.718187+00:00", 
+    "title": "ironic does not clean or shutdown nodes if nova-compute is down at the moment of 'nova delete'", 
+    "comments": [
+        {
+            "content": "If nova-compute service is down at the moment of execution 'nova delete' for instance, node with this instance will never been cleaned/turned off after nova-compute start.\n\nSteps to reproduce:\n1. Prepare ironic/nova\n2. Start instance (nova boot/openstack server create)\n3. Wait until 'ACTIVE' state for instance.\n4. Stop nova-compute\n5. Wait until it become 'down' in 'nova service-list'\n5. Execute 'nova delete' command for instance.\n6. Start nova-compute serivce\n\nExpected result:\nCase 1:\n- Instance stuck in the 'deleting' state until nova-compute is not come back.\n- Node switch to 'cleaning/available' as soon as nova-compute come back\n- Tenant instance (baremetal server) stops to operate as soon as nova-compute is up.\nor\n- Instance deleted as usual\n- Node switch to 'cleaning/available' as soon as nova-compute come back\n- Tenant instance (baremetal server) stops to operate as soon as nova-compute is up.\n\nActual result:\n- Instance deleted as usual.\n- Node has 'active' state with filled in 'Instance UUID' field.\n- Tenant instance (baremetal server) continue to work after nova-compute is up and continue to do so forever (until node is put to 'deleted' state manually by system administrator).\n\nI believe this is very severe bug, because it allows tenants to continue to use services regardless of nova report that there are no tenant instances running.\n\nAffected version: newton.", 
+            "date_created": "2017-02-09 12:49:42.718187+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "Ironic and libvirt drivers should behave the same way as far as the API is concerned. When the compute node is down where the instance is running, the compute API hits this 'local delete' flow where it deletes the instance in the nova database:\n\nhttps://github.com/openstack/nova/blob/1f81311d501b156404d7463fec5b830ef404be8b/nova/compute/api.py#L1916\n\nWhat do you have for the value of running_deleted_instance_action in nova.conf? Is it \"reap\"?", 
+            "date_created": "2017-02-10 14:28:46.600354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Yes, it is 'reap'.", 
+            "date_created": "2017-02-13 13:27:57.104729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "Well, the current behaviour you describe looks correct to me. Like Matt said, when a compute is node, we still soft-delete the instance from a DB perspective (ie. mark it deleted rather than deleting the row) and then when the compute is back up, the compute reconciles with the DB given the above opt value corresponding to the reconciling strategy.\n\nWhen you describe 'libvirt would keep instance in deleting state', is that something you saw with your deployment ?", 
+            "date_created": "2017-02-15 16:29:14.171060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "I see that libvirt behavior in our production (mitaka/kvm).\n\nMain issue I reporting is that nova says that instance is deleted. Already. But it is running. If some abuse reports comes at this moment, operator will be misleaded by nova. Nova says that this instance is no longer running, but in reality it is still in tenant possession.\n\nThis does not sound as problem for devstack deployments, but in real world this is a disaster.", 
+            "date_created": "2017-02-15 16:39:13.358805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-04-17 04:17:28.528084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "This problem exists in Ironic regardless of bot attempts to sweep it under the expiration rug.", 
+            "date_created": "2017-07-10 13:18:14.306080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "I think on the Nova side this is pretty much working as designed. If there is different / better ironic behavior, perhaps it could be brought up with the Ironic team?", 
+            "date_created": "2017-07-28 12:43:07.952602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2017-07-28 12:42:36.864884+00:00"
+}

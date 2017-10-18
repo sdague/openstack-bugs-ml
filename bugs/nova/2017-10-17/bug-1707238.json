@@ -1,0 +1,76 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-08-28 09:54:57.642864+00:00", 
+    "description": "In an attempt to fix a different bug [1] where a later try to detach a volume failed if the guest was busy and ignored the request to detach from the live domain, a new bug was introduced where a later try to detach a volume silently passes even though the device is still attached to the live domain.\n\nThis bug is serious because now it's possible for a volume to be attached to two live domains and data corruption can occur. We should be trying to detach from the live domain even if we had already detached from the persistent domain in the past.\n\n[1] https://bugs.launchpad.net/nova/+bug/1633236", 
+    "tags": [
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1707238", 
+    "owner": "https://api.launchpad.net/1.0/~melwitt", 
+    "id": 1707238, 
+    "index": 2117, 
+    "openned": "2017-07-28 15:48:05.997990+00:00", 
+    "created": "2017-07-28 15:48:05.997990+00:00", 
+    "title": "detach_device_with_retry doesn't detach from live domain if persistent domain was already detached in the past", 
+    "comments": [
+        {
+            "content": "In an attempt to fix a different bug [1] where a later try to detach a volume failed if the guest was busy and ignored the request to detach from the live domain, a new bug was introduced where a later try to detach a volume silently passes even though the device is still attached to the live domain.\n\nThis bug is serious because now it's possible for a volume to be attached to two live domains and data corruption can occur. We should be trying to detach from the live domain even if we had already detached from the persistent domain in the past.\n\n[1] https://bugs.launchpad.net/nova/+bug/1633236", 
+            "date_created": "2017-07-28 15:48:05.997990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/488545", 
+            "date_created": "2017-07-28 17:26:43.549092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Here are the steps to reproduce the bug:\n\n1. Create an instance.\n$ nova boot --flavor m1.nano --image cirros-0.3.5-x86_64-disk repro\n\n2. Create a volume.\n$ cinder create --name repro 1\n\n3. Attach the volume to the instance.\n$ nova volume-attach repro 552e833a-5c56-45c0-a670-7cfddaa8112b\n\n4. See the device on the domain.\n$ virsh domblklist 1\nTarget     Source\n------------------------------------------------\nvda        /opt/stack/data/nova/instances/b626887f-aa9a-4d91-864b-ce4733f5cc24/disk\nvdb        /dev/sdc\n\n5. Create XML to use for the detach from persistent domain only.\n$ cat detach.xml \n<disk type='block' device='disk'>\n  <driver name='qemu' type='raw' cache='none' io='native'/>\n  <source dev='/dev/sdc'/>\n  <backingStore/>\n  <target dev='vdb' bus='virtio'/>\n  <serial>552e833a-5c56-45c0-a670-7cfddaa8112b</serial>\n  <alias name='virtio-disk1'/>\n  <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x0'/>\n</disk>\n\n6. Detach from persistent domain only.\n$ virsh detach-device 1 detach.xml --config\nDevice detached successfully\n\n7. Detach the volume via the Nova API.\n$ nova volume-detach repro 552e833a-5c56-45c0-a670-7cfddaa8112b\n\nExpected Result: Device is no longer attached to the live domain.\n$ virsh domblklist 1 \nTarget     Source\n------------------------------------------------\nvda        /opt/stack/data/nova/instances/b626887f-aa9a-4d91-864b-ce4733f5cc24/disk\n\n\nActual Result: Device is still attached to the live domain.\n$ virsh domblklist 1 \nTarget     Source\n------------------------------------------------\nvda        /opt/stack/data/nova/instances/b626887f-aa9a-4d91-864b-ce4733f5cc24/disk\nvdb        /dev/sdc\n", 
+            "date_created": "2017-07-28 20:53:28.445369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/488545\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d39934ad6afb7e2729bb45235f363ada86012d15\nSubmitter: Jenkins\nBranch:    master\n\ncommit d39934ad6afb7e2729bb45235f363ada86012d15\nAuthor: melanie witt <email address hidden>\nDate:   Fri Jul 28 17:06:53 2017 +0000\n\n    Detach device from live domain even if not found on persistent\n    \n    In a past attempt to fix a bug [1], we started raising DeviceNotFound\n    if a device wasn't found on the persistent domain. This was to address\n    a scenario where the guest ignored the detach from the live domain\n    because it was busy and we wanted to avoid failing a later detach\n    request to the user (compute handles DeviceNotFound).\n    \n    Unfortunately, in the above case, a later detach request won't fail to\n    the user but it also won't detach from the live domain. It sees the\n    device already detached from the persistent domain and doesn't attempt\n    to detach from the live domain.\n    \n    This is a serious problem because it's possible for a volume to be\n    attached to two live domains and data corruption can occur.\n    \n    This adds an attempt to detach from the live domain even if we had\n    already detached from the persistent domain in the past.\n    \n    Closes-Bug: #1707238\n    \n    [1] https://review.openstack.org/386257\n    \n    Change-Id: I8cd056fa17184a98c31547add0e9fb2d363d0908\n", 
+            "date_created": "2017-08-07 21:47:43.505962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/491625", 
+            "date_created": "2017-08-07 23:11:07.957230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/491630", 
+            "date_created": "2017-08-07 23:29:27.583091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0rc1 release candidate.", 
+            "date_created": "2017-08-11 12:27:08.773616+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/491625\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=539d3bbb8aced7703914bb7ef0b72ac3a471c54e\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 539d3bbb8aced7703914bb7ef0b72ac3a471c54e\nAuthor: melanie witt <email address hidden>\nDate:   Fri Jul 28 17:06:53 2017 +0000\n\n    Detach device from live domain even if not found on persistent\n    \n    In a past attempt to fix a bug [1], we started raising DeviceNotFound\n    if a device wasn't found on the persistent domain. This was to address\n    a scenario where the guest ignored the detach from the live domain\n    because it was busy and we wanted to avoid failing a later detach\n    request to the user (compute handles DeviceNotFound).\n    \n    Unfortunately, in the above case, a later detach request won't fail to\n    the user but it also won't detach from the live domain. It sees the\n    device already detached from the persistent domain and doesn't attempt\n    to detach from the live domain.\n    \n    This is a serious problem because it's possible for a volume to be\n    attached to two live domains and data corruption can occur.\n    \n    This adds an attempt to detach from the live domain even if we had\n    already detached from the persistent domain in the past.\n    \n    Closes-Bug: #1707238\n    \n    [1] https://review.openstack.org/386257\n    \n    Change-Id: I8cd056fa17184a98c31547add0e9fb2d363d0908\n    (cherry picked from commit d39934ad6afb7e2729bb45235f363ada86012d15)\n", 
+            "date_created": "2017-08-16 02:30:55.319137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/491630\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=dd925025543bfd1c826db728caf9832f44c1bacd\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit dd925025543bfd1c826db728caf9832f44c1bacd\nAuthor: melanie witt <email address hidden>\nDate:   Fri Jul 28 17:06:53 2017 +0000\n\n    Detach device from live domain even if not found on persistent\n    \n    In a past attempt to fix a bug [1], we started raising DeviceNotFound\n    if a device wasn't found on the persistent domain. This was to address\n    a scenario where the guest ignored the detach from the live domain\n    because it was busy and we wanted to avoid failing a later detach\n    request to the user (compute handles DeviceNotFound).\n    \n    Unfortunately, in the above case, a later detach request won't fail to\n    the user but it also won't detach from the live domain. It sees the\n    device already detached from the persistent domain and doesn't attempt\n    to detach from the live domain.\n    \n    This is a serious problem because it's possible for a volume to be\n    attached to two live domains and data corruption can occur.\n    \n    This adds an attempt to detach from the live domain even if we had\n    already detached from the persistent domain in the past.\n    \n    Closes-Bug: #1707238\n    \n    [1] https://review.openstack.org/386257\n    \n    Change-Id: I8cd056fa17184a98c31547add0e9fb2d363d0908\n    (cherry picked from commit d39934ad6afb7e2729bb45235f363ada86012d15)\n    (cherry picked from commit 539d3bbb8aced7703914bb7ef0b72ac3a471c54e)\n", 
+            "date_created": "2017-08-17 03:18:09.554588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.7 release.", 
+            "date_created": "2017-08-22 11:39:03.297004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.8 release.", 
+            "date_created": "2017-08-28 09:54:57.012160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-08-07 21:47:40.871322+00:00"
+}

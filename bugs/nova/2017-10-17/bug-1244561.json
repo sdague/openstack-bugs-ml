@@ -1,0 +1,58 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-11-19 19:05:33.034129+00:00", 
+    "description": "The code version:\nThe lastest version of master.\n\nThe API version:\nV2\n\nDetails:\nNow, i have two hosts.The one named \"A\" runs all the openstack services, and the other one named \"B\" only runs nova-computer and quantum-agent services.\n1.Create a vm on the host \"B\".\n2.Shutdown host B.\n3.Delete the vm on the host \"B\".\n4.Start host B, i find that the data of the deleted vm is still on \"/opt/stack/data/nova/instances\" directory.And use \"virsh list --all\" command, i find the vm with \"shutoff\" state.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1244561", 
+    "owner": "None", 
+    "id": 1244561, 
+    "index": 5501, 
+    "openned": "2013-10-25 07:39:08.680502+00:00", 
+    "created": "2013-10-25 07:39:08.680502+00:00", 
+    "title": "Delete vm when the host shutdown.", 
+    "comments": [
+        {
+            "content": "The code version:\nThe lastest version of master.\n\nThe API version:\nV2\n\nDetails:\nNow, i have two hosts.The one named \"A\" runs all the openstack services, and the other one named \"B\" only runs nova-computer and quantum-agent services.\n1.Create a vm on the host \"B\".\n2.Shutdown host B.\n3.Delete the vm on the host \"B\".\n4.Start host B, i find that the data of the deleted vm is still on \"/opt/stack/data/nova/instances\" directory.And use \"virsh list --all\" command, i find the vm with \"shutoff\" state.", 
+            "date_created": "2013-10-25 07:39:08.680502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~w-wanghong"
+        }, 
+        {
+            "content": "What is your expected behavior for such case? Thanks.", 
+            "date_created": "2013-10-27 09:13:36.789709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "I think, it shuld have the same behavior to the case of deleting vm when host is running. If i delete vm when host is running, the data of the deleted vm on the disk will be deleted and i cannot list the deleted vm with \"virsh list --all\" command.", 
+            "date_created": "2013-10-29 01:44:40.642718+00:00", 
+            "author": "https://api.launchpad.net/1.0/~w-wanghong"
+        }, 
+        {
+            "content": "Are there any errors in the logs when you delete the instance and host B is shutdown?  And what does 'shutdown' mean in this case?  You shutdown the operating system on host B (your compute node), you simply stopped the compute service on host B, other?\n\nHow long did you wait before you checked the status of the instance after you restarted host B?  I'm wondering if the periodic task that syncs the hypervisor with the database automatically shutdown/deleted the instance once host B was back up.", 
+            "date_created": "2013-11-23 20:58:49.507731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think in this case, \" B is shutdown\" means B is power off. When we try to delete the instance which on the dead host, the consequence may depend on the time which let openstack really think this host is down.\n\nIf rpc message of delete instance have been sent, these data would be totally deleted including cache image and disk when B' s service  restart. \n\nOtherwise, soft-delete will be execute, just flush the database and tell us that this instance is invalid. But the disk image  is still exists in host's disk, forever, as openstack don't have periodic task to clean these disk image but base image.\n\nSo,  shall we think about adding some work to clean disk image into periodic task. I think this question is wanghong really want to express.\n\nBTW, to matt, what's the name of  periodic task that syncs the hypervisor with the database ?", 
+            "date_created": "2013-11-27 00:46:15.917482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lvhancy"
+        }, 
+        {
+            "content": "The _sync_power_states periodic tasks in the nova.compute.manager is what I was thinking of:\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L4705", 
+            "date_created": "2013-11-27 02:44:52.193910+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I do a test as what wanghong did. \n\nFirst, I run a vm in the host (another machine), when vm is running, I power off the host.\n\nAfter the host power off , I wait for a few minutes(> 60s of service_down_time )  and  delete the  vm by horizon.  The nova-api.log shows  info like:\n\n......[instance: 8a2158c1-c655-4181-938c-38b559dc1070] instance's host openstack-HP-Compaq-8100-Elite-CMT-PC is down, deleting from database\n\nand the vm_state in mysql  became \"deleted\": \n+--------------------------------------+----------+\n| uuid                                 | vm_state |\n+--------------------------------------+----------+\n| 8a2158c1-c655-4181-938c-38b559dc1070 | deleted  |\n+--------------------------------------+----------+\n\nthen, I start the host and find that the dir-path :/opt/stack/data/nova/instances/8a2158c1-c655-4181-938c-38b559dc1070 exists.  Using \"virsh list --all\" command can find the vm with \"shutoff\" state.  These are same as what wanghong described above.\n\nBut after about 5 minutes, the nova-compute.log output :\n2013-12-16 15:26:06.827 DEBUG nova.compute.manager [-] There are 1 instances to clean from (pid=2828) _run_pending_deletes /opt/stack/nova/nova/compute/manager.py:5182\n2013-12-16 15:26:06.827 DEBUG nova.compute.manager [-] [instance: 8a2158c1-c655-4181-938c-38b559dc1070] Instance has had 0 of 5 cleanup attempts from (pid=2828) _run_pending_deletes /opt/stack/nova/nova/compute/manager.py:5190\n2013-12-16 15:26:06.828 INFO nova.virt.libvirt.driver [-] [instance: 8a2158c1-c655-4181-938c-38b559dc1070] Deleting instance files /opt/stack/data/nova/instances/8a2158c1-c655-4181-938c-38b559dc1070\n2013-12-16 15:26:06.848 INFO nova.virt.libvirt.driver [-] [instance: 8a2158c1-c655-4181-938c-38b559dc1070] Deletion of /opt/stack/data/nova/instances/8a2158c1-c655-4181-938c-38b559dc1070 complete\n\nI search in /opt/stack/data/nova/instances/ and find 8a2158c1-c655-4181-938c-38b559dc1070 not exists. \nAccording to the log I find the _run_pending_deletes method (a periodic_task) of ComputeManager, this may be the reason why the instance data been deleted:\n     if attempts < CONF.maximum_instance_delete_attempts:\n                    success = self.driver.delete_instance_files(instance)\n\nIt is worth mentioning that after the instance data been deleted,  an error info occurs in nova-compute.log:\n2013-12-16 15:27:06.951 AUDIT nova.compute.resource_tracker [-] Auditing locally available compute resources\n2013-12-16 15:27:06.952 DEBUG nova.virt.libvirt.driver [-] ........ from (pid=2828) update_status /opt/stack/nova/nova/virt/libvirt/driver.py:4993\n2013-12-16 15:27:06.981 ERROR nova.virt.libvirt.driver [-] Getting disk size of instance-00000002: [Errno 2] No such file or directory: '/opt/stack/data/nova/instances/8a2158c1-c655-4181-938c-38b559dc1070/disk' \n\nSo, is this a bug or not?", 
+            "date_created": "2013-12-16 09:05:40.044790+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jiadong-jia"
+        }, 
+        {
+            "content": "I think that after deleting instance files in _run_pending_deletes,  the instance should also be removed from the hypervisor.", 
+            "date_created": "2013-12-18 01:34:46.771399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jiadong-jia"
+        }
+    ], 
+    "closed": "2014-11-19 19:05:30.061680+00:00"
+}

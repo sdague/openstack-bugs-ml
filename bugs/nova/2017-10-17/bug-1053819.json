@@ -1,0 +1,48 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2012-12-13 15:20:32.887759+00:00", 
+    "description": "in my devstack all in one installation, I created two tenant, and each tenant has a subnet (10.0.0.0/24), and then start two instance each tenant, after instance started up. I check the iptable rules. \n\ninstances of tenant1:\n# nova list\n+--------------------------------------+-------+--------+---------------+\n| ID                                   | Name  | Status | Networks      |\n+--------------------------------------+-------+--------+---------------+\n| a0c528b9-c5cc-49b9-aa5c-f680b739f385 | test1 | ACTIVE | net1=10.0.0.3 |\n| 7f144411-dcee-4672-bb5d-e4b1d19677dd | test2 | ACTIVE | net1=10.0.0.4 |\n+--------------------------------------+-------+--------+---------------+\n\ninstances of tenant2:\n+--------------------------------------+-------+--------+---------------+\n| ID                                   | Name  | Status | Networks      |\n+--------------------------------------+-------+--------+---------------+\n| 880a0ce4-eae4-4850-9684-32b5de8a6eca | test1 | ACTIVE | net1=10.0.0.3 |\n| 60b40131-2070-4090-9720-e77579e43de7 | test2 | ACTIVE | net1=10.0.0.4 |\n+--------------------------------------+-------+--------+---------------+\n\niptable rules:\n\n# iptables-save\n...\n-A nova-compute-local -d 10.0.0.3/32 -j nova-compute-inst-1\n-A nova-compute-local -d 10.0.0.4/32 -j nova-compute-inst-2\n-A nova-compute-local -d 10.0.0.3/32 -j nova-compute-inst-3\n-A nova-compute-local -d 10.0.0.4/32 -j nova-compute-inst-4\n...\n\nfrom the iptable rules, we can see that the instances with the same ip address will go through the same iptable rules which is not as we expected. More important,  one tenant's security group setting may impact other tenant's.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1053819", 
+    "owner": "None", 
+    "id": 1053819, 
+    "index": 4376, 
+    "openned": "2012-09-24 17:49:10.963418+00:00", 
+    "created": "2012-09-21 05:35:14.701496+00:00", 
+    "title": "nova security group iptables rules conflict for overlapping subnets", 
+    "comments": [
+        {
+            "content": "in my devstack all in one installation, I created two tenant, and each tenant has a subnet (10.0.0.0/24), and then start two instance each tenant, after instance started up. I check the iptable rules. \n\ninstances of tenant1:\n# nova list\n+--------------------------------------+-------+--------+---------------+\n| ID                                   | Name  | Status | Networks      |\n+--------------------------------------+-------+--------+---------------+\n| a0c528b9-c5cc-49b9-aa5c-f680b739f385 | test1 | ACTIVE | net1=10.0.0.3 |\n| 7f144411-dcee-4672-bb5d-e4b1d19677dd | test2 | ACTIVE | net1=10.0.0.4 |\n+--------------------------------------+-------+--------+---------------+\n\ninstances of tenant2:\n+--------------------------------------+-------+--------+---------------+\n| ID                                   | Name  | Status | Networks      |\n+--------------------------------------+-------+--------+---------------+\n| 880a0ce4-eae4-4850-9684-32b5de8a6eca | test1 | ACTIVE | net1=10.0.0.3 |\n| 60b40131-2070-4090-9720-e77579e43de7 | test2 | ACTIVE | net1=10.0.0.4 |\n+--------------------------------------+-------+--------+---------------+\n\niptable rules:\n\n# iptables-save\n...\n-A nova-compute-local -d 10.0.0.3/32 -j nova-compute-inst-1\n-A nova-compute-local -d 10.0.0.4/32 -j nova-compute-inst-2\n-A nova-compute-local -d 10.0.0.3/32 -j nova-compute-inst-3\n-A nova-compute-local -d 10.0.0.4/32 -j nova-compute-inst-4\n...\n\nfrom the iptable rules, we can see that the instances with the same ip address will go through the same iptable rules which is not as we expected. More important,  one tenant's security group setting may impact other tenant's.", 
+            "date_created": "2012-09-21 05:35:14.701496+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ljjjustin"
+        }, 
+        {
+            "content": "Yes, all parts of nova assumes that IPs can never overlap.  This is similar to the issues with nova-metadata server and overlapping IPs.  \n\nDuring Folsom we had wanted to get security groups ported over to Quantum, which would have meant that we add support for overlapping IPs as well as multiple interface per VM.  However, we ran out of time, and so we have the partial solution of utilizing Nova security groups, with those limits.  Not great, I agree.  \n\nTo me, the real concern here is that there is no good way to make sure nova metadata & security groups are only used if Quantum has no overlapping IPs.  One thing we had discussed was potentially having a flag in Quantum that indicates whether overlapping IPs should be allowed or not.  We could default this to false, and then mention the limitations around metadata + security groups where we document how to enable overlapping IPs in Quantum.  The concern I have with this approach is that defaulting to not allowing overlapping IPs seems like the wrong long-term default for quantum, once quantum itself implements security groups (and we modify the metadata mechanism to handle overlapping IPs).  Outside of that, I think this is just a question of documentation, unless someone else sees anything super bright.  \n\n", 
+            "date_created": "2012-09-21 06:50:58.646919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "So there are two high-level approaches to this.\n\n1) try to patch nova security groups to handle overlapping IPs.\n2) just focus on finishing the existing design of security groups within quantum, which implicitly will handle overlapping IPs.\n\nSome quick thoughts based on how we might perform #1 in a non-invasive way: \n- add an ensure namespace method to linux-net\n- add a delete namespace method to linux-net\n- for LibvirtHybridOVSBridgeDriverin nova/virt/libvirt/vif.py, ,plug() create the bridge and bridge-side veth device and place them into a instance specific (or vif-specific) namespace.  We could do something similar for the BridgeDriver to support Linux Bridge plugin.  \n- modify nova/virt/firewall.py, and create a NamespaceIPtablesFirewallDriver.  This driver would be a \"meta driver\", creating a separate instance of the normal IPtablesFirewallDriver for each namespace. \n- when an instance id destroyed, destroy the instance of IPtablesFirewallDriver for that instance/vif.\n- when a vif is unplugged(), destroy the corresponding namespace. \n\n", 
+            "date_created": "2012-09-24 17:58:19.659865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Note: as a safety measure on the quantum side, I would consider adding a flag to prevent inadvertently creating subnets that overlap.  ", 
+            "date_created": "2012-09-24 20:53:38.831920+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "for folsom, we added a flag and new default setting for quantum to avoid overlapping IPs unless explicitly enabled.  \n\nin grizzly quantum will implement its own security groups, so moving this to won't fix. ", 
+            "date_created": "2012-09-25 21:14:48.456780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "seems like I do not have the permissions to set won't fix for nova.  hoping someone else will...", 
+            "date_created": "2012-09-25 21:15:56.226249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }
+    ], 
+    "closed": "2012-12-13 15:20:31.482531+00:00"
+}

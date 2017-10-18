@@ -1,0 +1,66 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-11-22 12:59:48.773740+00:00", 
+    "description": "The neutron full job is exhibiting a rather high number of cases where network-vif-plugged timeout are reported.\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOiBcIlRpbWVvdXQgd2FpdGluZyBmb3IgdmlmIHBsdWdnaW5nIGNhbGxiYWNrIGZvciBpbnN0YW5jZVwiIiwiZmllbGRzIjpbXSwib2Zmc2V0IjowLCJ0aW1lZnJhbWUiOiIxNzI4MDAiLCJncmFwaG1vZGUiOiJjb3VudCIsInRpbWUiOnsidXNlcl9pbnRlcnZhbCI6MH0sInN0YW1wIjoxNDAzNjA5MTk0NDg4LCJtb2RlIjoiIiwiYW5hbHl6ZV9maWVsZCI6IiJ9\n\n95.78% of this kind of messages appear for the neutron full job. However, only a fraction of those cause build failures, but that's because the way the tests are executed.\nThis error is currently being masked by another bug as tempest tries to get the console log of a VM in error state: https://bugs.launchpad.net/tempest/+bug/1332414\n\nThis bug will target both neutron and nova pending a better triage.\nFixing this is of paramount importance to get the full job running.\n\nNote: This is different from https://bugs.launchpad.net/nova/+bug/1321872 and https://bugs.launchpad.net/nova/+bug/1329546", 
+    "tags": [
+        "in-stable-icehouse", 
+        "neutron-full-job"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1333654", 
+    "owner": "https://api.launchpad.net/1.0/~salvatore-orlando", 
+    "id": 1333654, 
+    "index": 6210, 
+    "openned": "2014-06-24 11:34:04.663384+00:00", 
+    "created": "2014-06-24 11:34:04.663384+00:00", 
+    "title": "Timeout waiting for vif plugging callback for instance", 
+    "comments": [
+        {
+            "content": "The neutron full job is exhibiting a rather high number of cases where network-vif-plugged timeout are reported.\nhttp://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOiBcIlRpbWVvdXQgd2FpdGluZyBmb3IgdmlmIHBsdWdnaW5nIGNhbGxiYWNrIGZvciBpbnN0YW5jZVwiIiwiZmllbGRzIjpbXSwib2Zmc2V0IjowLCJ0aW1lZnJhbWUiOiIxNzI4MDAiLCJncmFwaG1vZGUiOiJjb3VudCIsInRpbWUiOnsidXNlcl9pbnRlcnZhbCI6MH0sInN0YW1wIjoxNDAzNjA5MTk0NDg4LCJtb2RlIjoiIiwiYW5hbHl6ZV9maWVsZCI6IiJ9\n\n95.78% of this kind of messages appear for the neutron full job. However, only a fraction of those cause build failures, but that's because the way the tests are executed.\nThis error is currently being masked by another bug as tempest tries to get the console log of a VM in error state: https://bugs.launchpad.net/tempest/+bug/1332414\n\nThis bug will target both neutron and nova pending a better triage.\nFixing this is of paramount importance to get the full job running.\n\nNote: This is different from https://bugs.launchpad.net/nova/+bug/1321872 and https://bugs.launchpad.net/nova/+bug/1329546", 
+            "date_created": "2014-06-24 11:34:04.663384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "It seems the root cause of this bug is a missing check in the server_external_events extension.\nThe server_external_events extension handles notifications from Neutron for VIF plug events.\nWhen a VIF is plugged, a network-vif-plugged event is sent; when a VIF is unplugged neutron sends a network-vif-unplugged.\nIn order to optimize communication between these two services,  Neutron packs events together when possible.\n\nOn the other hand, when processing multiple events on the nova side, if processing for one of those events fails for any reason - all the other events are not processed anymore.\n\nIn the specific case of this bug, we always observe the network-vif-plugged being correctly sent from the nova side. However this event is not processed because in the same request there was also a network-vif-unplugged which failed. The traceback in nova looks like this [1].\n\nThe failure is happening because the server-external-events controller is trying to dispatch this event to a compute node; unfortunately the instance for which the vif is being unplugged does not have an host. This apparently weird condition however can happen in a few instances. In this case, it's being triggered by a shelve action [2].\n\nIn this case the network-vif-unplugged should not be processed simply because there's nothing to do. In general, when more events are packed into a single call to server-external-events, failure in processing one event should not stop event processing. This API extension is not supposed to have an all-or-none behaviour, so it's ok to proceed in case of failures.\n\nQ: So what are you going to do?\nA: log an exception in case of failure while dispatching an event and move on to the next event.\nQ: Why are you doing this?\nA: To prevent an error occurring on an instance to affect the correct spawning of another instance. Also to remove the 1st reason of failure of the neutron full job.\nQ: Man, you're ignoring an exception. This is bad. In some communities you might be hanged for this!\nA: If you look at the current code there's no handling of any exception whatsoever - and neutron does not bother whether it receives a 200 or a 500, so in my opinion exceptions are already ignored\nQ: Yeah but it seems there might be some design flaw here, and you should address that rather than put some tape or hiding the dust under the carpet.\nA: I agree with the first part of the statement, not really with the latter. Neutron packs events together only to minimize the number of calls to nova. It is a bug if a failure in one event prevents processing of the others. It is however agreeable that maybe neutron should be informed of which events where processed successfully and which ones not.\nQ: How do I know you're not lying? Show me a logstash query!\nA: This is not easy. It's not easy to build a query to find situations where more than event is packed together and then one of those events fails. The failure itself is rather common - and in most cases it does not cause a build failure [3]. However, looking only at failed builds when this exception appears, it's very likely to find exactly this failure mode [4].\nQ: I've seen it happens only with the full job. Why is that?\nA: Because the smoke job is not parallel. Without parallelism it is not possible to get multiple events stashed together from neutron to nova.\n\n\n[1] http://logs.openstack.org/59/96459/3/check/check-tempest-dsvm-neutron-full/7ff9d9e/logs/screen-n-api.txt.gz?#_2014-06-29_10_13_54_969\n[2] http://logs.openstack.org/59/96459/3/check/check-tempest-dsvm-neutron-full/7ff9d9e/logs/screen-n-api.txt.gz?#_2014-06-29_10_13_50_346\n[3] http://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiQ2F1Z2h0IGVycm9yOiBVbmFibGUgdG8gZmluZCBob3N0IGZvciBJbnN0YW5jZVwiIEFORCB0YWdzOlwic2NyZWVuLW4tYXBpLnR4dFwiIiwiZmllbGRzIjpbXSwib2Zmc2V0IjowLCJ0aW1lZnJhbWUiOiIxNzI4MDAiLCJncmFwaG1vZGUiOiJjb3VudCIsInRpbWUiOnsidXNlcl9pbnRlcnZhbCI6MH0sInN0YW1wIjoxNDA0MTY1NjY2MDg3LCJtb2RlIjoiIiwiYW5hbHl6ZV9maWVsZCI6IiJ9\n[4] http://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiQ2F1Z2h0IGVycm9yOiBVbmFibGUgdG8gZmluZCBob3N0IGZvciBJbnN0YW5jZVwiIEFORCBidWlsZF9zdGF0dXM6XCJGQUlMVVJFXCIgQU5EIHRhZ3M6XCJzY3JlZW4tbi1hcGkudHh0XCIiLCJmaWVsZHMiOltdLCJvZmZzZXQiOjAsInRpbWVmcmFtZSI6IjE3MjgwMCIsImdyYXBobW9kZSI6ImNvdW50IiwidGltZSI6eyJ1c2VyX2ludGVydmFsIjowfSwic3RhbXAiOjE0MDQxNjU2Mzk1NjEsIm1vZGUiOiIiLCJhbmFseXplX2ZpZWxkIjoiIn0=\n", 
+            "date_created": "2014-06-30 22:04:33.575113+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "At the end of the day the exception was raised even before dispatching the call to the RPC layer, so the bug should be fixable in an even easier way - just by avoiding evens for instances without an host are processed.\n\nLooking at how the notification process works, it seems it won't make any harm to skip them.", 
+            "date_created": "2014-07-01 06:35:31.100376+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "Addressed by: https://review.openstack.org/#/c/103865/\n\nI'm not sure if I'm missing something in the commit message, but it was not automatically added.", 
+            "date_created": "2014-07-01 12:47:55.068302+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/103865\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4f8ccd7b95c27180a1cfe689e3c6f46bde5f803b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4f8ccd7b95c27180a1cfe689e3c6f46bde5f803b\nAuthor: Salvatore Orlando <email address hidden>\nDate:   Mon Jun 30 16:29:32 2014 -0700\n\n    Do not process events for instances without host\n    \n    In some cases Neutron might send events such as 'VIF unplugged'\n    for instances which are either being deleted or shelved. When\n    that happens there will be a failure in dispatching the event\n    to the appropriate compute node - as there is no host for the\n    instance.\n    \n    As multiple neutron events can be stashed in a single call\n    it is important to avoid that this kind of errors will prevent\n    processing of other events in the same call.\n    \n    This patch does not process events for instances without a host,\n    marking them as failed.\n    \n    When the above condition occurs, the create event request will\n    return a 207 response code. For specific events, a 422\n    unprocessable entity code will be set.\n    \n    This patch also preserve the characteristic that events are\n    returned in the response in the same order they were found in\n    the request.\n    \n    Change-Id: I18062b81e50c722ec96b4296ac39384493683ae3\n    Closes-Bug: #1333654\n", 
+            "date_created": "2014-07-22 16:54:01.316602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/108806", 
+            "date_created": "2014-07-22 19:01:56.812063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/109798", 
+            "date_created": "2014-07-26 06:33:20.350268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/109798\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=811cab7f3d2cfd4488dd29df59a95df6e1f85a06\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 811cab7f3d2cfd4488dd29df59a95df6e1f85a06\nAuthor: Salvatore Orlando <email address hidden>\nDate:   Mon Jun 30 16:29:32 2014 -0700\n\n    Do not process events for instances without host\n    \n    In some cases Neutron might send events such as 'VIF unplugged'\n    for instances which are either being deleted or shelved. When\n    that happens there will be a failure in dispatching the event\n    to the appropriate compute node - as there is no host for the\n    instance.\n    \n    As multiple neutron events can be stashed in a single call\n    it is important to avoid that this kind of errors will prevent\n    processing of other events in the same call.\n    \n    This patch does not process events for instances without a host,\n    marking them as failed.\n    \n    When the above condition occurs, the create event request will\n    return a 207 response code. For specific events, a 422\n    unprocessable entity code will be set.\n    \n    This patch also preserve the characteristic that events are\n    returned in the response in the same order they were found in\n    the request.\n    \n    Change-Id: I18062b81e50c722ec96b4296ac39384493683ae3\n    Closes-Bug: #1333654\n    (cherry picked from commit 4f8ccd7b95c27180a1cfe689e3c6f46bde5f803b)\n", 
+            "date_created": "2014-07-31 18:53:10.222989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/108806\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2014-11-22 12:59:48.038395+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-07-23 15:08:57.877792+00:00"
+}

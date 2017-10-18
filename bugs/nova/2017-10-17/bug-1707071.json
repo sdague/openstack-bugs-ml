@@ -1,0 +1,87 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-10-12 23:43:12.096883+00:00", 
+    "description": "As far back as Ocata, compute nodes that manage allocations will end up overwriting allocations from other compute nodes when doing a migration. This stems from the fact that the Resource Tracker was designed to manage a per-compute-node set of accounting, but placement is per-instance accounting. When we try to create/update/delete allocations for instances on compute nodes from the existing resource tracker code paths, we end up deleting allocations that apply to other compute nodes in the process.\n\nFor example, when an instance A is running against compute1, there is an allocation for its resources against that node. When migrating that instance to compute2, the target compute (or scheduler) may create allocations for instance A against compute2, which overwrite those for compute1. Then, compute1's periodic healing task runs, and deletes the allocation for instance A against compute2, replacing it with one for compute1. When migration completes, compute2 heals again and overwrites the allocation with one for the new home of the instance. Then, compute1 may delete the allocation it thinks it owns, followed finally by another heal on compute2. While this is going on, the scheduler (via placement) does not have a consistent view of resources to make proper decisions.\n\nIn order to fix this, we need a combination of changes:\n\n1. There should be allocations against both compute nodes for an instance during a migration\n2. Compute nodes should respect the double claim, and not delete allocations for instances it used to own, if the allocation has no resources for its resource provider\n3. Compute nodes should not delete allocations for instances unless they own the instance _and_ the instance is in DELETED/SHELVED_OFFLOADED state", 
+    "tags": [
+        "compute", 
+        "placement", 
+        "resource-tracker"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1707071", 
+    "owner": "https://api.launchpad.net/1.0/~jaypipes", 
+    "id": 1707071, 
+    "index": 4878, 
+    "openned": "2017-07-27 21:35:09.473900+00:00", 
+    "created": "2017-07-27 21:35:09.473900+00:00", 
+    "title": "Compute nodes will fight over allocations during migration", 
+    "comments": [
+        {
+            "content": "As far back as Ocata, compute nodes that manage allocations will end up overwriting allocations from other compute nodes when doing a migration. This stems from the fact that the Resource Tracker was designed to manage a per-compute-node set of accounting, but placement is per-instance accounting. When we try to create/update/delete allocations for instances on compute nodes from the existing resource tracker code paths, we end up deleting allocations that apply to other compute nodes in the process.\n\nFor example, when an instance A is running against compute1, there is an allocation for its resources against that node. When migrating that instance to compute2, the target compute (or scheduler) may create allocations for instance A against compute2, which overwrite those for compute1. Then, compute1's periodic healing task runs, and deletes the allocation for instance A against compute2, replacing it with one for compute1. When migration completes, compute2 heals again and overwrites the allocation with one for the new home of the instance. Then, compute1 may the allocation it thinks it owns, followed finally by another heal on compute2. While this is going on, the scheduler (via placement) does not have a consistent view of resources to make proper decisions.\n\nIn order to fix this, we need a combination of changes:\n\n1. There should be allocations against both compute nodes for an instance during a migration\n2. Compute nodes should respect the double claim, and not delete allocations for instances it used to own, if the allocation has no resources for its resource provider\n3. Compute nodes should not delete allocations for instances unless they own the instance _and_ the instance is in DELETED/SHELVED_OFFLOADED state", 
+            "date_created": "2017-07-27 21:35:09.473900+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "I pushed up a sanity check patch:\n\nhttps://review.openstack.org/#/c/488187/2\n\nfor this and got a hit in the live migration job:\n\nhttp://logs.openstack.org/87/488187/2/check/gate-tempest-dsvm-multinode-live-migration-ubuntu-xenial/107a810/logs/subnode-2/screen-n-cpu.txt.gz#_Jul_27_22_21_14_766229\n\nJul 27 22:21:14.766229 ubuntu-xenial-2-node-rax-iad-10131407-754260 nova-compute[921]: WARNING nova.scheduler.client.report [None req-e1963d3c-9cb0-4980-a397-7314c7f483fa tempest-LiveMigrationRemoteConsolesV26Test-535663336 tempest-LiveMigrationRemoteConsolesV26Test-535663336] [instance: 6a8ff75c-22e3-4a17-b0d3-ac1b44f9f7c3] Removing allocations for instance which are currently against more than one compute node resource provider. Current allocations: {u'13b1e5e0-66ef-4533-9a07-b1a3220d6b00': {u'generation': 8, u'resources': {u'VCPU': 1, u'MEMORY_MB': 64}}, u'7aa9619d-db83-4da9-b822-f4d66e7143f8': {u'generation': 6, u'resources': {u'VCPU': 1, u'MEMORY_MB': 64}}}\n\nI have not seen a hit on the case that the source node is deleting allocations for an instance but the source node UUID is not part of the current allocations, which is a race that can exist in a slow system, but probably not slow enough for the upstream CI system which doesn't have that much traffic.", 
+            "date_created": "2017-07-27 22:31:12.082631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "From the three points:\n\n1. Is handled by https://review.openstack.org/#/c/487589/\n\n2. We could work into https://review.openstack.org/#/c/488187/\n\n3. Jay Pipes is working on this one I think.", 
+            "date_created": "2017-07-27 22:33:56.096430+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/488510", 
+            "date_created": "2017-07-28 16:10:16.158675+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/488595", 
+            "date_created": "2017-07-28 20:05:53.621398+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/489714", 
+            "date_created": "2017-08-01 19:02:46.121223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/489714\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=dea7a19c361be8180c35ed09ce12434de0e9fc87\nSubmitter: Jenkins\nBranch:    master\n\ncommit dea7a19c361be8180c35ed09ce12434de0e9fc87\nAuthor: Jay Pipes <email address hidden>\nDate:   Tue Aug 1 12:55:48 2017 -0400\n\n    Additional assertions to resize tests\n    \n    Adds a number of assertions that usage and allocation records are what\n    we expect at the following times:\n    \n    * After boot on the source host but before running periodics After\n    * resize operation but before confirming or reverting and before\n      running periodics\n    \n    Change-Id: I23ed64d5c48f520f115d64a97c748e5b49bb5f20\n    Related-bug: #1707071\n", 
+            "date_created": "2017-08-02 07:04:50.348614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Jay Pipes (<email address hidden>) on branch: master\nReview: https://review.openstack.org/488595\nReason: I'll come back to this later...", 
+            "date_created": "2017-08-03 14:48:46.595435+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/491850", 
+            "date_created": "2017-08-08 16:21:31.159825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/491850\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=09e169bd7a74deaf52d9d6d38ff37799cab24157\nSubmitter: Jenkins\nBranch:    master\n\ncommit 09e169bd7a74deaf52d9d6d38ff37799cab24157\nAuthor: Jay Pipes <email address hidden>\nDate:   Mon Aug 7 16:36:49 2017 -0400\n\n    placement: refactor healing of allocations in RT\n    \n    Updates the RT method for \"healing\" instance allocations so that we\n    only delete allocations (and delete them entirely for an instance) in\n    the event that the instance has been local-deleted. Adds log statements\n    to the method to give us a good idea of what the state of various\n    things are during test runs.\n    \n    Note that this patch only partially fixes LP #1707071 to remove some of\n    the back-and-forth allocation trampling that was going on for move\n    operations. The next patch adds the final piece of the puzzle which is\n    to have the confirm/revert resize step on the source or destination\n    compute host *correct* a doubled-up allocation. What this patch does is\n    prevent the healing function from deleting allocations unless the\n    instance is local-deleted.\n    \n    Partial-bug: #1707071\n    \n    Change-Id: Ia0bb32fd92ae723c505d0fce5691e0fe0540f10d\n", 
+            "date_created": "2017-08-10 16:23:50.498585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/488510\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5390210a4fa46e2af6b6aec9b41c03147b52760c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5390210a4fa46e2af6b6aec9b41c03147b52760c\nAuthor: Jay Pipes <email address hidden>\nDate:   Wed Aug 2 17:48:38 2017 -0400\n\n    Remove provider allocs in confirm/revert resize\n    \n    Now that the scheduler creates a doubled-up allocation for the duration\n    of a move operation (with part of the allocation referring to the\n    source and part referring to the destination host), we need to remove\n    the source provider when confirming the resize and remove the\n    destination provider from the allocation when reverting a resize. This\n    patch adds this logic in the RT's drop_move_claim() method.\n    \n    Change-Id: I6f8afe6680f83125da9381c812016b3623503825\n    Co-Authored-By: Dan Smith <email address hidden>\n    Fixes-bug: #1707071\n", 
+            "date_created": "2017-08-11 02:29:57.183127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/496847", 
+            "date_created": "2017-08-23 18:52:42.871301+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/496847\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=e3b7f43e3ae9689967d2ecd1cd7974d829c78c85\nSubmitter: Jenkins\nBranch:    master\n\ncommit e3b7f43e3ae9689967d2ecd1cd7974d829c78c85\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Aug 23 14:51:17 2017 -0400\n\n    Add missing tests for _remove_deleted_instances_allocations\n    \n    Some testing gaps were pointed out during the review for change\n    Ia0bb32fd92ae723c505d0fce5691e0fe0540f10d - this change adds\n    the missing tests.\n    \n    Change-Id: I0cb676ef3fdbc14e9c19fff231c129612805bad6\n    Related-Bug: #1707071\n", 
+            "date_created": "2017-10-12 23:43:11.548946+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-08-11 02:29:55.038069+00:00"
+}

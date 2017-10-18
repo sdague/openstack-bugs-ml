@@ -1,0 +1,36 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-08-23 04:18:26.640242+00:00", 
+    "description": "After https://review.openstack.org/#/c/189632/, since the device name specified by the user is ignored when attaching volumes to a VM, the user now has no way to configure the disk bus that the volume is attached to.\n\nBefore the change, if user specifies device name like \"/dev/hda\" then it will be attached with ide driver, or \"/dev/vda\" with virtio driver (for KVM).\n\nNow, the device name is ignored. Instead, the disk bus is determined first based on the image metadata of the VM instance, and then based on the device type (e.g. \"virtio\" for a KVM disk). Note that the former is based on the VM image metadata, not the volume image metadata. So, if the VM is booted from an image that uses ide disk bus, then the volume will also be attached with ide disk bus instead of virtio. If it is based on the volume image metadata or volume metadata instead, then that would solve the bug.\n\nWe added a temporary hack to mitigate the issue, so that the device name is not completely ignored:\n\n--- novaa/virt/libvirt/driver.py\t2016-03-23 18:40:52.000000000 -0400\n+++ novab/virt/libvirt/driver.py\t2016-03-23 18:41:40.800635279 -0400\n@@ -7278,7 +7278,14 @@\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# NOTE(ndipanov): get_info_from_bdm will generate the new device name\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0#                 only when it's actually not set on the bd object\n-        block_device_obj.device_name = None\n+        if block_device_obj.device_name is not None:\n+            if len(block_device_obj.device_name) >= 6 and block_device_obj.device_name[0:5] == '/dev/' and block_device_obj.get('disk_bus') is None:\n+                if block_device_obj.device_name[5] == 'v':\n+                    block_device_obj.disk_bus = 'virtio'\n+                elif block_device_obj.device_name[5] == 'h':\n+                    block_device_obj.disk_bus = 'ide'\n+            block_device_obj.device_name = None\n+\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0disk_info = blockinfo.get_info_from_bdm(\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0instance, CONF.libvirt.virt_type, image_meta,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0block_device_obj, mapping=instance_info['mapping'])", 
+    "tags": [
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1561246", 
+    "owner": "None", 
+    "id": 1561246, 
+    "index": 4492, 
+    "openned": "2016-03-23 23:22:53.926782+00:00", 
+    "created": "2016-03-23 23:22:53.926782+00:00", 
+    "title": "user cannot choose disk bus when attaching volume to instance", 
+    "comments": [
+        {
+            "content": "After https://review.openstack.org/#/c/189632/, since the device name specified by the user is ignored when attaching volumes to a VM, the user now has no way to configure the disk bus that the volume is attached to.\n\nBefore the change, if user specifies device name like \"/dev/hda\" then it will be attached with ide driver, or \"/dev/vda\" with virtio driver (for KVM).\n\nNow, the device name is ignored. Instead, the disk bus is determined first based on the image metadata of the VM instance, and then based on the device type (e.g. \"virtio\" for a KVM disk). Note that the former is based on the VM image metadata, not the volume image metadata. So, if the VM is booted from an image that uses ide disk bus, then the volume will also be attached with ide disk bus instead of virtio. If it is based on the volume image metadata or volume metadata instead, then that would solve the bug.\n\nWe added a temporary hack to mitigate the issue, so that the device name is not completely ignored:\n\n--- novaa/virt/libvirt/driver.py\t2016-03-23 18:40:52.000000000 -0400\n+++ novab/virt/libvirt/driver.py\t2016-03-23 18:41:40.800635279 -0400\n@@ -7278,7 +7278,14 @@\n \n         # NOTE(ndipanov): get_info_from_bdm will generate the new device name\n         #                 only when it's actually not set on the bd object\n-        block_device_obj.device_name = None\n+        if block_device_obj.device_name is not None:\n+            if len(block_device_obj.device_name) >= 6 and block_device_obj.device_name[0:5] == '/dev/' and block_device_obj.get('disk_bus') is None:\n+                if block_device_obj.device_name[5] == 'v':\n+                    block_device_obj.disk_bus = 'virtio'\n+                elif block_device_obj.device_name[5] == 'h':\n+                    block_device_obj.disk_bus = 'ide'\n+            block_device_obj.device_name = None\n+\n         disk_info = blockinfo.get_info_from_bdm(\n             instance, CONF.libvirt.virt_type, image_meta,\n             block_device_obj, mapping=instance_info['mapping'])", 
+            "date_created": "2016-03-23 23:22:53.926782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fbastani"
+        }, 
+        {
+            "content": "@Matt\n\nWe can see this http://docs.openstack.org/developer/nova/block_device_mapping.html#intermezzo-problem-with-device-names\n\nI wonder if we want to fix this issue or not.\n\nEli.", 
+            "date_created": "2016-07-07 06:26:39.114122+00:00", 
+            "author": "https://api.launchpad.net/1.0/~taget-9"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-08-23 04:18:23.891167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2017-08-23 04:18:24.365553+00:00"
+}

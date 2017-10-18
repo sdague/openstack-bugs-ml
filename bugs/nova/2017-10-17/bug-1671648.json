@@ -1,0 +1,102 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-04-14 09:22:51.882488+00:00", 
+    "description": "Steps to reproduce:\nPre-step. Need to force the deploy to fail in such a way that it can be rescheduled. For testing I just forced it to fail by adding raise nova.exception.ComputeResourcesUnavailable('forced failure') during the instance spawn on the host.\n1. Make sure environment is set to retry failed deploys.\n2. Attempt to deploy VM and wait for it to fail.\n\nExpected result:\nFailed instance is rescheduled and attempted on another host.\n\nActual result:\nDeploy fails but is not rescheduled.\n\n\n\nI am just beginning to experiment with ocata build from early March. I found that when an instance fails to deploy and throws a RescheduledException, it is not getting rescheduled as expected. The problem appears to be that the filter_properties['retry'] is not getting set during initial deploy.\n\nOn initial deploy nova.conductor.manager.schedule_and_build_instances() schedules the build_request and creates the instance object. That method also creates the filter properties (filter_props) that is passed on to compute_rpcapi.build_and_run_instance(). The problem is that scheduler_utils.populate_retry() is not called before the filter_props is passed on to the build call. When the deploy later fails on the host nova.compute.manager._do_build_and_run_instance() catches the RescheduledException but does not try and reschedule it because filter_properties.get('retry') returns None.\n\nIn the past it looks like populate_retry() was called in by nova.conductor.manager.build_instances() during the initial deploy. I'm not seeing build_instances() get called during initial deploy after switching to ocata. As an experiment I added scheduler_utils.populate_retry(filter_props, build_request.instance_uuid) immediately after filter_props is set in schedule_and_build_instances(). Afterward I do see the instances get rescheduled. I also noticed nova.conductor.manager.build_instances() gets called for each attempt after the first.", 
+    "tags": [
+        "conductor", 
+        "in-stable-ocata", 
+        "ocata-backport-potential"
+    ], 
+    "importance": "High", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1671648", 
+    "owner": "https://api.launchpad.net/1.0/~shunliz", 
+    "id": 1671648, 
+    "index": 2045, 
+    "openned": "2017-03-09 22:46:46.766324+00:00", 
+    "created": "2017-03-09 22:46:46.766324+00:00", 
+    "title": "Instances are not rescheduled after deploy fails", 
+    "comments": [
+        {
+            "content": "Steps to reproduce:\nPre-step. Need to force the deploy to fail in such a way that it can be rescheduled. For testing I just forced it to fail by adding raise nova.exception.ComputeResourcesUnavailable('forced failure') during the instance spawn on the host.\n1. Make sure environment is set to retry failed deploys.\n2. Attempt to deploy VM and wait for it to fail.\n\nExpected result:\nFailed instance is rescheduled and attempted on another host.\n\nActual result:\nDeploy fails but is not rescheduled.\n\n\n\nI am just beginning to experiment with ocata build from early March. I found that when an instance fails to deploy and throws a RescheduledException, it is not getting rescheduled as expected. The problem appears to be that the filter_properties['retry'] is not getting set during initial deploy.\n\nOn initial deploy nova.conductor.manager.schedule_and_build_instances() schedules the build_request and creates the instance object. That method also creates the filter properties (filter_props) that is passed on to compute_rpcapi.build_and_run_instance(). The problem is that scheduler_utils.populate_retry() is not called before the filter_props is passed on to the build call. When the deploy later fails on the host nova.compute.manager._do_build_and_run_instance() catches the RescheduledException but does not try and reschedule it because filter_properties.get('retry') returns None.\n\nIn the past it looks like populate_retry() was called in by nova.conductor.manager.build_instances() during the initial deploy. I'm not seeing build_instances() get called during initial deploy after switching to ocata. As an experiment I added scheduler_utils.populate_retry(filter_props, build_request.instance_uuid) immediately after filter_props is set in schedule_and_build_instances(). Afterward I do see the instances get rescheduled. I also noticed nova.conductor.manager.build_instances() gets called for each attempt after the first.", 
+            "date_created": "2017-03-09 22:46:46.766324+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cjvolzka"
+        }, 
+        {
+            "content": "tried on devstack.\nnova / nova/conductor/manager.py:schedule_and_build_instances\n\nfilter_props = request_spec.to_legacy_filter_properties_dict()\nscheduler_utils.populate_filter_properties(filter_props,\n                                                       host)\n\nThe filter_pros here is an empty dict,so nothing is done in _add_retry_host and the retry feature is broken.\n\nI will investigate this and work on this problem.", 
+            "date_created": "2017-03-10 01:58:56.504780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shunliz"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/444106", 
+            "date_created": "2017-03-10 06:13:07.308637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/446209", 
+            "date_created": "2017-03-15 22:32:57.072862+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/446261", 
+            "date_created": "2017-03-16 01:36:24.940906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/446262", 
+            "date_created": "2017-03-16 01:36:40.576202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/446209\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=72e1506101b131b51fbe77acc0af19f36899c28d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 72e1506101b131b51fbe77acc0af19f36899c28d\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Mar 15 16:58:11 2017 -0400\n\n    Add a functional regression/recreate test for bug 1671648\n    \n    This adds a test which recreates the regression bug introduced\n    in Ocata where build retries are not populated when creating\n    instances in conductor for cells v2.\n    \n    The change that fixes the bug will go on top of this and modify\n    the test to show the bug is fixed.\n    \n    Change-Id: Ie9e955d79b4e1441092183135b3f70b003c94db5\n    Related-Bug: #1671648\n", 
+            "date_created": "2017-03-16 18:08:03.690090+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/446685", 
+            "date_created": "2017-03-16 18:35:09.736409+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/444106\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cb4ce72f5f092644aa9b84fa58bcb9fd89b6bedc\nSubmitter: Jenkins\nBranch:    master\n\ncommit cb4ce72f5f092644aa9b84fa58bcb9fd89b6bedc\nAuthor: ShunliZhou <email address hidden>\nDate:   Fri Mar 10 14:05:57 2017 +0800\n\n    Add populate_retry to schedule_and_build_instances\n    \n    When boot an instance and failed on the compute node, nova will\n    not retry to boot on other host.\n    \n    Since https://review.openstack.org/#/c/319379/ change the create\n    instance workflow and called schedule_and_build_instances which\n    not populate the retry into filter properties. So nova will not\n    retry when boot on compute fail. This patch populate retry to\n    instance properties when call schedule_and_build_instances.\n    \n    Change-Id: Ifdaddcd265a7fe8282499e27043936f8212610ad\n    Closes-Bug: #1671648\n", 
+            "date_created": "2017-03-16 23:05:38.930951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/446685\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b6b5438c3ddeedab6c7f83d1998d283f1bb503bc\nSubmitter: Jenkins\nBranch:    master\n\ncommit b6b5438c3ddeedab6c7f83d1998d283f1bb503bc\nAuthor: melanie witt <email address hidden>\nDate:   Thu Mar 16 18:24:23 2017 +0000\n\n    Fix functional regression/recreate test for bug 1671648\n    \n    There are a couple of issues with the test:\n    \n      1. It doesn't consider both hosts from the two compute services\n         during scheduling.\n    \n      2. There is a race where sometimes claims.Claim.__init__ won't\n         be called because if the RT instance_claim runs before\n         update_available_resource has run, it will create a\n         claims.NopClaim instead.\n    \n    This adds the RetryFilter to enabled_filters, adds set_nodes() calls\n    to set the nodenames of each compute service to match its host,\n    resulting in consideration of both hosts for scheduling, and stubs\n    resource_tracker.ResourceTracker.instance_claim instead of\n    claims.Claim.__init__.\n    \n    Related-Bug: #1671648\n    \n    Change-Id: I541c03a7960b8f135b005c43cb5c7bcb0b63b9ae\n", 
+            "date_created": "2017-03-17 00:29:55.601769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/447014", 
+            "date_created": "2017-03-17 14:30:57.284199+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/446261\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=26b3a749530cc4b56921ab9b4016a9346991b9ca\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 26b3a749530cc4b56921ab9b4016a9346991b9ca\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Mar 15 16:58:11 2017 -0400\n\n    Add a functional regression/recreate test for bug 1671648\n    \n    This adds a test which recreates the regression bug introduced\n    in Ocata where build retries are not populated when creating\n    instances in conductor for cells v2.\n    \n    The change that fixes the bug will go on top of this and modify\n    the test to show the bug is fixed.\n    \n    Change-Id: Ie9e955d79b4e1441092183135b3f70b003c94db5\n    Related-Bug: #1671648\n    (cherry picked from commit 72e1506101b131b51fbe77acc0af19f36899c28d)\n", 
+            "date_created": "2017-03-20 07:40:09.812187+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/447014\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6304edf6082a8e36aabaa2a927b4a14da9df2402\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 6304edf6082a8e36aabaa2a927b4a14da9df2402\nAuthor: melanie witt <email address hidden>\nDate:   Thu Mar 16 18:24:23 2017 +0000\n\n    Fix functional regression/recreate test for bug 1671648\n    \n    There are a couple of issues with the test:\n    \n      1. It doesn't consider both hosts from the two compute services\n         during scheduling.\n    \n      2. There is a race where sometimes claims.Claim.__init__ won't\n         be called because if the RT instance_claim runs before\n         update_available_resource has run, it will create a\n         claims.NopClaim instead.\n    \n    This adds the RetryFilter to enabled_filters, adds set_nodes() calls\n    to set the nodenames of each compute service to match its host,\n    resulting in consideration of both hosts for scheduling, and stubs\n    resource_tracker.ResourceTracker.instance_claim instead of\n    claims.Claim.__init__.\n    \n    Conflicts:\n    \tnova/tests/functional/regressions/test_bug_1671648.py\n    \n    NOTE(mriedem): The conflict is due to this patch coming after\n    cb4ce72f5f092644aa9b84fa58bcb9fd89b6bedc in Pike. Since this\n    is a fix for the functional test that the bug fix builds on,\n    we actually want this to come *before* the bug fix backport.\n    \n    Related-Bug: #1671648\n    \n    Change-Id: I541c03a7960b8f135b005c43cb5c7bcb0b63b9ae\n    (cherry picked from commit b6b5438c3ddeedab6c7f83d1998d283f1bb503bc)\n", 
+            "date_created": "2017-03-20 07:40:24.697200+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/446262\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4e3be434bd0b6f7c0add4e210e1f674b80fe54f4\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 4e3be434bd0b6f7c0add4e210e1f674b80fe54f4\nAuthor: ShunliZhou <email address hidden>\nDate:   Fri Mar 10 14:05:57 2017 +0800\n\n    Add populate_retry to schedule_and_build_instances\n    \n    When boot an instance and failed on the compute node, nova will\n    not retry to boot on other host.\n    \n    Since https://review.openstack.org/#/c/319379/ change the create\n    instance workflow and called schedule_and_build_instances which\n    not populate the retry into filter properties. So nova will not\n    retry when boot on compute fail. This patch populate retry to\n    instance properties when call schedule_and_build_instances.\n    \n    Conflicts:\n    \tnova/tests/functional/regressions/test_bug_1671648.py\n    \n    NOTE(mriedem): The conflict is due to putting the functional\n    test fix before this bug fix in the backport series.\n    \n    Change-Id: Ifdaddcd265a7fe8282499e27043936f8212610ad\n    Closes-Bug: #1671648\n    (cherry picked from commit cb4ce72f5f092644aa9b84fa58bcb9fd89b6bedc)\n", 
+            "date_created": "2017-03-20 10:29:59.885162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.2 release.", 
+            "date_created": "2017-03-22 10:15:14.594756+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b1 development milestone.", 
+            "date_created": "2017-04-14 09:22:51.113166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-03-16 23:05:34.205622+00:00"
+}

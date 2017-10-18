@@ -1,0 +1,84 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-06-27 08:05:50.235650+00:00", 
+    "description": "When we try to attach an already attached volume to an instance it raises InvalidVolume exception but creates an entry in block_device_mapping table with deleted flag set to true. Ideally when attach volume fails it should not create any entries in database.\n\nSteps to reproduce:\n\n1. Created an instance named test_vm_1.\n2. Created a volume named test_volume_1.\n3. Verified that instance is in active state and volume is in available state.\n4. Attach volume using below command:\n    $ nova volume-attach <instance_id> <volume_id>.\n5. Confirmed that volume is in 'in-use' status using below command:\n    $ cinder list.\n6. Execute volume-attach command again with same volume_id.\n    $ nova volume-attach <instance_id> <volume_id>.\n   \nAfter executing step 6 it raises \"Invalid volume\" exception and attached volume can be used normally which is correct. But when you check  block_device_mapping table using below sql query, you will find an additional bdm entry which should not be created.\n\nselect * from block_device_mapping where instance_uuid='ee94830b-5d39-42a7-b8c2-6175bb77563a';", 
+    "tags": [
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 40, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1427060", 
+    "owner": "https://api.launchpad.net/1.0/~honjo-rikimaru-c6", 
+    "id": 1427060, 
+    "index": 4168, 
+    "openned": "2015-03-02 06:13:57.255734+00:00", 
+    "created": "2015-03-02 06:13:57.255734+00:00", 
+    "title": "Unnecessary bdm entry is created if same volume is attached twice to an instance", 
+    "comments": [
+        {
+            "content": "When we try to attach an already attached volume to an instance it raises InvalidVolume exception but creates an entry in block_device_mapping table with deleted flag set to true. Ideally when attach volume fails it should not create any entries in database.\n\nSteps to reproduce:\n\n1. Created an instance named test_vm_1.\n2. Created a volume named test_volume_1.\n3. Verified that instance is in active state and volume is in available state.\n4. Attach volume using below command:\n    $ nova volume-attach <instance_id> <volume_id>.\n5. Confirmed that volume is in 'in-use' status using below command:\n    $ cinder list.\n6. Execute volume-attach command again with same volume_id.\n    $ nova volume-attach <instance_id> <volume_id>.\n   \nAfter executing step 6 it raises \"Invalid volume\" exception and attached volume can be used normally which is correct. But when you check  block_device_mapping table using below sql query, you will find an additional bdm entry which should not be created.\n\nselect * from block_device_mapping where instance_uuid='ee94830b-5d39-42a7-b8c2-6175bb77563a';", 
+            "date_created": "2015-03-02 06:13:57.255734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ankitagrawal"
+        }, 
+        {
+            "content": "If we take a look at following code, line 3023,3024 can be moved to previous line before reserve bdm\nbecause it's only a status check , I will try to submit a patch and see whether they are some traps of \nconcurrency issue there\n\n\n3007     def _attach_volume(self, context, instance, volume_id, device,\n3008                        disk_bus, device_type):\n3009         \"\"\"Attach an existing volume to an existing instance.\n3010\n3011         This method is separated to make it possible for cells version\n3012         to override it.\n3013         \"\"\"\n3014         # NOTE(vish): This is done on the compute host because we want\n3015         #             to avoid a race where two devices are requested at\n3016         #             the same time. When db access is removed from\n3017         #             compute, the bdm will be created here and we will\n3018         #             have to make sure that they are assigned atomically.\n3019         volume_bdm = self.compute_rpcapi.reserve_block_device_name(\n3020             context, instance, device, volume_id, disk_bus=disk_bus,\n3021             device_type=device_type)\n3022         try:\n3023             volume = self.volume_api.get(context, volume_id)\n3024             self.volume_api.check_attach(context, volume, instance=instance)\n3025             self.volume_api.reserve_volume(context, volume_id)\n3026             self.compute_rpcapi.attach_volume(context, instance=instance,\n3027                     volume_id=volume_id, mountpoint=device, bdm=volume_bdm)\n3028         except Exception:\n3029             with excutils.save_and_reraise_exception():\n3030                 volume_bdm.destroy()\n3031\n", 
+            "date_created": "2015-03-06 20:31:59.934471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/163177", 
+            "date_created": "2015-03-10 20:54:39.526016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by jichenjc (<email address hidden>) on branch: master\nReview: https://review.openstack.org/163177\nReason: seems an old bug exists and no better way now..", 
+            "date_created": "2015-10-08 10:52:33.665526+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So this behavior can have pretty bad consequences, if we fail to delete the created BDM.\n\nIf in normal operation once the BDM record is created reserving the device name on the compute host, we will attempt to mark it as 'attaching' in Cinder. This fails if the volume is already attached, and as part of the cleanup we delete the BDM record we created.\n\nIf something goes wrong with the reply message however (there is a problem with the network, or for some reason the API worker that accepted the attach request goes away in the meantime are some of the problems I can think of), the cleanup code never runs and we are stuck with an invalid BDM, which we have to clean up manually. This is not ideal obviously but is made worse, by the fact that when looking for the BDM record, we commonly select records only by instance and volume IDs which will not be unique in this case, and Nova may attempt to use the wrong one by chance which causes things like detach, migrate etc. to fail until manual cleanup", 
+            "date_created": "2016-03-09 11:28:31.909381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/290793", 
+            "date_created": "2016-03-09 19:25:17.479166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Per comment 4, we had some patches from Dan Smith at one point to create a uuid column in the block_device_mappings table and then use that in the objects, so we could avoid issues with bdm_update_or_create in the DB API. Those never landed because they were written for a latent boot from volume race with cells v1 and we decided to just not fix cells v1, but could still be useful for situations like this.", 
+            "date_created": "2016-03-11 20:43:46.483518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is Dan's BDM object change to use a uuid:\n\nhttps://review.openstack.org/#/c/242603/", 
+            "date_created": "2016-03-11 20:44:17.643405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/290793 is updated according to changes in volume API (reserve call is added).\nOrder of creating BDM and volume reserving is reversed due guess that remote HTTP call can fail more frequently than DB request.", 
+            "date_created": "2016-08-17 14:12:22.886562+00:00", 
+            "author": "https://api.launchpad.net/1.0/~avolkov"
+        }, 
+        {
+            "content": "Hi Lee Yarwood, any updates on this bug? If not, I would like to work on it.", 
+            "date_created": "2017-02-01 06:35:36.472790+00:00", 
+            "author": "https://api.launchpad.net/1.0/~swathichittajallu"
+        }, 
+        {
+            "content": "I'm going to revisit the following stack of patches in Pike and hopefully close this out finally :\n\nhttps://review.openstack.org/#/q/topic:bug/1427060+status:open\n\nPlease feel free to review and rebase these if you have time but I'd like to retain ownership of the bug as a reminder to revisit this when the next cycle opens up.", 
+            "date_created": "2017-02-01 10:36:31.454477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyarwood"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/453451", 
+            "date_created": "2017-04-05 04:17:11.958095+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Zhang Hua (<email address hidden>) on branch: master\nReview: https://review.openstack.org/453451\nReason: sorry, this patch can't stop creating new dirty BDM record when happen to fail to run 'volume_bdm.destroy()' - https://github.com/openstack/nova/blob/master/nova/compute/api.py#L3715, so abandon it", 
+            "date_created": "2017-04-05 05:24:03.199912+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

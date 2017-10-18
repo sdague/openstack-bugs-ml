@@ -1,0 +1,75 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:11:49.862591+00:00", 
+    "description": "The cache in trusted_filter does not work because a new instance of TrustedFilter is made each time, which creates it's own cache.\n\nThis means that each time a new instance is scheduled, the TrustedFilter will query the attestation service for all hosts - which is a very slow operation.", 
+    "tags": [
+        "scheduler"
+    ], 
+    "importance": "Medium", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1223450", 
+    "owner": "https://api.launchpad.net/1.0/~hanlind", 
+    "id": 1223450, 
+    "index": 3572, 
+    "openned": "2013-09-10 16:37:21.086752+00:00", 
+    "created": "2013-09-10 16:37:21.086752+00:00", 
+    "title": "trusted_filter cache does not work", 
+    "comments": [
+        {
+            "content": "The cache in trusted_filter does not work because a new instance of TrustedFilter is made each time, which creates it's own cache.\n\nThis means that each time a new instance is scheduled, the TrustedFilter will query the attestation service for all hosts - which is a very slow operation.", 
+            "date_created": "2013-09-10 16:37:21.086752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/54073/6", 
+            "date_created": "2013-11-13 12:02:43.670296+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/64498", 
+            "date_created": "2013-12-31 04:08:07.628690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Why has this been changed to Invalid?\n\nI believe this is still valid unless the logic in how the scheduler creates filters has changed?", 
+            "date_created": "2014-03-31 15:28:49.785512+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Sorry - I've now seen the comments on https://review.openstack.org/#/c/64498/ - however, I think the point stands; the cache does not work currently.", 
+            "date_created": "2014-03-31 15:30:53.820683+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Set back to confirmed pending the output of the comments on the review; I just don't want to forget this bug at the moment and I think there is more discussion to be had.", 
+            "date_created": "2014-03-31 15:41:59.379281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "I believe the comments indicate that the cache is working as designed.  The cache saves the trust state of all of the hosts for the duration of scheduling a single VM.  However, as Bob reports, the attestation server can take a long time to respond.  I see delays around 10 seconds and I only have 2 hosts in my configuration.    If I start 10 VMs at the same time, this adds at least 100 seconds to scheduling time.  It would be a great performance boost if all VMs starting around the same time could share a cache.", 
+            "date_created": "2014-08-22 17:35:03.413823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dave-mccowan"
+        }, 
+        {
+            "content": "Dave, thanks for your input and your data.\n\nSome thought:\n\na) I'm surprised to see 10 seconds for only 2 hosts. Which attestation server are you using?\nb) I think with the local cache, it will not take 100 seconds to start VM at the same time if they are started in batch.\nc) I agree that a global cache should help, I will comments on the patch.\n\n\nThanks\n--jyh", 
+            "date_created": "2014-08-22 17:56:37.953755+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "I suggest we keep the discussions on here rather than the patch since the patch is abandoned and thereofre email notifcations etc seem to be disabled.\n\na) There was a bug with the TrustedFilter implementation (I believe now fixed) that would add both the compute and domU on XenServer hosts to the list of hosts to ask Mt Wilson about; the response from Mt Wilson took a long time although I haven't been playing with the environment recently enough to comment more on the length of time.\n\nb) Since each scheduled VM start has it's own TrustedFilter the cache is completely useless for multi-VM starts.  The filter works on class names until it gets through to the 'get_filtered_objects' method which is called once for each VM to be scheduled since we have filter_properties there; as such each class is instantiated for each VM schedule.  We _always_ get a new cache because the cache is on ComputeAttestation which is initialised when TrustedFilter is initialised and there are no global singletons.\n\nSurely since the cache has a timeout it can very safely be global since we will never trust the cache contents once the timeout has been reached.", 
+            "date_created": "2014-08-26 08:35:08.047309+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/132229", 
+            "date_created": "2014-10-31 12:32:46.706732+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/132229\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c126d36640e0398e76ba01783b7f21f01f53a5f5\nSubmitter: Jenkins\nBranch:    master\n\ncommit c126d36640e0398e76ba01783b7f21f01f53a5f5\nAuthor: Hans Lindgren <email address hidden>\nDate:   Thu Oct 23 19:42:35 2014 +0200\n\n    Make scheduler filters/weighers only load once\n    \n    Right now, filters/weighers are instantiated on every invocation of the\n    scheduler. This is both time consuming and unnecessary. In cases where\n    a filter/weigher tries to be smart and store/cache something in between\n    invocations this actually prohibits that.\n    \n    This change make base filter/weigher functions take objects instead of\n    classes and then let schedulers create objects only once and then reuse\n    them.\n    \n    This fixes a known bug in trusted_filter that tries to cache things.\n    \n    Related to blueprint scheduler-optimization\n    \n    Change-Id: I3174ab7968b51c43c0711033bac5d4bc30938b95\n    Closes-Bug: #1223450\n", 
+            "date_created": "2014-12-11 17:02:58.891339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-12-18 20:00:22.390175+00:00"
+}

@@ -1,0 +1,63 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:44:37.291206+00:00", 
+    "description": "When an IP address is assigned to an instance linux_net can be configured to send an gratuitous APR to announce the change to the network - configured by the \"send_arp_for_ha\" flag.\n\nThe command used, arping, accepts an argument \"-c\" to control the number of APRs sent, but in linux_net.py this is currently hard coded to 1. \n\nWe have seen that is some circumstances it is necesary (esp if the network is loaded) to send more than one gratuitous APR to ensure that the network devices see and respond to this change.\n\nThis shoudl be a simple change, introducing a new \"arp_count\" flag which can passed to the arpinc command instead of teh current hard coded value.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1043796", 
+    "owner": "https://api.launchpad.net/1.0/~brian-haley", 
+    "id": 1043796, 
+    "index": 3030, 
+    "openned": "2012-08-30 12:39:21.773986+00:00", 
+    "created": "2012-08-30 12:39:21.773986+00:00", 
+    "title": "Should send multiple ARPs after floating IP assignment", 
+    "comments": [
+        {
+            "content": "When an IP address is assigned to an instance linux_net can be configured to send an gratuitous APR to announce the change to the network - configured by the \"send_arp_for_ha\" flag.\n\nThe command used, arping, accepts an argument \"-c\" to control the number of APRs sent, but in linux_net.py this is currently hard coded to 1. \n\nWe have seen that is some circumstances it is necesary (esp if the network is loaded) to send more than one gratuitous APR to ensure that the network devices see and respond to this change.\n\nThis shoudl be a simple change, introducing a new \"arp_count\" flag which can passed to the arpinc command instead of teh current hard coded value.", 
+            "date_created": "2012-08-30 12:39:21.773986+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Sounds reasonable that we should want to send more than 1\n\nDon't need to add yet another flag - just sending 5 or more should be fine for everyone\n\nFor reference, qemu sends 5 after a live migration:\nhttp://git.qemu.org/?p=qemu.git;a=blob;f=savevm.c;h=c7fe283145;hb=HEAD#l135", 
+            "date_created": "2012-08-30 14:29:32.901081+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I think this should be a flag since for every additional ARP we send we add 1 second of startup time for an instance (setting to 5 adds 4 seconds).  Plus it gives someone the ability to change this for their environment without hacking the code.\n\nI'll send out a patch.", 
+            "date_created": "2012-08-31 14:35:20.198851+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Hmm, I wonder does this really need to be done synchronously?", 
+            "date_created": "2012-09-03 19:48:06.526222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I guess there is no reason why the apring couldn't be run from a seperate thread - but do we really need that additional complexity to save 4 seconds from VM start-up time ?\r\n\r\nI'd suggest we fix the basic problem for now, and optimise in the next pass.", 
+            "date_created": "2012-09-04 08:07:37.124376+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "4 seconds of VM startup time seems pretty significant to me\n\nRunning it from eventlet.spawn_n() isn't terribly complicated either\n\nAgain, this makes it possible to just \"do the right thing\" rather than add a \"you get to choose slow or broken\" flag", 
+            "date_created": "2012-09-04 08:56:57.522355+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "There is already a \"broken\" flag, since by default FLAGS.send_arp_for_ha=False, so you'll get no ARPs unless you change that.  People will want a tunable if they set that flag (it maybe should have been an int from the beginning).  To get that simple change out and make it easy enough to add spawn_n() later I'll propose the following:\n\nCreate a new flag for the number of ARPs:\n\n    \"int\" FLAGS.send_arp_for_ha_count, default: 3 (high enough?)\n\nCreate a new function to send the ARPs:\n\n    def send_arp_for_ip(ip, device, count)\n\nChange the two call sites that call arping directly to call that instead, making spawn_n() somewhat painless.", 
+            "date_created": "2012-09-04 17:54:24.405310+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/12436", 
+            "date_created": "2012-09-05 16:24:27.811146+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/12436\nCommitted: http://github.com/openstack/nova/commit/e9b05caca3c47c57225a9dfcc36bf77d91324bfe\nSubmitter: Jenkins\nBranch:    master\n\ncommit e9b05caca3c47c57225a9dfcc36bf77d91324bfe\nAuthor: Brian Haley <email address hidden>\nDate:   Wed Sep 5 12:19:33 2012 -0400\n\n    Add a tunable to control how many ARPs are sent.\n    \n    This new flag, send_arp_for_ha_count, controls how many\n    ARPs are sent when binding a floating IP address to an\n    instance.  Also increased the default number to 3 from 1,\n    to make this more robust and guarantee other network\n    devices see them.\n    \n    Fixes bug 1043796.\n    \n    Change-Id: Ib9118fcc5334ef4a8c5d7a5e765364e26fea68da\n", 
+            "date_created": "2012-09-07 20:25:39.234550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-09-19 06:39:06.721626+00:00"
+}

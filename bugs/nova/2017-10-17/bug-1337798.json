@@ -1,0 +1,55 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-09-11 15:16:24.183419+00:00", 
+    "description": "N.B. This is based purely on code inspection. A reasonable resolution would be to point out that I've misunderstood something and it's actually fine. I'm filing this bug because it's potentially a subtle data corruptor, and I'd like more eyes on it.\n\nThe snapshot code in vmwareapi/vmops.py does:\n\n1. snapshot\n2. copy disk image to vmware\n3. delete snapshot\n4. copy disk image from vmware to glance\n\nI think the problem is in step 2. I don't see how it's copying the snapshot it just created rather than the live disk image. i.e. I don't think step 2 is copying the snapshot it created in step 1. It's possible that there's some subtlety to do with path names here, but in that case it could still do with a comment.\n\nIf it is in fact copying the live image, it would normally work. However, this would potentially be a subtle data corruptor. For example, consider that a file's data was towards the beginning of a disk, but its metadata was towards the end of the disk. If the VM guest creates the file during the copy operation, it copies the metadata at the end of the disk, but misses the contents at the beginning of the disk.", 
+    "tags": [
+        "vmware"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1337798", 
+    "owner": "None", 
+    "id": 1337798, 
+    "index": 6244, 
+    "openned": "2014-07-04 10:59:02.801220+00:00", 
+    "created": "2014-07-04 10:59:02.801220+00:00", 
+    "title": "VMware: snapshot operation copies a live image", 
+    "comments": [
+        {
+            "content": "N.B. This is based purely on code inspection. A reasonable resolution would be to point out that I've misunderstood something and it's actually fine. I'm filing this bug because it's potentially a subtle data corruptor, and I'd like more eyes on it.\n\nThe snapshot code in vmwareapi/vmops.py does:\n\n1. snapshot\n2. copy disk image to vmware\n3. delete snapshot\n4. copy disk image from vmware to glance\n\nI think the problem is in step 2. I don't see how it's copying the snapshot it just created rather than the live disk image. i.e. I don't think step 2 is copying the snapshot it created in step 1. It's possible that there's some subtlety to do with path names here, but in that case it could still do with a comment.\n\nIf it is in fact copying the live image, it would normally work. However, this would potentially be a subtle data corruptor. For example, consider that a file's data was towards the beginning of a disk, but its metadata was towards the end of the disk. If the VM guest creates the file during the copy operation, it copies the metadata at the end of the disk, but misses the contents at the beginning of the disk.", 
+            "date_created": "2014-07-04 10:59:02.801220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "The snapshot being copied out is, well, 'snapshotted' from the live instance, and is read-only. The data of the read-only snapshot disk being consistent depends on the guest quiescing all I/O prior to the snapshot, which we ask that the guest does in our snapshot API call.\n\nBut yes, even with all that it is possible that we can be in the middle of writing some file, and have an inconsistent file in the snapshotted disk image. If guest memory is captured and used in conjunction with the disk then this problem can be avoided, with the the current model of capture disk only image snapshot, only some kind of coordination with the applications in the guest that are doing the I/O can this issue be avoided.", 
+            "date_created": "2014-07-10 22:51:05.296407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "Please see also:\nhttp://docs.openstack.org/openstack-ops/content/snapshots.html", 
+            "date_created": "2014-07-10 22:59:36.372710+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "I think you missed what I was getting at there. I'm aware that copying a snapshot is normally safe with a modern filesystem, and that with memory snapshotting too there's no problem at all. However, I have a suspicion that's not what the code is doing, and that it is not safe.\n\nI believe the code is doing the following:\n\n1. Make a snapshot\n2. *IGNORE THE SNAPSHOT* and copy the live image\n3. Delete the snapshot, having not used it\n\nWhether we snapshot memory or not, this would be a subtle data corruptor, because we are not copying the filesystem as it existed at any point in time.", 
+            "date_created": "2014-07-14 08:33:02.119285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "No, I think the confusion stems from how disk chain grows during snapshot.\n\ndisk vm writes to before snapshot:\nscsi0:0.fileName = \"aa8c982c-28bb-4657-a366-e45c1d1924b5.vmdk\"\n\nduring snapshot, above disk becomes read-only and a new child disk is created from it to be written to:\n\ndisk vm writes to after snapshot:\nscsi0:0.fileName = \"aa8c982c-28bb-4657-a366-e45c1d1924b5.-0000001.vmdk\" \n\nThe code is relying on the behavior that the disk path prior to the snapshot always becomes the immediate \nparent of the writable child disk, which also happens to be the disk referenced by the just-taken\nsnapshot. (and hence forms the basis of the disk we need to upload to glance)\nIt's a shortcut relying on behavior that is probably officially documented or at minimum pretty well-known, that elminates the need to query the VM object's snapshot info for the snapshot disk path. \n\nIt's probably worth a comment or two in the driver code to prevent further confusion.\n\n", 
+            "date_created": "2014-07-16 17:59:35.956069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "The code is relying on the behavior that the disk path prior to the snapshot \nalways becomes the immediate parent of the writable child disk, \nwhich also happens to be the disk referenced by the just-taken snapshot.\n\nvvvvvv\n\nThe code is relying on the behavior that the disk path prior to the snapshot \nalways becomes the immediate parent of the writable child disk. That\nimmediate parent also happens to be the disk referenced by the just-taken snapshot.\n", 
+            "date_created": "2014-07-16 18:01:33.215848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vui"
+        }, 
+        {
+            "content": "Discussion seems to imply this is invalid", 
+            "date_created": "2014-09-11 15:16:23.500254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2014-09-11 15:16:12.000611+00:00"
+}

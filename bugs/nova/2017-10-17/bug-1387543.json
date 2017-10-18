@@ -1,0 +1,296 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-01-21 23:18:05.798858+00:00", 
+    "description": "If user create instance, and resize it to larger flavor and than delete that instance, migration process does not stop. This allow  user to repeat operation many times, causing overload to affected compute nodes over user quota.\n\nAffected installation: most drastic effect happens on 'raw-disk' instances without live migration. Whole raw disk (full size of the flavor) is copied during migration.\n\nIf user delete instance it does not terminate rsync/scp keeping disk backing file opened regardless of removal by nova compute.\n\nBecause rsync/scp of large disks is rather slow, it gives malicious user enough time to repeat that operation few hundred times, causing disk space depletion on compute nodes, huge impact on management network and so on.\n\nProposed solution: abort migration (kill rsync/scp) as soon, as instance is deleted.\n\nAffected installation: Havana, Icehouse, probably Juno (not tested).", 
+    "tags": [
+        "in-stable-juno", 
+        "juno-backport-potential"
+    ], 
+    "importance": "High", 
+    "heat": 276, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1387543", 
+    "owner": "https://api.launchpad.net/1.0/~abhishek-kekane", 
+    "id": 1387543, 
+    "index": 1647, 
+    "openned": "2014-10-30 07:24:59.661831+00:00", 
+    "created": "2014-10-30 07:24:59.661831+00:00", 
+    "title": "[OSSA 2015-015] Resize/delete combo allows to overload nova-compute (CVE-2015-3241)", 
+    "comments": [
+        {
+            "content": "If user create instance, resize it to larger flavor and than remove it, migration process does not stop, allowing user to repeat operation many times, causing overload to affected compute nodes over user quota.\n\nAffected installation: most drastic effect happens on 'raw-disk' instances without live migration. Whole raw disk (full size of the flavor) is copied during migration.\n\nIf user delete instance it does not terminate rsync/scp keeping disk backing file opened regardless of removal by nova compute.\n\nBecause rsync/scp of large disks is rather slow, it gives malicious user enough time to repeat that operation few hundred times, causing disk space depletion on compute nodes, huge impact on management network and so on.\n\nProposed solution: abort migration (kill rsync/scp) as soon, as instance is deleted.\n\nAffected installation: Havana, Icehouse, probably Juno (not tested).", 
+            "date_created": "2014-10-30 07:24:59.661831+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "Thanks for the report! The OSSA tasks is set to incomplete pending project core security review.\nAt first glance, it's seems a valid DoS avenue...", 
+            "date_created": "2014-10-30 12:41:35.979569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Now that bug is unduplicated from https://bugs.launchpad.net/bugs/1392527, but very similar.", 
+            "date_created": "2015-03-16 17:06:10.497041+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "Yes, we might want to issue a single OSSA for both, if a patch can be logged for this one soon enough.", 
+            "date_created": "2015-03-17 08:44:01.604820+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I think we can confirm it since the other was confirmed", 
+            "date_created": "2015-03-19 10:39:21.078197+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Looks like a real issue.  Priority set to high just to show it's behind existing issues.\r\n", 
+            "date_created": "2015-03-27 05:22:36.809321+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Is the proposed solution (abort migration (kill rsync/scp) as soon as instance is deleted) somethign that works for everyone ? Anyone up for proposing a patch that would do that ?", 
+            "date_created": "2015-04-02 13:12:36.549200+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "For me it works in manual mode (go to node and kill all scp/rsyncs in sight). Because this bugreport is private, most of the tenants do not know about this and that happens mostly with my own machines in lab.\n\nThere is no patch up to now. Sorry, I'm operator, it's too deep and complicated for me.\n\nFix in the https://bugs.launchpad.net/bugs/1392527 is working on destination host (as far as I understand), but scp or rsync should be killed on the source host.\n", 
+            "date_created": "2015-04-02 13:30:37.702546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "In the resize operation, during copying files from source to destination compute node  scp/rsync processes are not aborted after the instance is deleted because linux kernel doesn't delete instance files physically until all processes using the file handle is closed completely. Hence rsync/scp process keeps on running until it transfers 100% of file data.\n\nOne way to abort rsync/scp process is to call truncate command and set the size of the file to 0 bytes before deleting the instance files in the delete operation. We have added code to truncate files to 0 bytes and found out that it aborts rsync/scp process and doesn't copy the file to the destination node.\n\nPreviously rsync/scp copies 100% of file data but after adding truncate command, if the instance is deleted during copying files using rsync process it raises following ProcessExecutionError\n\nProcessExecutionError: Unexpected error while running command.\n   Command: rsync --sparse --compress\n/opt/stack/data/nova/instances/49225011-aefb-4262-b89c-50daa967fe98_resize/d\nisk\n10.69.4.130:/opt/stack/data/nova/instances/49225011-aefb-4262-b89c-50daa967f\ne98/disk\n   Exit code: 23\n   Stdout: u''\n   Stderr: u'rsync: read errors mapping\n\"/opt/stack/data/nova/instances/49225011-aefb-4262-b89c-50daa967fe98_resize/\ndisk\": No data available (61)\\nfile has vanished:\n\"/opt/stack/data/nova/instances/49225011-aefb-4262-b89c-50daa967fe98_resize/\ndisk\"\\nrsync error: some files/attrs were not transferred (see previous\nerrors) (code 23) at main.c(1183) [sender=3.1.0]\\n'\n\n\nAlso timing wise, we have observed rsync/scp processes are aborted early as compared to copying 100% of file but unfortunately the difference is not that big, it's merely 10-15% gain in time.\n\nResults:\n\nFollowing are the test results for rsync/scp processes for 25,50,75 and 100 GB disks.\n\n*Command rsync, 25 GB*\nMaster Branch:\nProcessing Time: 9:40 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 25 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 7:30 mins\nSource Node Files: Deleted\nDestination Node Files: empty instance directory\n\n\n\n\n*Command scp, 25 GB*\nMaster Branch:\nProcessing Time: 5:11 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 25 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 4:20 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 25 GB present in instance directory\n\n\n\n*Command rsync, 50 GB*\nMaster Branch:\nProcessing Time: 17:23 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 50 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 15:40 mins\nSource Node Files: Deleted\nDestination Node Files: empty instance directory\n\n\n\n*Command scp, 50 GB*\nMaster Branch:\nProcessing Time: 11:25 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 50 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 9:35 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 50 GB present in instance directory\n\n\n\n*Command rsync, 75 GB*\nMaster Branch:\nProcessing Time: 25.53 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 75 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 22:30 mins\nSource Node Files: Deleted\nDestination Node Files: empty instance directory\n\n\n\n*Command scp, 75 GB*\nMaster Branch:\nProcessing Time: 16:24 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 75 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 14:58 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 75 GB present in instance directory\n\n\n\n*Command rsync, 100 GB*\nMaster Branch:\nProcessing Time: 35:15 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 100 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 32:30 mins\nSource Node Files: Deleted\nDestination Node Files: empty instance directory\n\n\n*Command scp, 100 GB*\nMaster Branch:\nProcessing Time: 23:45 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 100 GB present in instance directory\n\nTruncate Patch:\nProcessing Time: 21:15 mins\nSource Node Files: Deleted\nDestination Node Files: disk file of 100 GB present in instance directory", 
+            "date_created": "2015-04-02 21:10:13.907654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "Hello. Seems cool, but is this documented feature of rsync? If this a random bug/undocumented behaviour, relying on it to close CVE is too fragile.\n\nAnd one more, please check the codepath with scp too. I just tried to truncate file on the source (and destination) hosts and this does not terminate scp. It actually hangs it.\n\nSteps:\n\nfallocate big -l 10G\nscp big remote_server: &\ntruncate big --size 0\nssh remote_server truncate big --size 0\n\nand scp fall down to '-stalled-' mode.\n\n", 
+            "date_created": "2015-04-03 08:25:31.876221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "Hi,\n\nAttached is the Truncate patch which Tushar Patil has referred in comment #8.\n\n@George,\n\nWe have tried with scp process as well. In case of SCP with this attached patch processing time of copying file is less but it copies the disk file to destination node where as in case of rsync it does not copies the disk file to destination node.", 
+            "date_created": "2015-04-03 08:50:52.289137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "It does not work with scp. I've rechecked it twice on different systems: if you truncate source file for scp, it still continue to copy data. It displays '-stalled-' state, but network activity is very high for very long time after the file was truncated.\n\nTry yourself:\n\nfallocate big -l 10G\nscp big remote_server: &\ntruncate big --size 0\n\nCheck network interface load (atop utility, for example) right after that script. It will be very high until copy is not finished.", 
+            "date_created": "2015-04-03 10:06:45.373633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "If this trick does not work with scp, would it be possible to use rsync everywhere and drop scp?", 
+            "date_created": "2015-04-06 14:28:56.108442+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "In our installation we specifically disable rsync to force nova to use scp, because scp with proper crypto settings is much faster than rsync for raw disk (they should be copied as is at full size and rsync smart tricks with scanning just makes thinks slower).\n\nI really like to see fix for scp.\n\nIn my opinion it should just send SIGHUP to scp (or rsync). \n\nProper solution would be to store  PID of the process during call in nova/common/processutils.py, but it would be a very serious change (not the best idea for bugfix).\n\nFor very dirty trick (but not more dirty than utils.exec('truncate')) one can use 'fuser -k /path/to/file'. It will terminate _ANY_ process accessing file. And I think it is right behavior, because no one should access file during instance termination.\n\n", 
+            "date_created": "2015-04-06 15:42:06.685317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "P.S. And there should be fallback from 'fuser' to 'truncate' in case if fuser is not installed on the host.", 
+            "date_created": "2015-04-06 15:42:52.055116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "I have confirmed there is an issue with scp. Also I agree with the solution you have mentioned in comment #13, it would fix this issue for both scp and rsync. We will submit a patch with this proposed solution soon.", 
+            "date_created": "2015-04-06 23:25:30.614746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "I opened question on stackoverflow: http://stackoverflow.com/questions/29494852/force-application-to-close-fd-or-cause-eio-linux\n\nRight now there is one concern: If we are sending kill -9 to all application  accessing file ('fuser -k' sends kill -9), can we by some chance to send it to nova-compute or libvirtd?\n\nSome scenarios:\n1) Concurrent calls 'create snapshot' and 'delete' from user\n2) libvirtd performing scheduled tasks on image\n\nMay be we should not call fuser, but do the same (search in /proc/PID/fd) and try to narrow application list to 'scp' and 'rsync'?\n\nI know it sounds paranoid, but I don't want to see random kill -9 on production on unspecified process list. ", 
+            "date_created": "2015-04-07 15:19:12.698715+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "Hi,\n\nI have attached patches which will kill the rsync/scp processes if instance is deleted while resizing.\n\n1. oslo_concurrency patch, to store the pid of the process - 0001-Store-pid-of-processes.patch\n2. nova patch, to pass a callback handler to store/remove the pid and kill the process - 0001-Kill-rsync-scp-processes-before-deleting-instance.patch\n\nTo run this patch successfully on master you need to apply following patches to avoid the nova-compute startup issue:\n\n1. https://review.openstack.org/#/c/173794/1\n2. https://review.openstack.org/#/c/173897/\n\nNote:\n1. In attached nova patch I have used os.kill() to kill the process, this can also be done by using process_utils execute call.\n\n2. If rsync/scp process is killed while deleting the instance, instance folder remains on destination node.\n   If you apply periodic patch [1] mentioned in security bug [2] the above orphan instance folder gets deleted on nova-compute startup\n   [1] 0001-Delete-orphaned-instance-files-from-compute-nodes.patch\n   [2] https://bugs.launchpad.net/nova/+bug/1392527\n", 
+            "date_created": "2015-04-16 07:01:22.844664+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-04-16 07:01:53.671822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Current state of play:\n\n173794 is merged, 173897 is abandoned in favour of the merged 174288.\n\n0001-Store-pid-of-processes.patch looks good to me, but should probably be a gerrit review with a more generic commit message. We need to release oslo.concurrency before we can use this in nova. This presents a problem as well, as I don't think we bump the dependancies for stable releases?\n\n0001-Kill-rsync-scp-processes-before-deleting-instance.patch looks reasonable to me too.", 
+            "date_created": "2015-05-11 20:34:05.517937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "In theory oslo.concurrency has a corresponding stable branch where they would backport the necessary functionality, and then tag a corresponding stable point release which either matches the current caps in stable requirements or in such a way that we can adjust that requirement to only cover the new stable release of the library.", 
+            "date_created": "2015-05-11 20:53:35.958742+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "We proposed to issue a single advisory for this issue and #1392527 which are similar in term of impact. However, in case this bug couldn't be fixed at the same time, we might want to issue a different advisory (in order to not block one because of the other). Here is the impact description draft:\n\nTitle: Nova instance migration process does not stop when instance is deleted\nReporter: George Shuklin (Webzilla LTD)\nProducts: Nova\nAffects: versions through 2014.1.4, and 2014.2 versions through 2014.2.3, and version 2015.1.0\n\nDescription:\nGeorge Shuklin from Webzilla LTD reported a vulnerability in Nova migration process. By resizing and deleting an instance repeatedly an authenticated user may overcome his quota and overload Nova computes node resulting in a denial of service attack. All Nova setups are affected.\n", 
+            "date_created": "2015-05-12 21:18:52.260454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hi All,\n\nFor stable/kilo oslo.concurrency required version is >=1.8.0,<1.9.0, so is it possible to release a new version 1.8.1 with the required changes in oslo.concurrency to fix this security issue.\n\nFor stable/juno oslo.concurrency is not used, instead changes need to be done in processutils module of oslo-incubator.\nIs it possible to propose a separate patch for stable/juno by making changes in oslo-incubator processutils module?\n\nPlease let me know your opinion for the same.", 
+            "date_created": "2015-05-13 12:11:48.300794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Yes, in theory we could update nova stable/juno from a fix on the stable/juno branch of oslo-incubator.", 
+            "date_created": "2015-06-01 23:09:43.920211+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I subscribed Dims as the oslo PTL to get his advice on the oslo portions.\n\nI've uploaded: https://review.openstack.org/#/c/190472/\nOnce that lands in master I'll follow the appropriate process to get that added to kilo and juno. as outlined in comments 22 and 23", 
+            "date_created": "2015-06-11 04:02:46.137452+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Oh rats I left \"Closes-bug: #1387543\" in the commit message.", 
+            "date_created": "2015-06-11 04:04:31.000628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Since this public commit message really disclose the bug: https://review.openstack.org/#/c/190472/1//COMMIT_MSG, we'll open it bug shortly.\n\nA CVE has been requested with impact description from comment #21.", 
+            "date_created": "2015-06-15 16:34:17.780026+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hi,\n\nOslo concurrency patch is merged https://review.openstack.org/#/c/190472 today and I have made changes in nova patches for handling 2 callbacks.\n\nShould I attach the patch to bug or submit it to gerrit as this bug is already marked as public.\n\nPlease suggest.", 
+            "date_created": "2015-06-17 12:47:03.790033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Hi Abhishek,\n\nNow that this bug is public, please submit fix and backports directly to gerrit.\n\nthanks in advance!", 
+            "date_created": "2015-06-17 13:00:46.886451+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hi Trisatan,\n\nThank you for the update, I will submit the patch to gerrit as soon as I finish with the functional testing.", 
+            "date_created": "2015-06-17 13:25:05.951734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "We need to bump global requirements so we can use the newly releases oslo.concurrency in nova to fix this. That review is at https://review.openstack.org/194861 . Merging that change blocks merging the nova trunk fix.", 
+            "date_created": "2015-06-23 23:23:43.878418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/juno\nReview: https://review.openstack.org/195669", 
+            "date_created": "2015-06-25 16:26:56.306989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "It seems that we are still missing:\n * kilo requirement update\n * kilo change to use the callbacks\n * juno change to use the callbacks\n", 
+            "date_created": "2015-06-29 14:04:50.605401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "fyi, we released oslo.concurrency 1.8.1 (stable/kilo) with support for the on_execute and on_completion today", 
+            "date_created": "2015-07-07 21:25:32.808871+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/200621", 
+            "date_created": "2015-07-10 16:48:00.714999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Abhishek has already submitted patch [1] to fix this issue but it looks like it didn't show up in this bug.\n\n[1] : https://review.openstack.org/#/c/192986", 
+            "date_created": "2015-07-10 18:12:38.054588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "Change abandoned by Nikola Dipanov (<email address hidden>) on branch: master\nReview: https://review.openstack.org/200621\nReason: Abandoning in favor of https://review.openstack.org/#/c/192986/", 
+            "date_created": "2015-07-14 10:51:18.031475+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/192986\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7ab75d5b0b75fc3426323bef19bf436a258b9707\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7ab75d5b0b75fc3426323bef19bf436a258b9707\nAuthor: abhishekkekane <email address hidden>\nDate:   Mon Jul 6 01:51:26 2015 -0700\n\n    libvirt: Kill rsync/scp processes before deleting instance\n    \n    In the resize operation, during copying files from source to\n    destination compute node scp/rsync processes are not aborted after\n    the instance is deleted because linux kernel doesn't delete instance\n    files physically until all processes using the file handle is closed\n    completely. Hence rsync/scp process keeps on running until it\n    transfers 100% of file data.\n    \n    Added new module instancejobtracker to libvirt driver which will add,\n    remove or terminate the processes running against particular instances.\n    Added callback methods to execute call which will store the pid of\n    scp/rsync process in cache as a key: value pair and to remove the\n    pid from the cache after process completion. Process id will be used to\n    kill the process if it is running while deleting the instance. Instance\n    uuid is used as a key in the cache and pid will be the value.\n    \n    SecurityImpact\n    \n    Closes-bug: #1387543\n    Change-Id: Ie03acc00a7c904aec13c90ae6a53938d08e5e0c9\n", 
+            "date_created": "2015-07-31 16:21:47.626986+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi,\n\nTo backport [1] patch to stable/kilo and stable/juno branches following steps are essential.\n\nstable/kilo:\n\n1. Backport oslo.concurrency change [2] to stable/kilo  - Done (https://review.openstack.org/#/c/208349/)\n2. Bump oslo_concurrency version to be used in nova\n3. Backport [1] patch to stable/kilo\n\n\nstable/juno:\n\n1. Backport oslo.concurrency change [2] to stable/juno - Done (https://review.openstack.org/#/c/208388)\n2. Once above backport is merged, then abandon patch [3] and sync these changes in nova stable/juno (similar to patch [3])\n3. Backport [1] patch to stable/juno\n\n[1] https://review.openstack.org/#/c/192986/\n[2] https://review.openstack.org/#/c/197983/\n[3] https://review.openstack.org/#/c/195669/", 
+            "date_created": "2015-08-03 09:30:48.155840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/juno\nReview: https://review.openstack.org/208876", 
+            "date_created": "2015-08-04 08:39:39.996056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi,\n\noslo.concurrency stable/kilo patch https://review.openstack.org/#/c/208349/ is merged.\nNow it requires new release of oslo.concurrency to backport nova patch [1] to stable/kilo branch.\n\n[1] https://review.openstack.org/#/c/192986/", 
+            "date_created": "2015-08-04 13:33:51.349119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "1.8.2 of oslo.concurrency has been cut, please add a review to update global-requirements.", 
+            "date_created": "2015-08-04 15:17:16.215224+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "In stable/kilo, nova/requirements and requirements/global-requirements is:\noslo.concurrency>=1.8.0,<1.9.0\n\nDo we need to force >=1.8.2 ?", 
+            "date_created": "2015-08-05 12:47:35.311174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: stable/juno\nReview: https://review.openstack.org/195669\nReason: Replaced by https://review.openstack.org/#/c/208876/", 
+            "date_created": "2015-08-05 12:50:26.282783+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi,\n\nAs per comment from Matt on patch https://review.openstack.org/#/c/208876/, I have submitted another patch [1] by cherry-picking \nchanges from oslo.concurrency stable/juno branch to oslo-incubatore stable/juno branch.\n\n[1] https://review.openstack.org/#/c/209791/\n\nAs of now on oslo-incubator stable/juno branch following tests are failing\n\ntests.unit.reports.test_views.TestJinjaView.test_load_from_file\ntests.unit.db.sqlalchemy.test_migration_common.TestMigrationCommon.test_db_sync_sanity_skipped\ntests.unit.db.sqlalchemy.test_migration_common.TestMigrationCommon.test_db_sync_sanity_called\n\nThese tests are passing on master branch, please let me know what can be done in this case.", 
+            "date_created": "2015-08-06 09:01:47.250436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/209856", 
+            "date_created": "2015-08-06 10:26:54.548111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "To sum-up:\n\n1/ Required Oslo changes:\n\n* Ifc23325eddb523f6449ba06a2deb0885a8a7009d: \"Add 2 callbacks to processutils.execute()\"\n-> [oslo.concurrency] merged in master/kilo/juno\n-> [oslo.incubator]   *in progress* in juno\n\n* I22b2d7bde8797276f7670bc289d915dab5122481: \"processutils: ensure on_completion callback is always called\"\n-> [oslo.concurrency] merged in master/kilo/juno\n\n* Ica74dd6c35e6bd17eac285e2dc2900c1ff23073f: \"Sync process utils from oslo for execute callbacks\"\n-> [nova] *in progress* for juno\n\n\n2/ Requirements bump:\n\n* I08693891b2b4c1d4c166e41b38adc6776e25d8e5: \"Nova requires concurrency 2.1.0 or better\"\n-> [nova] merged in master, *patch needed* for kilo\n\n\n3/ Actual Nova fix:\n\n* Ie03acc00a7c904aec13c90ae6a53938d08e5e0c9: \"libvirt: Kill rsync/scp processes before deleting instance\"\n-> [nova] merged in master, *in progress* for kilo, *patch needed* for juno\n\n\n4/ What is missing:\n\n* The priority is the oslo.incubator change ( https://review.openstack.org/208876 ).\n* Once this gets in, we can update the sync ( https://review.openstack.org/209791 ).\n* Seems like the nova requirements.txt olso bump needs to be adjusted, 2.1.0 does not have the \"ensure on_completion is called\" fix...\n* The kilo fix ( https://review.openstack.org/209856 )\n* The juno fix ( should depend on the sync )\n\n\nAm I missing something here ?", 
+            "date_created": "2015-08-06 15:10:22.080362+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hi Tristan,\n\nThank you for summary,\n\nWe also need * I22b2d7bde8797276f7670bc289d915dab5122481: \"processutils: ensure on_completion callback is always called\" in oslo-incubator stable/juno and then we can sync oslo-incubator stable/juno to nova stable/juno.", 
+            "date_created": "2015-08-07 07:38:22.377249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/209856\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b5020a047fc487f35b76fc05f31e52665a1afda1\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit b5020a047fc487f35b76fc05f31e52665a1afda1\nAuthor: abhishekkekane <email address hidden>\nDate:   Mon Jul 6 01:51:26 2015 -0700\n\n    libvirt: Kill rsync/scp processes before deleting instance\n    \n    In the resize operation, during copying files from source to\n    destination compute node scp/rsync processes are not aborted after\n    the instance is deleted because linux kernel doesn't delete instance\n    files physically until all processes using the file handle is closed\n    completely. Hence rsync/scp process keeps on running until it\n    transfers 100% of file data.\n    \n    Added new module instancejobtracker to libvirt driver which will add,\n    remove or terminate the processes running against particular instances.\n    Added callback methods to execute call which will store the pid of\n    scp/rsync process in cache as a key: value pair and to remove the\n    pid from the cache after process completion. Process id will be used to\n    kill the process if it is running while deleting the instance. Instance\n    uuid is used as a key in the cache and pid will be the value.\n    \n    Conflicts:\n            nova/virt/libvirt/driver.py\n    \n    SecurityImpact\n    \n    Closes-bug: #1387543\n    Change-Id: Ie03acc00a7c904aec13c90ae6a53938d08e5e0c9\n    (cherry picked from commit 7ab75d5b0b75fc3426323bef19bf436a258b9707)\n", 
+            "date_created": "2015-08-18 21:52:03.516825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/208876\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bf23643e36c8764b4bd532546a2cc04385fe0cff\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit bf23643e36c8764b4bd532546a2cc04385fe0cff\nAuthor: abhishekkekane <email address hidden>\nDate:   Sat Aug 8 02:28:50 2015 -0700\n\n    Sync process utils from oslo for execute callbacks\n    \n    ------------------------------------------------\n    The sync pulls in the following changes:\n    \n    Ifc23325 Add 2 callbacks to processutils.execute()\n    I22b2d7b processutils: ensure on_completion callback is always called\n    I59d5799 Let oslotest manage the six.move setting for mox\n    I245750f Remove `processutils` dependency on `log`\n    Ia5bb418 Fix exception message in openstack.common.processutils.execute\n    -----------------------------------------------\n    \n    Related-Bug: 1387543\n    Change-Id: I22b2d7bde8797276f7670bc289d915dab5122481\n", 
+            "date_created": "2015-08-19 03:59:20.354421+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/214528", 
+            "date_created": "2015-08-19 09:21:39.480093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/214528\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=539693e40388c4729c99a2c133b573896296df2a\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 539693e40388c4729c99a2c133b573896296df2a\nAuthor: abhishekkekane <email address hidden>\nDate:   Mon Jul 6 01:51:26 2015 -0700\n\n    libvirt: Kill rsync/scp processes before deleting instance\n    \n    In the resize operation, during copying files from source to\n    destination compute node scp/rsync processes are not aborted after\n    the instance is deleted because linux kernel doesn't delete instance\n    files physically until all processes using the file handle is closed\n    completely. Hence rsync/scp process keeps on running until it\n    transfers 100% of file data.\n    \n    Added new module instancejobtracker to libvirt driver which will add,\n    remove or terminate the processes running against particular instances.\n    Added callback methods to execute call which will store the pid of\n    scp/rsync process in cache as a key: value pair and to remove the\n    pid from the cache after process completion. Process id will be used to\n    kill the process if it is running while deleting the instance. Instance\n    uuid is used as a key in the cache and pid will be the value.\n    \n    Conflicts:\n            nova/tests/unit/virt/libvirt/test_driver.py\n            nova/tests/unit/virt/libvirt/test_utils.py\n            nova/virt/libvirt/driver.py\n            nova/virt/libvirt/utils.py\n    \n    Note: The required unit-tests are manually added to the below path,\n    as new path for unit-tests is not present in stable/juno release.\n    nova/tests/virt/libvirt/test_driver.py\n    nova/tests/virt/libvirt/test_utils.py\n    \n    SecurityImpact\n    \n    Closes-bug: #1387543\n    Change-Id: Ie03acc00a7c904aec13c90ae6a53938d08e5e0c9\n    (cherry picked from commit 7ab75d5b0b75fc3426323bef19bf436a258b9707)\n    (cherry picked from commit b5020a047fc487f35b76fc05f31e52665a1afda1)\n", 
+            "date_created": "2015-08-24 16:04:58.064966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Great, seems like all required changes are now merged.\n\nIn the upcoming OSSA ( https://review.openstack.org/216422 ), I've only referenced the relevant bits (requirements bump and actual fix).\n\nThanks everyone :)", 
+            "date_created": "2015-08-24 21:04:00.064460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hello.\n\nCVE page does not filled yet (http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2015-3241)", 
+            "date_created": "2015-09-01 12:19:58.762532+00:00", 
+            "author": "https://api.launchpad.net/1.0/~george-shuklin"
+        }, 
+        {
+            "content": "It's not uncommon for MITRE to take months or even years to fill in CVE details. We have no control over this.", 
+            "date_created": "2015-09-01 12:50:01.517465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }
+    ], 
+    "closed": "2015-09-03 11:43:18.016789+00:00"
+}

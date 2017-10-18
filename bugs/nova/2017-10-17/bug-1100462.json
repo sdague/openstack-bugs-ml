@@ -1,0 +1,70 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 11:18:59.545832+00:00", 
+    "description": "If a live-migration fails due to an InvalidSharedStorage exception, or other pre-migration checks failing, the live migration is never attempted and the task_state is left as 'migrating' for the instance. This leaves the instance in a somewhat broken state and future requests on the instance fail such as pause, suspend, or stop. This behavior was changed between essex and folsom. Essex would not set the task_state to migrating if the pre-checks failed. Folsom sets the task_state to migrating before the pre-check are made and then do not clear the task_state if the pre-checks fail. I believe the current master would have the same behavior but I haven't tested. It seems that the instance task_state should be reset to None if the pre-migration checks fail.\n\nThis was discovered against folsom (commit 4bfc8f1165b05c2cc7c5506641b9b85fa8e1e144) and using devstack as a test environment.", 
+    "tags": [
+        "folsom-backport-potential"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1100462", 
+    "owner": "https://api.launchpad.net/1.0/~alaski", 
+    "id": 1100462, 
+    "index": 3207, 
+    "openned": "2013-01-16 20:59:50.119699+00:00", 
+    "created": "2013-01-16 20:59:50.119699+00:00", 
+    "title": "Instance task_state being left as migrating after InvalidSharedStorage error", 
+    "comments": [
+        {
+            "content": "If a live-migration fails due to an InvalidSharedStorage exception, or other pre-migration checks failing, the live migration is never attempted and the task_state is left as 'migrating' for the instance. This leaves the instance in a somewhat broken state and future requests on the instance fail such as pause, suspend, or stop. This behavior was changed between essex and folsom. Essex would not set the task_state to migrating if the pre-checks failed. Folsom sets the task_state to migrating before the pre-check are made and then do not clear the task_state if the pre-checks fail. I believe the current master would have the same behavior but I haven't tested. It seems that the instance task_state should be reset to None if the pre-migration checks fail.\n\nThis was discovered against folsom (commit 4bfc8f1165b05c2cc7c5506641b9b85fa8e1e144) and using devstack as a test environment.", 
+            "date_created": "2013-01-16 20:59:50.119699+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mlovell"
+        }, 
+        {
+            "content": "would love a patch for this.", 
+            "date_created": "2013-01-17 00:28:07.414941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Perhaps it's related to the same issue. ( If it's not, just let me know here, I can file a new one).\n\n\nShort summary: \n-----------------\nAttempting to 'nova live-migrate' to a non-existing host, it fails, & the state of running  instance remains perpetually in MIGRATING'\n\nLong:\n-----\n-> Ensure the right fix is in:\n#=================================#\n[root@interceptor ~(keystone_admin)]# grep -i -A3 -B3 \"Live Migration failure\"  /usr/lib/python2.6/site-packages/nova/virt/libvirt/driver.py\n\n        except Exception as e:\n            with excutils.save_and_reraise_exception():\n                LOG.error(_(\"Live Migration failure: %(e)s\") % locals(),\n                          instance=instance_ref)\n                recover_method(ctxt, instance_ref, dest, block_migration)\n\n[root@interceptor ~(keystone_admin)]# \n#=================================#\n\n\n-> List current running nova instances:\n#=================================#\n[tuser1@interceptor ~(keystone_user1)]$ nova list\n+--------------------------------------+-----------+--------+-------------------+\n| ID                                   | Name      | Status | Networks\n|\n+--------------------------------------+-----------+--------+-------------------+\n| 08d616a9-87a1-4c0d-b986-7d6aa5ed6780 | fedora-t1 | ACTIVE | net1=xx.yy.www.50\n|\n| 3e487977-37e8-4f26-9443-d65ecbdf83c9 | fedora-t2 | ACTIVE | net1=xx.yy.www.51\n|\n| 48d9e518-a91f-48db-9d9b-965b243e7113 | fedora-t4 | ACTIVE | net1=xx.yy.www.52\n|\n+--------------------------------------+-----------+--------+-------------------+\n#=================================#\n\n\n-> Let's try to live migrate using the 'name' of the guest.  I'm trying to\nmigrate to a host which *doesn't* have Compute node running/configured.\n#=================================#\n[tuser1@interceptor ~(keystone_user1)]$ nova live-migration fedora-t4\nmaelstrom.foo.bar.com ERROR: Policy doesn't allow\ncompute_extension:admin_actions:migrateLive to be performed. (HTTP 403)\n(Request-ID: req-ce093ff9-3c4d-48b3-82c9-d68a7f08ecf6) [tuser1@interceptor\n~(keystone_user1)]$ \n#=================================#\nNote, it says, policy doesn't allow.\n\n\n-> Source the keystone_admin rc file, & try to migrate using the 'Name'. It says the name\n'fedora-t4' doesn't exist. But as it can be seen from previous commands, it\ndoes exist from 'nova list'\n#=================================#\n[tuser1@interceptor ~(keystone_user1)]$ . ~/keystonerc_admin \n[tuser1@interceptor ~(keystone_admin)]$ nova live-migration fedora-t4\nmaelstrom.foo.bar.com\nERROR: No server with a name or ID of 'fedora-t4' exists.\n#=================================#\n\n\n-> Ok, so, let's try to migrate using the ID of the guest:\n#=================================#\n[tuser1@interceptor ~(keystone_admin)]$ nova live-migration\n48d9e518-a91f-48db-9d9b-965b243e7113 maelstrom.foo.bar.com\nERROR: Live migration of instance 48d9e518-a91f-48db-9d9b-965b243e7113 to host\nmaelstrom.foo.bar.com failed (HTTP 400) (Request-ID:\nreq-b41ad3bb-2b0c-4aea-b15e-3513106c3bf9)\n[tuser1@interceptor ~(keystone_admin)]$ \n#=================================#\n\n\n-> Let's list to see the status of the current instances:\n#=================================#\n[tuser1@interceptor ~(keystone_admin)]$ nova list --all-tenants\n+--------------------------------------+-----------+-----------+-------------------+\n| ID                                   | Name      | Status    | Networks\n|\n+--------------------------------------+-----------+-----------+-------------------+\n| 08d616a9-87a1-4c0d-b986-7d6aa5ed6780 | fedora-t1 | ACTIVE    |\nnet1=xx.yy.www.50 |\n| 3e487977-37e8-4f26-9443-d65ecbdf83c9 | fedora-t2 | ACTIVE    |\nnet1=xx.yy.www.51 |\n| 48d9e518-a91f-48db-9d9b-965b243e7113 | fedora-t4 | MIGRATING |\nnet1=xx.yy.www.52 |\n+--------------------------------------+-----------+-----------+-------------------+\n[tuser1@interceptor ~(keystone_admin)]$ \n#=================================#\nInteresting, from the above, it says 'MIGRATING' - a dubious message. Since,\nit's the same state for more than a couple of hours.\n\n\n-> Let's grep for the string 'migrate' in nova logs:\n#=================================#\n[tuser1@interceptor glance(keystone_admin)]$ sudo grep -i migrate\n/var/log/nova/*.log\n/var/log/nova/api.log:2013-02-25 13:04:19 66223 TRACE\nnova.api.openstack.compute.contrib.admin_actions   File\n\"/usr/lib/python2.6/site-packages/nova/api/openstack/compute/contrib/admin_actions.py\",\nline 288, in _migrate_live\n/var/log/nova/api.log:2013-02-25 13:04:19 66223 TRACE\nnova.api.openstack.compute.contrib.admin_actions   File\n\"/usr/lib/python2.6/site-packages/nova/compute/api.py\", line 2040, in\nlive_migrate\n[tuser1@interceptor glance(keystone_admin)]$ date\nMon Feb 25 13:45:05 IST 2013\n[tuser1@interceptor glance(keystone_admin)]$ \n#=================================#\n\n\n-> nova's api.log indicating the failure of migration, indicating \"compute host not found\"\n#=================================#\nn service_get_all_compute_by_host\n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions     return IMPL.service_get_all_compute_by_host(context, host)\n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions \n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions   File \"/usr/lib/python2.6/site-packages/nova/db/sqlalchemy/api.py\", line 111, in wrapper\n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions     return f(*args, **kwargs)\n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions \n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions   File \"/usr/lib/python2.6/site-packages/nova/db/sqlalchemy/api.py\", line 394, in service_get_all_compute_by_host\n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions     raise exception.ComputeHostNotFound(host=host)\n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions \n2013-02-25 13:04:19 66223 TRACE nova.api.openstack.compute.contrib.admin_actions ComputeHostNotFound: Compute host maelstrom.foo.bar.com could not be found.\n:\n.\n.\n.\n013-02-25 13:04:19 INFO nova.api.openstack.wsgi [req-b41ad3bb-2b0c-4aea-b15e-3513106c3bf9 e34da0f70aaa4b86b97857299d66155f 5aaa100a372248dd9c658f8b7775784c] HTTP exception thrown: Live migration of instance 48d9e518-a91f-48db-9d9b-965b243e7113 to host maelstrom.foo.bar.com failed\n2013-02-25 13:04:19 INFO nova.api.openstack.wsgi [req-b41ad3bb-2b0c-4aea-b15e-3513106c3bf9 e34da0f70aaa4b86b97857299d66155f 5aaa100a372248dd9c658f8b7775784c] http://127.0.0.1:8774/v1.1/5aaa100a372248dd9c658f8b7775784c/servers/48d9e518-a91f-48db-9d9b-965b243e7113/action returned with HTTP 400\n2013-02-25 13:04:19 INFO nova.osapi_compute.wsgi.server [req-b41ad3bb-2b0c-4aea-b15e-3513106c3bf9 e34da0f70aaa4b86b97857299d66155f 5aaa100a372248dd9c658f8b7775784c] 127.0.0.1 - - [25/Feb/2013 13:04:19] \"POST /v1.1/5aaa100a372248dd9c658f8b7775784c/servers/48d9e518-a91f-48db-9d9b-965b243e7113/action HTTP/1.1\" 400 352 0.370040\n.\n.\n.\n.\n#=================================#\n\n-> nova stop fails:\n#=================================#\n[tuser1@interceptor ~(keystone_admin)]$ nova stop 48d9e518-a91f-48db-9d9b-965b243e7113\nERROR: Instance 48d9e518-a91f-48db-9d9b-965b243e7113 in task_state migrating. Cannot stop while the instance is in this state. (HTTP 400) (Request-ID: req-7fac4a5d-6510-4aaf-8aed-cfcc5a8c5087)\n#=================================#", 
+            "date_created": "2013-02-25 11:06:59.971439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "kchamart, the non-existing dest host bug has been fixed: bug 973393", 
+            "date_created": "2013-02-26 08:08:27.293896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "I  also meet the same issue .  Pre-migration checks failing  like  ComputeServiceUnavailable, UnableToMigrateToSelf,InvalidHypervisorType, DestinationHypervisorTooOld will leave  instance task_state with migrating .\nI didn't find a way to update  the  task state  of instance except  updating db directly as follow:\nupdate nova.instances set task_state=NULL where display_name='gcb_migrate';\n\nI think a total solution to deal with all the exceptions of pre-migration  is better  .\n", 
+            "date_created": "2013-02-26 09:42:07.457544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "ChangBo, Agreed.", 
+            "date_created": "2013-02-26 11:56:09.407838+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "@Jian Wen, I think we need to cover more exceptions to avoid the state is hanging on \"MIGRATING\".", 
+            "date_created": "2013-03-04 16:05:14.295997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~flwang"
+        }, 
+        {
+            "content": "@Fei Long Wang, sure", 
+            "date_created": "2013-03-11 03:58:08.086916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wenjianhn"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/24545", 
+            "date_created": "2013-03-15 17:59:55.072872+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/24545\nCommitted: http://github.com/openstack/nova/commit/f5fa0224686c259188e6b85115fa16939c20cb29\nSubmitter: Jenkins\nBranch:    master\n\ncommit f5fa0224686c259188e6b85115fa16939c20cb29\nAuthor: Andrew Laski <email address hidden>\nDate:   Fri Mar 15 13:48:55 2013 -0400\n\n    Reset migrating task state for more Exceptions\n    \n    There are a number of exceptions that can occur during pre\n    live-migration checks, and they should reset the task state to None when\n    they occur since they prevent the migration from beginning.  This adds\n    two more exceptions to the list of exceptions that just need to reset\n    the task state rather than set the instance to error.\n    \n    Bug 1100462\n    \n    Change-Id: I95e09f49908fbc3a79f5d2eb490d5a0b3296a6ed\n", 
+            "date_created": "2013-03-18 12:25:22.977832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-03-20 16:09:01.641159+00:00"
+}

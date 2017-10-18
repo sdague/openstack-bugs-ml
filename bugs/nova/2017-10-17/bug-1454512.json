@@ -1,0 +1,45 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:58:11.991695+00:00", 
+    "description": "We found this issue during testing volume detachment when iSCSI multipath is used. When a same iSCSI protal and iqn is shared by multiple LUNs, device from other volume maybe be deleted unexpected. This is found both in Kilo and the latest code.\r\n\r\nFor example, the devices under /dev/disk/by-path may looks like below when LUN 23 and 231 are from a same storage system and a same iSCSI protal and iqn are used. ls /dev/disk/by-path\r\nip-192.168.3.50:3260-iscsi-<iqna>-lun-23\r\nip-192.168.3.50:3260-iscsi-<iqna>-lun-231\r\nip-192.168.3.51:3260-iscsi-<iqnb>-lun-23\r\nip-192.168.3.51:3260-iscsi-<iqnb>-lun-231\r\n\r\nWhen we try to detach volume corresponding LUN 23 from the host, we noticed that the devices regarding to LUN 231 are also deleted which may cause the data unavailable.\r\n\r\nWhy this happen? After digging into the nova code, below is the clue:\r\n\r\nnova/virt/libvirt/volume.py\r\n770 def _delete_mpath(self, iscsi_properties, multipath_device, ips_iqns):\r\n771 entries = self._get_iscsi_devices()\r\n772 # Loop through ips_iqns to construct all paths\r\n773 iqn_luns = []\r\n774 for ip, iqn in ips_iqns:\r\n775 iqn_lun = '%s-lun-%s' % (iqn,\r\n776 iscsi_properties.get('target_lun', 0))\r\n777 iqn_luns.append(iqn_lun)\r\n778 for dev in ['/dev/disk/by-path/%s' % dev for dev in entries]:\r\n779 for iqn_lun in iqn_luns:\r\n780 if iqn_lun in dev: ==> This is incorrect, device for LUN 231 will made this be True.\r\n781 self._delete_device(dev)\r\n782\r\n783 self._rescan_multipath()\r\n\r\nDue to the incorrect logic in line 780, detach LUN xx will deleted devices for other LUNs starts with xx, such as xxy, xxz. We could use dev.endswith(iqn_lun) to avoid it.\r\n===================================\r\nstack@openstack-performance:~/tina/nova_iscsi_mp/nova$ git log -1\r\ncommit f4504f3575b35ec14390b4b678e441fcf953f47b\r\nMerge: 3f21f60 5fbd852\r\nAuthor: Jenkins <email address hidden>\r\nDate: Tue May 12 22:46:43 2015 +0000\r\n\r\n    Merge \"Remove db layer hard-code permission checks for network_get_all_by_host\"", 
+    "tags": [
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1454512", 
+    "owner": "None", 
+    "id": 1454512, 
+    "index": 4253, 
+    "openned": "2015-05-13 06:47:58.725028+00:00", 
+    "created": "2015-05-13 06:47:58.725028+00:00", 
+    "title": "Device for other volume is deleted unexpected during volume detach when iscsi multipath is used ", 
+    "comments": [
+        {
+            "content": "We found this issue during testing volume detachment when iSCSI multipath is used. When a same iSCSI protal and iqn is shared by multiple LUNs, device from other volume maybe be deleted unexpected. This is found both in Kilo and the latest code.\n\n\nFor example, the devices under /dev/disk/by-path may looks like below when LUN 23 and 231 are from a same storage system and a same iSCSI protal and iqn are used. ls /dev/disk/by-path\nip-192.168.3.50:3260-iscsi-<iqna>-lun-23 -> ../../sdh\nip-192.168.3.50:3260-iscsi-<iqna>-lun-231 -> ../../sdk\nip-192.168.3.51:3260-iscsi-<iqnb>-lun-23 -> ../../sdd\nip-192.168.3.51:3260-iscsi-<iqnb>-lun-231 -> ../../sdi\n\n\nWhen we try to detach volume corresponding LUN 23 from the host, the devices regarding to LUN 231 are also deleted which may cause the data unavailable. \n\nWhy this happen?  After digging into the node code, below is the clue:\n\nnova/virt/libvirt/volume.py\n770     def _delete_mpath(self, iscsi_properties, multipath_device, ips_iqns):\n 771         entries = self._get_iscsi_devices()\n 772         # Loop through ips_iqns to construct all paths\n 773         iqn_luns = []\n 774         for ip, iqn in ips_iqns:\n 775             iqn_lun = '%s-lun-%s' % (iqn,\n 776                                      iscsi_properties.get('target_lun', 0))\n 777             iqn_luns.append(iqn_lun)\n 778         for dev in ['/dev/disk/by-path/%s' % dev for dev in entries]:\n 779             for iqn_lun in iqn_luns:\n 780                 if iqn_lun in dev:                 ==> This is incorrect, device for LUN 231 will made this be True. \n 781                     self._delete_device(dev)\n 782\n 783         self._rescan_multipath()\n\nDue to the incorrect logic in line 780, detach LUN xx will deleted devices for other LUNs starts with xx, such as xxy, xxz\n===================================\nstack@openstack-performance:~/tina/nova_iscsi_mp/nova$ git log -1\ncommit f4504f3575b35ec14390b4b678e441fcf953f47b\nMerge: 3f21f60 5fbd852\nAuthor: Jenkins <email address hidden>\nDate:   Tue May 12 22:46:43 2015 +0000\n\n    Merge \"Remove db layer hard-code permission checks for network_get_all_by_host\"", 
+            "date_created": "2015-05-13 06:47:58.725028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tina-tang"
+        }, 
+        {
+            "content": "This can be fixed easily, assign it to myself.", 
+            "date_created": "2015-05-13 06:57:25.290951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tina-tang"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/182565", 
+            "date_created": "2015-05-13 08:12:50.777414+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by melanie witt (<email address hidden>) on branch: master\nReview: https://review.openstack.org/182565\nReason: Tina, thanks for the update. I'll abandon this patch for you. FYI you can abandon patches on which you are owner by clicking the \"Abandon\" button", 
+            "date_created": "2015-09-02 17:32:56.408053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is apparently fixed by the switch to os-brick:\r\n\r\nhttps://review.openstack.org/#/c/175569/", 
+            "date_created": "2015-09-02 18:01:25.289854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }
+    ], 
+    "closed": "2015-09-03 11:45:07.276345+00:00"
+}

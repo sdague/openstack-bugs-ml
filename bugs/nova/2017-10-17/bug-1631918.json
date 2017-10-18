@@ -1,0 +1,58 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-09-27 04:17:58.872807+00:00", 
+    "description": "On a fresh deployment, there are issues when starting up nova-compute, before nova-conductor has started responding to RPC requests.\n\nThe first is a MessagingTimeout in the _determine_version_cap call, that is triggered by creating the ComputeManager class.\n\nThis cases the process to exit, but it doesn't seem to quite fully exit the process.\n\nIt seems like this happens only when CONF.upgrade_levels.compute = \"auto\"\n\nThis was spotted in this OSA change:\nhttps://review.openstack.org/#/c/367752", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1631918", 
+    "owner": "None", 
+    "id": 1631918, 
+    "index": 4644, 
+    "openned": "2016-10-10 11:23:53.724985+00:00", 
+    "created": "2016-10-10 11:23:53.724985+00:00", 
+    "title": "_determine_version_cap fails with MessagingTimeout when starting nova-compute", 
+    "comments": [
+        {
+            "content": "On a fresh deployment, there are issues when starting up nova-compute, before nova-conductor has started responding to RPC requests.\n\nThe first is a MessagingTimeout in the _determine_version_cap call, that is triggered by creating the ComputeManager class.\n\nThis cases the process to exit, but it doesn't seem to quite fully exit the process.", 
+            "date_created": "2016-10-10 11:23:53.724985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/384428", 
+            "date_created": "2016-10-10 11:27:58.829109+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I think this is the key chain of events:\n2016-10-08 11:05:41.202 16059 ERROR nova Traceback (most recent call last):\n2016-10-08 11:05:41.202 16059 ERROR nova   File \"/openstack/venvs/nova-testing/bin/nova-compute\", line 10, in <module>\n2016-10-08 11:05:41.202 16059 ERROR nova     sys.exit(main())\n2016-10-08 11:05:41.202 16059 ERROR nova   File \"/openstack/venvs/nova-testing/local/lib/python2.7/site-packages/nova/cmd/compute.py\", line 63, in main\n2016-10-08 11:05:41.202 16059 ERROR nova     db_allowed=CONF.conductor.use_local)\n2016-10-08 11:05:41.202 16059 ERROR nova   File \"/openstack/venvs/nova-testing/local/lib/python2.7/site-packages/nova/service.py\", line 218, in create\n2016-10-08 11:05:41.202 16059 ERROR nova     db_allowed=db_allowed)\n2016-10-08 11:05:41.202 16059 ERROR nova   File \"/openstack/venvs/nova-testing/local/lib/python2.7/site-packages/nova/service.py\", line 92, in __init__\n<snip>\n2016-10-08 11:05:41.202 16059 ERROR nova   File \"/openstack/venvs/nova-testing/local/lib/python2.7/site-packages/nova/compute/rpcapi.py\", line 344, in _determine_version_cap\n2016-10-08 11:05:41.202 16059 ERROR nova     context.get_admin_context(), 'nova-compute\u2019)\n<snip>\n2016-10-08 11:05:41.202 16059 ERROR nova MessagingTimeout: Timed out waiting for a reply to message ID 85abb28f3095431eaa819b6fedb2f932\n2016-10-08 11:05:43.622 17413 WARNING nova.virt.libvirt.driver [req-b6d46bac-0d67-48dd-83fc-8d684fb1cf3c - - - - -] Cannot update service status on host \"ubuntu-trusty-osic-cloud1-s3500-4816864\" since it is not registered.\n\nThe first failure appears to be during the setting up the RPC API, we try to make a DB call, and it fails.  and we never try again it would seem:\nhttps://github.com/openstack/nova/blob/master/nova/compute/rpcapi.py#L343\nWe need to better handle failures during the above call.\n\n\nThe second one is more of a worry. I can\u2019t quite tell who restarted nova-compute or if Nova has some kind of failed restart going on here? I need to dig into that. It looks like we fail on the first service update, then all future service update attempts fail because service doesn\u2019t exist.\n\nIn the working ones, you see:\n2016-10-10 02:27:48.015 17473 WARNING nova.virt.libvirt.driver [req-cd630ce1-c7b8-402c-8ad9-4303b3f737c9 - - - - -] Cannot update service status on host \"ubuntu-trusty-osic-cloud1-s3500-4823960\" since it is not registered.\n2016-10-10 02:27:48.106 17473 ERROR nova.compute.manager [req-cd630ce1-c7b8-402c-8ad9-4303b3f737c9 - - - - -] No compute node record for host ubuntu-trusty-osic-cloud1-s3500-4823960\n2016-10-10 02:27:48.109 17473 WARNING nova.compute.monitors [req-cd630ce1-c7b8-402c-8ad9-4303b3f737c9 - - - - -] Excluding nova.compute.monitors.cpu monitor virt_driver. Not in the list of enabled monitors (CONF.compute_monitors).\n2016-10-10 02:27:48.168 17473 WARNING nova.compute.resource_tracker [req-cd630ce1-c7b8-402c-8ad9-4303b3f737c9 - - - - -] No compute node record for ubuntu-trusty-osic-cloud1-s3500-4823960:ubuntu-trusty-osic-cloud1-s3500-4823960\n2016-10-10 02:27:48.191 17473 INFO nova.compute.resource_tracker [req-cd630ce1-c7b8-402c-8ad9-4303b3f737c9 - - - - -] Compute_service record created for ubuntu-trusty-osic-cloud1-s3500-4823960:ubuntu-trusty-osic-cloud1-s3500-4823960\n\nNow quite why things are different between the two is confusing me. Something is auto healing, and I am not seeing where.", 
+            "date_created": "2016-10-10 11:49:10.202825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Change abandoned by John Garbutt (<email address hidden>) on branch: master\nReview: https://review.openstack.org/384428\nReason: This is a bad idea, the service does die correctly, it was the init script that caused it to come back to life.", 
+            "date_created": "2016-10-10 12:34:48.302136+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Turns out, the init script is restarting the process after 150 seconds of failure.\n\nThis races tempest retries, and sometimes means the tests pass (tempest gets retried 3 times I think).\n\nSo nova-compute dies when nova-conductor is not running, which is OK. Might be better if we retried a few times once we are up, but seems like that would need a bit of re-work.", 
+            "date_created": "2016-10-10 13:17:20.954171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:43:20.174961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "The bug report seems to indicate this isn't really an issue any more?", 
+            "date_created": "2017-07-28 13:18:52.457255+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-09-27 04:17:56.794360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2017-09-27 04:17:57.261180+00:00"
+}

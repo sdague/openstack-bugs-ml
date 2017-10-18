@@ -1,0 +1,55 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-10-17 00:56:02.275535+00:00", 
+    "description": "I found this while working on a change to improve the usage of the CellDatabases test fixture by defaulting to the 'cell0' database instead of the 'cell1' database.\n\nIn the set_target_cell method, we synchronize access to the cached cell\ndatabase transaction context manager objects to prevent more than one \nthread from using a cell's transaction context manager at the same\ntime.\n\nIn scatter_gather_cells, we're calling target_cell in such a way that\nthe lock is acquired and released BEFORE the green thread actually\naccesses the database in the spawned function. So multiple threads can \naccess a cell's database transaction context manager and it's possible\nfor a database transaction to fail with the error:\n\n  TypeError: Can't upgrade a READER transaction to a WRITER\n             mid-transaction\n\nbecause the in-scope transaction context might be in the middle of a\nread when a concurrent green thread tries to do a write.\n\nI saw this happen in the test:\n\nnova.tests.unit.compute.test_compute.DisabledInstanceTypesTestCase.test_can_resize_to_visible_instance_type\n\nwhere a parallel read of instances during a quota check accessed the cell's database transaction context manager at the same time as an instance.save() in the compute/api, causing the instance.save() to fail with \"TypeError: Can't upgrade a READER transaction to a WRITER mid-transaction.\"", 
+    "tags": [
+        "cells"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1722404", 
+    "owner": "https://api.launchpad.net/1.0/~melwitt", 
+    "id": 1722404, 
+    "index": 2160, 
+    "openned": "2017-10-09 20:53:43.856144+00:00", 
+    "created": "2017-10-09 20:53:43.856144+00:00", 
+    "title": "Database transactions can fail with 'TypeError: Can't upgrade a READER transaction to a WRITER mid-transaction' because of scatter_gather_cells", 
+    "comments": [
+        {
+            "content": "I found this while working on a change to improve the usage of the CellDatabases test fixture by defaulting to the 'cell0' database instead of the 'cell1' database.\n\nIn the set_target_cell method, we synchronize access to the cached cell\ndatabase transaction context manager objects to prevent more than one \nthread from using a cell's transaction context manager at the same\ntime.\n\nIn scatter_gather_cells, we're calling target_cell in such a way that\nthe lock is acquired and released BEFORE the green thread actually\naccesses the database in the spawned function. So multiple threads can \naccess a cell's database transaction context manager and it's possible\nfor a database transaction to fail with the error:\n\n  TypeError: Can't upgrade a READER transaction to a WRITER\n             mid-transaction\n\nbecause the in-scope transaction context might be in the middle of a\nread when a concurrent green thread tries to do a write.\n\nI saw this happen in the test:\n\nnova.tests.unit.compute.test_compute.DisabledInstanceTypesTestCase.test_can_resize_to_visible_instance_type\n\nwhere a parallel read of instances during a quota check accessed the cell's database transaction context manager at the same time as an instance.save() in the compute/api, causing the instance.save() to fail with \"TypeError: Can't upgrade a READER transaction to a WRITER mid-transaction.\"", 
+            "date_created": "2017-10-09 20:53:43.856144+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/510691", 
+            "date_created": "2017-10-09 20:56:55.524550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/510691\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=3cc3cc453dc16e22365bea597c1be5bb0be57aeb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3cc3cc453dc16e22365bea597c1be5bb0be57aeb\nAuthor: melanie witt <email address hidden>\nDate:   Mon Oct 9 20:36:59 2017 +0000\n\n    Fix target_cell usage for scatter_gather_cells\n    \n    In the set_target_cell method, we synchronize access to the cached cell\n    database transaction context manager objects to prevent more than one\n    thread from using a cell's transaction context manager at the same\n    time.\n    \n    In scatter_gather_cells, we're calling target_cell in such a way that\n    the lock is acquired and released BEFORE the green thread actually\n    accesses the database in the spawned function. So multiple threads can\n    access a cell's database transaction context manager and it's possible\n    for a database transaction to fail with the error:\n    \n      TypeError: Can't upgrade a READER transaction to a WRITER\n                 mid-transaction\n    \n    because the in-scope transaction context might be in the middle of a\n    read when a concurrent green thread tries to do a write.\n    \n    Closes-Bug: #1722404\n    \n    Change-Id: I07dd4d5aebdc82e343ec2035dc94c744e4754c96\n", 
+            "date_created": "2017-10-12 12:07:31.717223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/pike\nReview: https://review.openstack.org/511538", 
+            "date_created": "2017-10-12 17:42:28.964563+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related debugging: https://review.openstack.org/#/c/511651/", 
+            "date_created": "2017-10-13 13:34:59.371273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/511651\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=42b70509c6e632b0553e92d8ff04cb4cecaa563c\nSubmitter: Zuul\nBranch:    master\n\ncommit 42b70509c6e632b0553e92d8ff04cb4cecaa563c\nAuthor: Dan Smith <email address hidden>\nDate:   Thu Oct 12 16:37:14 2017 -0700\n\n    Regenerate context during targeting\n    \n    We are only doing a copy.copy() on context when we do target_cell(),\n    which may mean we're sharing more across threads than we intend to.\n    This makes that a full regeneration of the context (like we would\n    do over RPC). This will necessarily dump the targeting, if already\n    set, and any per-thread database context.\n    \n    Closes-Bug: #1722404\n    Change-Id: Id24dea7465bafc1f6f58c4a121c4ffb35b7a634a\n", 
+            "date_created": "2017-10-17 00:42:37.683842+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/pike\nReview: https://review.openstack.org/512456", 
+            "date_created": "2017-10-17 00:56:01.671638+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-10-12 12:07:29.293752+00:00"
+}

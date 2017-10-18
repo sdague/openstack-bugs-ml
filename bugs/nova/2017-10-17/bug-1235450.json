@@ -1,0 +1,400 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 11:22:34.664279+00:00", 
+    "description": "The neutron metadata service works in the following way:\n\nInstance makes a GET request to http://169.254.169.254/\n\nThis is directed to the metadata-agent which knows which router(namespace) he is running on and determines the ip_address from the http request he receives. \n\nNow, the neturon-metadata-agent queries neutron-server  using the router_id and ip_address from the request to determine the port the request came from. Next, the agent takes the device_id (nova-instance-id) on the port and passes that to nova as X-Instance-ID. \n\nThe vulnerability is that if someone exposes their instance_id their metadata can be retrieved. In order to exploit this, one would need to update the device_id  on a port to match the instance_id they want to hijack the data from. \n\nTo demonstrate:\n\narosen@arosen-desktop:~/devstack$ nova list\n+--------------------------------------+------+--------+------------+-------------+------------------+\n| ID                                   | Name | Status | Task State | Power State | Networks         |\n+--------------------------------------+------+--------+------------+-------------+------------------+\n| 1eb33bf1-6400-483a-9747-e19168b68933 | vm1  | ACTIVE | None       | Running     | private=10.0.0.4 |\n| eed973e2-58ea-42c4-858d-582ff6ac3a51 | vm2  | ACTIVE | None       | Running     | private=10.0.0.3 |\n+--------------------------------------+------+--------+------------+-------------+------------------+\n\n\narosen@arosen-desktop:~/devstack$ neutron port-list\n+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+\n| id                                   | name | mac_address       | fixed_ips                                                                       |\n+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+\n| 3128f195-c41b-4160-9a42-40e024771323 |      | fa:16:3e:7d:a5:df | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.1\"} |\n| 62465157-8494-4fb7-bdce-2b8697f03c12 |      | fa:16:3e:94:62:47 | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.4\"} |\n| 8473fb8d-b649-4281-b03a-06febf61b400 |      | fa:16:3e:4f:a3:b0 | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.2\"} |\n| 92c42c1a-efb0-46a6-89eb-a38ae170d76d |      | fa:16:3e:de:9a:39 | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.3\"} |\n+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+\n\n\narosen@arosen-desktop:~/devstack$ neutron port-show  62465157-8494-4fb7-bdce-2b8697f03c12\n+-----------------------+---------------------------------------------------------------------------------+\n| Field                 | Value                                                                           |\n+-----------------------+---------------------------------------------------------------------------------+\n| admin_state_up        | True                                                                            |\n| allowed_address_pairs |                                                                                 |\n| device_id             | 1eb33bf1-6400-483a-9747-e19168b68933                                            |\n| device_owner          | compute:None                                                                    |\n| extra_dhcp_opts       |                                                                                 |\n| fixed_ips             | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.4\"} |\n| id                    | 62465157-8494-4fb7-bdce-2b8697f03c12                                            |\n| mac_address           | fa:16:3e:94:62:47                                                               |\n| name                  |                                                                                 |\n| network_id            | 5f68c45d-b729-4e21-9ded-089848eb4ef2                                            |\n| security_groups       | 3e29d8e7-0195-4438-a49a-9706736b888d                                            |\n| status                | ACTIVE                                                                          |\n| tenant_id             | 0f9d696fc73d4110ab492ca105881b9b                                                |\n+-----------------------+---------------------------------------------------------------------------------+\n\narosen@arosen-desktop:~/devstack$ neutron port-show  92c42c1a-efb0-46a6-89eb-a38ae170d76d\n+-----------------------+---------------------------------------------------------------------------------+\n| Field                 | Value                                                                           |\n+-----------------------+---------------------------------------------------------------------------------+\n| admin_state_up        | True                                                                            |\n| allowed_address_pairs |                                                                                 |\n| device_id             | eed973e2-58ea-42c4-858d-582ff6ac3a51                                            |\n| device_owner          | compute:None                                                                    |\n| extra_dhcp_opts       |                                                                                 |\n| fixed_ips             | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.3\"} |\n| id                    | 92c42c1a-efb0-46a6-89eb-a38ae170d76d                                            |\n| mac_address           | fa:16:3e:de:9a:39                                                               |\n| name                  |                                                                                 |\n| network_id            | 5f68c45d-b729-4e21-9ded-089848eb4ef2                                            |\n| security_groups       | 3e29d8e7-0195-4438-a49a-9706736b888d                                            |\n| status                | ACTIVE                                                                          |\n| tenant_id             | 0f9d696fc73d4110ab492ca105881b9b                                                |\n+-----------------------+---------------------------------------------------------------------------------+\n\nFrom vm2 (eed973e2-58ea-42c4-858d-582ff6ac3a51): \n$ curl http://169.254.169.254/latest/meta-data/hostname\nvm2.novalocal\n\narosen@arosen-desktop:~/devstack$ neutron port-update 92c42c1a-efb0-46a6-89eb-a38ae170d76d   --device_id=1eb33bf1-6400-483a-9747-e19168b68933\n\n From vm2 (eed973e2-58ea-42c4-858d-582ff6ac3a51): \n$ curl http://169.254.169.254/latest/meta-data/hostname\nvm1.novalocal\n\n\nIn order to fix this issue I believe we need to also pass the tenant-id in the metadata request to nova. When nova receives the request it will now have to query it's database using the instance_id and check that the tenant_id's match. Using the tenant_id solves this issue as the user is not allowed to specify or update this field.", 
+    "tags": [
+        "metadata"
+    ], 
+    "importance": "High", 
+    "heat": 278, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1235450", 
+    "owner": "https://api.launchpad.net/1.0/~arosen", 
+    "id": 1235450, 
+    "index": 1265, 
+    "openned": "2013-10-08 14:32:05.022415+00:00", 
+    "created": "2013-10-04 20:36:29.517924+00:00", 
+    "title": "[OSSA 2013-033] Metadata queries from Neutron to Nova are not restricted by tenant (CVE-2013-6419)", 
+    "comments": [
+        {
+            "content": "The neutron metadata service works in the following way:\n\nInstance makes a GET request to http://169.254.169.254/\n\nThis is directed to the metadata-agent which knows which router(namespace) he is running on and determines the ip_address from the http request he receives. \n\nNow, the neturon-metadata-agent queries neutron-server  using the router_id and ip_address from the request to determine the port the request came from. Next, the agent takes the device_id (nova-instance-id) on the port and passes that to nova as X-Instance-ID. \n\nThe vulnerability is that if someone exposes their instance_id their metadata can be retrieved. In order to exploit this, one would need to update the device_id  on a port to match the instance_id they want to hijack the data from. \n\nTo demonstrate:\n\narosen@arosen-desktop:~/devstack$ nova list\n+--------------------------------------+------+--------+------------+-------------+------------------+\n| ID                                   | Name | Status | Task State | Power State | Networks         |\n+--------------------------------------+------+--------+------------+-------------+------------------+\n| 1eb33bf1-6400-483a-9747-e19168b68933 | vm1  | ACTIVE | None       | Running     | private=10.0.0.4 |\n| eed973e2-58ea-42c4-858d-582ff6ac3a51 | vm2  | ACTIVE | None       | Running     | private=10.0.0.3 |\n+--------------------------------------+------+--------+------------+-------------+------------------+\n\n\narosen@arosen-desktop:~/devstack$ neutron port-list\n+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+\n| id                                   | name | mac_address       | fixed_ips                                                                       |\n+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+\n| 3128f195-c41b-4160-9a42-40e024771323 |      | fa:16:3e:7d:a5:df | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.1\"} |\n| 62465157-8494-4fb7-bdce-2b8697f03c12 |      | fa:16:3e:94:62:47 | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.4\"} |\n| 8473fb8d-b649-4281-b03a-06febf61b400 |      | fa:16:3e:4f:a3:b0 | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.2\"} |\n| 92c42c1a-efb0-46a6-89eb-a38ae170d76d |      | fa:16:3e:de:9a:39 | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.3\"} |\n+--------------------------------------+------+-------------------+---------------------------------------------------------------------------------+\n\n\narosen@arosen-desktop:~/devstack$ neutron port-show  62465157-8494-4fb7-bdce-2b8697f03c12\n+-----------------------+---------------------------------------------------------------------------------+\n| Field                 | Value                                                                           |\n+-----------------------+---------------------------------------------------------------------------------+\n| admin_state_up        | True                                                                            |\n| allowed_address_pairs |                                                                                 |\n| device_id             | 1eb33bf1-6400-483a-9747-e19168b68933                                            |\n| device_owner          | compute:None                                                                    |\n| extra_dhcp_opts       |                                                                                 |\n| fixed_ips             | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.4\"} |\n| id                    | 62465157-8494-4fb7-bdce-2b8697f03c12                                            |\n| mac_address           | fa:16:3e:94:62:47                                                               |\n| name                  |                                                                                 |\n| network_id            | 5f68c45d-b729-4e21-9ded-089848eb4ef2                                            |\n| security_groups       | 3e29d8e7-0195-4438-a49a-9706736b888d                                            |\n| status                | ACTIVE                                                                          |\n| tenant_id             | 0f9d696fc73d4110ab492ca105881b9b                                                |\n+-----------------------+---------------------------------------------------------------------------------+\n\narosen@arosen-desktop:~/devstack$ neutron port-show  92c42c1a-efb0-46a6-89eb-a38ae170d76d\n+-----------------------+---------------------------------------------------------------------------------+\n| Field                 | Value                                                                           |\n+-----------------------+---------------------------------------------------------------------------------+\n| admin_state_up        | True                                                                            |\n| allowed_address_pairs |                                                                                 |\n| device_id             | eed973e2-58ea-42c4-858d-582ff6ac3a51                                            |\n| device_owner          | compute:None                                                                    |\n| extra_dhcp_opts       |                                                                                 |\n| fixed_ips             | {\"subnet_id\": \"d5cbaa98-ecf0-495c-b009-b5ea6160259b\", \"ip_address\": \"10.0.0.3\"} |\n| id                    | 92c42c1a-efb0-46a6-89eb-a38ae170d76d                                            |\n| mac_address           | fa:16:3e:de:9a:39                                                               |\n| name                  |                                                                                 |\n| network_id            | 5f68c45d-b729-4e21-9ded-089848eb4ef2                                            |\n| security_groups       | 3e29d8e7-0195-4438-a49a-9706736b888d                                            |\n| status                | ACTIVE                                                                          |\n| tenant_id             | 0f9d696fc73d4110ab492ca105881b9b                                                |\n+-----------------------+---------------------------------------------------------------------------------+\n\nFrom vm2 (eed973e2-58ea-42c4-858d-582ff6ac3a51): \n$ curl http://169.254.169.254/latest/meta-data/hostname\nvm2.novalocal\n\narosen@arosen-desktop:~/devstack$ neutron port-update 92c42c1a-efb0-46a6-89eb-a38ae170d76d   --device_id=1eb33bf1-6400-483a-9747-e19168b68933\n\n From vm2 (eed973e2-58ea-42c4-858d-582ff6ac3a51): \n$ curl http://169.254.169.254/latest/meta-data/hostname\nvm1.novalocal\n\n\nIn order to fix this issue I believe we need to also pass the tenant-id in the metadata request to nova. When nova receives the request it will now have to query it's database using the instance_id and check that the tenant_id's match. Using the tenant_id solves this issue as the user is not allowed to specify or update this field.", 
+            "date_created": "2013-10-04 20:36:29.517924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "FYI This affects: Grizzly and Havana. ", 
+            "date_created": "2013-10-04 20:39:58.056333+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Also, passing in the tenant-id as well does not enforce a tenant from spoofing themselves but i think this is okay. ", 
+            "date_created": "2013-10-04 20:42:37.062285+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "An extra layer of security would be to make the device opaque by encrypting it using the tenant id of the port owner. To steal the data now, we not only need to compromise the agent, but also the neutron server.", 
+            "date_created": "2013-10-04 20:45:41.348677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "I can confirm that cross tenant metadata leaks are possible.  The exploit requires that the instance_id be obtained or that a valid UUID is randomly guessed correctly.  This will need to be fixed in Grizzly stable and the Havana RC and we've got a team to discuss and work on a fix.", 
+            "date_created": "2013-10-04 20:56:05.146716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmcclain"
+        }, 
+        {
+            "content": "IIUC the fix requires both changing Nova and Neutron ? Or is there a way to fix this that would only involve one party ? (that would make it easier to publish as a security fix)", 
+            "date_created": "2013-10-07 12:29:31.923047+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": " unfortunately a change is needed in both. One in neutron to pass the tenant-id in the request as well and one in nova to ensure that the tenant-id matches the instance-id. ", 
+            "date_created": "2013-10-07 16:04:47.878554+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Fix for nova see attached. ", 
+            "date_created": "2013-10-07 22:29:09.284909+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Fix for neutron. \n\nNote: I'll upload backports for grizzly once these are reviewed. ", 
+            "date_created": "2013-10-07 23:07:50.536003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Whoops left of the Fixes bug: 1235450 on last patch. Review attached patch instead.", 
+            "date_created": "2013-10-07 23:09:12.859999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "testing the patches...a suggestion would be for the nova patch to add a test to verify that a 404 gets returned if the project id for the instance does not match the tenant id specified in the header, in order to avoid potential regressions. I don't seem to find this kind of test. However I'd be fine to see this as a follow up patch once the security vulnerability is addressed. What do you think?", 
+            "date_created": "2013-10-08 23:52:46.682874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "@Russell: could you get some Nova reviewers on the Nova portion of that patch ?", 
+            "date_created": "2013-10-09 15:57:17.299015+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Armando - thanks for reviewing. There is such test already: \n\n+        # mismatched X-Tenant-ID\n+        response = fake_request(\n+            self.stubs, self.mdinst,\n+            relpath=\"/2009-04-04/user-data\",\n+            address=\"192.192.192.2\",\n+            fake_get_metadata_by_instance_id=fake_get_metadata,\n+            headers={'X-Forwarded-For': '192.192.192.2',\n+                     'X-Instance-ID': 'a-b-c-d',\n+                     'X-Tenant-ID': 'FAKE',\n+                     'X-Instance-ID-Signature': signed})\n+\n+        self.assertEqual(response.status_int, 404)\n\n", 
+            "date_created": "2013-10-09 16:27:00.745731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Thanks for pointing that out, I didn't notice there was one giant test case, yuk :)", 
+            "date_created": "2013-10-09 18:33:41.975267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "Yea I agree. But I didn't want to refactor the existing tests in a sec vul patch. \n", 
+            "date_created": "2013-10-09 19:44:14.821976+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "The two patches are okay from what I can tell. Are you gonna post grizzly ones too?", 
+            "date_created": "2013-10-09 23:48:39.348418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "@Armando sure i'll do that now. I was hoping to get review concense on my first two patches first. Coming right up", 
+            "date_created": "2013-10-10 19:34:42.185411+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-10-10 19:37:43.664363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-10-10 19:39:48.997587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "It would be great if we could get these matches in especially before the final RC of neturon and nova.", 
+            "date_created": "2013-10-11 20:27:33.258240+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "I agree--it would be lovely if some nova and neutron core reviewers could give these patches a once-over (and +2 them if appropriate). The sooner we can get this fixed and an advisory released, the better.", 
+            "date_created": "2013-10-12 20:06:36.866534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Given the embargo rules (4 business days of pre-disclosure) it's now impossible for us to fix this before release. I'd like to issue the advisory for it soon after release though, so reviewing would be nice.", 
+            "date_created": "2013-10-14 09:14:17.327964+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Nova patch comments:\n\n1) Since this is going into stable, do you think we should make it handle the case of a missing X-Tenant-ID header not fail the request?\n\n2) \n\n+        elif not isinstance(tenant_id, basestring):\n+            msg = _('Multiple X-Tenant-ID headers found within request.')\n\nWould checking if tenant_id is a list be a more explicit check for the msg you are assigning to it?  I see that it's just a copy of the handling for another header, so I guess it's fine to just leave it as-is.\n\n\nOtherwise, patch seems fine to me.  Thanks!", 
+            "date_created": "2013-10-14 14:26:59.609875+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "+2 from me on the patch as it is. I think the new change in expected client behavior (the new header) is better than the alternative of the spoofing risk.", 
+            "date_created": "2013-10-14 14:38:03.728055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Ok, that works for me.  +2 on the nova patch\n\nThanks!", 
+            "date_created": "2013-10-14 14:39:06.550852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "We need to wait a bit longer before disclosing this patch so that we can investigate a possible related issue.", 
+            "date_created": "2013-10-15 14:46:59.582244+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmcclain"
+        }, 
+        {
+            "content": "@MarkMcClain: any progress there ?", 
+            "date_created": "2013-10-21 13:45:04.528277+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hi Thierry - MarkMcClain pointed out there is another instance where this occurs: https://bugs.launchpad.net/neutron/+bug/1243327 I think all of these patches should go in at the same thing perhaps.", 
+            "date_created": "2013-10-22 18:39:54.514262+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "It's a bit unclear to me how the two issues are directly related, so I can't answer if a single patch makes more sesne than two separate patches here. Could one of you enlighten me ?", 
+            "date_created": "2013-10-24 14:39:26.342019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hi Thierry, \n\nYes they are two separate issues both allowing the vulnerability to occur by the tenant changing the device_id. These should be fixed in different patches. I'll ping a new neutron cores and get them to review the other bug report and hopefully we can proceed forward with getting this fixed. ", 
+            "date_created": "2013-10-24 16:39:17.330717+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Cool, please attach patches to this bug for private review", 
+            "date_created": "2013-10-28 14:51:45.016196+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@arosen, @markmcclain: is anybody working on a patch for this ?", 
+            "date_created": "2013-11-14 10:40:53.028649+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Aaron has been waiting for reviews besides mine.", 
+            "date_created": "2013-11-20 15:52:54.189541+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "and the others...but furthermore we wonder how to get this stuff to merge without going through the usual workflow.", 
+            "date_created": "2013-11-20 15:53:34.798654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~armando-migliaccio"
+        }, 
+        {
+            "content": "@Armando: we idea is to gather the necessary approvals for the patch on this bug (two core people saying +2). Then when the issue is made public we can propose it for review and get a single core reviewer to +2/APRV it based on the approvals collected on the bug. That way we can reduce the window where the vulnerability is public but no advisory has been published.\n\nFor more information on our workflow, see https://wiki.openstack.org/wiki/VulnerabilityManagement\n", 
+            "date_created": "2013-11-20 16:07:58.185230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sorry for the late chime in.\nI reviewed and tested the patches for master and grizzly branch.\n\n(Neutron patches) +2 for both branches\n(Nova pathces) Looks good (+1), but we need to rebase the patch to master branch.\n", 
+            "date_created": "2013-11-21 11:49:13.739175+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "Okay, so we have 2x +2 (Russell and Dan) on  nova-patch-master.txt and  nova-grizzly-patch.txt, and 2x +2 (Armando and Akihiro) on  neutron-patch-master.txt and  neutron-grizzly-patch.txt.\n\nAre nova-patch-master.txt and neutron-patch-master.txt also expected to work as-is on stable/havana branches now?\n\nWe still need stable (Grizzly and Havana) bugtasks added to this bug for both Neutron and Nova.", 
+            "date_created": "2013-11-21 18:17:23.763933+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "yay series", 
+            "date_created": "2013-11-22 16:40:44.858997+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "These patches don't apply on master right now. I'm rebasing and retesting. I'll upload a rebased set shortly. ", 
+            "date_created": "2013-11-22 17:05:09.135698+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-11-22 20:16:22.304835+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-11-22 20:16:48.443205+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "The same patches in comment 7/9 are good for icehouse. ", 
+            "date_created": "2013-11-22 20:25:20.214672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Proposed impact description\n-- \nTitle: Router metadata queries are not restricted by tenant\nReporter: Aaron Rosen (VMware)\nProducts: Neutron\nAffects: All supported releases\n\nDescription:\nAaron Rosen from VMware reported a vulnerability in OpenStack Neutron. By guessing the instance_id or UUID of a tenant's router, another tenant may retrieve its metadata resulting in potential information disclosure. Only OpenStack setups running Neutron are affected.\n-- \nI can't help but feel this is a little light on details. Anyone have any improvements to suggest before I request a CVE?", 
+            "date_created": "2013-11-26 03:36:32.088112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "My only comment is that I wouldn't necessarily say 'guessing the instance_id or UUID'. Guessing a UUID is (in theory) pretty difficult. In my mind the premise of this attack is essentially an insecure direct object reference. i.e. An authorization check was not in place to ensure that instance_id has access  restricted to a particular tenant_id. So you could potentially rephrase things to focus on that. Although I'm not sure how to rephrase that without going 'off template'. \n\nThat's my two cents anyway. Feel free to disregard. After-all I'm new at this :-)", 
+            "date_created": "2013-11-26 05:26:30.352308+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Hi Jeremy, how about this: \n\n--\nTitle:  Metadata queries between neutron and nova are not restricted by tenant\nReporter: Aaron Rosen (VMware)\nProducts: Neutron / Nova\nAffects: All supported releases\n\nDescription:\nAaron Rosen from VMware reported a vulnerability in the metadata access between neutron and nova . By guessing the instance_id, another tenant may retrieve its metadata resulting in potential information disclosure. Only OpenStack setups running the neturon-metadata-agent/quantum-metadata-agent are affected.\n--", 
+            "date_created": "2013-11-26 14:00:51.647863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "FWIW the template is not a hard rule, it's just a way to achieve common style from different authors :)", 
+            "date_created": "2013-11-26 16:08:05.619395+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Ok good to know.  Also what Aaron said LGTM.\n\n", 
+            "date_created": "2013-11-26 23:25:59.228988+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Revised impact description (thanks Aaron and Grant!)\n--\nTitle: Router metadata queries are not restricted by tenant\nReporter: Aaron Rosen (VMware)\nProducts: Neutron, Nova\nAffects: All supported releases\n\nDescription:\nAaron Rosen from VMware reported a vulnerability in the metadata access from OpenStack Neutron to Nova. Because of a missing authorization check on port binding, by guessing the instance_id of a tenant's router another tenant may retrieve its metadata resulting in information disclosure. Only OpenStack setups running neturon-metadata-agent or quantum-metadata-agent are affected.", 
+            "date_created": "2013-11-27 01:51:37.982453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Hi Jeremy, \n\nThe router_id actually doesn't come into play here. The issue is if another tenant finds out another tenants instance_id they can retrieve that instance's metadata.  I'd go with the title/description in comment 44\n", 
+            "date_created": "2013-11-27 04:35:41.510059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Ahh, got it. I didn't realize each tenant had only one distinct Nova instance_id and assumed that was per server (or router, a Neutron router is really just a Nova managed server right?). Presumably the requirement of binding the target instance_id to a port as mentioned in the bug description is still valid for this issue? I also get the impression that Neutron queries Nova for metadata but Nova does not query Neutron, correct? Another try...\n--------\n\nTitle: Metadata queries from Neutron to Nova are not restricted by tenant\nReporter: Aaron Rosen (VMware)\nProducts: Neutron, Nova\nAffects: All supported releases\n\nDescription:\nAaron Rosen from VMware reported a vulnerability in the metadata access from OpenStack Neutron to Nova. Because of a missing authorization check on port binding, by guessing an instance_id a tenant may retrieve another tenant's metadata resulting in information disclosure. Only OpenStack setups running neturon-metadata-agent or quantum-metadata-agent are affected.", 
+            "date_created": "2013-11-27 14:41:58.370131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "neturon -> neutron, otherwise looks good (not sure >i'd go and mention quantum-metadata-agent, but meh)", 
+            "date_created": "2013-11-27 16:31:36.103942+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hi Jeremy, \n\nNope a neturon router is actually not something that nova manages. \n\nHere's the whole history to this bug. Back in Folsom times or (if using  nova-network) the way that metadata works is that nova would look at the source address from the http get request to 169.254.169.254. Since neutron allows you to have overlapping ip_addresses using the source_ip address would no longer work because that was no longer unique. To fix this issue the neutron-metadata-agent was created. This agent intercepts requests to the metadata server at the neutron router. Since we do not allow overlapping ip addresses to be attached to the same router we are able to determine which port made the metadata request. When a metadata request comes in the neutron metadata agent would query neutron  (using the source_ip) for the port's device_id(which matches the nova-instance-id) and inserted that as the X-Instance-ID in the metadata request to nova. \n\nSince the device_id on a neutron port is update-able as a tenant, a tenant can change the device_id on his port to any instance_id to extract that instances metadata. The patches attached fix this issue by also passing the tenant_id in the metadata request. This is something that the tenant is not able to change. Then the tenant_id is also check on the nova side to make sure that they match. This ensures that one cannot get around this by spoofing. ", 
+            "date_created": "2013-12-01 18:56:39.398931+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Great explanation--thanks Aaron! With your and Thierry's suggestions, I'll request a CVE with the following impact description unless anyone has further corrections...\n--------\n\nTitle: Metadata queries from Neutron to Nova are not restricted by tenant\nReporter: Aaron Rosen (VMware)\nProducts: Neutron, Nova\nAffects: All supported releases\n\nDescription:\nAaron Rosen from VMware reported a vulnerability in the metadata access from OpenStack Neutron to Nova. Because of a missing authorization check on port binding, by guessing an instance_id a tenant may retrieve another tenant's metadata resulting in information disclosure. Only OpenStack setups running neutron-metadata-agent are affected.", 
+            "date_created": "2013-12-01 19:46:31.509655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "LGTM. Thanks Jeremy!", 
+            "date_created": "2013-12-01 20:21:44.571696+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "@fungi +1", 
+            "date_created": "2013-12-02 01:29:52.673892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmcclain"
+        }, 
+        {
+            "content": "+1 to The proposed description form Jeremy.", 
+            "date_created": "2013-12-02 07:15:18.513110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "why not put them into the review system for reviewing?", 
+            "date_created": "2013-12-02 09:29:39.468079+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gongysh"
+        }, 
+        {
+            "content": "the problem is that the user can change 'device-id', how about disabling to update the device-id once upon the device-id is assigned value?\n\nwith the solution:\nIn order to fix this issue I believe we need to also pass the tenant-id in the metadata request to nova. When nova receives the request it will now have to query it's database using the instance_id and check that the tenant_id's match. Using the tenant_id solves this issue as the user is not allowed to specify or update this field. \none user can still steal all the instance's metadata belong to the same tenant.", 
+            "date_created": "2013-12-02 09:37:34.845308+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gongysh"
+        }, 
+        {
+            "content": "@gongysh\nThis bug is a security fix and is not disclosed to all. It is the reason the normal review process (with gerrit) is not used.", 
+            "date_created": "2013-12-02 09:40:05.308189+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "the solution \"update the device-id once upon the device-id is assigned value?\" does not fix this issue. A tenant can create a port with device_id of an instance id of another tenant and this vulnerability happens for such case.", 
+            "date_created": "2013-12-02 10:45:04.124323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "@yong - right a tenant can steal his own metadata from his own instances we are aware of that. ", 
+            "date_created": "2013-12-02 21:16:48.027322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "with the help of unique device_id?", 
+            "date_created": "2013-12-02 21:16:59.841459+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gongysh"
+        }, 
+        {
+            "content": "Scheduled advisory publication date is Wednesday, December 11, 2013 at 1500UTC (so as to fall before the 2013.2.1 point release). Patches will be pushed to review.openstack.org for last-minute approval shortly prior to that time.", 
+            "date_created": "2013-12-06 21:06:30.548807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/61428", 
+            "date_created": "2013-12-11 14:12:21.726401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/61435", 
+            "date_created": "2013-12-11 14:27:43.858049+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/61437", 
+            "date_created": "2013-12-11 14:38:37.097524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/61439", 
+            "date_created": "2013-12-11 14:46:37.915134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/61442", 
+            "date_created": "2013-12-11 14:48:19.892622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/61443", 
+            "date_created": "2013-12-11 14:51:15.666189+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/61439\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=bd4a85d67f091382752d75b95f9cfd076431f30e\nSubmitter: Jenkins\nBranch:    master\n\ncommit bd4a85d67f091382752d75b95f9cfd076431f30e\nAuthor: Aaron Rosen <email address hidden>\nDate:   Mon Oct 7 15:34:38 2013 -0700\n\n    Add X-Tenant-ID to metadata request\n    \n    Previously, one could update a port's device_id to be that of\n    another tenant's instance_id and then be able to retrieve that\n    instance's metadata. In order to prevent this X-Tenant-ID is now\n    passed in the metadata request to nova and nova then checks that\n    X-Tenant-ID also matches the tenant_id for the instance against it's\n    database to ensure it's not being spoofed.\n    \n    DocImpact - When upgrading OpenStack nova and neturon, neutron\n                should be updated first (and neutron-metadata-agent\n                restarted before nova is upgraded) in order to minimize\n                downtime. This is because there is also a patch to nova\n                which has checks X-Tenant-ID against it's database\n                therefore neutron-metadata-agent needs to pass that\n                before nova is upgraded for metadata to work.\n    \n    Change-Id: I2b8fa2f561a7f2914608e68133abf15efa95015a\n    Closes-Bug: #1235450\n", 
+            "date_created": "2013-12-12 00:33:11.570387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/61442\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=954efa91f08ec1782d41a043584334fcf01a64cb\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 954efa91f08ec1782d41a043584334fcf01a64cb\nAuthor: Aaron Rosen <email address hidden>\nDate:   Mon Oct 7 15:34:38 2013 -0700\n\n    Add X-Tenant-ID to metadata request\n    \n    Previously, one could update a port's device_id to be that of\n    another tenant's instance_id and then be able to retrieve that\n    instance's metadata. In order to prevent this X-Tenant-ID is now\n    passed in the metadata request to nova and nova then checks that\n    X-Tenant-ID also matches the tenant_id for the instance against it's\n    database to ensure it's not being spoofed.\n    \n    DocImpact - When upgrading OpenStack nova and neturon, neutron\n                should be updated first (and neutron-metadata-agent\n                restarted before nova is upgraded) in order to minimize\n                downtime. This is because there is also a patch to nova\n                which has checks X-Tenant-ID against it's database\n                therefore neutron-metadata-agent needs to pass that\n                before nova is upgraded for metadata to work.\n    \n    Change-Id: I2b8fa2f561a7f2914608e68133abf15efa95015a\n    Closes-Bug: #1235450\n", 
+            "date_created": "2013-12-14 02:09:54.586399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/61428\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bce36e9bdb1fcb9658f7b684d160e656e88d816c\nSubmitter: Jenkins\nBranch:    master\n\ncommit bce36e9bdb1fcb9658f7b684d160e656e88d816c\nAuthor: Aaron Rosen <email address hidden>\nDate:   Mon Oct 7 13:33:31 2013 -0700\n\n    Prevent spoofing instance_id from neutron to nova\n    \n    Previously, one could update a port's device_id in neutron to be\n    that of another tenant's instance_id and then be able to retrieve\n    that instance's metadata. This patch prevents this from occurring by\n    checking that X-Tenant-ID received from the metadata request matches\n    the tenant_id in the nova database.\n    \n    DocImpact - This patch is dependent on another patch in neutron\n                which adds X-Tenant-ID to the request. Therefore to\n                minimize downtime one should upgrade Neutron first (then\n                restart neutron-metadata-agent) and lastly update nova.\n    \n    Change-Id: I93bf662797c3986324ca2099b403833c2e990fb4\n    Closes-Bug: #1235450\n", 
+            "date_created": "2013-12-14 09:23:18.282546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/61435\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=af2f823107010933ecd94a9c938f8b739baaecb7\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit af2f823107010933ecd94a9c938f8b739baaecb7\nAuthor: Aaron Rosen <email address hidden>\nDate:   Mon Oct 7 13:33:31 2013 -0700\n\n    Prevent spoofing instance_id from neutron to nova\n    \n    Previously, one could update a port's device_id in neutron to be\n    that of another tenant's instance_id and then be able to retrieve\n    that instance's metadata. This patch prevents this from occurring by\n    checking that X-Tenant-ID received from the metadata request matches\n    the tenant_id in the nova database.\n    \n    DocImpact - This patch is dependent on another patch in neutron\n                which adds X-Tenant-ID to the request. Therefore to\n                minimize downtime one should upgrade Neutron first (then\n                restart neutron-metadata-agent) and lastly update nova.\n    \n    Change-Id: I93bf662797c3986324ca2099b403833c2e990fb4\n    Closes-Bug: #1235450\n", 
+            "date_created": "2013-12-14 11:18:15.078128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/61443\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=67d7d9d617c64f41bb899c4ce525a66c84ccf071\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 67d7d9d617c64f41bb899c4ce525a66c84ccf071\nAuthor: Aaron Rosen <email address hidden>\nDate:   Mon Oct 7 15:34:38 2013 -0700\n\n    Add X-Tenant-ID to metadata request\n    \n    Previously, one could update a port's device_id to be that of\n    another tenant's instance_id and then be able to retrieve that\n    instance's metadata. In order to prevent this X-Tenant-ID is now\n    passed in the metadata request to nova and nova then checks that\n    X-Tenant-ID also matches the tenant_id for the instance against it's\n    database to ensure it's not being spoofed.\n    \n    DocImpact - When upgrading OpenStack nova and neturon, neutron\n                should be updated first (and neutron-metadata-agent\n                restarted before nova is upgraded) in order to minimize\n                downtime. This is because there is also a patch to nova\n                which has checks X-Tenant-ID against it's database\n                therefore neutron-metadata-agent needs to pass that\n                before nova is upgraded for metadata to work.\n    \n    Change-Id: I2b8fa2f561a7f2914608e68133abf15efa95015a\n    Closes-Bug: #1235450\n", 
+            "date_created": "2013-12-16 21:15:02.543425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/61437\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=07006be9165d1008ca0382b6f0ad25b13a676a55\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 07006be9165d1008ca0382b6f0ad25b13a676a55\nAuthor: Aaron Rosen <email address hidden>\nDate:   Mon Oct 7 13:33:31 2013 -0700\n\n    Prevent spoofing instance_id from neutron to nova\n    \n    Previously, one could update a port's device_id in neutron to be\n    that of another tenant's instance_id and then be able to retrieve\n    that instance's metadata. This patch prevents this from occurring by\n    checking that X-Tenant-ID received from the metadata request matches\n    the tenant_id in the nova database.\n    \n    DocImpact - This patch is dependent on another patch in neutron\n                which adds X-Tenant-ID to the request. Therefore to\n                minimize downtime one should upgrade Neutron first (then\n                restart neutron-metadata-agent) and lastly update nova.\n    \n    Change-Id: I93bf662797c3986324ca2099b403833c2e990fb4\n    Closes-Bug: #1235450\n", 
+            "date_created": "2013-12-17 05:11:47.152235+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi,\nI have created the common image cache code that can be used by all of the drivers - https://review.openstack.org/#/c/59994/. I need to update the aging patch for the vmware driver to make use of this common code. This should unblock the \u20132 that you have on the patch (https://review.openstack.org/#/c/56416/). If not can you please let me know why. Hopefully once I get the initial aging done we can start to work on additional algorithms. I am still waiting for inputs form Alvaro (I do not think that advanced aging algorithms should block the basic stuff)\nWishing you and yours a merry xmas and a happy new year\nThanks\nGary\n", 
+            "date_created": "2013-12-19 16:06:44+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }
+    ], 
+    "closed": "2014-01-22 16:11:14.973467+00:00"
+}

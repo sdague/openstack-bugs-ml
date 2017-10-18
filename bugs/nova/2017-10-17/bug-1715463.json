@@ -1,0 +1,44 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-09-18 09:01:48.950910+00:00", 
+    "description": "Before an upgrade, we have these type of entries in the db.\n\nMariaDB [nova]> SELECT id, host, `binary`, deleted, version FROM services;\n+----+--------------+--------------------+---------+---------+\n| id | host         | binary             | deleted | version |\n+----+--------------+--------------------+---------+---------+\n|  5 | r1-n-os-api  | nova-osapi_compute | 0       |      16 |\n| 21 | r1-n-m-api   | nova-metadata      | 0       |      16 |\n\nThe wsgi files we run basically boil down to something like\n\n  NAME=metadata\n  return wsgi_app.init_application(NAME)\n\nIn the wsgi_app.py we see this function\n\n  service_ref = objects.Service.get_by_host_and_binary(ctxt, host, name)\n\nWhich results in a really big query, which again comes down to\n\n  SELECT host, `binary` FROM services\n    WHERE host = 'r1-n-m-api' AND `binary` == 'metadata'\n\nNo results. service_ref is set to None. Carry on.\n\n  if service_ref:\n    #Nope.\n  else:\n    try:\n      ...\n      service_obj.host = host\n      service_obj.binary = 'nova-%s' % name\n      service_obj.create()\n\nWhich results in a INSERT statement something like this;\n\n  INSERT INTO services(host, `binary`, report_count, disabled, deleted, version)\n    VALUES ('r1-n-m-api', 'nova-metadata', 0, 0, 0, 22)\n\n  ERROR 1062 (23000): Duplicate entry 'r1-n-m-api-nova-metadata-0' for key 'uniq_services0host0binary0deleted'", 
+    "tags": [
+        "upgrade"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1715463", 
+    "owner": "https://api.launchpad.net/1.0/~eb4x", 
+    "id": 1715463, 
+    "index": 2144, 
+    "openned": "2017-09-06 18:27:39.385288+00:00", 
+    "created": "2017-09-06 18:27:39.385288+00:00", 
+    "title": "binary/name gets confused under upgrades of osapi_compute and metadata when using wsgi files", 
+    "comments": [
+        {
+            "content": "During an upgrade, you'll already have a entry in the nova.services table for 'nova-osapi_compute'.\n\nThe new wsgi app has NAME='osapi_compute' and first queries for this name, which yields 0 rows.\nThen since there's no entry it decides to create a new entry with INSERT where it appends 'nova-' to this 'name'. Problem is there's already an entry for 'nova-osapi_compute', so now the insert fails because of duplicate entries.\n\nSo NAME has to be changed, or append 'nova-' on both queries.\n\n\nAlso the queries\n\nSELECT\nif exists UPDATE\nif not exists INSERT\n\nCould really just boil down to \n\nUPDATE\nif fail INSERT\n\nThis way it's atomic aswell.", 
+            "date_created": "2017-09-06 18:27:39.385288+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eb4x"
+        }, 
+        {
+            "content": "What sequence of events got you here? Is this changing the deployment type post upgrade as well? It would be good to fully qualify what failed here, and why we didn't catch it, and if we need to put something into nova-manage to help.", 
+            "date_created": "2017-09-06 19:14:41.887768+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Patch in progress - https://review.openstack.org/#/c/501359/ ", 
+            "date_created": "2017-09-06 19:23:24.554740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "We're running nova-os-compute-api (nova/api/openstack/compute/wsgi.py), nova-metadata-api (nova/api/metadata/wsgi.py) and nova-placement-api (nova/api/openstack/placement/wsgi.py) under uwsgi. Each in separate containers, under venvs.", 
+            "date_created": "2017-09-06 20:18:21.680606+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eb4x"
+        }, 
+        {
+            "content": "If you look at the code in the patch, or rather the code before the patch, it tries to update one service-binary 'osapi_compute'. If it doesn't find it, it tries to insert a *different* service-binary 'nova-osapi_compute'.", 
+            "date_created": "2017-09-06 20:31:05.953050+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eb4x"
+        }
+    ]
+}

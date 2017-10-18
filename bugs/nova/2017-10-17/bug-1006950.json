@@ -1,0 +1,48 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:23:32.717005+00:00", 
+    "description": "Error: \"libvirtError: internal error Invalid harddisk device name: /dev/sdf\"\n\nWhen:   Instance with attached volume as /dev/sdf is started from stopped state\n\nReproduction scenario:\n\n1. \"euca-run-instance ami ..... -t ... -z ....\"\n       create i-0123456789\n\n2. \"euca-attach-volume vol.... -i i-0123456789 -d /dev/sdf\"\n       volume is attached\n\n3. \"virsh dumpxml  i-0123456789\"\n    ...\n    <disk type='block' device='disk'>\n      <driver name='qemu' type='raw' cache='none'/>\n      <source dev='/dev/disk/by-path/ip-.....3260-iscsi-iqn.2010-10.org.openstack:vol-000000xy-lun-1'/>\n\n      <target dev='sdf' bus='virtio'/>  <!- THIS IS IMPORTANT -->\n\n      <alias name='virtio-disk5'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x08' function='0x0'/>\n    </disk>\n    ....\n\n3. euca-stop-instance i-0123456789\n     still OK\n     \n4. euca-start-instance i-0123456789\n     ERROR !!!!\n\n     the \"/var/lib/nova/instances/i-0123456789/libvirt.xml\" file include\n\n          <disk type='block'>\n                   <driver name='qemu' type='raw' cache='none'/>\n                     <source dev='/dev/disk/by-path/ip-....:3260-iscsi-iqn.2010-10.org.openstack:vol-000000xy-lun-1'/>\n\n                     <target dev='/dev/sdf' bus='virtio'/>  <!-- WRONG !!! -->\n          </disk>", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1006950", 
+    "owner": "https://api.launchpad.net/1.0/~vishvananda", 
+    "id": 1006950, 
+    "index": 2926, 
+    "openned": "2012-05-31 14:49:10.853654+00:00", 
+    "created": "2012-05-31 14:49:10.853654+00:00", 
+    "title": "Starting Instance from 'stopped' state with attached volume cause libvirt error", 
+    "comments": [
+        {
+            "content": "Error: \"libvirtError: internal error Invalid harddisk device name: /dev/sdf\"\n\nWhen:   Instance with attached volume as /dev/sdf is started from stopped state\n\nReproduction scenario:\n\n1. \"euca-run-instance ami ..... -t ... -z ....\"\n       create i-0123456789\n\n2. \"euca-attach-volume vol.... -i i-0123456789 -d /dev/sdf\"\n       volume is attached\n\n3. \"virsh dumpxml  i-0123456789\"\n    ...\n    <disk type='block' device='disk'>\n      <driver name='qemu' type='raw' cache='none'/>\n      <source dev='/dev/disk/by-path/ip-.....3260-iscsi-iqn.2010-10.org.openstack:vol-000000xy-lun-1'/>\n\n      <target dev='sdf' bus='virtio'/>  <!- THIS IS IMPORTANT -->\n\n      <alias name='virtio-disk5'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x08' function='0x0'/>\n    </disk>\n    ....\n\n3. euca-stop-instance i-0123456789\n     still OK\n     \n4. euca-start-instance i-0123456789\n     ERROR !!!!\n\n     the \"/var/lib/nova/instances/i-0123456789/libvirt.xml\" file include\n\n          <disk type='block'>\n                   <driver name='qemu' type='raw' cache='none'/>\n                     <source dev='/dev/disk/by-path/ip-....:3260-iscsi-iqn.2010-10.org.openstack:vol-000000xy-lun-1'/>\n\n                     <target dev='/dev/sdf' bus='virtio'/>  <!-- WRONG !!! -->\n          </disk>", 
+            "date_created": "2012-05-31 14:49:10.853654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaroslav-pulchart-4"
+        }, 
+        {
+            "content": "I fixed this issue by attached patch. Is applicaple to  EL6 build from EPEL repo \"http://koji.fedoraproject.org/koji/buildinfo?buildID=319254\"", 
+            "date_created": "2012-05-31 14:51:59.224439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaroslav-pulchart-4"
+        }, 
+        {
+            "content": "I'm fixing this in a different way. I'm not quite sure why the /dev isn't getting truncated earlier, there is a specific regex to match it, but it should be fixed by my refactoring of the stop start code in the linked review", 
+            "date_created": "2012-06-01 05:53:26.956154+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Hello\n\nI'm maybe blind but where is the linked review?\n\nRegards,\nJaroslav", 
+            "date_created": "2012-06-01 06:39:59.142178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaroslav-pulchart-4"
+        }, 
+        {
+            "content": "Hmm, it didn't autolink for some reason.\n\nHere it is: https://review.openstack.org/#/c/8021/", 
+            "date_created": "2012-06-01 07:52:58.233489+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8021\nCommitted: http://github.com/openstack/nova/commit/7c847bc659e7c493cf009adc417be2e884c3c616\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7c847bc659e7c493cf009adc417be2e884c3c616\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Fri Jun 1 02:52:57 2012 +0000\n\n    Cleans up power_off and power_on semantics\n    \n    compute.api changes:\n      * improves state handling for delete/restrore\n      * removes hack to deal with SHUTOFF on start\n      * fixes api tests (volume shouldn't detach on stop)\n    \n    compute.manager changes:\n      * uses power_off/power_on for stop/start\n    \n    virt.libvirt changes:\n      * implements power_off/power_on for libvirt\n      * synchronizes usage of domain.create()\n      * cleans up usage of instance.name\n      * added tests for power_on and power_off\n      * fixes bug 1006950\n    \n    Change-Id: I91845a643e3f97955e7c81ca57c6ee5aa0a3d295\n", 
+            "date_created": "2012-06-07 15:36:53.323557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-07-04 08:28:16.578210+00:00"
+}

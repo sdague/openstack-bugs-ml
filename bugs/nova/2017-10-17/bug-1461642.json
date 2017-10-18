@@ -1,0 +1,117 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-02-08 04:17:44.188180+00:00", 
+    "description": "This is with nova-network.\n\nWhen we create an instance, libxl (used by libvirt) is going to call a script to setup the vif, add it to the bridge, and update the iptables. Sometime, the iptables call in the script fail, with exit status 4, and this result in an instance creation failure. (Nova would only report: \"libvirtError: internal error: libxenlight failed to create new domain\")\n\nThe script is:\n/etc/xen/scripts/vif-bridge\n(or xen.git/tools/hotplug/Linux/vif-bridge)\n\nOne way if fixing this would be to have libxl call a different script provided by OpenStack which could take a lock.", 
+    "tags": [
+        "libvirt", 
+        "xen", 
+        "xen-ci"
+    ], 
+    "importance": "Medium", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1461642", 
+    "owner": "None", 
+    "id": 1461642, 
+    "index": 4265, 
+    "openned": "2015-06-03 17:54:49.736990+00:00", 
+    "created": "2015-06-03 17:54:49.736990+00:00", 
+    "title": "libvirt-xen: Race between nova and a Xen script for updating the iptables", 
+    "comments": [
+        {
+            "content": "This is with nova-network.\n\nWhen we create an instance, libxl (used by libvirt) is going to call a script to setup the vif, add it to the bridge, and update the iptables. Sometime, the iptables call in the script fail, with exit status 4, and this result in an instance creation failure. (Nova would only report: \"libvirtError: internal error: libxenlight failed to create new domain\")\n\nThe script is:\n/etc/xen/scripts/vif-bridge\n(or xen.git/tools/hotplug/Linux/vif-bridge)\n\nOne way if fixing this would be to have libxl call a different script provided by OpenStack which could take a lock.", 
+            "date_created": "2015-06-03 17:54:49.736990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anthony-perard"
+        }, 
+        {
+            "content": "One can work around this issue with this patch:\nhttps://marc.info/?l=xen-devel&m=143317087603573", 
+            "date_created": "2015-06-04 15:45:25.978481+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anthony-perard"
+        }, 
+        {
+            "content": "Confirmed as seen several times in the libvirt+xen CI, e.g. http://d7013eaae7e632dff837-028d11a4a642ead4d20755bd13d99a1b.r55.cf5.rackcdn.com/31/189731/1/check/dsvm-tempest-xen/f59dee5/logs/xen/index.html\n\nMedium as it's a race condition which will affect any nova-network + libvirt+xen deployments and needs a fix to be scheduled.\n\nThis workaround was not deemed suitable by Xen as it doesn't solve the conceptual issue of both Xen + openstack trying to update iptables at the same time.  Hopefully the concurrent updating isn't needed, but if it is then it's likely an OpenStack script will be needed and passed to libxl as a parameter to ensure the correct updates are made and OpenStack remains in control of the networking", 
+            "date_created": "2015-06-10 12:46:02.156584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "xen project ci fails pretty regularly with this which is annoying since we don't have something like elastic-recheck on 3rd party CI to tell us what the failure is.", 
+            "date_created": "2015-06-19 14:14:07.194426+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/201257", 
+            "date_created": "2015-07-13 17:18:40.141397+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/199092\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cd1766287862162aadf1c111a4807f7618f34578\nSubmitter: Jenkins\nBranch:    master\n\ncommit cd1766287862162aadf1c111a4807f7618f34578\nAuthor: Anthony PERARD <email address hidden>\nDate:   Mon Jul 6 17:47:17 2015 +0100\n\n    libvirt-vif: Allow to configure a script on bridge interface\n    \n    While running with libvirt-xen driver, it is possible to have the Xen\n    toolstack running a different script than the default on a vif. This patch\n    allow Nova to change this script.\n    \n    Also do not set script to the empty string '' in designer.py for a linux\n    bridge. The empty string for script does not appear to be use anywhere in\n    the libvirt code when the vif is a bridge.\n    \n    Change-Id: Ib6d6542d22decccfa68a058d362a42d60e6c2cca\n    Partial-Bug: #1461642\n", 
+            "date_created": "2015-09-16 00:04:44.435655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This merged patch caused some breakage for me ... see http://paste.openstack.org/show/467063/.  Reverting it fixes it for me.", 
+            "date_created": "2015-09-18 01:41:46.239006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Hi Russell,\n\nIn you paste, you have:\n\n    <interface type='bridge'>\n      <mac address='fa:16:3e:76:d4:40'/>\n      <source bridge='br-int'/>\n      <virtualport type='openvswitch'>\n        <parameters interfaceid='9942b499-62e9-4cc2-ad9a-9ecf93b9ada7'/>\n      </virtualport>\n      <script path=''/>\n      <target dev='tap9942b499-62'/>\n      <model type='virtio'/>\n      <driver name='qemu'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>\n    </interface>\n\nThe problem is the script node set to an empty string. But I don't understand where this empty string could come from. I removed one in nova/virt/libvirt/designer.py.\n\nDo you have something in you environnement, maybe a patch on Nova, that would set script?", 
+            "date_created": "2015-09-18 11:13:20.120796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anthony-perard"
+        }, 
+        {
+            "content": "I am seeing the same Issue. I have libvirt version 1.2.2. \nDo we need a libvirt version higher than 1.2.2 for this change to work?\n\n\n2015-09-18 01:30:29.723 ERROR nova.compute.manager [req-c5b00bd7-943b-44cd-847b-064286501d6a admin admin] [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5] Instance failed to spaw\nn\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5] Traceback (most recent call last):\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/opt/stack/nova/nova/compute/manager.py\", line 2152, in _build_resourc\nes\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     yield resources\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/opt/stack/nova/nova/compute/manager.py\", line 2006, in _build_and_run\n_instance\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     block_device_info=block_device_info)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 2451, in spawn\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     block_device_info=block_device_info)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 4522, in _create_do\nmain_and_network\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     xml, pause=pause, power_on=power_on)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 4452, in _create_do\nmain\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     guest.launch(pause=pause)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/opt/stack/nova/nova/virt/libvirt/guest.py\", line 141, in launch\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     self._encoded_xml, errors='ignore')\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/usr/local/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 1\n95, in __exit__\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     six.reraise(self.type_, self.value, self.tb)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/opt/stack/nova/nova/virt/libvirt/guest.py\", line 136, in launch\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     return self._domain.createWithFlags(flags)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 183, i\nn doit\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     result = proxy_call(self._autowrap, f, *args, **kwargs)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 141, i\nn proxy_call\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     rv = execute(f, *args, **kwargs)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 122, i\nn execute\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     six.reraise(c, e, tb)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 80, in\n tworker\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     rv = meth(*args, **kwargs)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]   File \"/usr/local/lib/python2.7/dist-packages/libvirt.py\", line 900, in creat\neWithFlags\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5]     if ret == -1: raise libvirtError ('virDomainCreateWithFlags() failed', dom=self)\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5] libvirtError: unsupported configuration: scripts are not supported on interfaces of type bridge\n2015-09-18 01:30:29.723 TRACE nova.compute.manager [instance: 6d9297cc-d97f-40f9-a504-a17b79d279a5] \n\n\n\nThis variable is coming out to be an empty string for me \"<script path=''/>\"", 
+            "date_created": "2015-09-19 00:03:17.525780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nairprinikasankaran"
+        }, 
+        {
+            "content": "We are suspecting following code still setting conf.script = \"\"\n\nhttps://github.com/openstack/nova/blob/cd1766287862162aadf1c111a4807f7618f34578/nova/virt/libvirt/designer.py#L73\n\nPossible?", 
+            "date_created": "2015-09-19 00:59:31.414418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nairprinikasankaran"
+        }, 
+        {
+            "content": "That appear to be the issue, I did not see this one. Thanks, and sorry.\n\nAnyway, there is already a patch to fix this:\nhttps://review.openstack.org/#/c/225585/2", 
+            "date_created": "2015-09-21 10:42:17.890500+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anthony-perard"
+        }, 
+        {
+            "content": "Yeah, that fix makes sense.  In my case I'm in an env doing direct ovs plugging.", 
+            "date_created": "2015-09-21 20:18:54.133431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "The XenProject CI still has a pretty high failure rate on this bug, what else needs to be done here?", 
+            "date_created": "2016-03-04 15:08:55.629459+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "If the problem is a latent bug in older libvirt, is there a way we can workaround this?  Can we catch and detect the error and retry?   Or could the xenproject CI set network_allocate_retries>1 so the compute manager would retry on failure?", 
+            "date_created": "2016-03-04 15:11:50.051829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I guess network_allocate_retries won't help since that's not in the driver spawn code path that's failing:\n\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [req-2b591b2c-36f0-494b-a5b2-06dc2a783c49 tempest-MultipleCreateTestJSON-64962745 tempest-MultipleCreateTestJSON-1348265215] [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d] Instance failed to spawn\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d] Traceback (most recent call last):\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/opt/stack/new/nova/nova/compute/manager.py\", line 2193, in _build_resources\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     yield resources\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/opt/stack/new/nova/nova/compute/manager.py\", line 2039, in _build_and_run_instance\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     block_device_info=block_device_info)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/opt/stack/new/nova/nova/virt/libvirt/driver.py\", line 2767, in spawn\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     block_device_info=block_device_info)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/opt/stack/new/nova/nova/virt/libvirt/driver.py\", line 4906, in _create_domain_and_network\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     xml, pause=pause, power_on=power_on)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/opt/stack/new/nova/nova/virt/libvirt/driver.py\", line 4837, in _create_domain\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     guest.launch(pause=pause)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/opt/stack/new/nova/nova/virt/libvirt/guest.py\", line 142, in launch\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     self._encoded_xml, errors='ignore')\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/usr/local/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 220, in __exit__\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     self.force_reraise()\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/usr/local/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 196, in force_reraise\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     six.reraise(self.type_, self.value, self.tb)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/opt/stack/new/nova/nova/virt/libvirt/guest.py\", line 137, in launch\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     return self._domain.createWithFlags(flags)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 186, in doit\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     result = proxy_call(self._autowrap, f, *args, **kwargs)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 144, in proxy_call\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     rv = execute(f, *args, **kwargs)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 125, in execute\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     six.reraise(c, e, tb)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/usr/local/lib/python2.7/dist-packages/eventlet/tpool.py\", line 83, in tworker\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     rv = meth(*args, **kwargs)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]   File \"/usr/local/lib/python2.7/dist-packages/libvirt.py\", line 1059, in createWithFlags\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d]     if ret == -1: raise libvirtError ('virDomainCreateWithFlags() failed', dom=self)\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d] libvirtError: internal error: libxenlight failed to create new domain 'instance-0000003c'\n2016-03-04 07:17:13.370 8173 ERROR nova.compute.manager [instance: eb3ec27f-53c0-4ce7-a6ad-58f9bb37b25d] ", 
+            "date_created": "2016-03-04 15:13:53.773306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/199093\nReason: This patch has been sitting unchanged for more than 12 weeks. I am therefore going to abandon it to keep the nova review queue sane. Please feel free to restore the change if you're still working on it.", 
+            "date_created": "2016-10-25 16:12:00.617156+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/201257\nReason: This patch has been sitting unchanged for more than 12 weeks. I am therefore going to abandon it to keep the nova review queue sane. Please feel free to restore the change if you're still working on it.", 
+            "date_created": "2016-10-25 16:12:18.264267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Patch is stalled. Also, as it's nova-net only, and that's going away, is this relevant to neutron? If not we should just let it die off.", 
+            "date_created": "2016-12-09 17:04:43.012810+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-02-08 04:17:40.734484+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2017-02-08 04:17:41.309686+00:00"
+}

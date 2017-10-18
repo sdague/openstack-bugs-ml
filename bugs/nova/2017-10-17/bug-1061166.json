@@ -1,0 +1,111 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 10:50:43.716425+00:00", 
+    "description": "After upgrading a running cluster from Essex to Folsom (2012.2-0ubuntu2~cloud0), the EC2 API can no longer find instances by EC2 ID, ie:\n\nubuntu@ip-10-252-38-15:~$ euca-describe-instances \nRESERVATION\tr-90qer9xs\t7b58c0e219a948ef942071c871d05b8b\tdefault\nINSTANCE\ti-00000006\tami-00000001\t192.168.25.4\t192.168.25.4\trunning\tadam (7b58c0e219a948ef942071c871d05b8b, ip-10-252-40-134)\t0\t\tm1.tiny\t2012-10-03T18:35:03.000Z\tnovamonitoring-disabled\t192.168.25.4\t192.168.25.4\t\t\tinstance-store\t\t\t\t\t\t\t\t\t\nRESERVATION\tr-k190bhzm\t7b58c0e219a948ef942071c871d05b8b\tdefault\nINSTANCE\ti-00000004\tami-00000001\t192.168.25.5\t192.168.25.5\trunning\tadam (7b58c0e219a948ef942071c871d05b8b, ip-10-252-40-134)\t0\t\tm1.tiny\t2012-10-03T18:22:49.000Z\tnovamonitoring-disabled\t192.168.25.5\t192.168.25.5\t\t\tinstance-store\t\t\t\t\t\t\t\t\t\nubuntu@ip-10-252-38-15:~$ euca-get-console-output i-00000004\nInstanceNotFound: Instance i-00000004 could not be found.\n\nA quick test of other calls shows that this affects many actions:\n\neuca-get-console-output\neuca-terminate-instance\neuca-attach-volumes\neuca-associate-address\n\nShould note that describing individual instances still works (ie, euca-describe-instances i-00000004) still works as expected.  A quick glance at the code shows this call converts the EC2 instance ID to UUID with ec2utils.ec2_inst_id_to_uuid() rather than ec2utils.ec2_id_to_id() like the other calls.\n\nThis seems to not affect clusters that have been initially installed with Folsom.  I suspect something is wrong in the data migration from Essex to Folsom that causes the ec2_id_to_id() mapping to be bogus.", 
+    "tags": [
+        "ec2", 
+        "openstack-ubuntu-upgrade"
+    ], 
+    "importance": "Critical", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1061166", 
+    "owner": "https://api.launchpad.net/1.0/~gandelman-a", 
+    "id": 1061166, 
+    "index": 90, 
+    "openned": "2012-10-03 18:57:18.197163+00:00", 
+    "created": "2012-10-03 18:57:09.512054+00:00", 
+    "title": "ec2 instance IDs are broken after folsom upgrade", 
+    "comments": [
+        {
+            "content": "After upgrading a running cluster from Essex to Folsom (2012.2-0ubuntu2~cloud0), the EC2 API can no longer find instances by EC2 ID, ie:\n\nubuntu@ip-10-252-38-15:~$ euca-describe-instances \nRESERVATION\tr-90qer9xs\t7b58c0e219a948ef942071c871d05b8b\tdefault\nINSTANCE\ti-00000006\tami-00000001\t192.168.25.4\t192.168.25.4\trunning\tadam (7b58c0e219a948ef942071c871d05b8b, ip-10-252-40-134)\t0\t\tm1.tiny\t2012-10-03T18:35:03.000Z\tnovamonitoring-disabled\t192.168.25.4\t192.168.25.4\t\t\tinstance-store\t\t\t\t\t\t\t\t\t\nRESERVATION\tr-k190bhzm\t7b58c0e219a948ef942071c871d05b8b\tdefault\nINSTANCE\ti-00000004\tami-00000001\t192.168.25.5\t192.168.25.5\trunning\tadam (7b58c0e219a948ef942071c871d05b8b, ip-10-252-40-134)\t0\t\tm1.tiny\t2012-10-03T18:22:49.000Z\tnovamonitoring-disabled\t192.168.25.5\t192.168.25.5\t\t\tinstance-store\t\t\t\t\t\t\t\t\t\nubuntu@ip-10-252-38-15:~$ euca-get-console-output i-00000004\nInstanceNotFound: Instance i-00000004 could not be found.\n\nA quick test of other calls shows that this affects many actions:\n\neuca-get-console-output\neuca-terminate-instance\neuca-attach-volumes\neuca-associate-address\n\nShould note that describing individual instances still works (ie, euca-describe-instances i-00000004) still works as expected.  A quick glance at the code shows this call converts the EC2 instance ID to UUID with ec2utils.ec2_inst_id_to_uuid() rather than ec2utils.ec2_id_to_id() like the other calls.\n\nThis seems to not affect clusters that have been initially installed with Folsom.  I suspect something is wrong in the data migration from Essex to Folsom that causes the ec2_id_to_id() mapping to be bogus.", 
+            "date_created": "2012-10-03 18:57:09.512054+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "After taking another look at this, EC2 instance IDs appear to change during an upgrade.\n\nDid an upgrade with two running instances, i-00000003 and  i-00000004.  After upgrade, they show change to i-00000003 and  i-00000004, respecively.  Any EC2 action (terminate, get-console-output, etc) on these new IDs fail with InstanceNotFound.\n\nAFAICS:\n\nIn essex, these IDs appear mapped to IDs and UUIDs in the instances table:\n\nmysql> select id, uuid from instances where id=3 or id=4;\n+----+--------------------------------------+\n| id | uuid                                 |\n+----+--------------------------------------+\n|  3 | 7ca30bdc-46f3-4a2d-a0fb-f7657d60e8a8 |\n|  4 | bf7ecf97-0814-4b5e-b5f1-4a7cecd8a43f |\n+----+--------------------------------------+\n2 rows in set (0.00 sec)\n\nIn Folsom, much has been converted to use UUIDs instead.  the EC2 describe instances call gets a list of instances, and queries the instance_id_mappings for the corresponding instance ID (which will later get converted to an ec2 ID).  However, after upgrade this table has duplicate entries for these instances, causing later queries on these instances to yield a new, incorrect ID.\n\nmysql> select * from instance_id_mappings where uuid='bf7ecf97-0814-4b5e-b5f1-4a7cecd8a43f' or uuid='7ca30bdc-46f3-4a2d-a0fb-f7657d60e8a8';\n+---------------------+------------+------------+---------+----+--------------------------------------+\n| created_at          | updated_at | deleted_at | deleted | id | uuid                                 |\n+---------------------+------------+------------+---------+----+--------------------------------------+\n| NULL                | NULL       | NULL       |    NULL |  3 | 7ca30bdc-46f3-4a2d-a0fb-f7657d60e8a8 |\n| NULL                | NULL       | NULL       |    NULL |  4 | bf7ecf97-0814-4b5e-b5f1-4a7cecd8a43f |\n| 2012-10-04 01:50:23 | NULL       | NULL       |       0 |  5 | 7ca30bdc-46f3-4a2d-a0fb-f7657d60e8a8 |\n| 2012-10-04 01:50:23 | NULL       | NULL       |       0 |  6 | bf7ecf97-0814-4b5e-b5f1-4a7cecd8a43f |\n+---------------------+------------+------------+---------+----+--------------------------------------+\n\nThis can be worked around by change the EC2 layer to convert all incoming IDs to UUIDs, but the issue of instance IDs changing during a migration to Folsom is critical and needs to be resolved as an upgrade issue.\n\n\n", 
+            "date_created": "2012-10-04 02:06:06.130984+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Oops: should have read that instances  i-00000003 and i-00000004 changed post-upgrade to  i-00000005 and i-00000006", 
+            "date_created": "2012-10-04 02:07:11.264085+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "I upgraded today and found that I had this issue.\n\nNot all of my instances had duplicate entries in the `instance_id_mappings` table, however I did have more entries within the `instance_id_mappings` than within the `instances` table.\n\nIt seems that the `id` column in the `instances` table is still being used somewhere.\n\nIn order to work around the problem I needed to set the auto_increment integer to be the same for each table.\n\nExample:\n\n    -- grab the auto_increment integer for `instances` table\n    SELECT Auto_increment FROM information_schema.tables WHERE table_name='instances' AND table_schema='nova';\n\n    -- grab the auto_increment integer for `instances` table\n    SELECT Auto_increment FROM information_schema.tables WHERE table_name='instance_id_mappings' AND table_schema='nova';\n\n    -- raise the lowest number returned to the same as the highest for the relevant table.\n    ALTER TABLE instances AUTO_INCREMENT = 1769801923;\n", 
+            "date_created": "2012-10-04 14:21:01.428500+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "This looks like a broken migration to me, based on the above comment:\n\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/migrate_repo/versions/107_add_instance_id_mappings.py", 
+            "date_created": "2012-10-04 18:13:15.999023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "It looks like the id column should have been set to auto-increment after the data copy was done\n", 
+            "date_created": "2012-10-04 18:13:47.223035+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "From what I can gather the 107 migration only copies the instance's ID and UUID to the new mapping table, but leaves the other columns NULL, specifically 'deleted'.\n\nIn Folsom, an ec2 describe instances call will check that the instances.id <-> uuid mapping exists in the instances_id_mapping table and create one if it does not find one.\n\nThe query that checks the instances_id_mapping table has a 'deleted=0' constraint.  In this case, all of the copied mappings have a NULL value here.  Finding no mapping, it creates a new one and throws the whole thing off.  \n\nIt makes sense that this works fine on fresh Folsom installs, because new instances get a new mapping created in this empty table with the appropriate columns filled.\n\nThere is still a relationship between instances.id and instance_id_mappings.id, and the duplicate entries being created in the mapping table throws that relationship off (after the table has duplicate entires created, new instances EC2 IDs are also off).  I'm not sure if there needs to be a FK constraint between instances.id and instance_id_mappings.id to ensure that relationship is in-tact, even if the mappings table is being polluted with duplicates.\n\n", 
+            "date_created": "2012-10-04 19:58:26.035172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/14063", 
+            "date_created": "2012-10-04 21:18:59.192027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The loose relationship between two auto_incrementing `id` columns of different tables is insanely brittle. I am not convinced that the intention was for the relation to work this way. It may simple be a problem with part of the code referencing `id` instead of `uuid`.\n\nThe uuid's in the `instances_id_mapping` should, at the minimum, include a unique constraint.\n", 
+            "date_created": "2012-10-04 21:21:04.631635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "Status changed to 'Confirmed' because the bug affects multiple users.", 
+            "date_created": "2012-10-06 05:16:53.826399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/14063\nCommitted: http://github.com/openstack/nova/commit/1d0402cf65458c941639f01334a996c11e592018\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1d0402cf65458c941639f01334a996c11e592018\nAuthor: Adam Gandelman <email address hidden>\nDate:   Thu Oct 4 14:10:32 2012 -0700\n\n    Set read_deleted='yes' for instance_id_mappings.\n    \n    Since the migration that creates the instance_id_mappings does\n    not populated the 'deleted' column, queries to this table should\n    not limit results to 'deleted=0'.  Limiting to non-deleted rows\n    results in duplicate mappings being created for existing instance\n    mappings after an upgrade, and throws off the entire EC2 instance\n    ID to UUID mapping.\n    \n    Fixes LP: #1061166\n    \n    Change-Id: I8893954fcae94a71dcc284c1b3b23b53901437eb\n", 
+            "date_created": "2012-10-07 14:00:03.837601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This doesn't seem to be working for me, perhaps I implemented it incorrectly, or need to take further remedial action?\n\n(using ubuntu 12.04 coud archive version of nova-api as a base)\n\ncopied the patched verion of nova/db/sqlalchemy/api.py to\n\n/usr/lib/python2.7/dist-packages/nova/db/sqlalchemy/api.py\nand\n/usr/local/nova/nova/db/sqlalchemy/api.py\n\nthen pycompiled  /usr/lib/python2.7/dist-packages/nova/db/sqlalchemy/api.py (as there was an existing file of that name), I've restated the api service and even rebooted the system and still get the InstanceNotFound errors when attempting tho delete (euca-terminate-instances) or assign floating ips (euca-associate-address)", 
+            "date_created": "2012-10-09 16:17:03.687866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jproulx"
+        }, 
+        {
+            "content": "Jon-\n\nUnfortunately if you've hit this bug, your instance_id_mappings table is already polluted with duplicate entries and the mapping between EC2 IDs and UUIDs is skewed.    Someone may know a better work around, but in the meantime I'd take a look at the instance_id_mappings table and clean it of duplicate entries, ensuring the original rows remain (those copied during the original migration) if you wish to get back the original EC2 IDs.\n", 
+            "date_created": "2012-10-09 16:43:03.416632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "I see that for instances that were running during the upgrade, but I'm getting this error with new instances that do not have duplicate entries:\n\neuca-describe-instances i-00004fb6\nRESERVATION\tr-ttje080y\t98333a1a28e746fa8c629c83a818ad57\topen\nINSTANCE\ti-00004fb6\tami-00000027\tflood-x26\tflood-x26\trunning \t0 \tm1.tiny \t2012-10-09T14:42:16.000Z \tnova\n\neuca-terminate-instances i-00004fb6 \nInstanceNotFound: Instance i-00004fb6 could not be found.\n\nnova show shows this as having UUID 3f5d9fbf-eb02-4531-bacd-90df69f1233a and converting the ec2 id to decimal gives me ID 20406\n\nmysql> select * from instance_id_mappings where uuid='3f5d9fbf-eb02-4531-bacd-90df69f1233a' or id=20406 ;\n+---------------------+------------+------------+---------+-------+--------------------------------------+\n| created_at          | updated_at | deleted_at | deleted | id    | uuid                                 |\n+---------------------+------------+------------+---------+-------+--------------------------------------+\n| 2012-10-09 14:42:16 | NULL       | NULL       |       0 | 20406 | 3f5d9fbf-eb02-4531-bacd-90df69f1233a |\n+---------------------+------------+------------+---------+-------+--------------------------------------+\n1 row in set (0.00 sec)\n\nmysql> select created_at,updated_at,deleted_at,id,uuid,hostname from instances where uuid='3f5d9fbf-eb02-4531-bacd-90df69f1233a' or id=20406 ;\n+---------------------+---------------------+------------+-------+--------------------------------------+-----------+\n| created_at          | updated_at          | deleted_at | id    | uuid                                 | hostname  |\n+---------------------+---------------------+------------+-------+--------------------------------------+-----------+\n| 2012-10-09 14:42:16 | 2012-10-09 14:42:47 | NULL       | 20297 | 3f5d9fbf-eb02-4531-bacd-90df69f1233a | flood-x26 |\n+---------------------+---------------------+------------+-------+--------------------------------------+-----------+\n1 row in set (0.00 sec)\n\ndo I need to ensure  instance_id_mappings.id == instances.id?  thats' a little ugly, but possible to fix up on my end.", 
+            "date_created": "2012-10-09 17:33:00.016917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jproulx"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/14240", 
+            "date_created": "2012-10-09 20:12:10.066750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2012.2-0ubuntu4\n\n---------------\nnova (2012.2-0ubuntu4) quantal; urgency=low\n\n  * debian/patches/ubuntu/ubuntu-fix-ec2-instance-id-mappings.patch:\n    Backport from trunk, Set read_deleted='yes' for instance_id_mappings.\n    (LP: #1061166)\n -- Chuck Short <email address hidden>   Tue, 09 Oct 2012 11:51:15 -0500", 
+            "date_created": "2012-10-09 20:24:12.327593+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/14240\nCommitted: http://github.com/openstack/nova/commit/b7e509af5d8bc3f9e26dea5cf5121c0f62348dc0\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit b7e509af5d8bc3f9e26dea5cf5121c0f62348dc0\nAuthor: Adam Gandelman <email address hidden>\nDate:   Thu Oct 4 14:10:32 2012 -0700\n\n    Set read_deleted='yes' for instance_id_mappings.\n    \n    Since the migration that creates the instance_id_mappings does\n    not populated the 'deleted' column, queries to this table should\n    not limit results to 'deleted=0'.  Limiting to non-deleted rows\n    results in duplicate mappings being created for existing instance\n    mappings after an upgrade, and throws off the entire EC2 instance\n    ID to UUID mapping.\n    \n    Fixes LP: #1061166\n    \n    Change-Id: I8893954fcae94a71dcc284c1b3b23b53901437eb\n    (cherry picked from commit 1d0402cf65458c941639f01334a996c11e592018)\n", 
+            "date_created": "2012-10-09 20:44:23.676918+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "To answer my previous question for posterity, yes after removing duplicates and resetting the auto incremnt as described above and mismatch between the ids in instances and instance_id_mappings must be recitified:\n\nUPDATE instance_id_mappings,instances SET  instance_id_mappings.id=instances.id WHERE instances.uuid=instance_id_mappings.uuid and instance_id_mappings.id<>instances.id;\n\nseems to me instance_id_mappings only contains duplicated information which can only lead ot suffering like this, guess I should go read the code and revision history if I want to see how this came to be.", 
+            "date_created": "2012-10-10 14:43:34.126847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jproulx"
+        }
+    ], 
+    "closed": "2012-11-21 09:42:05.900883+00:00"
+}

@@ -1,0 +1,243 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:10:44.444974+00:00", 
+    "description": "Hi,\n\nOn a customer install which has approximately 500 VMs in the system, running the following will hang:\n\nnova list --ip 199\n\nWhat will happen afterwards is that the nova-network process will stop responding for a while, a trace shows that it's receiving a huge amount of data.  Upon further investigation, it looks like the issue maybe the right here:\n\nhttps://github.com/openstack/nova/blob/stable/icehouse/nova/network/manager.py#L420\n\nOn this installation:\n\nnova=> select count(*) from virtual_interfaces;\n count \n-------\n 11985\n(1 row)\n\nSo with 1 run, we're sending almost 12K records to a single nova-network process which takes up a huge CPU load (and blocks it from doing anything else).\n\nWhat ends up happening is other things start timing out in the system, such as resizes and new deployments:\n\n2014-08-19 03:44:49.511 31562 ERROR nova.compute.manager [req-e7b6d34f-81b5-46f9-a5e9-25ccfb863cfe bac292822cdf451f81201b3c1957914f 78578deaaf3542c087101746d1ad3f50] [instance: 28bf47af-1063-473c-9c7c-bb6351e97064] Setting instance vm_state to ERROR\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064] Traceback (most recent call last):\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 3547, in finish_resize\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     disk_info, image)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 3490, in _finish_resize\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     migration['dest_compute'])\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/network/api.py\", line 95, in wrapped\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     return func(self, context, *args, **kwargs)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/network/api.py\", line 509, in setup_networks_on_host\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     self.network_rpcapi.setup_networks_on_host(context, **args)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/network/rpcapi.py\", line 270, in setup_networks_on_host\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     teardown=teardown)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/rpc/client.py\", line 361, in call\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     return self.prepare().call(ctxt, method, **kwargs)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/rpc/client.py\", line 150, in call\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     wait_for_reply=True, timeout=timeout)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/transport.py\", line 90, in _send\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     timeout=timeout)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/_drivers/amqpdriver.py\", line 412, in send\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     return self._send(target, ctxt, message, wait_for_reply, timeout)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/_drivers/amqpdriver.py\", line 405, in _send\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     raise result\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064] RemoteError: Remote error: MessagingTimeout Timed out waiting for a reply to message ID dd6f75163f414ac4ade3cd629593cd2d", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 262, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1358583", 
+    "owner": "https://api.launchpad.net/1.0/~tristan-cacqueray", 
+    "id": 1358583, 
+    "index": 1571, 
+    "openned": "2014-08-19 04:06:41.046186+00:00", 
+    "created": "2014-08-19 04:06:41.046186+00:00", 
+    "title": "[OSSA 2014-038] List instances by IP results in DoS of nova-network (CVE-2014-3708)", 
+    "comments": [
+        {
+            "content": "Hi,\n\nOn a customer install which has approximately 500 VMs in the system, running the following will hang:\n\nnova list --ip 199\n\nWhat will happen afterwards is that the nova-network process will stop responding for a while, a trace shows that it's receiving a huge amount of data.  Upon further investigation, it looks like the issue maybe the right here:\n\nhttps://github.com/openstack/nova/blob/stable/icehouse/nova/network/manager.py#L420\n\nOn this installation:\n\nnova=> select count(*) from virtual_interfaces;\n count \n-------\n 11985\n(1 row)\n\nSo with 1 run, we're sending almost 12K records to a single nova-network process which takes up a huge CPU load (and blocks it from doing anything else).\n\nWhat ends up happening is other things start timing out in the system, such as resizes and new deployments:\n\n2014-08-19 03:44:49.511 31562 ERROR nova.compute.manager [req-e7b6d34f-81b5-46f9-a5e9-25ccfb863cfe bac292822cdf451f81201b3c1957914f 78578deaaf3542c087101746d1ad3f50] [instance: 28bf47af-1063-473c-9c7c-bb6351e97064] Setting instance vm_state to ERROR\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064] Traceback (most recent call last):\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 3547, in finish_resize\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     disk_info, image)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 3490, in _finish_resize\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     migration['dest_compute'])\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/network/api.py\", line 95, in wrapped\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     return func(self, context, *args, **kwargs)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/network/api.py\", line 509, in setup_networks_on_host\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     self.network_rpcapi.setup_networks_on_host(context, **args)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/nova/network/rpcapi.py\", line 270, in setup_networks_on_host\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     teardown=teardown)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/rpc/client.py\", line 361, in call\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     return self.prepare().call(ctxt, method, **kwargs)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/rpc/client.py\", line 150, in call\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     wait_for_reply=True, timeout=timeout)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/transport.py\", line 90, in _send\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     timeout=timeout)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/_drivers/amqpdriver.py\", line 412, in send\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     return self._send(target, ctxt, message, wait_for_reply, timeout)\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]   File \"/usr/lib/python2.7/dist-packages/oslo/messaging/_drivers/amqpdriver.py\", line 405, in _send\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064]     raise result\n2014-08-19 03:44:49.511 31562 TRACE nova.compute.manager [instance: 28bf47af-1063-473c-9c7c-bb6351e97064] RemoteError: Remote error: MessagingTimeout Timed out waiting for a reply to message ID dd6f75163f414ac4ade3cd629593cd2d", 
+            "date_created": "2014-08-19 04:06:41.046186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "Thanks for the report, the OSSA task is set to incomplete pending additional security review from @nova-coresec.", 
+            "date_created": "2014-08-19 15:16:53.257702+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "As the comment in the linked code indicates, that method is not going to work well for large amounts of data. The worst bottleneck is probably going to be the length of time it takes to complete the sql query and retrieve the data.  Unfortunately the mysql library used by Nova blocks when it makes a call, so everything stops in that process for the time it takes to complete.    But there should be one nova-network process per CPU of the machine it's running on, so even when one is blocked work can continue on the others.  And though the processing after retrieving the data will be CPU intensive, it should not prevent work in other processes or greenthreads from continuing.\n\nBut, multiple queries could tie up all of the nova-network processes and lead to a degradation of services.  In short, I think there is potential for a DoS here.", 
+            "date_created": "2014-08-29 04:07:15.184895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "One way to address this would be to add a policy check around the use of the ip filters so they could be effectively disabled.  In order to have this call work without causing issues some rethinking of how this filtering is accomplished is going to need to happen.", 
+            "date_created": "2014-08-29 04:10:07.543887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Just an FYI to add on this, there is no way to have multiple nova-network processes (at least no simple way to do it).\n\nhttps://github.com/openstack/nova/blob/master/nova/cmd/network.py\n\nThe service has no \"workers\" configuration, unlike services like the conductor...\n\nhttps://github.com/openstack/nova/blob/master/nova/cmd/conductor.py\n\nIt is possible to launch multiple instances but typically I don't think a cloud operator has reason to think that nova-network requires launching many instances.. it is (implied) to be a fairly quiet/low CPU consuming process.", 
+            "date_created": "2014-08-29 08:14:19.627330+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "Also, an alternative which seems fairly trivial to implement is requesting a filtered list from nova-conductor.  That way, only \"matched\" search results are sent across.", 
+            "date_created": "2014-08-29 08:15:31.691236+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "Unfortunately it is not a trivial thing to get a filtered list of instance uuids filtered by ip.  The filtering for instances is somewhat complex and we don't want to duplicate that in the ip query.  One potential approach would be to get a list of instance uuids not filtered by ip, and then send that to the network query to pare it down by ip filtering.\n\nI think the easiest approach would be to put some policy in place around that filtering option to address the potential for a DOS and then the querying can be optimized later.", 
+            "date_created": "2014-09-16 16:06:00.128091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "I think we can change this to grab all instances and then filter locally based on the ip information in the instance info cache. This will take nova-network out of the picture and minimize the network traffic. Working on a solution now.", 
+            "date_created": "2014-09-23 17:37:23.269966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "The above solution will still be expensive if trying to filter all instances in the system, but that would only be available to admins so I think it avoids the security issue.", 
+            "date_created": "2014-09-23 17:58:14.338939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Can it take into account if the all_tenants flag is provided?\n\nThat way it will work both for normal users for their own accounts and admins can search all tenants with --ip, similar to how --name works\n\nnova list --name <x> will just search your tenant\nnova list --name <x> --all-tenants will search all tenants", 
+            "date_created": "2014-09-23 18:09:28.774846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "This patch should resolve the issue", 
+            "date_created": "2014-09-23 19:28:10.920227+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "mnaser: the patch should use respect all-tenants properly", 
+            "date_created": "2014-09-23 22:22:47.124833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Yes that would seem to respect it properly, I can try testing it out and see how it performs.\n\nThanks", 
+            "date_created": "2014-09-23 22:46:28.076704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "Patch applies cleanly to master and looks good to me. The patch applies cleanly to stable/icehouse but doesn't work without rework (the patch uses objects).\n\nI'm undecided if we should backport this or not and would appreciate other people's thoughts on this -- the DoS is only available to authenticated users and has been out there in code we've marked as deprecated for a very long time. Is it really worth backporting this fix?", 
+            "date_created": "2014-09-24 00:41:01.340243+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "If we consider it a security vuln we have to provide backports.", 
+            "date_created": "2014-09-24 17:37:44.116632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Icehouse backport was pretty simple so that is done.", 
+            "date_created": "2014-09-24 17:47:07.254611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "@Michael Still, a security vulnerability requires backports to supported stable releases in order to warrant an advisory (OSSA). Since Havana entered end of life, only Icehouse is now supported.\n\nConsidering the effectiveness of this attack, I think we should work on a backport. However, since Juno release is comming really fast, we should also consider if this bug really worth an embargoed disclosure. Note that if we keep the embargo the  disclosure process requires 3 business days before fixes can be submitted to gerrit.\n\nI guess it boils to the difficulty of this rework and if someone is available to do it.", 
+            "date_created": "2014-09-24 17:48:27.693424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I should note that I have not tested the icehouse fix against a running system, alhough I did do that for the trunk patch", 
+            "date_created": "2014-09-24 17:51:08.505112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Oups, Vish already post a patch! Thanks!\n\nHere is impact description draft #1:\n\nTitle: Nova network DoS through ip filtering\nReporter: Mohammed Naser (Vexxhost)\nProducts: Nova\nVersions: up to 2014.1.2\n\nDescription:\nMohammed Naser from Vexxhost reported a vulnerability in Nova network ip filtering. By listing active servers using an ip filter, an authenticated user may overload nova-network process, resulting in a denial of services. All Nova network setups are affected.", 
+            "date_created": "2014-09-24 18:02:59.435986+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Havana version (untested). I removed the tests because it was a serious pain to construct object from scratch in havana. Havana is eol but i figured I would post a version for people that want to patch it on their own.", 
+            "date_created": "2014-09-24 18:28:37.501332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Re: impact description. Neutron isn't directly affected by the same issue, but it may have a similar one depending on how the queries are constructed to get all uuids by the filter. If it is also affected, the above patch should fix it.", 
+            "date_created": "2014-09-24 18:35:04.877243+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "@Vish: Thanks again for the feedback!\n\nAbout the Havana patch, we could probably includes it in the advisory, at the condition Havana tests are still running in OpenStack gate. Else jenkins won't be able to verify it and thus we shouldn't ship it in my opinion.\n\nThen about the impact description, is this new version enough to cover the Neutron impact ?\n\nTitle: Nova network DoS through API filtering\nReporter: Mohammed Naser (Vexxhost)\nProducts: Nova\nVersions: up to 2014.1.2\n\nDescription:\nMohammed Naser from Vexxhost reported a vulnerability in Nova API filters. By listing active servers using an ip filter, an authenticated user may overload nova-network or neutron-server process, resulting in a denial of services. All Nova setups are affected.", 
+            "date_created": "2014-09-24 18:55:58.461882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hi,\n\nI'm going to evaluate the icehouse patch on a large system and let you know.\n\nThank you.", 
+            "date_created": "2014-09-24 19:28:08.991165+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "Ran this patch on the same cluster with that issue\n\nnova list --all-tenants  0.92s user 0.19s system 16% cpu 6.804 total\nnova list --all-tenants --ip 199.19  1.81s user 0.26s system 23% cpu 8.891 total\n\nSo OK for me regarding the Icehouse patch, apologies for saying I was going to test the master one early, but no large cluster running master here.\n\nThanks", 
+            "date_created": "2014-09-24 19:31:48.782669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "Let's not tie this to the RC1 process", 
+            "date_created": "2014-09-25 07:41:02.987948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Impact desc looks good.\n@Nova-coresec: we could use another +1 on the patch here", 
+            "date_created": "2014-09-26 09:40:56.834537+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sorry for the small bump but has anyone had a chance to look at this?", 
+            "date_created": "2014-10-10 17:28:01.040986+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mnaser"
+        }, 
+        {
+            "content": "@mnaser: sadly this is not schedule for Juno, thus not many coresec member have time to review this now.\nUpdate should be excepted next week though.\n\nThanks for your patience...", 
+            "date_created": "2014-10-10 18:23:42.755672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "There's a few potential issues with the fix, the main one being that the info_cache is potentially up to a minute out of date.  The second issue being that this doesn't work with cells.  I don't think either of these is a real problem, and certainly not large enough to block a security fix.  I'm +2 on the patches.", 
+            "date_created": "2014-10-16 18:23:32.487755+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "The Icehouse patch is failing run_tests.sh here with:\nFAIL: nova.tests.compute.test_compute.ComputeAPITestCase.test_get_all_by_multiple_options_at_once\nFAIL: nova.tests.compute.test_compute_cells.CellsComputeAPITestCase.test_get_all_by_multiple_options_at_once\n\npythonlogging:'': {{{\nINFO [nova.virt.driver] Loading compute driver 'nova.virt.fake.FakeDriver'\nAUDIT [nova.compute.resource_tracker] Auditing locally available compute resources\nAUDIT [nova.compute.resource_tracker] Free ram (MB): 7680\nAUDIT [nova.compute.resource_tracker] Free disk (GB): 1028\nAUDIT [nova.compute.resource_tracker] Free VCPUS: 1\nINFO [nova.compute.resource_tracker] Compute_service record created for fake-mini:fakenode1\nAUDIT [nova.compute.manager] Deleting orphan compute node 2\n}}}\n\nTraceback (most recent call last):\n  File \"/opt/stack/nova/.venv/local/lib/python2.7/site-packages/mock.py\", line 1201, in patched\n    return func(*args, **keywargs)\n  File \"/opt/stack/nova/nova/tests/compute/test_compute.py\", line 7633, in test_get_all_by_multiple_options_at_once\n    search_opts={'ip': '.*\\.1', 'name': 'not.*'})\n  File \"/opt/stack/nova/nova/compute/api.py\", line 1889, in get_all\n    inst_models = self._ip_filter(inst_models, filters)\n  File \"/opt/stack/nova/nova/compute/api.py\", line 1908, in _ip_filter\n    for vif in nw_info:\nTypeError: 'NoneType' object is not iterable\n\n\nCan someone confirm/fix this error please ? We are willing to send the advance notification with a disclosure date set to:\n2014-10-28, 1500UTC\n\nThanks in advance!", 
+            "date_created": "2014-10-21 19:49:03.318674+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "The stable/juno patch is also failing on:\nFAIL: nova.tests.compute.test_compute.ComputeAPITestCase.test_get_all_by_multiple_options_at_once\nFAIL: nova.tests.compute.test_compute_cells.CellsComputeAPITestCase.test_get_all_by_multiple_options_at_once\nFAIL: nova.tests.network.test_neutronv2.TestNeutronv2.test_get_port_vnic_info_3\n\nwith the same kind of error:\n\npythonlogging:'': {{{\n2014-10-21 21:37:03,300 INFO [nova.virt.driver] Loading compute driver 'nova.virt.fake.SmallFakeDriver'\n2014-10-21 21:37:03,302 AUDIT [nova.compute.resource_tracker] Auditing locally available compute resources\n2014-10-21 21:37:03,331 AUDIT [nova.compute.resource_tracker] Total physical ram (MB): 8192, total allocated virtual ram (MB): 512\n2014-10-21 21:37:03,331 AUDIT [nova.compute.resource_tracker] Free disk (GB): 1028\n2014-10-21 21:37:03,331 AUDIT [nova.compute.resource_tracker] Total usable vcpus: 1, total allocated vcpus: 0\n2014-10-21 21:37:03,331 AUDIT [nova.compute.resource_tracker] PCI stats: []\n2014-10-21 21:37:03,332 INFO [nova.compute.resource_tracker] Compute_service record created for fake-mini:fakenode1\n2014-10-21 21:37:03,333 AUDIT [nova.compute.manager] Deleting orphan compute node 2\n}}}\n\nTraceback (most recent call last):\n  File \"/opt/stack/nova/.venv/local/lib/python2.7/site-packages/mock.py\", line 1201, in patched\n    return func(*args, **keywargs)\n  File \"/opt/stack/nova/nova/tests/compute/test_compute.py\", line 8025, in test_get_all_by_multiple_options_at_once\n    search_opts={'ip': '.*\\.1', 'name': 'not.*'})\n  File \"/opt/stack/nova/nova/compute/api.py\", line 1979, in get_all\n    inst_models = self._ip_filter(inst_models, filters)\n  File \"/opt/stack/nova/nova/compute/api.py\", line 1998, in _ip_filter\n    for vif in nw_info:\nTypeError: 'NoneType' object is not iterable\n\n\nand also:\n\nTraceback (most recent call last):\n  File \"/opt/stack/nova/nova/tests/network/test_neutronv2.py\", line 2615, in test_get_port_vnic_info_3\n    self._test_get_port_vnic_info()\n  File \"/opt/stack/nova/.venv/local/lib/python2.7/site-packages/mock.py\", line 1201, in patched\n    return func(*args, **keywargs)\n  File \"/opt/stack/nova/nova/tests/network/test_neutronv2.py\", line 2607, in _test_get_port_vnic_info\n    fields=['binding:vnic_type', 'network_id'])\n  File \"/opt/stack/nova/.venv/local/lib/python2.7/site-packages/mock.py\", line 845, in assert_called_once_with\n    raise AssertionError(msg)\nAssertionError: Expected to be called once. Called 2 times.\n", 
+            "date_created": "2014-10-22 14:22:30.006740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I've updated the patch for master and Juno and this is passing tests for me.  There was a test relying on the old ip filtering and it needed to be updated.  Will get an Icehouse version together as well.", 
+            "date_created": "2014-10-22 21:01:35.678445+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Icehouse patch", 
+            "date_created": "2014-10-22 21:12:10.025315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Thanks Andrew for these updates!\n\nThe pre-OSSA have been sent with a disclosure date set to:\n2014-10-28, 1500UTC\n\nCan another Nova-core review patches in comment #31 and #32.\n\nThanks in advance!", 
+            "date_created": "2014-10-22 22:09:52.074905+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Unit tests are successful with both patchs, beside some flake8 errors:\n\nIcehouse:\n./nova/tests/compute/test_compute.py:61:1: H306  imports not in alphabetical order (nova.objects.instance_info_cache, nova.objects.instance_group)\n./nova/tests/compute/test_compute.py:85:1: F401 'test_network' imported but unused\n\nJuno:\n./nova/tests/compute/test_compute.py:88:1: F401 'test_network' imported but unused\n", 
+            "date_created": "2014-10-23 12:40:20.741131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Of course, I forgot to run pep8.\n\nKilo/Juno fix attached.", 
+            "date_created": "2014-10-23 13:42:29.142871+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-10-23 13:43:21.368317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Patchs in comment #35 and #36 looks ready for prime-time. Can we please get a review of those before the disclosure date (2014-10-28, 1500UTC)\n\nThanks in advance!", 
+            "date_created": "2014-10-23 15:11:34.685294+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "+1 on both of these updates", 
+            "date_created": "2014-10-27 19:35:10.576573+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/131460", 
+            "date_created": "2014-10-28 15:01:30.916832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/131461", 
+            "date_created": "2014-10-28 15:01:43.997140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/131462", 
+            "date_created": "2014-10-28 15:01:53.543598+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/131462\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=e98738d55a2bd9e4a15df1b201f919b23d781afa\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit e98738d55a2bd9e4a15df1b201f919b23d781afa\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Mon Sep 22 23:31:07 2014 -0700\n\n    Fixes DOS issue in instance list ip filter\n    \n    Converts the ip filtering to filter the list locally based\n    on the network info cache instead of making an extremely expensive\n    call over to nova network where it attempts to retrieve a list\n    of every instance in the system.\n    \n    Change-Id: I455f6ab4acdecacc5152b11a183027f933dc4475\n    Closes-bug: #1358583\n", 
+            "date_created": "2014-10-28 22:25:49.529754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/131460\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ae781ee97947c33d6d43e4c21df4f338c875bf1c\nSubmitter: Jenkins\nBranch:    master\n\ncommit ae781ee97947c33d6d43e4c21df4f338c875bf1c\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Mon Sep 22 23:31:07 2014 -0700\n\n    Fixes DOS issue in instance list ip filter\n    \n    Converts the ip filtering to filter the list locally based\n    on the network info cache instead of making an extremely expensive\n    call over to nova network where it attempts to retrieve a list\n    of every instance in the system.\n    \n    Change-Id: I455f6ab4acdecacc5152b11a183027f933dc4475\n    Closes-bug: #1358583\n", 
+            "date_created": "2014-10-28 22:34:25.762637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/131461\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b6a080bbdaf1a5d8534e8e0519e150f55c46d18c\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit b6a080bbdaf1a5d8534e8e0519e150f55c46d18c\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Mon Sep 22 23:31:07 2014 -0700\n\n    Fixes DOS issue in instance list ip filter\n    \n    Converts the ip filtering to filter the list locally based\n    on the network info cache instead of making an extremely expensive\n    call over to nova network where it attempts to retrieve a list\n    of every instance in the system.\n    \n    Change-Id: I455f6ab4acdecacc5152b11a183027f933dc4475\n    Closes-bug: #1358583\n    (cherry picked from commit 24c8cc53fd6a62fcad1287b2cdcf32d2ff0991d9)\n", 
+            "date_created": "2014-10-30 04:31:29.323782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-12-18 19:58:25.657245+00:00"
+}

@@ -1,0 +1,206 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-09-30 09:40:48.771109+00:00", 
+    "description": "\nIt seems that when using the EC2 API, the security group implementation does not enforce RBAC policy for the add_rules, remove_rules, destroy and other functions (in compute/api.py). Only the add_to_instance and remove_from_instance functions enforce RBAC. This seems like an oversight for obvious reasons.\n\nThe Nova API security group implementation does enforce RBAC on these functions.\n\nIn addition, the add_to_instance and remove_from _instance functions which are wrapped in RBAC verification use the \"compute:security_groups\" action which is not even listed in the default /etc/nova/policy.json. The latter is confusing to users.\n\nThis is the case on Grizlly and at first glance, it doesn't look like this has changed in Havana.", 
+    "tags": [
+        "ec2", 
+        "security"
+    ], 
+    "importance": "High", 
+    "heat": 262, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1290537", 
+    "owner": "https://api.launchpad.net/1.0/~alaski", 
+    "id": 1290537, 
+    "index": 1421, 
+    "openned": "2014-03-10 20:20:59.737118+00:00", 
+    "created": "2014-03-10 20:20:59.737118+00:00", 
+    "title": "[0SSA 2014-011] RBAC policy not enforced when adding a security group rule using EC2 API (CVE-2014-0167)", 
+    "comments": [
+        {
+            "content": "\nIt seems that when using the EC2 API, the security group implementation does not enforce RBAC policy for the add_rules, remove_rules, destroy and other functions (in compute/api.py). Only the add_to_instance and remove_from_instance functions enforce RBAC. This seems like an oversight for obvious reasons.\n\nThe Nova API security group implementation does enforce RBAC on these functions.\n\nIn addition, the add_to_instance and remove_from _instance functions which are wrapped in RBAC verification use the \"compute:security_groups\" action which is not even listed in the default /etc/nova/policy.json. The latter is confusing to users.\n\nThis is the case on Grizlly and at first glance, it doesn't look like this has changed in Havana.", 
+            "date_created": "2014-03-10 20:20:59.737118+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "What can I do to make this report more \"complete\"?\n\nThanks.", 
+            "date_created": "2014-03-11 22:35:19.182625+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "I've marked the OpenStack Security Advisory task for this bug incomplete because the vulnerability management team is waiting for Nova core security reviewers to triage/confirm/reproduce the issue and determine a probable fix. Once we get closer to having a good grasp of the details there, the OSSA task will begin to separately progress through impact description drafting and review, CVE request and assignment, downstream notification and finally public disclosure (hopefully) synchronized with publication of the finalized patches. Hopefully that answers your questions.", 
+            "date_created": "2014-03-12 02:10:38.895074+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Yes that answers my question. Thanks.\n\nLet me know if there's anything I can do in the meantime.", 
+            "date_created": "2014-03-12 02:23:16.979895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "I've confirmed the behaviour, and it seems that it's likely been this way for a while.\n\nThe trend in the OpenStack API has been to move policy out of the compute api and into the API itself.  Even the existing checks on add_to_instance/remove_from_instance are likely to go away at some point.  So to keep in line with that the fix for this would be to add policy checks into the ec2 API.  \n\nThe code for policy enforcement is non invasive and easily backportable but we'll want to set a default policy that won't cause a problem for deployments.  As mentioned by Marc, the current \"compute:security_groups\" rule isn't listed which means it uses the default rule.  The default for the default rule is to limit calls to admins or users who share a project_id with the security group.  If we set up new policies for the security group calls that use the default rule it may break a use case that relies on the unrestricted behaviour currently available, but I believe that's ok.  And using the default rule will put the new policies in line with the existing policies for security groups calls.", 
+            "date_created": "2014-03-12 13:53:30.148774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Trying to make sure this is an exploitable vulnerability...\n\nif add_to_instance and remove_from_instance are protected by RBAC, can you actually do any harm using the unprotected functions ? What would be the attack scenario ? Would for example using remove_rules remove securitygroup rules from instances ?", 
+            "date_created": "2014-03-17 15:31:31.347615+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Assuming the default case of deny all in a security group, the attack scenario would be to use add_rules to add rules to an instance.\n\nNow, the problem with this bug is that users may get into a situation where there is a false sense of security. \n\nFor example, as a private-cloud operator, I want to restrict all Nova actions to users with the \"Member\" role on the tenant. Once that is done, I want to create a new role that allows only for read-only access to security group and instance information for auditing purposes. I can achieve this by editing the rule for the \"compute_extension:security_groups\" action in /etc/nova/policy.json. This will do what I want for the Nova API. The problem is that the EC2 API is left vulnerable and a user that does not have the Member role but only the read-only role can now add or delete rules from a security group.\n\nI hope that helps to clarify things. Of course, this bug only affects users who are trying to create tighter access controls. The default configuration is not affected by this bug since it grants any role on a project/tenant full access.\n\n", 
+            "date_created": "2014-03-17 16:41:51.623647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "OK, that makes sense, thanks for the explanation! We'll issue an advisory for this one.\r\nAndrew: would you be up for a patch ?", 
+            "date_created": "2014-03-19 14:10:54.295772+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thierry: yes, I can put a patch together for this.", 
+            "date_created": "2014-03-19 15:02:02.247724+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Here is an initial patch for review.", 
+            "date_created": "2014-03-20 23:09:16.143201+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "nova-coresec: care to review that one ?", 
+            "date_created": "2014-03-24 15:20:38.137428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "A couple questions while I try to draft an impact description for the CVE:\n\n* Mark, should we credit the company you work for, in addition to your name ? If yes, which company is it ?\n\n* Any idea which versions of OpenStack should be considered vulnerable to this ? I suspect that would be when RBAC was added to openStack API, but not sure how to be more precise than that\n", 
+            "date_created": "2014-03-26 14:14:42.118907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I will check with my company and get back to you about the divulging the name.\n\nFor the versions, it sounds like this might go back pretty far. I can confirm that it affects Grizzly.\n\n", 
+            "date_created": "2014-03-28 15:29:55.625353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "Hi, you can use the company name: Ubisoft", 
+            "date_created": "2014-03-28 19:09:54.174709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "Impact description draft #1:\n\nTitle: RBAC policy not enforced in Nova EC2 API\nReporter: Marc Heckmann (Ubisoft)\nProducts: Nova\nVersions: 2013.1 versions up to 2013.2.2\n\nDescription:\nMarc Heckmann from Ubisoft reported a vulnerability in the Nova EC2 API security group implementation. RBAC policy are not enforced when using the EC2 API, in particular the add_rules, remove_rules and destroy methods. A restricted user may overcome his limitation by using EC2 API resulting in unauthorized action on security groups. Only setups using tighter access controls for Nova API are affected.\n", 
+            "date_created": "2014-04-01 09:50:24.724430+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Suggestions:\n\nTitle: \"RBAC policy not properly enforced in Nova EC2 API\"\n\nRBAC policy are not enforced -> \"policies\"\n\nand replace last sentence: \"Only setups using non-default RBAC rules for Nova may be affected\".", 
+            "date_created": "2014-04-01 11:29:18.033000+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx Thanks!\n\nImpact description draft #2:\n\nTitle: RBAC policy not properly enforced in Nova EC2 API\nReporter: Marc Heckmann (Ubisoft)\nProducts: Nova\nVersions: 2013.1 versions up to 2013.2.2\n\nDescription:\nMarc Heckmann from Ubisoft reported a vulnerability in the Nova EC2 API security group implementation. RBAC policies are not enforced when using the EC2 API, in particular the add_rules, remove_rules and destroy methods. A restricted user may overcome his limitation by using EC2 API resulting in unauthorized action on security groups. Only setups using non-default RBAC rules for Nova may be affected.\n", 
+            "date_created": "2014-04-01 11:59:36.740936+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "+1 on Impact description draft #2", 
+            "date_created": "2014-04-01 12:26:26.095484+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+2 on the patch.\n\nI'm going to add cyeoh to this bug, as I think he'd be a good nova-core member to help review this fix.", 
+            "date_created": "2014-04-01 15:45:27.175795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Tristan's impact description in comment #16 looks good to me.", 
+            "date_created": "2014-04-02 16:02:46.255937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "+1 on the impact description\n\nRe: the patch - Although I agree it fixes the problem I'm not sure its the way we should do it.\n\nWe already have a policy \"compute_extension:security_groups\" which is used by the Nova API to enforce\naccess in a general way to all of these features. So I'm thinking that rather than introducing new policies\nmore specific such as compute:security_groups:remove_rules settings to fix the bug we should just use\nthe existing generic compute_extension:security_groups rule in the ec2 API.\n\nNow I think there may be a reasonable argument for having per method type policy settings in the API\nrather than general ones and we have generally been moving this way anyway, but if we do so we need to\nbe consistent across the Nova and EC2 APIs. So if a compute:security_groups:remove_rules policy is used\nby the EC2 code it should also be checked by the Nova API code too. Otherwise deployers could be mislead into\nthinking the policy is affecting the Nova API when it isn't.\n\nI think unless there is a clear need now to have detailed policy checks I think for an immediate bug fix we\nshould just use the existing general security groups policy (which I think also means no policy file changes\nare needed by deployers just the code update). And then if we want to have more fine grained policy checks\nwe can do this in Juno. And this needs to be done fairly carefully for the Nova API side to ensure minimal\nupgrade impact.\n\nAnd more generally we definitely need to ensure all possibly policy checks are in the policy file rather than\nrely on defaults as deployers should not be expected to grep the code to see what switches are available :-) I will\nsubmit a blueprint for that work in Juno.\n", 
+            "date_created": "2014-04-03 01:50:47.353926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "@Andrew Laski, Could you please attach another patch for Havana ?\nThe current one in comment #9 does apply to stable/havana but tests are failing, I think we are missing some import:\n\nNameError: global name 'extensions' is not defined           in nova/api/ec2/cloud.py\nNameError: global name 'common_policy' is not defined    in nova/tests/\n", 
+            "date_created": "2014-04-03 09:29:14.534455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "But then extensions module is lacking check_compute_policy method.", 
+            "date_created": "2014-04-03 10:01:58.908396+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Yeah, I am -1 for what chris said.\n\nSeems like we should use the same policy as the core openstack API, otherwise people will have to configure new policy for an api they may not release that had turned on, or something like that.\n\nI agree that we should have a more granular policy on both in the long term, but thats not really the fix for this bug, as I see it.", 
+            "date_created": "2014-04-03 13:46:29.719155+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I was hesitant to say anything about the patch, but Christopher is right, keeping the previously hidden \"compute:security_groups\" policy doesn't make sense if people are already using \"compute_extension:security_groups\". We should just have one way to do this.\n\nAnd yeah, as an operator, having more fine grained policy is a plus, but this could be done in a future release.", 
+            "date_created": "2014-04-03 14:00:33.090060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marc-w-heckmann"
+        }, 
+        {
+            "content": "Christopher:   Works for me. I'm happy with a simpler solution for now if everyone agrees.  I'll update shortly.  \nAnd Tristan, I'll work on a backport but I just wanted to get approval on the direction first.\n\nI added the fine grained controls into the ec2 api because the OpenStack api has fine grained controls as well, they're just enforced at the compute api level.  Actually I see now that I should have just added the @wrap_check_security_groups_policy decorator for the compute api methods that the ec2 api uses.  But really the ec2 api and OpenStack api have different semantics, and make different calls, so I think it's fine for them to have different policies.   That can be handled later in a non security review though.", 
+            "date_created": "2014-04-03 19:56:11.048631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Patch for master", 
+            "date_created": "2014-04-03 20:22:33.643534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "stable/havana", 
+            "date_created": "2014-04-03 20:39:49.908246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Thank you Andrew, patches are passing tests on Havana and master (beside a seemingly unrelated test: nova.tests.virt.libvirt.test_libvirt.LibvirtConnTestCase.test_get_domain_info_with_more_return)\n\nIf core could approve it today I'll send the pre-OSSA with a disclosure date at:\n2014-04-09 15:00 UTC\n\nThank you in advance!", 
+            "date_created": "2014-04-04 07:04:59.474307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I'm +2 on the latest set of havana/master patches", 
+            "date_created": "2014-04-04 09:25:45.246909+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "the pre-OSSA have been sent.\n\nProposed public disclosure date/time:\n2014-04-09 15:00 UTC\n", 
+            "date_created": "2014-04-04 14:12:57.208419+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "+2 on that patch, but looks like we are sorted anyways", 
+            "date_created": "2014-04-07 09:19:30.203549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/86360", 
+            "date_created": "2014-04-09 15:02:41.849830+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Master review: https://review.openstack.org/#/c/86353/", 
+            "date_created": "2014-04-09 15:03:24.147288+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/86358\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d4056f8723cc6cefb28ff6e5a7c0df5ea77f82ef\nSubmitter: Jenkins\nBranch:    master\n\ncommit d4056f8723cc6cefb28ff6e5a7c0df5ea77f82ef\nAuthor: Andrew Laski <email address hidden>\nDate:   Thu Mar 20 19:04:09 2014 -0400\n\n    Add RBAC policy for ec2 API security groups calls\n    \n    The revoke_security_group_ingress, revoke_security_group_ingress, and\n    delete_security_group calls in the ec2 API were not restricted by policy\n    checks.  This prevented a deployer from restricting their usage via\n    roles or other checks.  Checks have been added for these calls.\n    \n    Closes-Bug: #1290537\n    Change-Id: I4bf681bedd68ed2216b429d34db735823e0a6189\n", 
+            "date_created": "2014-04-09 17:36:32.237746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/86360\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=87f57c0a2cc00a70edc87c5dc10bdefb6c01587b\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit 87f57c0a2cc00a70edc87c5dc10bdefb6c01587b\nAuthor: Andrew Laski <email address hidden>\nDate:   Thu Mar 20 19:04:09 2014 -0400\n\n    Add RBAC policy for ec2 API security groups calls\n    \n    The revoke_security_group_ingress, revoke_security_group_ingress, and\n    delete_security_group calls in the ec2 API were not restricted by policy\n    checks.  This prevented a deployer from restricting their usage via\n    roles or other checks.  Checks have been added for these calls.\n    \n    Closes-Bug: #1290537\n    Change-Id: I4bf681bedd68ed2216b429d34db735823e0a6189\n    (cherry picked from commit d4056f8723cc6cefb28ff6e5a7c0df5ea77f82ef)\n", 
+            "date_created": "2014-04-09 20:54:11.426467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/86361\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=dbb7dd03fea68120ef5ac9bbb1b3f184e3f2eacc\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit dbb7dd03fea68120ef5ac9bbb1b3f184e3f2eacc\nAuthor: Andrew Laski <email address hidden>\nDate:   Wed Apr 9 09:27:44 2014 -0400\n\n    Add RBAC policy for ec2 API security groups calls\n    \n    The revoke_security_group_ingress, revoke_security_group_ingress, and\n    delete_security_group calls in the ec2 API were not restricted by policy\n    checks.  This prevented a deployer from restricting their usage via\n    roles or other checks.  Checks have been added for these calls.\n    \n    Based on commit d4056f8723cc6cefb28ff6e5a7c0df5ea77f82ef but modified\n    for the backport.\n    \n    Closes-Bug: #1290537\n    Change-Id: I4bf681bedd68ed2216b429d34db735823e0a6189\n", 
+            "date_created": "2014-04-09 20:55:32.318335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-04-09 20:54:07.616301+00:00"
+}

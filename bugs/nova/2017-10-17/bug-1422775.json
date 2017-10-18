@@ -1,0 +1,91 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:52:12.643478+00:00", 
+    "description": "In the trunk (kilo) nova libvirt code there are a numberr of places where we assume that qemu can provide NUMA-related functionality that was only introduced in a very recent version (2.1).  If we try to use this code with older qemu it triggers an exception and fails to boot the instance.\n\nIn some cases, we can get partial NUMA support by removing some of the more advanced functionality (per-numa-node pinning, per-numa-node hugepages).  This would arguably be the best solution.\n\nAt the very least, we should introduce a QEMU version check and fail cleanly with a proper error code rather than with cryptic errors that are complicated to resolve.\n\nKnown affected areas:\n\nvirt.libvirt.config.LibvirtConfigGuestMemoryBacking.format_dom()\n--the \"page\" subelement of the \"hugepages\" element is not supported by earlier qemu versions\n\nvirt.libvirt.config.LibvirtConfigGuestNUMATune.format_dom()\n--the \"memnode\" subelement of the \"numatune\" element is not supported by earlier qemu versions\n\nCommenting out the code that configures these elements allows NUMA to work (with somewhat reduced functionality) on an older qemu version, or a newer one without NUMA support (like Ubuntu 14.10 at the time of writing this).\n\nI think we should add a qemu version test against 2.1 and use that to determine whether or not to support the more advanced NUMA capabilities.  If Ubuntu doesn't fix their qemu in 14.10 then we might even want to add some kind of runtime capabilities test to check whether qemu was built with numa support.", 
+    "tags": [
+        "compute", 
+        "libvirt"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1422775", 
+    "owner": "https://api.launchpad.net/1.0/~cbf123", 
+    "id": 1422775, 
+    "index": 1539, 
+    "openned": "2015-02-17 15:23:57.736458+00:00", 
+    "created": "2015-02-17 15:23:57.736458+00:00", 
+    "title": "nova libvirt driver needs to check qemu support for NUMA & hugepages", 
+    "comments": [
+        {
+            "content": "In the trunk (kilo) nova libvirt code there are a numberr of places where we assume that qemu can provide NUMA-related functionality that was only introduced in a very recent version (2.1).  If we try to use this code with older qemu it triggers an exception and fails to boot the instance.\n\nIn some cases, we can get partial NUMA support by removing some of the more advanced functionality (per-numa-node pinning, per-numa-node hugepages).  This would arguably be the best solution.\n\nAt the very least, we should introduce a QEMU version check and fail cleanly with a proper error code rather than with cryptic errors that are complicated to resolve.\n\nKnown affected areas:\n\nvirt.libvirt.config.LibvirtConfigGuestMemoryBacking.format_dom()\n--the \"page\" subelement of the \"hugepages\" element is not supported by earlier qemu versions\n\nvirt.libvirt.config.LibvirtConfigGuestNUMATune.format_dom()\n--the \"memnode\" subelement of the \"numatune\" element is not supported by earlier qemu versions\n\nCommenting out the code that configures these elements allows NUMA to work (with somewhat reduced functionality) on an older qemu version, or a newer one without NUMA support (like Ubuntu 14.10 at the time of writing this).", 
+            "date_created": "2015-02-17 15:23:57.736458+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "> Commenting out the code that configures these elements\n> allows NUMA to work (with somewhat reduced functionality)\n> on an older qemu version, or a newer one without NUMA support\n> (like Ubuntu 14.10 at the time of writing this).\n\nNo, it really doesn't work correctly. Removing the 'pages' element means we cannot ensure the VM is using the page size that we requested. Removing the 'memnode' element results in the VM memory nodes not having correct host node affinity. Not only will this result in worse performance, but will lead to incorrect schedular decisions because its view of what resources are allocated / in use will no longer match reality in any way.", 
+            "date_created": "2015-02-17 16:02:41.433987+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "A few things:\n\n1) Currently the \"pages\" subelement of the \"hugepages\" element is set even when no NUMA support is requested for the guest.  This is a bug.  We should be able to use hugepages even if we can't use NUMA.\n\n2) As long as the CPU affinity is set before the memory allocation (should probably check whether this is the case) then the NUMA allocation would be governed by the system-wide allocation rule.  So maybe this means that with older qemu we don't allow setting per-flavor hw_numa_mempolicy, you're limited to the system-wide rule.\n\nEven if we decide to totally disallow NUMA support unless qemu supports it \"properly\", we should still add in a version (or better yet a runtime capabilities) check so that we can fail early with a nice error message.", 
+            "date_created": "2015-02-17 16:34:34.666765+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "The \"pages\" element specifies the huge page size, so even if you don't need NUMA we still need the pages element, so that's not a bug.  For NUMA, the system default allocation rule implemented by the kernel is just a preference, not a guarantee, so the actual placement of the guest is not going to match what the schedular is expecting.  The NUMA code is complex enough without having to add workarounds for outdated versions of QEMU or versions which distros crippled.  At most we should extend the version check here.", 
+            "date_created": "2015-02-17 16:45:42.480843+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Okay, if you don't think it's worthwhile to try and make it work then I'll defer to your judgement.\n\nI do think that we should add a qemu version check though..as it stands it is tricky to try and figure out why things aren't working and what version of libvirt/qemu is needed.", 
+            "date_created": "2015-02-17 17:13:19.857138+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "FWIW - I think we should just be failing the guest and provide a non-criptic message. That's the only way to ensure that there is a clear unambiguos  semantics of the extra specs we have introduced.\n\nAllowing partial support will lead to even more confusion from the users.\n\nWe skip the missing capabilities already (and that is fine because we don't want to be crashing the compute service) but when we detect that a capability was requested that cannot be unambiguously executed.\n\nWe may even want to do this at the scheduler level.", 
+            "date_created": "2015-02-23 07:17:12.017473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "The second paragraph in comment #5 should read:\n\n\"\"\"\nWe skip the missing capabilities already (and that is fine because we don't want to be crashing the compute service) but when we detect that a capability was requested that cannot be executed to provde the feature we claim it provides - the instance request should fail.\n\"\"\"\n\nI forgot to finish the sentence :)", 
+            "date_created": "2015-02-23 10:39:51.940494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Looking at the code, it seems that we have some existing checks on libvirt version, but they behave differently than what we've been discussing.\n\nCurrently if libvirt is older than MIN_LIBVIRT_MEMNODE_VERSION or MIN_LIBVIRT_MEMPAGES_VERSION it basically just ignores the relevant portion of the instance topology.\n\nThis seems like a poor design--the user has explicitly requested a particular topology, but the compute node is silently ignoring that request.\n\nDo we want to noisily fail (I'm thinking raising an exception) in these cases instead?  (As well as if qemu is too old?)", 
+            "date_created": "2015-03-23 22:52:01.536141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "The original code failed noisily, but some later changes caused a regression in this. I've fixed this regression with this change\n\nhttps://review.openstack.org/#/c/159106/", 
+            "date_created": "2015-03-23 23:07:45.269359+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Never mind about the libvirt checks, I just noticed Daniel's change at https://review.openstack.org/#/c/159106/\n\nWould we want to add a fix for this bug into that commit, or would it make sense for me to do a follow-on bugfix for the qemu check?", 
+            "date_created": "2015-03-23 23:24:13.336502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "I'd say keep it as a separate commit, as 159106 is already quite noisy.", 
+            "date_created": "2015-04-02 14:41:16.739848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/170780", 
+            "date_created": "2015-04-06 06:25:11.562082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "For anyone interested in NUMA/hugepages/qemu, the change at https://review.openstack.org/170780 is ready to go but needs core review.  It's a trivial patch, shouldn't take long.", 
+            "date_created": "2015-04-08 22:09:14.355968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/170780\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7f4d7e0b67521344e32790e4b59c42073182a2cf\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7f4d7e0b67521344e32790e4b59c42073182a2cf\nAuthor: Chris Friesen <email address hidden>\nDate:   Sun Apr 5 22:04:36 2015 -0600\n\n    libvirt: check qemu version for NUMA & hugepage support\n    \n    In commit 945ab28 the libvirt driver was modified to validate the\n    libvirt version before enabling NUMA and hugepage support.\n    \n    While good, it's not sufficient.  We also need to check the qemu\n    version since NUMA hugepage support wasn't added until version 2.1.\n    (See http://wiki.qemu.org/ChangeLog/2.1#x86, specifically the\n    memory-backend-* objects.)\n    \n    We know that qemu on the s390x doesn't support NUMA or hugepages.\n    Support for ppc64 is possible but not yet determined...we can\n    update the supported list once we find out for sure.\n    \n    Change-Id: Ib31c4f806e30a8b33669d5a15bd1578050c7e352\n    Closes-Bug: #1422775\n", 
+            "date_created": "2015-05-05 02:45:26.767580+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-06-24 12:20:07.689986+00:00"
+}

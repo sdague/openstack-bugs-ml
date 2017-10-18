@@ -1,0 +1,68 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:52:47.342396+00:00", 
+    "description": "For file-based volume drivers (eg; GlusterFS) that uses qcow2  snapshotting mechanism doesn't use relative path post an online snap delete operation.\n\nIn my testing with GlusterFS , I see 2 scenarios where the backing file path was using nova mnt instead of relative path.\neg: /opt/stack/data/nova/mnt/f4c6ad7e3bba4ad1195b3b538efab64a/volume-518a8faa-f264-4c07-80d7-ff691278b5da.838a5847-cb90-4279-b50f-f8f995321665\n\nThis is incorrect since after the volume is detach, the above path is invalid on the cinder/storage node.\n\nThe 2 scenarios are blockCommit and blockRebase for file-based volume drivers.", 
+    "tags": [
+        "commit", 
+        "glusterfs", 
+        "rebase", 
+        "relative"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1438027", 
+    "owner": "https://api.launchpad.net/1.0/~dpkshetty", 
+    "id": 1438027, 
+    "index": 1657, 
+    "openned": "2015-04-02 14:58:44.125285+00:00", 
+    "created": "2015-03-30 06:08:17.828750+00:00", 
+    "title": "backing file path isn't relative path for file-based volume drivers using qcow2 snapshots", 
+    "comments": [
+        {
+            "content": "For file-based volume drivers (eg; GlusterFS) that uses qcow2  snapshotting mechanism doesn't use relative path post an online snap delete operation.\n\nIn my testing with GlusterFS , I see 2 scenarios where the backing file path was using nova mnt instead of relative path.\neg: /opt/stack/data/nova/mnt/f4c6ad7e3bba4ad1195b3b538efab64a/volume-518a8faa-f264-4c07-80d7-ff691278b5da.838a5847-cb90-4279-b50f-f8f995321665\n\nThis is incorrect since after the volume is detach, the above path is invalid on the cinder/storage node.\n\nThe 2 scenarios are blockCommit and blockRebase for file-based volume drivers.", 
+            "date_created": "2015-03-30 06:08:17.828750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "For the above, My setup is a devstack setup on F21 using libvirt version 1.2.9", 
+            "date_created": "2015-03-30 07:04:27.849315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "Posted fix for this @\nhttps://review.openstack.org/#/c/168805/", 
+            "date_created": "2015-04-02 14:57:00.871472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "OT: I am not sure why the gerrit patch i posted didn't appear here automatically, inspite of linking this bug in the patch!", 
+            "date_created": "2015-04-02 14:57:43.824955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "@Davanum,\n  I think the prio of the nova LP bug should be atleast medium if not high, mainly because this problem affects all fs-backed cinder drivers that use hypervisor assisted snapshot mechanism", 
+            "date_created": "2015-04-08 14:53:53.533379+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "Adding some debug data and steps.\n\n*** For older libvirt (pre-1.2.7, which does not support _RELATIVE flag)  ***\n\nlibvirtd version 1.2.2\n\nstack@ubuntu:~/data/cinder/mnt/f4c6ad7e3bba4ad1195b3b538efab64a$ libvirtd --version libvirtd (libvirt) 1.2.2\n\nSteps:\n\n1) Snap chain : base <- snap1 <- snap2 (snap2: active) (NOTE: All paths during snap create are relative)\n\n2) Deleted snap1 (this causes nova to do a block Commit op)\n\n3) Snap chain: base <- snap2 (snap2: active)\n\n4) Dumping snap2's backing chain, we see the nova mount abs path being used as below:\n\nstack@ubuntu:~/data/cinder/mnt/f4c6ad7e3bba4ad1195b3b538efab64a$ qemu-img info volume-de05536f-fcec-4c42-9bbb-81806632fee9.8ccadd25-dea1-4dff-9a02-83076e748599 --backing-chain\nimage: volume-de05536f-fcec-4c42-9bbb-81806632fee9.8ccadd25-dea1-4dff-9a02-83076e748599\nfile format: qcow2\nvirtual size: 1.0G (1073741824 bytes)\ndisk size: 193K\ncluster_size: 65536\nbacking file: /opt/stack/data/nova/mnt/f4c6ad7e3bba4ad1195b3b538efab64a/volume-de05536f-fcec-4c42-9bbb-81806632fee9\nbacking file format: raw\nFormat specific information:\ncompat: 1.1\nlazy refcounts: false\n\nimage: /opt/stack/data/nova/mnt/f4c6ad7e3bba4ad1195b3b538efab64a/volume-de05536f-fcec-4c42-9bbb-81806632fee9 file format: raw virtual size: 1.0G (1073741824 bytes) disk size: 0\n\n5) Go back to step 1: base <- snap1 <- snap2 (snap2: active) (NOTE: All paths during snap create are relative) 6) Deleted snap2 (this causes nova to do a block Rebase (aka pull) op) 7) Snap chain: base <- snap2 (snap2: active) 8) Dumping snap2's backing chain, we see the relative path being used as below:\n\nstack@ubuntu:~/data/cinder/mnt/f4c6ad7e3bba4ad1195b3b538efab64a$ qemu-img info volume-36774096-9d8a-4657-9cba-219dd7dbacb3.98d00fda-9241-4974-8c40-9ff825c69c99 --backing-chain\nimage: volume-36774096-9d8a-4657-9cba-219dd7dbacb3.98d00fda-9241-4974-8c40-9ff825c69c99\nfile format: qcow2\nvirtual size: 1.0G (1073741824 bytes)\ndisk size: 193K\ncluster_size: 65536\nbacking file: volume-36774096-9d8a-4657-9cba-219dd7dbacb3\nbacking file format: raw\nFormat specific information:\ncompat: 1.1\nlazy refcounts: false\n\nimage: volume-36774096-9d8a-4657-9cba-219dd7dbacb3 file format: raw virtual size: 1.0G (1073741824 bytes) disk size: 0\n\nConclusion\nSo it looks like pre-1.2.7 version of libvirt, blockRebase retained the relative path but blockCommit did not.\n\n*** For newer libvirt (post-1.2.7, which supports _RELATIVE flag)  ***\n\nlibvirtd version 1.2.9 on F21\n\nI see the same behaviour as for pre-1.2.7 case, since the _RELATIVE flag is used if available only during blockCommit of\nnetwork disks and never used for file-type disks, hence we still see the absolute paths for this scenario too\n\n** Patch ***\nposted @ https://review.openstack.org/#/c/168805/\nfixes the issue for both file and network type disks and takes care of the pre and post libvirt versions\n", 
+            "date_created": "2015-04-09 09:07:20.992674+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "Nova-only fix.", 
+            "date_created": "2015-04-09 13:55:17.213799+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }, 
+        {
+            "content": "Per comments recd. in the patch @ https://review.openstack.org/#/c/168805/, moving the patch's commit message to the bug here\n\nlibvirt added support for _RELATIVE flag in v1.2.7 and when available this\nflag _must_ be used to ensure backing paths are maintained relative during\nsnapshot delete operations.\n\nPer the experiments I did using pre-1.2.7 (v1.2.2) and post-1.2.7 (v1.2.9)\nmy findings are below:\n\npre-1.2.7 (eg: v1.2.2) behaviour:\n    backing paths are maintained relative for blockRebase but not for\nblockCommit operations. Per the libvirt folks, this is not by design,\nbut a side effect of how/when the snap chain was created. For the Cinder-Nova\nonline snapshot case, it's broken for sure.\n\npost-1.2.7 (eg: v.1.2.9) behaviour:\n    Although the pre-1.2.7 behaviour is seen in this case too, per the\nlibvirt folks, _RELATIVE flag _must_ be used to guarantee qemu maintains\nrelative backing paths.\n\nWithout this patch:\n    _RELATIVE flag was used only for blockCommit of a network disk and\nraises excp if this flag isn't present. For file-backed disks case, Cinder\nis broken as qemu can't maintain relative paths.\n\n    For blockRebase this flag is never used, probably because blockRebase\nmaintained relative path (see above) even before this flag came into existence.\n\nWith this patch:\n    _RELATIVE flag if available, is used for both blockCommit & blockRebase\ncases for both file and network backed disks.\n\n    If unavailable, it means we are dealing with pre-1.2.7 libvirt, and\nit raises excp for blockCommit case (since we can't get relative paths and\nCinder flow is broken), but only puts out a warning message for blockRebase\ncase (since relative paths works even for older libvirt)\n\nSummary:\n    1) Uses _RELATIVE for blockRebase if available, for both file and network\n       disks. Don't raise excp if flag isn't present, thus preserving older\n       behaviour.\n\n    2) Uses _RELATIVE for blockCommit if available, for both file and network\n       disks. Raise excp if flag isn't present to ensure Cinder flow isn't\n       broken (old behaviour changes here, for file backed disks only)\n", 
+            "date_created": "2015-04-16 08:26:32.745411+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dpkshetty"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/168805\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7458c85daaffc56199094f66f29b2b86a4725955\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7458c85daaffc56199094f66f29b2b86a4725955\nAuthor: Deepak C Shetty <email address hidden>\nDate:   Mon Mar 30 06:46:37 2015 +0000\n\n    libvirt: Use 'relative' flag for online snapshot's commit/rebase operations\n    \n    libvirt added support for _RELATIVE flag in v1.2.7 and when available this\n    flag _must_ be used to ensure backing paths are maintained relative during\n    snapshot delete operations.\n    \n    This patch uses _RELATIVE flag if available, for both blockCommit and\n    blockRebase cases for both file and network backed disks.\n    \n    If _RELATIVE flag is unavailable, it raises excp for blockCommit case\n    (since we can't get relative paths and Cinder flow is broken), but only\n    puts out a warning message for blockRebase case (since relative paths\n    works even for older libvirt)\n    \n    Closes-Bug: 1438027\n    Change-Id: I9bda95cd4ab09aed88536d4a988d6c6579441c37\n", 
+            "date_created": "2015-05-14 02:13:25.397637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-06-24 12:21:02.491709+00:00"
+}

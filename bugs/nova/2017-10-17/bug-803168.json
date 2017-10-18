@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2011-09-22 12:57:43.081029+00:00", 
+    "description": "I have a lot of queues in Rabbit that don't appear to be getting torn down from Nova builds.\n\nExample:\nca866fee5eb748bd9526b2cf603e47a0        0\nff74b19d985c4353a0a3d611431f94b2        0\ne9b4770ab96149b0b93669abecb237c8        0\n44f063dc8b1044509f381137a1ed2cb2        0\n9bd1e93e59444c8d92bdca72194e1666        0\nb0e18bbb291b4277974eb61a2935e815        0\n1dcdf4cd82754219859758ee9ae0f511        0\n6f0d8278821342bea82a93ac28735028        0\n9d91add65c074093bd44ff4a53f1f8b1        0\n4736420006f84d1ea7845bc86c167dc0\n\nroot@z1-rabbit:~# rabbitmqctl list_queues | wc -l\n10381\n\nMost of these are types of queues listed above.  I'm currently running Rev 1215.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/803168", 
+    "owner": "https://api.launchpad.net/1.0/~cbehrens", 
+    "id": 803168, 
+    "index": 2444, 
+    "openned": "2011-06-28 21:49:12.092797+00:00", 
+    "created": "2011-06-28 21:49:12.092797+00:00", 
+    "title": "Response Queues for RPC Calls aren't being torn down", 
+    "comments": [
+        {
+            "content": "I have a lot of queues in Rabbit that don't appear to be getting torn down from Nova builds.\n\nExample:\nca866fee5eb748bd9526b2cf603e47a0        0\nff74b19d985c4353a0a3d611431f94b2        0\ne9b4770ab96149b0b93669abecb237c8        0\n44f063dc8b1044509f381137a1ed2cb2        0\n9bd1e93e59444c8d92bdca72194e1666        0\nb0e18bbb291b4277974eb61a2935e815        0\n1dcdf4cd82754219859758ee9ae0f511        0\n6f0d8278821342bea82a93ac28735028        0\n9d91add65c074093bd44ff4a53f1f8b1        0\n4736420006f84d1ea7845bc86c167dc0\n\nroot@z1-rabbit:~# rabbitmqctl list_queues | wc -l\n10381\n\nMost of these are types of queues listed above.  I'm currently running Rev 1215.", 
+            "date_created": "2011-06-28 21:49:12.092797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~antonym"
+        }, 
+        {
+            "content": "These are the queues for responses from rpc.call/multicall.  The queues are declared auto_delete=True, so all I can guess so far is that MulticallWaiter.close() is not being called.  I don't see how this can occur right now...  but it's definitely happening.  If I kill off nova services, the queues are deleted.", 
+            "date_created": "2011-06-28 22:03:27.673905+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Turns out this problem happens regardless if there is an exception or not.\n\nIt stems from the awkward use of the carrot API, but I don't know exactly why it's causing the queues to not be deleted. I do know that switching over to iterconsume() solves the problem. However, it causes unit test failures that aren't trivial to fix.\n\nI stopped working on this after having trouble with the unit tests because other people are working on replacing carrot with kombu. That might make fixing this bug moot.", 
+            "date_created": "2011-07-13 01:11:01.310879+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "@Chris: are you actually working on this, or should we unassign you to potentially let someone else have a shot at it ?", 
+            "date_created": "2011-08-19 09:48:38.362790+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'm working on it (sorta), but as part of a larger rpc refactor to use kombu instead of carrot.  There doesn't seem to be a simple fix for carrot, according to Johannes's comments above.  Someone else is welcome to take a look, though.  I've really not focused specifically on fixing this bug... but I took ownership because I knew it'd go away when switching to kombu. \n\nAnd kombu probably needs to wait to post-diablo... unless there's a desire to try to get it in with carrot still being the default (as to not introduce a new dependency this late).\n", 
+            "date_created": "2011-08-19 11:56:17.119060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Crap.  It actually appears that even when you call Consumer().close(), the consumer is not actually detached from the queue on the server.  This seems to be the case even if you close the channel being used.  Same issue happens with kombu, so it's not just a carrot issue.  I wonder if it's a rabbitmqserver bug.  The queue seems to only be removed when you close the actual connection to rabbit.\n\nSo, the only known workaround is to rip out connection pooling and only use a connection once for consumers. :-/  That has performance implications, though, but it's probably better than having a million queues in rabbit.. which probably has its own issues.", 
+            "date_created": "2011-08-24 09:38:30.602308+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Dug more into this after talking with Johannes about what we had found so far.\n\nTurns out that the queue is not removed when closing a channel... only if you've not called the interface that does a amqp basic_consume command.  I think this is technically a rabbit bug and will bring it up on the list.  Closing a channel should forget about queues you've bound while using the channel.. and remove queues that are auto_delete=True.\n\nAnyway, this is not a huge problem if you can use an interface that calls amqp's basic_consume command.  Unfortunately, with carrot, we use carrot Consumer.fetch() which does a basic_get() command instead.  This is where the real problem is.  If we can switch this to use .wait() or .iterconsume(), this bug goes away in all cases except a very rare case where you have an exception between between declaring the queue and calling .wait().  Closing the channel without calling .wait() would leave the queue around.\n\nNow, when I was working on connection pooling and termie was working on multicall, there was difficulty getting all tests to pass when using Consumer.wait() vs Consumer.fetch().  This is why we stuck with fetch(), even though it is also less efficient than .wait().\n\nI think the best way to solve this is to wait until kombu is done where tests have to be completely fixed anyway.  This is coming very soon.  I'll link my kombu branch here.  It is also tied to lp:798876 and will also fix lp:794627 (auto-reconnecting to rabbit when it restarts).\n\n", 
+            "date_created": "2011-08-25 06:32:12.153528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }
+    ], 
+    "closed": "2011-09-22 12:57:41.726898+00:00"
+}

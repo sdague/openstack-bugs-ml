@@ -1,0 +1,40 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2016-06-02 16:45:09.051807+00:00", 
+    "description": "Steps to reproduce\n==================\n1 - Get a keystone v3 token using the ?nocatalog param. Example:\n\nexport TOKEN=`curl -i -k -v -H \"Content-type: application/json\" -d '{\"auth\": {\"identity\": {\"methods\": [\"password\"], \"password\": {\"user\": {\"domain\": {\"name\": \"Default\"}, \"name\": \"test\", \"password\": \"password\"}}}, \"scope\": {\"project\": {\"name\": \"test-project\", \"domain\": {\"name\": \"Default\"}}}}}' http://localhost:5000/v3/auth/tokens?nocatalog | grep X-Subject-Token | awk '{print $2}' | sed -e 's,\\r,,' `\n\n2 - Try to create a server using a cinder volume. Example:\n\ncurl -k -v -H  \"X-Auth-Token:$TOKEN\" -H \"Content-type: application/json\" -d '{\"server\": {\"name\": \"test_CSDPU_1\", \"imageRef\": \"\", \"block_device_mapping_v2\": [{\"source_type\": \"volume\", \"destination_type\": \"volume\", \"boot_index\": 0, \"delete_on_termination\": false, \"uuid\": \"85397498-850f-406f-806a-25cf93cd94dc\"}], \"flavorRef\": \"790959df-f79b-4b87-8389-a160a3b6e606\", \"max_count\": 1, \"min_count\": 1}}' http://localhost:8774/v2/07564c39740f405b92f4722090cd745b/servers\n\nActual result\n=============\n\n{\"badRequest\": {\"message\": \"Block Device Mapping is Invalid: failed to get volume 85397498-850f-406f-806a-25cf93cd94dc.\", \"code\": 400}}\n\nExpected result\n===============\n\nA meaningful error message is displayed.\n\nDetails\n=======\n\n- During cinderclient creation, nova tries to get cinder's endpoint using the auth object obtained from the token without the catalog [1]. keystoneauth will raise an EmptyCatalog exception [2] that is not treated and will result in the error seen above.\n\n[1] https://github.com/openstack/nova/blob/master/nova/volume/cinder.py#L82\n[2] https://github.com/openstack/keystoneauth/blob/master/keystoneauth1/access/service_catalog.py#L190\n\n- This issue might happen in other areas of code, is not necessarily exclusive to the cinderclient creation.", 
+    "tags": [
+        "cinder"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1585652", 
+    "owner": "None", 
+    "id": 1585652, 
+    "index": 3071, 
+    "openned": "2016-05-25 13:54:32.933038+00:00", 
+    "created": "2016-05-25 13:54:32.933038+00:00", 
+    "title": "EmptyCatalog not treated during cinderclient creation", 
+    "comments": [
+        {
+            "content": "Steps to reproduce\n==================\n1 - Get a keystone v3 token using the ?nocatalog param. Example:\n\nexport TOKEN=`curl -i -k -v -H \"Content-type: application/json\" -d '{\"auth\": {\"identity\": {\"methods\": [\"password\"], \"password\": {\"user\": {\"domain\": {\"name\": \"Default\"}, \"name\": \"test\", \"password\": \"password\"}}}, \"scope\": {\"project\": {\"name\": \"test-project\", \"domain\": {\"name\": \"Default\"}}}}}' http://localhost:5000/v3/auth/tokens | grep X-Subject-Token | awk '{print $2}' | sed -e 's,\\r,,' `\n\n2 - Try to create a server using a cinder volume. Example:\n\ncurl -k -v -H  \"X-Auth-Token:$TOKEN\" -H \"Content-type: application/json\" -d '{\"server\": {\"name\": \"test_CSDPU_1\", \"imageRef\": \"\", \"block_device_mapping_v2\": [{\"source_type\": \"volume\", \"destination_type\": \"volume\", \"boot_index\": 0, \"delete_on_termination\": false, \"uuid\": \"85397498-850f-406f-806a-25cf93cd94dc\"}], \"flavorRef\": \"790959df-f79b-4b87-8389-a160a3b6e606\", \"max_count\": 1, \"min_count\": 1}}' http://localhost:8774/v2/07564c39740f405b92f4722090cd745b/servers\n\nActual result\n=============\n\n{\"badRequest\": {\"message\": \"Block Device Mapping is Invalid: failed to get volume 85397498-850f-406f-806a-25cf93cd94dc.\", \"code\": 400}}\n\nExpected result\n===============\n\nServer is created without issues or a meaningful error message is displayed.\n\nDetails\n=======\n\n- During cinderclient creation, nova tries to get cinder's endpoint using the auth object obtained from the token without the catalog [1]. keystoneauth will raise an EmptyCatalog exception [2] that is not treated and will result in the error seen above.\n\n[1] https://github.com/openstack/nova/blob/master/nova/volume/cinder.py#L82\n[2] https://github.com/openstack/keystoneauth/blob/master/keystoneauth1/access/service_catalog.py#L190\n\n- This issue might happen in other areas of code, is not necessarily exclusive to the cinderclient creation.", 
+            "date_created": "2016-05-25 13:54:32.933038+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rodrigodsousa"
+        }, 
+        {
+            "content": "EmptyCatalog means that the session you were using tried to find the URL for the endpoint and the catalog was empty - which makes sense because you used ?nocatalog.\n\nMy question would be why ?nocatalog? If you opt out of receiving a catalog then you are going to have to specify the full URL to the endpoint in the request.\n", 
+            "date_created": "2016-05-25 22:33:55.648757+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jamielennox"
+        }, 
+        {
+            "content": "Yeah, that's correct. The issue here is the kind of message in the output. I think that something like explaining the reason the volume wasn't get would be better instead of displaying that it is invalid.", 
+            "date_created": "2016-05-25 22:50:33.044972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rodrigodsousa"
+        }, 
+        {
+            "content": "It's fine if you want to submit a patch to make this better. I'm not really convinced that we should be handling the case where users create crippled tokens and then attempt to do complex operations. ", 
+            "date_created": "2016-06-02 16:45:08.366924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2016-06-02 16:44:15.709587+00:00"
+}

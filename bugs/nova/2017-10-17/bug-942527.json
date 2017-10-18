@@ -1,0 +1,43 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2012-03-13 07:39:16.189262+00:00", 
+    "description": "Creating instance with quantum network manager without specifying tenant id, the following exceptions occurs\n\n2012-02-08 19:30:55,181 ERROR nova.rpc [-] Exception during message handling\n(nova.rpc): TRACE: Traceback (most recent call last):\n(nova.rpc): TRACE:   File \"/usr/local/lib/python2.7/dist-packages/nova/rpc/amqp.py\", line 249, in _process_data\n(nova.rpc): TRACE:     rval = node_func(context=ctxt, **node_args)\n(nova.rpc): TRACE:   File \"/usr/local/lib/python2.7/dist-packages/nova/network/quantum/manager.py\", line 483, in get_instance_nw_info\n(nova.rpc): TRACE:     net_tenant_id = net_tenant_dict[network['uuid']]\n(nova.rpc): TRACE: KeyError: 'b84a365e-69ce-4ca5-adf2-a63f1067f22b'\n(nova.rpc): TRACE:\n\nThis can be fixed with the following patch\n\n nova/network/quantum/manager.py |    5 ++---\n 1 files changed, 2 insertions(+), 3 deletions(-)\n\ndiff --git a/nova/network/quantum/manager.py b/nova/network/quantum/manager.py\nindex 8f2aa0a..91722cb 100644\n--- a/nova/network/quantum/manager.py\n+++ b/nova/network/quantum/manager.py\n@@ -473,9 +473,8 @@ class QuantumManager(manager.FloatingIP, manager.FlatManager):\n         for vif in vifs:\n             if vif.get('network_id') is not None:\n                 network = db.network_get(admin_context, vif['network_id'])\n-                net_tenant_id = net_tenant_dict[network['uuid']]\n-                if net_tenant_id is None:\n-                    net_tenant_id = FLAGS.quantum_default_tenant_id\n+                net_tenant_id = net_tenant_dict.get(network['uuid'],\n+                                    FLAGS.quantum_default_tenant_id)\n                 network = {'id': network['id'],\n                            'uuid': network['uuid'],\n                            'bridge': '',  # Quantum ignores this field", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/942527", 
+    "owner": "https://api.launchpad.net/1.0/~yamahata", 
+    "id": 942527, 
+    "index": 3893, 
+    "openned": "2012-02-28 10:30:39.698975+00:00", 
+    "created": "2012-02-28 10:30:39.698975+00:00", 
+    "title": "Key error exception with quantum manager", 
+    "comments": [
+        {
+            "content": "Creating instance with quantum network manager without specifying tenant id, the following exceptions occurs\n\n2012-02-08 19:30:55,181 ERROR nova.rpc [-] Exception during message handling\n(nova.rpc): TRACE: Traceback (most recent call last):\n(nova.rpc): TRACE:   File \"/usr/local/lib/python2.7/dist-packages/nova/rpc/amqp.py\", line 249, in _process_data\n(nova.rpc): TRACE:     rval = node_func(context=ctxt, **node_args)\n(nova.rpc): TRACE:   File \"/usr/local/lib/python2.7/dist-packages/nova/network/quantum/manager.py\", line 483, in get_instance_nw_info\n(nova.rpc): TRACE:     net_tenant_id = net_tenant_dict[network['uuid']]\n(nova.rpc): TRACE: KeyError: 'b84a365e-69ce-4ca5-adf2-a63f1067f22b'\n(nova.rpc): TRACE:\n\nThis can be fixed with the following patch\n\n nova/network/quantum/manager.py |    5 ++---\n 1 files changed, 2 insertions(+), 3 deletions(-)\n\ndiff --git a/nova/network/quantum/manager.py b/nova/network/quantum/manager.py\nindex 8f2aa0a..91722cb 100644\n--- a/nova/network/quantum/manager.py\n+++ b/nova/network/quantum/manager.py\n@@ -473,9 +473,8 @@ class QuantumManager(manager.FloatingIP, manager.FlatManager):\n         for vif in vifs:\n             if vif.get('network_id') is not None:\n                 network = db.network_get(admin_context, vif['network_id'])\n-                net_tenant_id = net_tenant_dict[network['uuid']]\n-                if net_tenant_id is None:\n-                    net_tenant_id = FLAGS.quantum_default_tenant_id\n+                net_tenant_id = net_tenant_dict.get(network['uuid'],\n+                                    FLAGS.quantum_default_tenant_id)\n                 network = {'id': network['id'],\n                            'uuid': network['uuid'],\n                            'bridge': '',  # Quantum ignores this field", 
+            "date_created": "2012-02-28 10:30:39.698975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-02-28 10:30:39.698975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4628", 
+            "date_created": "2012-02-28 13:56:08.010777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Thanks for reporting the bug! However, I do not believe this fix is correct.\n\nCan you show the commands you were using to trigger this? I suspect you were using the os-create-server extension (i.e., the --nic option with the nova client) and that you were passing in a network UUID that was neither:\nowned the tenant-id spinning up the VM\nowned by the default tenant\n\nEssentially, the dict we are accessing in the original version *should* have all of the valid entries in it (in some cases, those valid entries map to a project_id of Null, which is why we have the check).\n\nI believe the real problem is actually something I'm already working on fixing in Quantum itself (or rather, some Quantum plugins). This bug (https://bugs.launchpad.net/quantum/+bug/942713) causes the validate_networks() method of QuantumManager to miss the fact that the network specified is not valid, meaning the list of networks is passed to allocate_for_instance(), which is where that exception is triggered. Stated another way, the right solution is to prevent the dict from being accessed with a key that is not a member, not to handle the fact that the key may not be in the dict.", 
+            "date_created": "2012-02-28 16:47:17.168453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Note: the following Quantum patch will fix this issue, if my hypothesis is correct: https://review.openstack.org/#change,4647\n\nI do not believe this issue will require Nova changes. ", 
+            "date_created": "2012-02-28 20:41:53.799018+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }
+    ], 
+    "closed": "2012-03-13 07:07:28.337987+00:00"
+}

@@ -1,0 +1,76 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-09-14 19:30:23.434029+00:00", 
+    "description": "When booting an instance from image, which should create new volume, when AZ zone is not specified, instance could end in different AZ than the image.\n\nThat doesn't hurt with cross_az_attach=true, but if this is set to False, creating the volume will fail with\n\n\" Instance %(instance)s and volume %(vol)s are not in the same availability_zone....\" error.\n\n\nNova actually decides at some point, which AZ it should use (when none was specified), so I think we just need to move this decision before the point when the volume is created, so nova can pass correct AZ value to cinder API.", 
+    "tags": [
+        "az", 
+        "scheduler", 
+        "volumes"
+    ], 
+    "importance": "Low", 
+    "heat": 36, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1497253", 
+    "owner": "https://api.launchpad.net/1.0/~rpodolyaka", 
+    "id": 1497253, 
+    "index": 1850, 
+    "openned": "2015-09-18 12:06:12.693410+00:00", 
+    "created": "2015-09-18 12:06:12.693410+00:00", 
+    "title": "different availability zone for nova and cinder when AZ is not explicitly given", 
+    "comments": [
+        {
+            "content": "When booting an instance from image, which should create new volume, when AZ zone is not specified, instance could end in different AZ than the image.\n\nThat doesn't hurt with cross_az_attach=true, but if this is set to False, creating the volume will fail with\n\n\" Instance %(instance)s and volume %(vol)s are not in the same availability_zone....\" error.\n\n\nNova actually decides at some point, which AZ it should use (when none was specified), so I think we just need to move this decision before the point when the volume is created, so nova can pass correct AZ value to cinder API.", 
+            "date_created": "2015-09-18 12:06:12.693410+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsuchome"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/225119", 
+            "date_created": "2015-09-18 12:12:57.689377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/226977", 
+            "date_created": "2015-09-23 20:25:24.124686+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/226977\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d8d2f02f3014e8d7e0ef9a61723f5a10f050cc81\nSubmitter: Jenkins\nBranch:    master\n\ncommit d8d2f02f3014e8d7e0ef9a61723f5a10f050cc81\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Sep 23 13:21:06 2015 -0700\n\n    Deprecate cinder.cross_az_attach option\n    \n    Introduced in 1504cbc5d4a27695fa663f0b0f3f7b48745bdb45 in Grizzly, the\n    use cases around this option are unclear but there have been several\n    bugs related to it.\n    \n    For example, 6060888b58db42eea826939852838f9e1c204d2c changed boot from\n    volume to pass the server instance availability zone to cinder when\n    creating the volume.  However, if that same AZ does not exist in Cinder,\n    the volume create request will fail - which is bug 1496235.\n    \n    Cinder works around this with b85d2812a8256ff82934d150dbc4909e041d8b31\n    using a config option to allow falling back to a default Cinder AZ if\n    the one requested does not exist.  By default this fallback is disabled\n    though.\n    \n    It also sounds like availability zones in Cinder were an artifact from\n    when Cinder was split out from the nova-volume service, but Cinder AZ\n    use cases are also unclear.  And it's also unclear what the relationship\n    is between AZs in Nova and Cinder.\n    \n    So given the problems here and the lack of a clear use case to justify\n    having this configuration option in tree, along with it's added\n    complexity, deprecate the option for removal.\n    \n    Related-Bug: #1496235\n    Related-Bug: #1380780\n    Related-Bug: #1489575\n    Related-Bug: #1497253\n    \n    Change-Id: I52cd3d8867d3b35f5caba377302bfc52c112f1d6\n", 
+            "date_created": "2015-09-24 00:14:29.259652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I should have been more clear in the bug report, so here's another attempt:\n\n1. User has cinder AZ's and nova AZ of the same names\n\n2. AZ's physical location is different, and user wants instances to have same AZ as their volumes\n\n3. This is generally achieved by setting  cross_az_attach option to False, because since \nhttps://review.openstack.org/#/c/157041/ volumes are created in the same AZ as instances.\n\n4. However, what if user doesn't explicitly provide AZ when creating the instance (so the scheduler can distribute the load evenly and according to available resources)? \nThis is the situation possibly requiring a fix. In such case, nova uses the None value for availability zone at the time it calls  volume_api.create. Cinder creates the volume in some AZ it has available, and when nova finishes creating the instance it creates it in some of its available AZ. There's no relation between these two, so if they end up being different, we'll hit the error \" Instance %(instance)s and volume %(vol)s are not in the same availability_zone....\"\n\nSo, my proposal (as expressed in https://review.openstack.org/225119) is that:\n\n- if cross_az_attach is set to false, nova should ensure cinder and nova AZ's are matching, AND it should make sure this rule is true also in the case when AZ was not specified by user. Thus I propose to look for instance's real AZ BEFORE actually trying to create the volume, and use this value also for volume.", 
+            "date_created": "2015-09-30 09:17:59.606954+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsuchome"
+        }, 
+        {
+            "content": "I confirm this as of https://bugs.launchpad.net/heat/+bug/1580582\n\nIf there is no computes in nova AZ, booting from volume will fail if AZ is not explicitly set - it will try to create volume in nova AZ.", 
+            "date_created": "2016-05-25 07:57:29.650588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zbikmarc+launchpad"
+        }, 
+        {
+            "content": "Marcin, does the proposed solution for this (https://review.openstack.org/225119) solve your problem?", 
+            "date_created": "2016-05-30 08:27:43.675170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsuchome"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/225119\nReason: This review is > 6 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2016-12-09 21:02:08.326263+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:47:10.100845+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Found open reviews for this bug in gerrit, setting to In Progress. \n\nreview: https://review.openstack.org/366724 in branch: master\n", 
+            "date_created": "2017-06-29 11:45:02.368525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Related mailing list thread about this:\n\nhttp://lists.openstack.org/pipermail/openstack-operators/2017-June/013676.html", 
+            "date_created": "2017-09-14 19:30:22.286956+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

@@ -1,0 +1,32 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-09-17 14:54:22.952718+00:00", 
+    "description": "This problem is about [ plug_ovs_hybrid ] in libvirt/vif.py.\r\nIn this function, there is not try..catch to roll back \"ip link set\".\r\n\r\nif not linux_net.device_exists(v2_name):\r\n    linux_net._create_veth_pair(v1_name, v2_name)\r\n    utils.execute('ip', 'link', 'set', br_name, 'up', run_as_root=True)\r\n           <--- this action should roll back when create fail\r\n    utils.execute('brctl', 'addif', br_name, v1_name, run_as_root=True)\r\n    linux_net.create_ovs_vif_port(self.get_bridge_name(vif),\r\n                                  v2_name, iface_id, vif['address'],\r\n                                  instance['uuid'])\r\n\r\nIn below case, it will result that instance will lost it's virtual interface(resume_guests_state_on_host_boot = True) :\r\n1. Create a instance (name vm1) with network, wait until active.\r\n2. Reset the Host OS, and wait until it is ready.\r\n3. Before creating openvswitch bridge, start nova-compute service at the first time.\r\n   The init_host function in nova compute manager will call plug_ovs_hybrid, and finally raise a exception at create_ovs_vif_port.\r\n   As a result, the nova-compute service will stop, and do not roll back the \"ip link set\" of the instance(vm1).\r\n4. Start openvswitch service, and create bridge for openstack.\r\n5. Restart nova-compute service, and then recreat instances, include vm1.\r\n   When creating vm1, because of do not roll back \"ip link set\", if will return false, and vm1 will lost it's virtual interface.\r\n\r\nI think we should roll back ip link set, or set instance status to ERROR.", 
+    "tags": [
+        "libvirt", 
+        "network", 
+        "neutron"
+    ], 
+    "importance": "Undecided", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1294597", 
+    "owner": "https://api.launchpad.net/1.0/~shida", 
+    "id": 1294597, 
+    "index": 5932, 
+    "openned": "2014-03-19 10:55:52.906870+00:00", 
+    "created": "2014-03-19 10:55:52.906870+00:00", 
+    "title": "libvirt vif plug_ovs_hybrid should roll back ip link set when fail", 
+    "comments": [
+        {
+            "content": "This problem is about [ plug_ovs_hybrid ] in libvirt/vif.py.\nIn this function, there is not try..catch to roll back \"ip link set\".\n\n        if not linux_net.device_exists(v2_name):\n            linux_net._create_veth_pair(v1_name, v2_name)\n            utils.execute('ip', 'link', 'set', br_name, 'up', run_as_root=True)  <--- should roll back here\n            utils.execute('brctl', 'addif', br_name, v1_name, run_as_root=True)\n            linux_net.create_ovs_vif_port(self.get_bridge_name(vif),            <--- exception here\n                                          v2_name, iface_id, vif['address'],\n                                          instance['uuid'])\n\nIn below case, it will result that instance will lost it's virtual interface(resume_guests_state_on_host_boot = True) :\n1. Create a instance (name vm1) with network, wait until active.\n2. Reset the Host OS, and wait until it is ready.\n3. Before creating openvswitch bridge, start nova-compute service at the first time.\n   The init_host function in nova compute manager will call plug_ovs_hybrid, and raise a exception at create_ovs_vif_port.\n     init_host -> _init_instance (vm1)  -> plug_ovs_hybrid -> create_ovs_vif_port\n   The nova-compute service will stop, and do not roll back the \"ip link set\" of vm1.\n4. Start openvswitch service, and create bridge for openstack.\n5. Restart nova-compute service, and then recreat instances, include vm1.\n   When creating vm1, because of do not roll back \"ip link set\", if will return false, and vm1 will lost it's virtual interface.\n\nI think we should roll back ip link set, or set instance status to ERROR.", 
+            "date_created": "2014-03-19 10:55:52.906870+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kexiaodong"
+        }, 
+        {
+            "content": "I'm try to reproduce it on devstack environment.\nnova's rev: 5a7eb3aa68...\n\n1. Create a instance (name vm1) with network, wait until active.\nCheck the pinging to vm > OK\n2. Reset the Host OS, and wait until it is ready.\nReboot the Host OS.\n3. Before creating openvswitch bridge, start nova-compute service at the first time.\nexecute rejoin-stack.sh > It failed to start nova-compute for delete instance.\n\nReset means reboot?\n", 
+            "date_created": "2014-05-28 12:36:16.615222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shida"
+        }
+    ], 
+    "closed": "2014-09-17 14:54:20.169247+00:00"
+}

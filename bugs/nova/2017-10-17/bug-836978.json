@@ -1,0 +1,91 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 11:04:13.409324+00:00", 
+    "description": "DescribeInstances api call doe snot seem to be returning an error on unknown instance id.\n\nagainst nova:\n$ euca-describe-instances i-aaaaaaaa\n$ echo $?\n0\n\nagainst ec2:\n\n$ euca-describe-instances i-aaaaaaaa\nInvalidInstanceID.NotFound: The instance ID 'i-aaaaaaaa' does not exist\n$ echo $?\n1", 
+    "tags": [
+        "ec2", 
+        "ops"
+    ], 
+    "importance": "Low", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/836978", 
+    "owner": "https://api.launchpad.net/1.0/~mikal", 
+    "id": 836978, 
+    "index": 268, 
+    "openned": "2011-08-29 20:25:48.962828+00:00", 
+    "created": "2011-08-29 20:25:48.962828+00:00", 
+    "title": "DescribeInstances does not raise error on invalid instance", 
+    "comments": [
+        {
+            "content": "DescribeInstances api call doe snot seem to be returning an error on unknown instance id.\n\nagainst nova:\n$ euca-describe-instances i-aaaaaaaa\n$ echo $?\n0\n\nagainst ec2:\n\n$ euca-describe-instances i-aaaaaaaa\nInvalidInstanceID.NotFound: The instance ID 'i-aaaaaaaa' does not exist\n$ echo $?\n1", 
+            "date_created": "2011-08-29 20:25:48.962828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "This is due to the way that we check multiple ids and should be an easy fix.  While you are at it can you also post what the response should be if there are two ids specified and one exists and the other doesn't?", 
+            "date_created": "2011-08-29 22:58:09+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Taking, will try to reproduce and work on fix", 
+            "date_created": "2011-09-19 14:30:53.379762+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rcarrillocruz"
+        }, 
+        {
+            "content": "I see the problem at _format_instances:\n\n    def _format_instances(self, context, instance_id=None, use_v6=False,\n            **search_opts):\n        # TODO(termie): this method is poorly named as its name does not imply\n        #               that it will be making a variety of database calls\n        #               rather than simply formatting a bunch of instances that\n        #               were handed to it\n        reservations = {}\n        # NOTE(vish): instance_id is an optional list of ids to filter by\n        if instance_id:\n            instances = []\n            for ec2_id in instance_id:\n                internal_id = ec2utils.ec2_id_to_id(ec2_id)\n                try:\n                    instance = self.compute_api.get(context, internal_id)\n                except exception.NotFound:\n                    continue\n                instances.append(instance)\n\n\nIf no instance is found wit the ID passed as an argument, the exception is caught but we don\u00b4t print anything about it .", 
+            "date_created": "2011-09-20 15:01:28.203440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rcarrillocruz"
+        }, 
+        {
+            "content": "root@openstack-dev:/home/dormammu/src/openstack/nova# euca-describe-instances i-aaaaaaaa\nInstanceNotFound: Instance i-aaaaaaaa could not be found.\n\nroot@openstack-dev:/home/dormammu/src/openstack/nova# euca-run-instances ami-tiny -t m1.tiny\nImageNotFound: Image ami-tiny could not be found.\n\nroot@openstack-dev:/home/dormammu/src/openstack/nova# euca-describe-instances i-aaaaaaaa\nInstanceNotFound: Instance i-aaaaaaaa could not be found.\n\nroot@openstack-dev:/home/dormammu/src/openstack/nova# euca-run-instances ami-tty -t m1.tiny\nRESERVATION     r-91huht8j      admin   default\nINSTANCE        i-00000001      ami-00000008                    pending None (admin, None)      0               m1.tiny 2011-09-21T10:28:16Z    unknown zone    aki-00000007    ari-00000006\n\nroot@openstack-dev:/home/dormammu/src/openstack/nova# euca-describe-instances i-00000001\nRESERVATION     r-91huht8j      admin   default\nINSTANCE        i-00000001      ami-00000008    10.0.0.3        10.0.0.3        running None (admin, openstack-dev)     0               m1.tiny 2011-09-21T10:28:16Z    nova    aki-00000007    ari-00000006\n\nroot@openstack-dev:/home/dormammu/src/openstack/nova# euca-describe-instances i-aaaaaaaa\nInstanceNotFound: Instance i-aaaaaaaa could not be found.\n", 
+            "date_created": "2011-09-21 10:36:19.930692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rcarrillocruz"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/3978", 
+            "date_created": "2012-02-09 20:32:13.579523+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Review failed and there doesn't look like there's been another fix attempt since.", 
+            "date_created": "2012-05-17 13:36:42.378590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }, 
+        {
+            "content": "I went to write a patch for this, but I can't until I know what to do in the case that two instance ids are passed and one is valid and the other is not. What should happen then?", 
+            "date_created": "2012-12-05 02:57:28.880581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "I ran the attached program with 2 instances running to show what would happen.  The short summary:\n If there are invalid instances in the request, do not terminate anything.\n\nFull output:\n\noriginal: [u'i-2046ba5e/running', u'i-0a46ba74/running']\nkill_good_first start: [u'i-2046ba5e/running', u'i-0a46ba74/running']\nkill_good_first: killing [u'i-2046ba5e', u'i-11111111']\ncaught exception\n  code=InvalidInstanceID.NotFound\n  msg=The instance ID 'i-11111111' does not exist\n  reason=Bad Request\n\nkill_good_first end: [u'i-2046ba5e/running', u'i-0a46ba74/running']\nkill_bad_first start: [u'i-2046ba5e/running', u'i-0a46ba74/running']\nkill_bad_first: killing [u'i-22222222', u'i-0a46ba74']\ncaught exception\n  code=InvalidInstanceID.NotFound\n  msg=The instance ID 'i-22222222' does not exist\n  reason=Bad Request\n\nkill_bad_first end: [u'i-2046ba5e/running', u'i-0a46ba74/running']\n", 
+            "date_created": "2012-12-05 15:33:50.695207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/18677", 
+            "date_created": "2012-12-27 05:16:45.409022+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This change of behaviour causes tempest to fail. I need to update the devstack euca exercise.", 
+            "date_created": "2012-12-28 00:04:38.307011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/18701", 
+            "date_created": "2012-12-28 00:22:34.029522+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/18701\nCommitted: http://github.com/openstack-dev/devstack/commit/796342c06e8ca3dcfd2e8f1ba4e0300a703b8de1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 796342c06e8ca3dcfd2e8f1ba4e0300a703b8de1\nAuthor: Michael Still <email address hidden>\nDate:   Fri Dec 28 11:08:20 2012 +1100\n\n    Handle the new behaviour for invalid instances.\n    \n    The behaviour of this case changed with bug/836978. Requesting the\n    status of an invalid instance will now return an error message\n    including the instance id, so we need to filter that out.\n    \n    Resolves the devstack elements of bug 836978.\n    \n    Change-Id: I385eb6f04cff90e1ddc0b79d835fbbdf92e4e9ff\n", 
+            "date_created": "2012-12-28 17:12:13.301528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/18677\nCommitted: http://github.com/openstack/nova/commit/66d0cb1ce5c9d716ad93685ab6e6e86ddbd0b293\nSubmitter: Jenkins\nBranch:    master\n\ncommit 66d0cb1ce5c9d716ad93685ab6e6e86ddbd0b293\nAuthor: Michael Still <email address hidden>\nDate:   Thu Dec 27 16:15:12 2012 +1100\n\n    Invalid EC2 ids should make the entire request fail.\n    \n    Resolves bug 836978. I suspect there are many other cases where we\n    should add this check.\n    \n    Change-Id: I027e44db2e27eb1ef913ddad8560cca08388906b\n", 
+            "date_created": "2013-01-04 22:29:44.763140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-01-09 10:22:29.090100+00:00"
+}

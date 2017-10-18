@@ -1,0 +1,213 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-12-18 06:46:33.391727+00:00", 
+    "description": "\nThe suds project appears to be largely unmaintained upstream. The default cache implementation stores pickled objects to a predictable path in /tmp. This can be used by a local attacker to redirect SOAP requests via symlinks or run a privilege escalation / code execution attack via a pickle exploit. \n\ncinder/requirements.txt:suds>=0.4\ngantt/requirements.txt:suds>=0.4\nnova/requirements.txt:suds>=0.4\noslo.vmware/requirements.txt:suds>=0.4\n\n\nThe details are available here - \nhttps://bugzilla.redhat.com/show_bug.cgi?id=978696\n(CVE-2013-2217)\n\nAlthough this is an unlikely attack vector steps should be taken to prevent this behaviour. Potential ways to fix this are by explicitly setting the cache location to a directory created via tempfile.mkdtemp(), disabling cache client.set_options(cache=None), or using a custom cache implementation that doesn't load / store pickled objects from an insecure location.", 
+    "tags": [
+        "in-stable-havana", 
+        "in-stable-icehouse", 
+        "security", 
+        "vmware"
+    ], 
+    "importance": "Medium", 
+    "heat": 262, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1341954", 
+    "owner": "https://api.launchpad.net/1.0/~dims-v", 
+    "id": 1341954, 
+    "index": 3952, 
+    "openned": "2014-07-15 04:36:26.167129+00:00", 
+    "created": "2014-07-15 04:35:27.865426+00:00", 
+    "title": "suds client subject to cache poisoning by local attacker", 
+    "comments": [
+        {
+            "content": "\nThe suds project appears to be largely unmaintained upstream. The default cache implementation stores pickled objects to a predictable path in /tmp. This can be used by a local attacker to redirect SOAP requests via symlinks or run a privilege escalation / code execution attack via a pickle exploit. \n\ncinder/requirements.txt:suds>=0.4\ngantt/requirements.txt:suds>=0.4\nnova/requirements.txt:suds>=0.4\noslo.vmware/requirements.txt:suds>=0.4\n\n\nThe details are available here - \nhttps://bugzilla.redhat.com/show_bug.cgi?id=978696\n(CVE-2013-2217)\n\nAlthough this is an unlikely attack vector steps should be taken to prevent this behaviour. Potential ways to fix this are by explicitly setting the cache location to a directory created via tempfile.mkdtemp(), disabling cache client.set_options(cache=None), or using a custom cache implementation that doesn't load / store pickled objects from an insecure location.", 
+            "date_created": "2014-07-15 04:35:27.865426+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "This sounds OSSA worthy to me...", 
+            "date_created": "2014-07-15 14:31:23.513071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx, I agree, this can lead to local code execution by local user in services context.", 
+            "date_created": "2014-07-15 15:16:00.003492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I think we can reuse the existing CVE for this issue and issue an advisory. I've created the draft impact description below: \n\nTitle: oslo.vmware uses a version of the suds soap client with known vulnerabilities.\nReporter: Grant Murphy (Red Hat)\nProducts: oslo.vmware, Nova, Cinder \nVersions: from 2013.2 to 2013.2.3, and 2014.1 versions up to 2014.1.1\n\nDescription: \nGrant Murphy from Red Hat found that oslo.vmware uses a vulnerable dependency. \nThe suds soap client cache stores pickled objects at a predictable path in /tmp. \nA local attacker could pre-emptively create poisoned cache entries to execute \narbitrary code via pickle deserialization.  The oslo.vmware code can be found \nin the Nova and Cinder projects. \n\nReferences: \nhttp://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2013-2217\n", 
+            "date_created": "2014-07-22 09:15:23.101198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "@Grant, Small nits:\n\nProducts: Nova, Cinder   (we don't support oslo.vmware iirc)\n\nVersions: up to 2013.2.3, 2014.1 versions up to 2014.1.1   (grizzly at least looks affected too, see:\n$ git show grizzly-2:tools/pip-requires | grep suds\nsuds==0.4\n)\n\nI would merge the two first sentences -> \"oslo.vmware uses a vulnerable version of the suds soap client that cache stores pickled objects at a predictable path in /tmp.\"\n\n\"A local attacker\" -> \"A local attacker with shell access\"\n\n\"The oslo.vmware code can be found in the Nova and Cinder projects.\" -> \"All Nova and Cinder setups are affected.\"", 
+            "date_created": "2014-07-22 21:09:41.803469+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Attaching proposed fix for oslo.vmware. This is probably not the cleanest solution. It uses mkdtemp to create a secure temporary directory to store cached objects. This directory will be cleaned up when object is out of scope. It may be a better to use a contextmanager for this however I was unsure of the typical usage. Another alternative would be to register a cleanup function via atexit. \n\nHow do you guys think we should patch this?", 
+            "date_created": "2014-07-23 01:12:44.755533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": " @Tristan - Thanks for the feedback. I think I was looking at cinder which tags which start at 2013.2. You're right though. Nova is affected from 2013.1.  How's this one sound:\n\nTitle: oslo.vmware uses a version of the suds soap client with known vulnerabilities.\nReporter: Grant Murphy (Red Hat)\nProducts:  Nova, Cinder\nVersions: from 2013.1 to 2013.2.3, and 2014.1 versions up to 2014.1.1\n\nDescription:\nGrant Murphy from Red Hat found that oslo.vmware uses a vulnerable version of the suds soap client that stores pickled objects at a predictable path in /tmp for caching purposes. A local attacker with shell access could pre-emptively create poisoned cache entries to execute arbitrary code when cached objects are deserialized.  All Nova and Cinder setups are affected.\n\nReferences:\nhttp://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2013-2217", 
+            "date_created": "2014-07-23 04:52:06.280348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "@Grant, the patch is looking good to me, though using __del__ for tmp clean can go wrong (as you don't control destruction order), maybe we could put the cleaning code into a function and call it in __del__ and as an atexit handler just to be on the safe side ?\n\nAlso, here (Ubuntu 13.10) suds does not install correctly with py33: http://paste.openstack.org/show/OebG2GJnDRTgm9JpzdMM/\n\n+1 on impact description in comment #6.", 
+            "date_created": "2014-07-23 11:35:36.000128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "\n@Tristan I don't like the __del__ much either. I might rewrite it to do the atexit cleanup and define the cache directory at the oslo/vmware/api.py level and pass it in as a configuration parameter. \n\nThe incompatibility with Python 3.3. is also concerning with this library. Even the more up to date fork [1] has problems when you try to import the module in Python 3.3.  Unfortunately there doesn't seem to be many other contenders in this space either [2]. \n \n\n[1] https://bitbucket.org/jurko/suds/overview\n[2] http://stackoverflow.com/questions/206154/what-soap-client-libraries-exist-for-python-and-where-is-the-documentation-for\n\n\n", 
+            "date_created": "2014-07-23 23:29:32.941928+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Maybe shorter title: \"oslo.vmware uses a vulnerable version of the suds soap client\"", 
+            "date_created": "2014-07-28 14:13:28.157795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This patch removes the use of __del__() in favour of a call out to atexit. The caching can now also explicitly be disabled. ", 
+            "date_created": "2014-08-06 04:57:49.848774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-08-06 05:13:14.260496+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "@oslo-core please review proposed patch (or point to oslo.vmware people we should invite to this bug)", 
+            "date_created": "2014-08-07 15:24:02.870757+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'm a little confused here - from what I see suds defaults to no caching (https://jortel.fedorapeople.org/suds/doc/suds.options.Options-class.html), so since oslo.vmware wasn't providing any cache setting, suds wouldn't have been writing files to disk, would it?  This appears to only be a problem if you use the FileCache without providing a location, which we weren't doing in the first place.\n\nThat said, the change generally looks fine to me.  A few minor comments, but nothing that would change how it functions:\n\n* If the directory cleanup fails, I would prefer to log the exception at the same level as the message.  It's not something that should happen, so we want to provide information on why it did.  Requiring debug logging to figure out problems in OpenStack is something we really need to get away from.\n\n* self.cache should be either self._cache or just cache, since it doesn't appear to need to be a member variable.\n\n* The tests should use the unit test assert methods - self.assertTrue/False(os.path.exists...)", 
+            "date_created": "2014-08-07 16:04:46.899298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bnemec"
+        }, 
+        {
+            "content": "If we can confirm that we're not using suds in a vulnerable manner in either of Havana or Icehouse, then we shouldn't need to publish a security advisory for this and can work it in the open as a normal bug.", 
+            "date_created": "2014-08-07 16:37:38.671919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I think the documentation does not actually represent what is happening in the code. \n\n[gm@lappy suds_test]$ virtualenv venv\nNew python executable in venv/bin/python\nInstalling setuptools, pip...done.\n[gm@lappy suds_test]$ source venv/bin/activate\n(venv)[gm@lappy suds_test]$ pip install suds==0.4\nDownloading/unpacking suds==0.4\n  Downloading suds-0.4.tar.gz (104kB): 104kB downloaded\n  Running setup.py (path:/home/gm/suds_test/venv/build/suds/setup.py) egg_info for package suds\n    \nInstalling collected packages: suds\n  Running setup.py install for suds\n    /home/gm/suds_test/venv/bin/python -O /tmp/tmpqRpfM4.py\n    removing /tmp/tmpqRpfM4.py\n    \nSuccessfully installed suds\nCleaning up...\n(venv)[gm@lappy suds_test]$ python\nPython 2.7.5 (default, Jun 25 2014, 10:19:55) \n[GCC 4.8.2 20131212 (Red Hat 4.8.2-7)] on linux2\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> import suds\n>>> wsdl = \"http://wsf.cdyne.com/WeatherWS/Weather.asmx?WSDL\"\n>>> c = suds.client.Client(wsdl)\n>>> c.options.cache.location\n'/tmp/suds'\n>>> c.options.cache.__class__\n<class suds.cache.ObjectCache at 0x7fe90c9aba78>\n\nSee also - \nhttps://github.com/infirmary/suds/blob/master/suds/client.py#L109\nhttps://github.com/infirmary/suds/blob/master/suds/cache.py#L314", 
+            "date_created": "2014-08-07 23:57:45.172876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Agreed--I tried the same and also confirmed that the /tmp/suds directory is indeed created and used to store pickled data. It does indeed appear that suds has caching on by default after all.", 
+            "date_created": "2014-08-08 01:49:06.286359+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I tried with the latest version of oslo.vmware and it created the directory \"tmpoKkE2U\" with files of the format suds-*-document.px. There was no /tmp/suds directory. The same was observed while running the vmware cinder driver.", 
+            "date_created": "2014-08-08 11:38:43.893554+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vbala"
+        }, 
+        {
+            "content": "@vbala\n\nI think the dependency might be getting picked up via your vendors packaging system it could potentially be patched against this flaw.  For example this package is patched: python-suds_0.4.1-2ubuntu1.1_all.deb for ubuntu.\n\n", 
+            "date_created": "2014-08-08 16:44:06.862326+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Ah, they default the Client class differently from the Options class.  In that case I agree there would be an issue in any unpatched versions of suds, so we should definitely fix this.", 
+            "date_created": "2014-08-08 19:39:21.556312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bnemec"
+        }, 
+        {
+            "content": "So... this could easily be considered a vulnerability in suds rather than in OpenStack, in which case it would not be OSSA territory. In particular, if most distros consider it a vulnerability in suds, we can workaround the issue in master (and even backport the fix) to care for vulnerable suds, but would not issue an OSSA about it. We could issue an OSSN about it though.", 
+            "date_created": "2014-08-11 14:15:08.118934+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Also it would be well-known, so this could be made public.", 
+            "date_created": "2014-08-11 14:15:40.615424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sure. That makes sense.  I think we need to look at reviving upstream or finding an alternative too. There are python 3 incompatibilities IIUC. \n\nI'll cancel the OSSA task, add OSSN task bug, and switch to public if nobody screams about it soon.", 
+            "date_created": "2014-08-11 23:16:28.429747+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Sounds fine to me.", 
+            "date_created": "2014-08-11 23:32:00.908394+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bnemec"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/116270", 
+            "date_created": "2014-08-22 13:05:27.233365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fixed in oslo.vmware - Ieec9d99aa674adf5cbc9be924fef3856cf4e5d66", 
+            "date_created": "2014-08-23 02:54:14.382010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/116270\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=6a41fe9c5c98a14a355fa81b41aae2c4b0ce0a7b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6a41fe9c5c98a14a355fa81b41aae2c4b0ce0a7b\nAuthor: Vipin Balachandran <email address hidden>\nDate:   Fri Aug 22 10:19:29 2014 +0530\n\n    VMware: Disable suds caching\n    \n    The default cache implementation in suds store pickled objects in a\n    predictable path in /tmp which could lead to attacks. This patch\n    turns off suds caching to address this security issue.\n    \n    Change-Id: I7daaa25a0677004e03896298e9c3026d5c33c6ac\n    Closes-Bug: #1341954\n", 
+            "date_created": "2014-08-31 16:22:54.756681+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/118560", 
+            "date_created": "2014-09-03 07:26:29.704161+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/118565", 
+            "date_created": "2014-09-03 08:14:22.113393+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Here's a oslo.vmware review that adds back a memory based cache - https://review.openstack.org/#/c/116297/", 
+            "date_created": "2014-09-06 02:00:49.595141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/118560\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=03573a02a3235db2bf65d48aceb92a6e81850dd9\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 03573a02a3235db2bf65d48aceb92a6e81850dd9\nAuthor: Vipin Balachandran <email address hidden>\nDate:   Fri Aug 22 10:19:29 2014 +0530\n\n    VMware: Disable suds caching\n    \n    The default cache implementation in suds store pickled objects in a\n    predictable path in /tmp which could lead to attacks. This patch\n    turns off suds caching to address this security issue.\n    \n    Change-Id: I7daaa25a0677004e03896298e9c3026d5c33c6ac\n    Closes-Bug: #1341954\n    (cherry picked from commit 6a41fe9c5c98a14a355fa81b41aae2c4b0ce0a7b)\n", 
+            "date_created": "2014-09-08 13:02:58.789315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This has been fixed in oslo.vmware which Nova now depends on, we just need a fresh release of oslo.vmware to fix this in Nova", 
+            "date_created": "2014-09-08 13:27:29.819524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/118565\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=3c3530db2445eca9be583715ff689bd746e6d387\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 3c3530db2445eca9be583715ff689bd746e6d387\nAuthor: Vipin Balachandran <email address hidden>\nDate:   Fri Aug 22 10:19:29 2014 +0530\n\n    VMware: Disable suds caching\n    \n    The default cache implementation in suds store pickled objects in a\n    predictable path in /tmp which could lead to attacks. This patch\n    turns off suds caching to address this security issue.\n    \n    Conflicts:\n            cinder/volume/drivers/vmware/pbm.py\n    \n    Change-Id: I7daaa25a0677004e03896298e9c3026d5c33c6ac\n    Closes-Bug: #1341954\n    (cherry picked from commit 6a41fe9c5c98a14a355fa81b41aae2c4b0ce0a7b)\n", 
+            "date_created": "2014-09-10 10:48:07.132541+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This should be addressed by the oslo.vmware bump in requirements", 
+            "date_created": "2014-09-15 15:09:35.099456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/121614", 
+            "date_created": "2014-09-15 16:17:27.283863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Davanum Srinivas (dims) (<email address hidden>) on branch: master\nReview: https://review.openstack.org/121614", 
+            "date_created": "2014-09-22 17:08:10.583111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Tim, are you still working on this?", 
+            "date_created": "2014-11-24 10:37:56.841596+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fifieldt"
+        }, 
+        {
+            "content": "This has been published as OSSN-0038 to the openstack and openstack-dev mailing lists as well as the wiki:\r\n\r\n  https://wiki.openstack.org/wiki/OSSN/OSSN-0038", 
+            "date_created": "2014-12-18 06:46:27.763710+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }
+    ], 
+    "closed": "2014-10-01 07:43:19.003199+00:00"
+}

@@ -1,0 +1,77 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-02-04 02:21:22.539868+00:00", 
+    "description": "I checked latest source of nova on master branch, this problem is still exists.\n\nWhen we are doing evacuate, eventually _do_rebuild_instance will be called.\nAs rebuild is not implemented in libvirt driver, in fact _rebuild_default_impl is called.\n\n        try:    \n            with instance.mutated_migration_context():\n                self.driver.rebuild(**kwargs)\n        except NotImplementedError:\n            # NOTE(rpodolyaka): driver doesn't provide specialized version \n            # of rebuild, fall back to the default implementation\n            self._rebuild_default_impl(**kwargs)\n\n_rebuild_default_impl will call self.driver.spawn to boot up the instance, and spawn will in turn call _create_domain_and_network\nwhen VirtualInterfaceCreateException or Timeout happen, self.cleanup will be called.\n\n        except exception.VirtualInterfaceCreateException:\n            # Neutron reported failure and we didn't swallow it, so\n            # bail here\n            with excutils.save_and_reraise_exception():\n                if guest:\n                    guest.poweroff()\n                self.cleanup(context, instance, network_info=network_info,\n                             block_device_info=block_device_info)\n        except eventlet.timeout.Timeout:\n            # We never heard from Neutron\n            LOG.warn(_LW('Timeout waiting for vif plugging callback for '\n                         'instance %(uuid)s'), {'uuid': instance.uuid},\n                     instance=instance)\n            if CONF.vif_plugging_is_fatal:\n                if guest:\n                    guest.poweroff()\n                self.cleanup(context, instance, network_info=network_info,\n                             block_device_info=block_device_info)\n                raise exception.VirtualInterfaceCreateException()\n\nBecause default value for parameter destroy_disks is True\n    def cleanup(self, context, instance, network_info, block_device_info=None,\n                destroy_disks=True, migrate_data=None, destroy_vifs=True):\n\nSo if error occur when doing evacuate during wait neutron's event, instance's disk file will be deleted unexpectedly", 
+    "tags": [
+        "compute", 
+        "evacuate", 
+        "libvirt", 
+        "rebuild"
+    ], 
+    "importance": "Medium", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1550919", 
+    "owner": "None", 
+    "id": 1550919, 
+    "index": 4463, 
+    "openned": "2016-02-28 13:19:22.664792+00:00", 
+    "created": "2016-02-28 13:19:22.664792+00:00", 
+    "title": "[Libvirt]Evacuate fail may cause disk image be deleted", 
+    "comments": [
+        {
+            "content": "I checked latest source of nova on master branch, this problem is still exists.\n\nWhen we are doing evacuate, eventually _do_rebuild_instance will be called.\nAs rebuild is not implemented in libvirt driver, in fact _rebuild_default_impl is called.\n\n        try:    \n            with instance.mutated_migration_context():\n                self.driver.rebuild(**kwargs)\n        except NotImplementedError:\n            # NOTE(rpodolyaka): driver doesn't provide specialized version \n            # of rebuild, fall back to the default implementation\n            self._rebuild_default_impl(**kwargs)\n\n_rebuild_default_impl will call self.driver.spawn to boot up the instance, and spawn will in turn call _create_domain_and_network\nwhen VirtualInterfaceCreateException or Timeout happen, self.cleanup will be called.\n\n        except exception.VirtualInterfaceCreateException:\n            # Neutron reported failure and we didn't swallow it, so\n            # bail here\n            with excutils.save_and_reraise_exception():\n                if guest:\n                    guest.poweroff()\n                self.cleanup(context, instance, network_info=network_info,\n                             block_device_info=block_device_info)\n        except eventlet.timeout.Timeout:\n            # We never heard from Neutron\n            LOG.warn(_LW('Timeout waiting for vif plugging callback for '\n                         'instance %(uuid)s'), {'uuid': instance.uuid},\n                     instance=instance)\n            if CONF.vif_plugging_is_fatal:\n                if guest:\n                    guest.poweroff()\n                self.cleanup(context, instance, network_info=network_info,\n                             block_device_info=block_device_info)\n                raise exception.VirtualInterfaceCreateException()\n\nBecause default value for parameter destroy_disks is True\n    def cleanup(self, context, instance, network_info, block_device_info=None,\n                destroy_disks=True, migrate_data=None, destroy_vifs=True):\n\nSo if error occur when doing evacuate during wait neutron's event, instance's disk file will be deleted unexpectedly", 
+            "date_created": "2016-02-28 13:19:22.664792+00:00", 
+            "author": "https://api.launchpad.net/1.0/~feli5"
+        }, 
+        {
+            "content": "Are you using shared storage or local disks?  In the case of evacuate/rebuild, we're completely rebuilding the instance from the old image ref, flavor, network information and attached volumes (if any).  So I'm not sure there is any guarantee (or point) that if nova fails to spawn the rebuilt instance it should keep the disk it created as part of the rebuild.", 
+            "date_created": "2016-03-03 20:03:37.345994+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "In fact, there is a preserve_ephemeral flag passed to the _rebuild_default_impl method and if that's true the rebuild fails because rebuild by design can't rebuild ephemeral storage, it's presumably gone and that's why you're rebuilding the instance on another host (in the case of evacuate).", 
+            "date_created": "2016-03-03 20:06:49.251123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/288109", 
+            "date_created": "2016-03-03 20:19:52.675139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I've posted a patch here: https://review.openstack.org/#/c/288109/\n\nPlease let me know if that resolves your issue (it assumes you have disks on shared storage).", 
+            "date_created": "2016-03-03 20:20:11.871479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm using shared storage. And I will do the verify.", 
+            "date_created": "2016-03-04 01:45:13.042158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~feli5"
+        }, 
+        {
+            "content": "Can you be more specific? Shared storage with Ceph, NFS, GlusterFS, other?", 
+            "date_created": "2016-03-05 18:55:16.215665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hi Matt.\n\nIt's NFS. \n", 
+            "date_created": "2016-03-06 14:57:46.548443+00:00", 
+            "author": "https://api.launchpad.net/1.0/~feli5"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/288109", 
+            "date_created": "2016-05-13 01:05:00.897774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Solving inconsistency: changing bug status from \"New\" to \"Confirmed\" as it has assignee.\n", 
+            "date_created": "2016-06-02 18:49:53.077590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~siva-radhakrishnan"
+        }, 
+        {
+            "content": "Disk image be deleted on ceph also, I tested on ceph", 
+            "date_created": "2017-02-04 02:21:21.863913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shunliz"
+        }
+    ]
+}

@@ -1,0 +1,132 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-01-27 01:16:01.192069+00:00", 
+    "description": "It seems that there is a race condition in the stress volume_attach_delete test. It creates VMs and volumes, attaches volumes and deletes everything. \n\nThe test is waiting for volumes to be in 'in-use' state before deleting VMs. It seems that Nova/Cinder don't have time to register volumes as attached in their databases before VMs get deleted. Volumes are then left attached to deleted VMs and unable to be deleted.", 
+    "tags": [
+        "race-condition", 
+        "testing", 
+        "volumes"
+    ], 
+    "importance": "Undecided", 
+    "heat": 82, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1335889", 
+    "owner": "None", 
+    "id": 1335889, 
+    "index": 6228, 
+    "openned": "2014-09-16 18:22:57.045916+00:00", 
+    "created": "2014-06-30 14:55:15.548041+00:00", 
+    "title": "Race condition in quickly attaching / deleting volumes", 
+    "comments": [
+        {
+            "content": "The stress volume_attach_delete test creates VMs and volumes, attaches volumes, deletes everything and restarts. The test is only waiting for the volumes to be in  'in-use' state before deleting VMs. This doesn't mean that volumes were actually attached.\n\nThe cleanup then tries to delete volumes but can't because Nova/Cinder didn't have time to register volumes as attached in their databases. Volumes are then left attached to deleted VMs.", 
+            "date_created": "2014-06-30 14:55:15.548041+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joseph-lanoux"
+        }, 
+        {
+            "content": "I am not seeing how this is a bug in tempest. Tempest is deleting the vm only after nova reports that the volume is 'in-use' which seems fine.  It would be nice if there was a backtrace, log, or something associated with this ticket. This might be a cinder issue but more likely nova and the test is making a nova call.", 
+            "date_created": "2014-09-16 18:22:40.047852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "So I believe this is the same basic issue that exists between cinder and nova in the fact that it is assumed the event will happen within a reasonable amount of time, and if it doesn't... sadness. ", 
+            "date_created": "2014-09-16 18:30:55.339408+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Initial analysis of Nova code is as follows.\n\nThe operation of deleting VM doesn't check if the VM is being attached with volume or not.\nThe operation of attaching volume to VM can't receive any status response from Cinder .\n\nThere is no sync between Nova and Cinder under this scenario.\nNova has no mechanism of pending an operation. Indeed, it just raises some Exception if invalid state is detected.\nCinder has no mechanism of responding the operation status.\n\nTherefore, it's nearly impossible to resolve this problem completely.  So, we ought to live with this problem.\n\nA work-around is that Cinder should allow to delete an orphaned volume (i.e. the volume attached to an already-deleted VM).\n\nAny feedback/comment is always appreciated", 
+            "date_created": "2014-12-08 06:56:28.531709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trung-t-trinh"
+        }, 
+        {
+            "content": "Proposed work-around of Cinder source code to allow deleting of volume attached to the already-deleted VM:\n\nIn the function cinder.volume.api.API.delete(), there exists an if-clause as follows:\n\n        if volume['attach_status'] == \"attached\":\n            MY_LOG.debug(\"%s - API::delete - Volume is still attached, \"\\\n                         \"need to detach first\" % __name__)\n\n            # Volume is still attached, need to detach first\n            raise exception.VolumeAttached(volume_id=volume_id)\n\nBased on the above if-clause, it's possible to add further code to check if volume['instance_uuid'] results in a non-existed instance, then the deleting operation is still passed through. \nThe question is how to check if some instance_uuid exists or not from Cinder side?\n\n", 
+            "date_created": "2014-12-08 10:27:14.407061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trung-t-trinh"
+        }, 
+        {
+            "content": "Based on debugging, it can be seen that Nova's deleting of a VM always triggers Cinder's detaching of the associated volume.\n", 
+            "date_created": "2014-12-09 07:55:56.022723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trung-t-trinh"
+        }, 
+        {
+            "content": "The work-around of allowing to delete volume attached to an already-deleted VM is successful as below:\n\nxtrutri@ubuntu:~/Work/devstack-stable-juno$ cinder list\n+--------------------------------------+--------+--------------+------+-------------+----------+--------------------------------------+\n|                  ID                  | Status | Display Name | Size | Volume Type | Bootable |             Attached to              |\n+--------------------------------------+--------+--------------+------+-------------+----------+--------------------------------------+\n| 5fc4746e-bc31-4764-8877-cf32de9b4e22 | in-use |   new_vol    |  1   | lvmdriver-1 |  false   | 8e6033c7-1450-4526-95c1-84879a51af5e |\n+--------------------------------------+--------+--------------+------+-------------+----------+--------------------------------------+\n\nxtrutri@ubuntu:~/Work/devstack-stable-juno$ cinder delete 5fc4746e-bc31-4764-8877-cf32de9b4e22\n\n\nWe can see that now it's possible to delete the volume whose status is still \"in-use\"\n\n\nPlease be noted the Cinder's detaching of the associated volume, which is triggered by Nova's deleting of a VM, is temporarily disabled for having the scenario that the volume is attached to an already-deleted VM ", 
+            "date_created": "2014-12-15 10:44:22.453921+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trung-t-trinh"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/142006", 
+            "date_created": "2014-12-16 07:13:31.755180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Mike Perez (<email address hidden>) on branch: master\nReview: https://review.openstack.org/142006\nReason: Over a month with no update.", 
+            "date_created": "2015-08-16 08:38:09.466476+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There is a change here https://review.openstack.org/#/c/184537/ that adds a nova-manage command to force-delete a volume attachment from a server instance.", 
+            "date_created": "2015-09-18 13:29:57.161536+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think changing the cinder API to just allow a volume to be deleted, without a force flag, when it's 'in-use' is a dangerous and wrong to do.   We'll get users who do it by mistake and then nuke their volumes attached to live VMs.   \n\nSo, it seems the issue is related to the fact that in Nova's code we nuke the VM first and then try and delete the volumes.\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2365-L2375\n\nShouldn't nova ensure that it detaches the volume first before deleting it?  \nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2307-L2315\n\nOr check the exception that comes back from the volume_api.delete call and see if it complains because it's attached, then call terminate_connection, then delete.  \n", 
+            "date_created": "2015-09-23 20:14:31.514470+00:00", 
+            "author": "https://api.launchpad.net/1.0/~walter-boring"
+        }, 
+        {
+            "content": ">> So, it seems the issue is related to the fact that in Nova's code we nuke the VM first and then try and delete the volumes.\n>> Shouldn't nova ensure that it detaches the volume first before deleting it?\n\nI think above behavior likely to be changed in nova considering volume muti-attach feature. So nova should detach the volume while nuking the VM and should only delete the volume if it is not attached to other live VM/s.\n\n>> Or check the exception that comes back from the volume_api.delete call and see if it complains because it's attached, then call terminate_connection, then delete.\nThis lazy verification might be used to avoid some race-conditions but can have performance penalty for VM terminate operation.\n", 
+            "date_created": "2015-10-09 07:11:44.538179+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishalcdac07"
+        }, 
+        {
+            "content": "I opine that we should detach the volume first in nova code and then delete the VM. if we get an error while detaching volume then don't delete the VM and raise the exception.      \n\nWe can implement a verification check at the end of API whether the volume is detached successfully or not, but it will have some performance penalty. \n\nAny thoughts!", 
+            "date_created": "2016-03-07 07:56:46.211413+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gsingla294"
+        }, 
+        {
+            "content": "One thing we can do here is have a periodic task in nova or cinder and find all the volumes that are attached to instances that do not exist and delete those volumes. Opinions are welcome on this solution.", 
+            "date_created": "2016-03-07 11:37:20.610042+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parora"
+        }, 
+        {
+            "content": "@zhaolihui Please change the status to InProgress if you are currently working on it.", 
+            "date_created": "2016-05-20 15:06:54.572218+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sujitha-neti"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:52:52.813894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "I think things have changed enough that this particular failure isn't an issue anymore. Can anyone confirm?", 
+            "date_created": "2016-09-29 02:10:52.070326+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }, 
+        {
+            "content": "This bug can be reproduced by cinder tempest tests on which i'm working now.\n\nAlso the way to reproduce it described in this bug [0] that i marked as duplicated\n\nhttps://bugs.launchpad.net/cinder/+bug/1650277", 
+            "date_created": "2016-12-20 15:00:41.212087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdovgal"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/413141", 
+            "date_created": "2016-12-20 15:33:35.953471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/413141\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=d0abb60fe7798c6fea4bfb9247db25cf15591340\nSubmitter: Jenkins\nBranch:    master\n\ncommit d0abb60fe7798c6fea4bfb9247db25cf15591340\nAuthor: Michael Dovgal <email address hidden>\nDate:   Tue Dec 20 15:16:03 2016 +0200\n\n    Attach/Delete volume for tgt driver race condition fix\n    \n    We have race condition when remove target operation still\n    isn't completed and we try to run create target operation.\n    This patch fixed this race condition by retrying create\n    iscsi target operation run.\n    \n    Change-Id: I151990cc5148eb3f56e27e01fce71d87da2d9759\n    Closes-Bug: #1335889\n", 
+            "date_created": "2017-01-23 23:25:55.476351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/411277\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=4f5adf435eaf1f6f8b5ff8195a8f371afe3fbf21\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4f5adf435eaf1f6f8b5ff8195a8f371afe3fbf21\nAuthor: Michael Dovgal <email address hidden>\nDate:   Thu Dec 8 17:05:29 2016 +0200\n\n    Add volume backup tempest tests\n    \n    Tempest tests that are added:\n    1) test volume snapshot backup\n    2) test backup create and restore to an existing volume\n    This test can reproduce the bug that is related.\n    3) test incremental backup\n    \n    Co-Authored-By: Oleksii Butenko <email address hidden>\n    Related-Bug: #1335889\n    \n    Change-Id: Iff857ee11ed15665315077a0ba22cf31f92efe4b\n", 
+            "date_created": "2017-01-25 20:12:23.098442+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/cinder 10.0.0.0b3 development milestone.", 
+            "date_created": "2017-01-27 01:15:59.993864+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-07-05 09:52:48.693686+00:00"
+}

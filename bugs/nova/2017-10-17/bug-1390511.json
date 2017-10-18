@@ -1,0 +1,47 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:19:58.534897+00:00", 
+    "description": "The bugs manifests only when two processes of the same service tries to register the same node.\n\nWhen multiple processes of one service (nova-conductor for now) tries to join servicegroup and zookeeper driver is used \nthere is a race between processes: all processes tries to register itself in zookeeper as the same member in the same namespace.\n\nZookeeper path looks like this:\n\n/servicegroups/conductor/MEMBER_ID\n\nEach process tries to create this node, which already exists.\n\nThis ends up with each process trying endlessly register itself which ends with traceback:\n\nTraceback (most recent call last):\n  File \"/opt/stack/nova/nova/servicegroup/drivers/zk.py\", line 106, in join\n    member = membership.Membership(self._session, path, member_id)\n  File \"/usr/local/lib/python2.7/dist-packages/evzookeeper/membership.py\", line 130, in __init__\n    self.refresh(quiet=False)\n  File \"/usr/local/lib/python2.7/dist-packages/evzookeeper/membership.py\", line 155, in refresh\n    self._join()\n  File \"/usr/local/lib/python2.7/dist-packages/evzookeeper/membership.py\", line 203, in _join\n    raise RuntimeError(\"Duplicated membership name %s\" % path)\nRuntimeError: Duplicated membership name /servicegroups/conductor/MEMBER_ID\n\n\nFor now only nova-conductor is affected because it's the one only service that forks.\n\nThere is not other consequences except polluted logs and confusion of operator.\n\nubuntu 14.04 + zookeeper 3.4.5\n\nThe bug is related to other bug [1] that any of the processes isn't going to register itself, because processes locks on\ncommunication with zookeeper.\n\n[1] https://bugs.launchpad.net/nova/+bug/1389782", 
+    "tags": [
+        "conductor", 
+        "servicegroups", 
+        "zookeeper"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1390511", 
+    "owner": "https://api.launchpad.net/1.0/~pawel-palucki", 
+    "id": 1390511, 
+    "index": 6532, 
+    "openned": "2014-11-07 15:49:18.987311+00:00", 
+    "created": "2014-11-07 15:49:18.987311+00:00", 
+    "title": "conductor: race between processes to join servicegroups when zk driver is used", 
+    "comments": [
+        {
+            "content": "The bugs manifests only when two processes of the same service tries to register the same node.\n\nWhen multiple processes of one service (nova-conductor for now) tries to join servicegroup and zookeeper driver is used \nthere is a race between processes: all processes tries to register itself in zookeeper as the same member in the same namespace.\n\nZookeeper path looks like this:\n\n/servicegroups/conductor/MEMBER_ID\n\nEach process tries to create this node, which already exists.\n\nThis ends up with each process trying endlessly register itself which ends with traceback:\n\nTraceback (most recent call last):\n  File \"/opt/stack/nova/nova/servicegroup/drivers/zk.py\", line 106, in join\n    member = membership.Membership(self._session, path, member_id)\n  File \"/usr/local/lib/python2.7/dist-packages/evzookeeper/membership.py\", line 130, in __init__\n    self.refresh(quiet=False)\n  File \"/usr/local/lib/python2.7/dist-packages/evzookeeper/membership.py\", line 155, in refresh\n    self._join()\n  File \"/usr/local/lib/python2.7/dist-packages/evzookeeper/membership.py\", line 203, in _join\n    raise RuntimeError(\"Duplicated membership name %s\" % path)\nRuntimeError: Duplicated membership name /servicegroups/conductor/MEMBER_ID\n\n\nFor now only nova-conductor is affected because it's the one only service that forks.\n\nThere is not other consequences except polluted logs and confusion of operator.\n\nubuntu 14.04 + zookeeper 3.4.5\n\nThe bug is related to other bug [1] that any of the processes isn't going to register itself, because processes locks on\ncommunication with zookeeper.\n\n[1] https://bugs.launchpad.net/nova/+bug/1389782", 
+            "date_created": "2014-11-07 15:49:18.987311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-palucki"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/133479", 
+            "date_created": "2014-11-10 13:48:22.517134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/133500", 
+            "date_created": "2014-11-10 15:24:07.899959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/133500\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=e61bf70146c47a99394a143c598ebd73409eca47\nSubmitter: Jenkins\nBranch:    master\n\ncommit e61bf70146c47a99394a143c598ebd73409eca47\nAuthor: Pawel Palucki <email address hidden>\nDate:   Fri Nov 7 14:41:49 2014 +0100\n\n    Fix conductor processes race trying to join servicegroup (zk driver)\n    \n    When conductor is run in multi process manner and zk (zookeeper) driver\n    is used as servicegroup driver, there is a problem because each process\n    tries to manage own Membership object to the same zookeeper path.\n    \n    This ends with raising exceptions:\n    \n    RuntimeError: Duplicated membership name /servicegroups/conductor/MEMBER_ID\n    \n    Zookeeper driver uses Membership (evzookeeper) class with path related\n    to service type and AFAIK it isn't correct that many process will be\n    responsible for the same ephemeral node. From my research it is not\n    supported but evzookeeper (Membership class) - so we can ignore the\n    exception or give each process his own node.\n    \n    If we ignore exception (silent it) and when first registered process dies\n    and the ephemeral node disappears, another process will create it. It will\n    work but hides the information about overall structure of services and\n    also causes that each process endlessly will be trying to create a node\n    (sending invalid create node requests to zookeeper). IMO is not a clean solution.\n    \n    So there is another solution that each process has its own node. This\n    fix does that.\n    \n    The best unique identifier for process is pid, so the chosen solution,\n    reorganizes the structure of zookeeper tree by adding one more level\n    with process ids.\n    \n    The zookeeper tree before looks like this:\n    \n    /servicesgroups/SERVICE/MEMBER\n    \n    and after path will look like this:\n    \n    /servicegroups/SERVICE/MEMBER/PID\n    eg.\n    /servicegroups/conductor/foo/12345\n    \n    This solution also assumes, that servicegroup driver will not check existence of\n    member node, but existence of subnodes (pids) - which corresponds to existence\n    of processes of given service.\n    \n    In general we will have more granular information about whole system -\n    for exmaple we can check number of processes of given service on each node.\n    \n    To answer the question: is service on given node works, we have to check\n    number of ephemeral \"pids\" nodes in get_all() method.\n    \n    Closes-bug: #1390511\n    \n    Related-bug: #1389782\n    Related-bug: #1382153\n    \n    Change-Id: I478845b6921dcfb9e9af5a45283a8569051b4f4f\n", 
+            "date_created": "2015-01-29 21:49:27.303479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/133479\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=afe86b6f29033a472cab1b52dd0724bb3c6dfb82\nSubmitter: Jenkins\nBranch:    master\n\ncommit afe86b6f29033a472cab1b52dd0724bb3c6dfb82\nAuthor: Michal Dulko <email address hidden>\nDate:   Wed Feb 4 12:44:12 2015 +0100\n\n    Fix conductor servicegroup joining when zk driver is used\n    \n    When conductor is run as multiprocess (default for multi core system) and\n    zk (zookeeper) is used as servicegroup_driver then conductor is unable to join\n    servicegroup because of shared zookeeper handle (and probably socket)\n    between parent and children processes.\n    \n    It's found the problem lies in zookeeper c library implementation.\n    Proof can be seen in related bug #1389782.\n    \n    This fix follows the idea used by memcache and db driver that\n    servicegroup_api._driver object is used in lazy manner.\n    This means that like connection to memcache and session to database,\n    zookeeper handle (zk session in driver) isn't created until required by\n    worker (child process).\n    \n    Additional note: before fix, during Service object creation the\n    prefix in zookeeper was created. That was the probably reason the session was\n    established so early. In my opinion the eagerness of this is not necessary\n    and namespace can be created by child process as well.\n    \n    Closes-Bug: #1389782\n    \n    Related-bug: #1390511\n    Related-bug: #1382153\n    \n    Change-Id: I9b386ef1f9268d19d04879ec89e5684170f3862a\n", 
+            "date_created": "2015-02-06 18:37:52.282704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-02-05 20:23:32.275518+00:00"
+}

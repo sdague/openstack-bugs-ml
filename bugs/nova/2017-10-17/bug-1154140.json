@@ -1,0 +1,43 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-01-22 23:10:29.711956+00:00", 
+    "description": "See https://review.openstack.org/23894\n\n |--LOG.exception()\n | |--LoggerAdapter.exception():logging/__init()__\n | |--self.logger.error()\n | |--self._log()\n | |--self.handle()\n | |--self.callHandlers()\n | |--hdlr.handle()\n | |--Handler.handle():handlers.py\n | |--self.emit()\n | |--self.socket.sendto()\n | |--GreenSocket.sendto():eventlet/greenio.py\n | |--trampoline():hubs/__init__.py\n | |--hub.switch()\n | |--BaseHub.switch():hub.py\n | |-- clear_sys_exc_info()\n\nWhen you're using syslog logging, LOG.exception() can cause sys.exc_info() to be cleared\n\nSo if you do e.g.\n\n except Exception:\n     LOG.exception(_('in looping call'))\n    done.send_exception(*sys.exc_info())\n    return\n\nthen you'll find that (with syslog enabled) the second reference to sys.exc_info() won't work\n\nBasically, any time you make a call that can result in a greenlet context switch you can find sys.exc_info() has been cleared\n\nThe really nasty thing is this only happens with syslog so you don't find it under normal testing\n\nI'm thinking we need something like:\n\n  with excutils.save_and_restore_exception():\n      LOG.exception(...)\n   ctxt.reply(...)\n\nwhich would be equivalent to:\n\n  except Exception:\n      try:\n          with excutils.save_and_reraise_exception():\n              LOG.exception(...)\n      except Exception:\n          ctxt.reply(...)\n\nhowever, I'm not sure there's a way of restoring sys.exc_info() that will work with python 3 - AFAIK, in python3 exc_info is only valid during an exception handler", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1154140", 
+    "owner": "None", 
+    "id": 1154140, 
+    "index": 3280, 
+    "openned": "2013-03-12 15:14:27.054823+00:00", 
+    "created": "2013-03-12 15:14:27.054823+00:00", 
+    "title": "Add excutils.save_and_reraise_exception()", 
+    "comments": [
+        {
+            "content": "See https://review.openstack.org/23894\n\n |--LOG.exception()\n | |--LoggerAdapter.exception():logging/__init()__\n | |--self.logger.error()\n | |--self._log()\n | |--self.handle()\n | |--self.callHandlers()\n | |--hdlr.handle()\n | |--Handler.handle():handlers.py\n | |--self.emit()\n | |--self.socket.sendto()\n | |--GreenSocket.sendto():eventlet/greenio.py\n | |--trampoline():hubs/__init__.py\n | |--hub.switch()\n | |--BaseHub.switch():hub.py\n | |-- clear_sys_exc_info()\n\nWhen you're using syslog logging, LOG.exception() can cause sys.exc_info() to be cleared\n\nSo if you do e.g.\n\n except Exception:\n     LOG.exception(_('in looping call'))\n    done.send_exception(*sys.exc_info())\n    return\n\nthen you'll find that (with syslog enabled) the second reference to sys.exc_info() won't work\n\nBasically, any time you make a call that can result in a greenlet context switch you can find sys.exc_info() has been cleared\n\nThe really nasty thing is this only happens with syslog so you don't find it under normal testing\n\nI'm thinking we need something like:\n\n  with excutils.save_and_restore_exception():\n      LOG.exception(...)\n   ctxt.reply(...)\n\nwhich would be equivalent to:\n\n  except Exception:\n      try:\n          with excutils.save_and_reraise_exception():\n              LOG.exception(...)\n      except Exception:\n          ctxt.reply(...)\n\nhowever, I'm not sure there's a way of restoring sys.exc_info() that will work with python 3 - AFAIK, in python3 exc_info is only valid during an exception handler", 
+            "date_created": "2013-03-12 15:14:27.054823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Is there anyway we can recommend people move to a newer eventlet/greenlet instead and remove the need for this??\n\nIt appears to be fixed @ https://github.com/python-greenlet/greenlet/commit/096e83165\n\n", 
+            "date_created": "2013-04-09 01:11:11.000159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Adding to oslo.messaging because the place we workaround this issue is in amqp.py:\n\n\n        except Exception:\n            # sys.exc_info() is deleted by LOG.exception().                                                                    \n            exc_info = sys.exc_info()\n            LOG.error(_('Exception during message handling'),\n                      exc_info=exc_info)\n", 
+            "date_created": "2013-10-29 08:35:55.553840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Need to confirm the issue is fixed by greenlet 0.4.1", 
+            "date_created": "2013-10-29 08:36:07.814549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Is this still valid? It seems like by the bug conversation this is basically addressed now.", 
+            "date_created": "2014-09-18 23:25:47.123571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2015-01-22 23:10:26.975329+00:00"
+}

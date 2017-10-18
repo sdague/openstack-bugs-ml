@@ -1,0 +1,119 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-09-29 02:36:16.006733+00:00", 
+    "description": "I have doubts about the flow of the volume attaching operation, as defined in /usr/lib/python2.6/site-packages/nova/volume/encryptors/luks.py.\n\nIf the device is not recognized to be a valid luks device, the script is luks formatting it! So if for some reason the luks header get corrupted, it erases the whole data.\nTo manage corrupted headers there are the \n\n    cryptsetup luksHeaderBackup\n\nand\n\n    cryptsetup luksHeaderRestore\n\ncommands that respectively do the backup and the restore of the headers.\n\nI think that the process has to be reviewed, and the luksFormat operation has to be performed during the volume creation.", 
+    "tags": [
+        "cinder", 
+        "luks", 
+        "lvm", 
+        "nova", 
+        "security"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1372375", 
+    "owner": "None", 
+    "id": 1372375, 
+    "index": 6438, 
+    "openned": "2014-09-22 09:51:32.194406+00:00", 
+    "created": "2014-09-22 09:51:32.194406+00:00", 
+    "title": "Attaching LVM encrypted volumes (with LUKS) could cause data loss if LUKS headers get corrupted", 
+    "comments": [
+        {
+            "content": "I have doubts about the flow of the volume attaching operation, as defined in /usr/lib/python2.6/site-packages/nova/volume/encryptors/luks.py.\n\nIf the device is not recognized to be a valid luks device, the script is luks formatting it! So if for some reason the luks header get corrupted, it erases the whole data.\nTo manage corrupted headers there are the \n\n    cryptsetup luksHeaderBackup\n\nand\n\n    cryptsetup luksHeaderRestore\n\ncommands that respectively do the backup and the restore of the headers.\n\nI think that the process has to be reviewed, and the luksFormat operation has to be performed during the volume creation.", 
+            "date_created": "2014-09-22 09:51:32.194406+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patriziotufarolo"
+        }, 
+        {
+            "content": "Why is this marked as a security bug? It seems like a data loss bug.", 
+            "date_created": "2014-09-22 11:37:02.398436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I marked it as security bug because it is related to a security function that can compromise data integrity. Should I move it elsewhere?", 
+            "date_created": "2014-09-22 12:35:39.620486+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patriziotufarolo"
+        }, 
+        {
+            "content": "I think this is a normal data loss bug.  I'm happy to have it as high, but I don't think it should be categorized as a security bug. ", 
+            "date_created": "2014-09-22 14:14:35.224807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I am so sorry for the mistake. I think it is really important to have it fixed because it could cause whole damages to companies that use LUKS in a production environment.", 
+            "date_created": "2014-09-22 20:14:24.672377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patriziotufarolo"
+        }, 
+        {
+            "content": "Adding cinder on since it is likely the fix will end up in cinder", 
+            "date_created": "2014-09-23 11:31:45.706246+00:00", 
+            "author": "https://api.launchpad.net/1.0/~duncan-thomas"
+        }, 
+        {
+            "content": "The question here is really what should happen if the LUKS header become corrupted for some reason.\n\nImplicit to that question is the assumption that the header could be corrupted without also impacting the integrity of the data stored in the volume. While it's probably possible, my inclination is that corrupting the header would also likely corrupt other portions of the volume in which case the user would probably want to restore the volume from a backup. (See patch to support backups of encrypted volumes: https://review.openstack.org/#/c/74532/)\n\nRegarding the use of luksHeaderBackup and luksHeaderRestore, where do you propose storing the backup header file? Would a backup of the whole volume (see above) be sufficient in your opinion, or is there a specific need to backup only the header?\n\nFinally, the decision to format the device in Nova instead of Cinder was intentional: because Cinder never has access to the encryption key (it merely requests the creation of an encryption key), only the compute host must be trusted. That is, the current flow limits trust among the various services in OpenStack. (I do not argue that flow could be different, but there are security trade-offs that should be considered with such a change.)", 
+            "date_created": "2014-09-25 15:00:24.683279+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joel-coffman"
+        }, 
+        {
+            "content": "The bug I submitted wants to be related more to the flow of the volume encryption procedure than to the LUKS header backup, that is also important.\nI have no idea, at the moment, on where to store luks headers' backup, I'm looking around.\nHowever a backup of the whole volume could be sufficient, but in my opinion it could become expensive in some cases.\nI focused on luksHeaderBackup and luksHeaderRestore to highlight on how formatting a volume is not a valid choice when the device is not recognized as valid luks.\nI agree with the decision to format the device in Nova, but I think that Cinder should ask luksFormat to nova at the moment of volume creation, and not when attaching for the problem above.", 
+            "date_created": "2014-09-25 16:57:39.343400+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patriziotufarolo"
+        }, 
+        {
+            "content": "> [...] I think that Cinder should ask luksFormat to nova at the moment of volume creation [...]\n\nI agree that approach would be cleaner, but it also forces Cinder to delegate a significant amount of work to Nova -- it's basically comparable to attaching a volume to a VM. I'm also not really sure that (encrypted) volume creation should couple Cinder to Nova. It would certainly be a significant change from the creation of non-encrypted volumes.\n\nWhile it's not optimal, the existing approach is simple -- much simpler than the alternatives in my opinion. ", 
+            "date_created": "2014-09-29 16:47:21.165563+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joel-coffman"
+        }, 
+        {
+            "content": "A simpler approach could consist in a flag stored in the cinder db to indicate if the volume has been formatted before.\nThen we could handle the volume attachment procedure checking this flag's value first.\nIf the device has been used but Nova would not be able to mount it,  we could return an exception inviting the cloud administrator to check for the volume integrity.\nWhat do you think about that?", 
+            "date_created": "2014-09-30 10:25:44.051174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patriziotufarolo"
+        }, 
+        {
+            "content": "That approach seems good in my opinion -- no real downsides apart from the additional metadata.", 
+            "date_created": "2014-09-30 17:02:40.548051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joel-coffman"
+        }, 
+        {
+            "content": "Adding a flag seems reasonable, I'm actually undecided however if that should be a new key in the DB or perhaps just some admin-meta.  My preference here would be admin-meta and I believe that would work here.\n\nI'm also not sure how the implementation would end up looking, first glance it seems like it would be fairly clean to add the check ", 
+            "date_created": "2014-10-04 14:36:13.524597+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "This seems like this really should be handled in cinder scope, marking nova invalid for now. Please flag back to new if we feel it should be in the fix.", 
+            "date_created": "2015-04-01 15:14:38.828665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "@Patrizio/Joel\nCouple questions, like how would we like to see the info passed to Cinder to indicate that the Volume has been formatted to set the proposed flag?  This is part of the reason why this was all handled on the Nova side to begin with, that's where the encryption *stuff* happens for the most part, and given we don't currently have any mechanism for Nova sending updates back to Cinder there's a good deal of  plumbing needed here I think.\n\nAlso, is anybody interested enough to work on this?   ", 
+            "date_created": "2015-04-01 16:40:25.955733+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "I don't know if someone could be interested.\nAs of now, I think we can leave the encryption layer in nova but I would at least change the workflow of the volume encryption operation.\nIt is crazy to luks format a volume because I am not able to mount it, and it is crazy to suppose that if I am not able to mount a volume, then it's the first time I am mounting it.", 
+            "date_created": "2015-04-01 16:58:54.915148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~patriziotufarolo"
+        }, 
+        {
+            "content": "> [...] how would we like to see the info passed to Cinder to indicate that the Volume has been formatted to set the proposed flag? \n\nPerhaps something could be added to the VolumeEncryptionMetadata API extension to support toggling the flag when the volume is formatted. Not sure how much would be gained from this approval since it potentially would create a way to (maliciously) trigger reformatting the volume -- maybe it would be write-once so it can only be set (i.e., formatted = True).\n\n> It is crazy to luks format a volume because I am not able to mount it, and it is crazy to suppose that if I am not able to mount a volume, then it's the first time I am mounting it.\n\nYou could use the cryptsetup encryptor instead of LUKS, as raw cryptsetup does not format the volume at all.\n\n> Also, is anybody interested enough to work on this?\n\nI'm willing to look into this issue since I'm responsible for the original feature, but it's pretty much at the bottom of my priority list.\n\nI also stand by my original comment on this bug report. We're talking about a situation where 1) the LUKS header is corrupted, 2) the (encrypted) volume \"data\" is not corrupted, and 3) the user doesn't have backups or snapshots of the volume. Perhaps someone from the Cinder core team will correct me, but I'd guess that Cinder's backends try to avoid data corruption, but it remains the user's responsibility to have snapshots or backups of the volume in case corruption occurs. If so, we're talking about a very specific situation where changing the existing behavior would be beneficial.", 
+            "date_created": "2015-04-06 14:45:50.357671+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joel-coffman"
+        }, 
+        {
+            "content": "Hey Joel,\n\nbesides just docs.openstack.org, is there any other source of OpenStack documentation?\n\nDane\n", 
+            "date_created": "2015-04-23 13:27:39+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dane-fichter"
+        }, 
+        {
+            "content": "Sorry for the comment. Hilariously stupid Microsoft Outlook error on my part.", 
+            "date_created": "2015-04-23 13:47:37.757588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dane-fichter"
+        }, 
+        {
+            "content": "\n> -----Original Message-----\n> From: Dane Fichter [mailto:<email address hidden>]\n> Sent: 23 April 2015 14:28\n> To: <email address hidden>\n> Subject: [Openstack-security] [Bug 1372375] OpenStack Docs\n>\n> Hey Joel,\n>\n> besides just docs.openstack.org, is there any other source of OpenStack\n> documentation?\n>\n> Dane\n\nHi Dane,\n\nThis is a good place to start:\nhttps://wiki.openstack.org/wiki/Security\n", 
+            "date_created": "2015-04-23 14:16:28+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }
+    ], 
+    "closed": "2015-04-01 15:14:13.287738+00:00"
+}

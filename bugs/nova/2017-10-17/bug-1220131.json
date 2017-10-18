@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:58:58.007688+00:00", 
+    "description": "The fact that nova.conf's glance_api_servers list requires those endpoints to be using the standard URI format seems lacking. For example there is nothing stopping users from running glance under some arbitrary URI (ex: http://host:port/image-service/zone1/base)  however the current nova code does not allow for this flexibility but rather makes assumptions about the URI structure of the glance endpoint(s).   Ideally glance url should be able to be specified on any host/port/URI scheme and nova should work fine -- not limit the URI glance scheme to some defined URI format.\n\n# URL for connecting to neutron (string value)\nneutron_url=https://9.123.106.99:9973/0bcdb4dcd6d14ed7a3dc39b1d141d1dc/public  - \"virtual\" url for neutron\n\n# auth url for connecting to neutron in admin context (string\n# value)\nneutron_admin_auth_url=https://9.123.106.99:9973/aeb337113f264e13984fda81dc165d21/admin/v2.0 - \"virtual\" url for keystone\n\nglance_api_servers = http://9.123.106.99:9973/0bcdb4dcd6d14ed7a3dc39b1d141d1dc/public/ \n\nThe error is that in nova glance.py code I see here: \n\nhttps://github.com/openstack/nova/blob/master/nova/image/glance.py#L135\n\n    endpoint = '%s://%s:%s' % (scheme, host, port)\n    return glanceclient.Client(str(version), endpoint, **params)\n\n\nFrom consumer perspective, could we configure all component url in same way? For neutron/keystone url, we can point a customer url, but for glance url, nova has limited it in one way.", 
+    "tags": [], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1220131", 
+    "owner": "None", 
+    "id": 1220131, 
+    "index": 966, 
+    "openned": "2013-09-03 09:06:03.799769+00:00", 
+    "created": "2013-09-03 09:06:03.799769+00:00", 
+    "title": "glance_api_servers list in nova.conf requires endpoints to be using the standard URI format seems lacking", 
+    "comments": [
+        {
+            "content": "The fact that nova.conf's glance_api_servers list requires those endpoints to be using the standard URI format seems lacking. For example there is nothing stopping users from running glance under some arbitrary URI (ex: http://host:port/image-service/zone1/base)  however the current nova code does not allow for this flexibility but rather makes assumptions about the URI structure of the glance endpoint(s).   Ideally glance url should be able to be specified on any host/port/URI scheme and nova should work fine -- not limit the URI glance scheme to some defined URI format.\n\n# URL for connecting to neutron (string value)\nneutron_url=https://9.123.106.99:9973/0bcdb4dcd6d14ed7a3dc39b1d141d1dc/public  - \"virtual\" url for neutron\n\n# auth url for connecting to neutron in admin context (string\n# value)\nneutron_admin_auth_url=https://9.123.106.99:9973/aeb337113f264e13984fda81dc165d21/admin/v2.0 - \"virtual\" url for keystone\n\nglance_api_servers = http://9.123.106.99:9973/0bcdb4dcd6d14ed7a3dc39b1d141d1dc/public/ \n\nThe error is that in nova glance.py code I see here: \n\nhttps://github.com/openstack/nova/blob/master/nova/image/glance.py#L135\n\n    endpoint = '%s://%s:%s' % (scheme, host, port)\n    return glanceclient.Client(str(version), endpoint, **params)\n\n\nFrom consumer perspective, could we configure all component url in same way? For neutron/keystone url, we can point a customer url, but for glance url, nova has limited it in one way.", 
+            "date_created": "2013-09-03 09:06:03.799769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yuyangbj"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/45072", 
+            "date_created": "2013-09-04 14:59:51.514130+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Adding some more details on this bug from someone that is closer to the problem than myself:\n\nLet's assume we have glance running a non-default URI. This is supported/achieved by doing something like the following:\n\n1. Install openstack\n\n2. Edit glance's glance-api-paste.ini such that the base URIs are non-default for the composite:rootapp section... i.e.\n[composite:rootapp]\n/glance/images: apiversions\n/glance/images/v1: apiv1app\n/glance/images/v2: apiv2app\n\n3. Start glance with the above ini config. The Glance URI is now something like: host:port/glance/images/v1/ and host:port/glance/images/v2/\n\n4. Update nova/cinder's .conf files to try and use the non-default glance URIs. These are set with the glance_api_servers property:\n# A list of the glance api servers available to nova. Prefix\n# with https:// for ssl-based glance api servers.\n# ([hostname|ip]:port) (list value)\n#glance_api_servers=$glance_host:$glance_port\n\n5. Try to get nova to work with these uris; I suspect it won't work due to the non default URI scheme. \n\nThe crux of the problem in both nova/cinder is in the _create_glance_client() method which can be found in nova/nova/image/glance.py and cinder/cinder/image/glance.py. Here's a snippet from that method:\n    if utils.is_valid_ipv6(host):\n        #if so, it is ipv6 address, need to wrap it with '[]'\n        host = '[%s]' % host\n    endpoint = '%s://%s:%s' % (scheme, host, port)\n    return glanceclient.Client(str(version), endpoint, **params)\n\nNotice that the 'endpoint' is created only using the scheme/host/port -- it ignores/truncates any URI paths which may have been in the glance_api_servers conf property... This appears to be the main problem; path URIs are ignored.\n\nBased on the current python-glanceclient/glanceclient/common/http.py it appears a non-default endpoint *should* work if it were passed when creating the glance client:\nclass HTTPClient(object):\n\n    def __init__(self, endpoint, **kwargs):\n        self.endpoint = endpoint\n        endpoint_parts = self.parse_endpoint(self.endpoint)\n        self.endpoint_scheme = endpoint_parts.scheme\n        self.endpoint_hostname = endpoint_parts.hostname\n        self.endpoint_port = endpoint_parts.port\n        self.endpoint_path = endpoint_parts.path\n\n\nGive the above, my perspective is that nova/cinder were coded in hindsight with respect to only support default glance URIs... That is, the python glanceclient should support endpoint path, but nova/cinder truncate/ignore them.", 
+            "date_created": "2013-09-23 14:05:27.422789+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "When using the keystone service catalog, this is the glance entry:\n\n    <service type=\"image\" name=\"glance\">\n      <endpoints_links/>\n      <endpoint adminURL=\"https://9.123.106.90:9973/74a89f40eca64685aae96a4f3bc240f6\" region=\"regionOne\" publicURL=\"https://9.123.106.90:9973/74a89f40eca64685aae96a4f3bc240f6\" internalURL=\"https://9.123.106.90:9973/74a89f40eca64685aae96a4f3bc240f6\" id=\"32aa7114c1e24de7a1e5c3342b456a68\"/>\n    </service>", 
+            "date_created": "2013-09-23 14:12:16.454101+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "We should be using keystone catalog to get this information, as that is exactly what we have it for.", 
+            "date_created": "2013-11-08 03:43:02.077888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/68867", 
+            "date_created": "2014-01-24 07:30:18.035440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/80220", 
+            "date_created": "2014-03-13 09:30:08.237792+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fixed a long time ago in Change-Id: I829cf006f7e7c53a36f5e12b40f60f875fe8f331", 
+            "date_created": "2015-08-28 01:23:40.409173+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ], 
+    "closed": "2015-09-03 11:46:15.524882+00:00"
+}

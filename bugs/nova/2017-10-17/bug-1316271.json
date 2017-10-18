@@ -1,0 +1,195 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2015-01-27 17:47:22.080548+00:00", 
+    "description": "Hi guys,\n\n    We're still using nova-network and we'll be using it for a while and we noticed that the VM guests can contact the compute nodes on all ports ... The one we're the most preoccupied with is SSH.   We've written the following patch in order to isolate the VM guests from the VM hosts.\n\n--- linux_net.py.orig   2014-05-05 17:25:10.171746968 +0000\n+++ linux_net.py        2014-05-05 18:42:54.569209220 +0000\n@@ -805,6 +805,24 @@\n\n\n @utils.synchronized('lock_gateway', external=True)\n+def isolate_compute_from_guest(network_ref):\n+    if not network_ref:\n+        return\n+\n+    iptables_manager.ipv4['filter'].add_rule('INPUT',\n+                                             '-p tcp -d %s --dport 8775 '\n+                                             '-j ACCEPT' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n+                                             '-p tcp -d %s --dport 8775 '\n+                                             '-j ACCEPT' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('INPUT',\n+                                             '-d %s '\n+                                             '-j DROP' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n+                                             '-d %s '\n+                                             '-j DROP' % network_ref['dhcp_server'])\n+    iptables_manager.apply()\n+\n def initialize_gateway_device(dev, network_ref):\n     if not network_ref:\n         return\n@@ -1046,6 +1064,7 @@\n             try:\n                 _execute('kill', '-HUP', pid, run_as_root=True)\n                 _add_dnsmasq_accept_rules(dev)\n+                isolate_compute_from_guest(network_ref)\n                 return\n             except Exception as exc:  # pylint: disable=W0703\n                 LOG.error(_('Hupping dnsmasq threw %s'), exc)\n@@ -1098,6 +1117,7 @@\n\n     _add_dnsmasq_accept_rules(dev)\n\n+    isolate_compute_from_guest(network_ref)\n\n @utils.synchronized('radvd_start')\n def update_ra(context, dev, network_ref):", 
+    "tags": [
+        "ebtables", 
+        "iptables", 
+        "nova", 
+        "nova-network", 
+        "security", 
+        "ssh"
+    ], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1316271", 
+    "owner": "https://api.launchpad.net/1.0/~david-hill-ubisoft", 
+    "id": 1316271, 
+    "index": 3893, 
+    "openned": "2014-05-05 19:02:22.123937+00:00", 
+    "created": "2014-05-05 19:02:22.123937+00:00", 
+    "title": "Network Security: VM hosts can SSH to compute node", 
+    "comments": [
+        {
+            "content": "Hi guys,\n\n    We're still using nova-network and we'll be using it for a while and we noticed that the VM guests can contact the compute nodes on all ports ... The one we're the most preoccupied with is SSH.   We've written the following patch in order to isolate the VM guests from the VM hosts.\n\n--- linux_net.py.orig   2014-05-05 17:25:10.171746968 +0000\n+++ linux_net.py        2014-05-05 18:42:54.569209220 +0000\n@@ -805,6 +805,24 @@\n\n\n @utils.synchronized('lock_gateway', external=True)\n+def isolate_compute_from_guest(network_ref):\n+    if not network_ref:\n+        return\n+\n+    iptables_manager.ipv4['filter'].add_rule('INPUT',\n+                                             '-p tcp -d %s --dport 8775 '\n+                                             '-j ACCEPT' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n+                                             '-p tcp -d %s --dport 8775 '\n+                                             '-j ACCEPT' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('INPUT',\n+                                             '-d %s '\n+                                             '-j DROP' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n+                                             '-d %s '\n+                                             '-j DROP' % network_ref['dhcp_server'])\n+    iptables_manager.apply()\n+\n def initialize_gateway_device(dev, network_ref):\n     if not network_ref:\n         return\n@@ -1046,6 +1064,7 @@\n             try:\n                 _execute('kill', '-HUP', pid, run_as_root=True)\n                 _add_dnsmasq_accept_rules(dev)\n+                isolate_compute_from_guest(network_ref)\n                 return\n             except Exception as exc:  # pylint: disable=W0703\n                 LOG.error(_('Hupping dnsmasq threw %s'), exc)\n@@ -1098,6 +1117,7 @@\n\n     _add_dnsmasq_accept_rules(dev)\n\n+    isolate_compute_from_guest(network_ref)\n\n @utils.synchronized('radvd_start')\n def update_ra(context, dev, network_ref):", 
+            "date_created": "2014-05-05 19:02:22.123937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "We could add a default boolean that would be false by default before pushing this to trunk ... The effect of this patch would be the following:\n\nChain nova-network-FORWARD (1 references)\ntarget     prot opt source               destination\nACCEPT     all  --  0.0.0.0/0            0.0.0.0/0\nACCEPT     all  --  0.0.0.0/0            0.0.0.0/0\nACCEPT     tcp  --  0.0.0.0/0            x.x.x.x          tcp dpt:8775\nDROP       all  --  0.0.0.0/0            x.x.x.x\n\nChain nova-network-INPUT (1 references)\ntarget     prot opt source               destination\nACCEPT     udp  --  0.0.0.0/0            0.0.0.0/0           udp dpt:67\nACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0           tcp dpt:67\nACCEPT     udp  --  0.0.0.0/0            0.0.0.0/0           udp dpt:53\nACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0           tcp dpt:53\nACCEPT     tcp  --  0.0.0.0/0            x.x.x.x          tcp dpt:8775\nDROP       all  --  0.0.0.0/0            x.x.x.x\n\nInstead of:\nChain nova-network-FORWARD (1 references)\ntarget     prot opt source               destination\nACCEPT     all  --  0.0.0.0/0            0.0.0.0/0\nACCEPT     all  --  0.0.0.0/0            0.0.0.0/0\nACCEPT     tcp  --  0.0.0.0/0            10.30.96.8          tcp dpt:8775\n\nChain nova-network-INPUT (1 references)\ntarget     prot opt source               destination\nACCEPT     udp  --  0.0.0.0/0            0.0.0.0/0           udp dpt:67\nACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0           tcp dpt:67\nACCEPT     udp  --  0.0.0.0/0            0.0.0.0/0           udp dpt:53\nACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0           tcp dpt:53\n\n", 
+            "date_created": "2014-05-05 19:23:59.797164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "What's missing?", 
+            "date_created": "2014-05-06 15:29:26.361102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "@David, the advisory task is incomplete pending additional details from security reviewers (nova-coresec team).\n\nFor your information, the process is described there: https://wiki.openstack.org/wiki/VulnerabilityManagement#Reception", 
+            "date_created": "2014-05-06 15:38:57.313560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "For some reasons, dhcp needs to talk with loopback...\n\n--- linux_net.py.orig   2014-05-06 15:22:13.525362875 +0000\n+++ linux_net.py        2014-05-06 22:01:42.914944165 +0000\n@@ -808,6 +808,24 @@\n\n\n @utils.synchronized('lock_gateway', external=True)\n+def isolate_compute_from_guest(network_ref):\n+    if not network_ref:\n+        return\n+\n+    iptables_manager.ipv4['filter'].add_rule('INPUT',\n+                                             '-p tcp -d %s --dport 8775 '\n+                                             '-j ACCEPT' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n+                                             '-p tcp -d %s --dport 8775 '\n+                                             '-j ACCEPT' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('INPUT',\n+                                             '-d %s ! -i lo '\n+                                             '-j DROP' % network_ref['dhcp_server'])\n+    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n+                                             '-d %s ! -i lo '\n+                                             '-j DROP' % network_ref['dhcp_server'])\n+    iptables_manager.apply()\n+\n def initialize_gateway_device(dev, network_ref):\n     if not network_ref:\n         return\n@@ -1049,6 +1067,7 @@\n             try:\n                 _execute('kill', '-HUP', pid, run_as_root=True)\n                 _add_dnsmasq_accept_rules(dev)\n+                isolate_compute_from_guest(network_ref)\n                 return\n             except Exception as exc:  # pylint: disable=W0703\n                 LOG.error(_('Hupping dnsmasq threw %s'), exc)\n@@ -1101,6 +1120,7 @@\n\n     _add_dnsmasq_accept_rules(dev)\n\n+    isolate_compute_from_guest(network_ref)\n\n @utils.synchronized('radvd_start')\n def update_ra(context, dev, network_ref):\n", 
+            "date_created": "2014-05-06 22:13:05.843582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Nova is using dhcp_release in order to communicate with the DHCP server to release the IP address so ! -i lo addresses this issue.", 
+            "date_created": "2014-05-07 15:38:38.299586+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Can't this be done by implementing EBtables on the Compute host to disallow inappropriate traffic from the nova-network bridge?", 
+            "date_created": "2014-05-14 20:12:56.952681+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "I don't think ebtables will work because you'll be able to contact the gateway of another compute node.  This patch has been tested and prevent all VMs from all compute nodes from accessing any compute node using nova-network.\n\n(I don't know much of ebtables so I can't be 100% sure of this statement but iptables does the trick)", 
+            "date_created": "2014-05-14 21:39:13.481269+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Didn't test it yet but:\n\n--- a/nova/network/linux_net.py\n+++ b/nova/network/linux_net.py\n@@ -1631,10 +1631,14 @@ def remove_ebtables_rules(rules, table='filter'):\n def isolate_dhcp_address(interface, address):\n     # block arp traffic to address across the interface\n     rules = []\n+    rules.append('INPUT -p TCP -i %s --dst %s --ip-destination-port 8776 -j ALLOW'\n+                 % (interface, address))\n     rules.append('INPUT -p ARP -i %s --arp-ip-dst %s -j DROP'\n                  % (interface, address))\n     rules.append('OUTPUT -p ARP -o %s --arp-ip-src %s -j DROP'\n                  % (interface, address))\n+    rules.append('INPUT -i %s --dst %s -j DROP'\n+                 % (interface, address))\n     # NOTE(vish): the above is not possible with iptables/arptables\n     ensure_ebtables_rules(rules)\n     # block dhcp broadcast traffic across the interface\n\n", 
+            "date_created": "2014-05-14 22:30:26.432888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "The full patch would look like this:\n\n--- a/nova/network/linux_net.py\n+++ b/nova/network/linux_net.py\n@@ -1631,10 +1631,14 @@ def remove_ebtables_rules(rules, table='filter'):\n def isolate_dhcp_address(interface, address):\n     # block arp traffic to address across the interface\n     rules = []\n+    rules.append('INPUT -p TCP -i %s --dst %s --ip-destination-port 8776 -j ALLOW'\n+                 % (interface, address))\n     rules.append('INPUT -p ARP -i %s --arp-ip-dst %s -j DROP'\n                  % (interface, address))\n     rules.append('OUTPUT -p ARP -o %s --arp-ip-src %s -j DROP'\n                  % (interface, address))\n+    rules.append('INPUT -i %s --dst %s -j DROP'\n+                 % (interface, address))\n     # NOTE(vish): the above is not possible with iptables/arptables\n     ensure_ebtables_rules(rules)\n     # block dhcp broadcast traffic across the interface\n@@ -1663,10 +1667,14 @@ def isolate_dhcp_address(interface, address):\n def remove_isolate_dhcp_address(interface, address):\n     # block arp traffic to address across the interface\n     rules = []\n+    rules.append('INPUT -p TCP -i %s --dst %s --ip-destination-port 8776 -j ALLOW'\n+                 % (interface, address))\n     rules.append('INPUT -p ARP -i %s --arp-ip-dst %s -j DROP'\n                  % (interface, address))\n     rules.append('OUTPUT -p ARP -o %s --arp-ip-src %s -j DROP'\n                  % (interface, address))\n+    rules.append('INPUT -i %s --dst %s -j DROP'\n+                 % (interface, address))\n     remove_ebtables_rules(rules)\n     # NOTE(vish): the above is not possible with iptables/arptables\n     # block dhcp broadcast traffic across the interface\n", 
+            "date_created": "2014-05-14 22:32:11.691151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "I'm not quite sure but I doubt this patch will work because we're not using share_dhcp_address and by default that one is set to false.   Looking at the code, the simplest method to get that enforced is to add it to iptables.   ", 
+            "date_created": "2014-05-14 22:37:46.269035+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Would that be a better patch? \n\n--- a/nova/virt/libvirt/firewall.py\n+++ b/nova/virt/libvirt/firewall.py\n@@ -76,6 +76,28 @@ class NWFilterFirewall(base_firewall.FirewallDriver):\n                   </filter>'''\n \n     @staticmethod\n+    def nova_isolate_compte_node():\n+        \"\"\"This filter will disallow all traffic toward the gateway of the guests.\n+        \"\"\"\n+\n+        return '''<filter name='nova-allow-dhcp-server' chain='ipv4'>\n+                    <uuid>891e4787-e5c0-d59b-cda6-41bc3c6b36fc</uuid>\n+                    <rule action='allow' direction='in'\n+                          priority='100'>\n+                      <tcp dstipaddr='$DHCPSERVER'\n+                           dstportstart='8776'/>\n+                    </rule>\n+                    <rule action='drop' direction='in'\n+                          priority='100'>\n+                      <tcp dstipaddr='$DHCPSERVER' />\n+                    </rule>\n+                    <rule action='drop' direction='in'\n+                          priority='100'>\n+                      <udp dstipaddr='$DHCPSERVER' />\n+                    </rule>\n+                  </filter>'''\n+\n+    @staticmethod\n     def nova_dhcp_filter():\n         \"\"\"The standard allow-dhcp-server filter is an <ip> one, so it uses\n            ebtables to allow traffic through. Without a corresponding rule in\n@@ -221,6 +243,7 @@ class NWFilterFirewall(base_firewall.FirewallDriver):\n         self._define_filter(self._filter_container('nova-vpn',\n                                                    ['allow-dhcp-server']))\n         self._define_filter(self.nova_dhcp_filter)\n+        self._define_filter(self.nova_compute_isolation)\n \n         self.static_filters_configured = True\n", 
+            "date_created": "2014-05-14 22:49:14.879858+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "This one needs to be tested:\n\n--- a/nova/virt/libvirt/firewall.py\n+++ b/nova/virt/libvirt/firewall.py\n@@ -76,6 +76,28 @@ class NWFilterFirewall(base_firewall.FirewallDriver):\n                   </filter>'''\n \n     @staticmethod\n+    def nova_dhcp_isolate_filter():\n+        \"\"\"This filter will disallow all traffic toward the gateway of the guests.\n+        \"\"\"\n+\n+        return '''<filter name='nova-isolate-dhcp-server' chain='ipv4'>\n+                    <uuid>891e4787-e5c0-d59b-cda6-41bc3c6b36fc</uuid>\n+                    <rule action='allow' direction='in'\n+                          priority='100'>\n+                      <tcp dstipaddr='$DHCPSERVER'\n+                           dstportstart='8776'/>\n+                    </rule>\n+                    <rule action='drop' direction='in'\n+                          priority='100'>\n+                      <tcp dstipaddr='$DHCPSERVER' />\n+                    </rule>\n+                    <rule action='drop' direction='in'\n+                          priority='100'>\n+                      <udp dstipaddr='$DHCPSERVER' />\n+                    </rule>\n+                  </filter>'''\n+\n+    @staticmethod\n     def nova_dhcp_filter():\n         \"\"\"The standard allow-dhcp-server filter is an <ip> one, so it uses\n            ebtables to allow traffic through. Without a corresponding rule in\n@@ -221,6 +243,7 @@ class NWFilterFirewall(base_firewall.FirewallDriver):\n         self._define_filter(self._filter_container('nova-vpn',\n                                                    ['allow-dhcp-server']))\n         self._define_filter(self.nova_dhcp_filter)\n+        self._define_filter(self.nova_dhcp_isolate_filter)\n \n         self.static_filters_configured = True\n \n", 
+            "date_created": "2014-05-14 23:46:22.361972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Well, sorry to spam, but I don't know where this could be injected in the code...  The easiest place is where it is put in iptables and it also protects the compute node from being access from all the other guests from all the other computes nodes.    If it's a ebtable INPUT rule, it must be global and not on a by instance basis.   All my previous patches wont work (execpt the first one) as they are on a by instance basis or if share_dhcp_adress is set to true which is not the case in our case. \n\nThis patch should be addressing it:\n\n--- a/nova/network/linux_net.py\n+++ b/nova/network/linux_net.py\n@@ -1447,6 +1447,9 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):\n \n         if CONF.share_dhcp_address:\n             remove_isolate_dhcp_address(iface, network['dhcp_server'])\n+       else \n+            remove_isolate_compute_node(iface, network['dhcp_server'])\n+\n \n         iptables_manager.apply()\n         return self.get_dev(network)\n@@ -1627,6 +1630,13 @@ def remove_ebtables_rules(rules, table='filter'):\n         cmd = ['ebtables', '-t', table, '-D'] + rule.split()\n         _execute(*cmd, check_exit_code=False, run_as_root=True)\n \n+def isolate_compute_node(interface, address):\n+    rules = []\n+    rules.append('INPUT -p TCP -i %s --dst %s --ip-destination-port 8776 -j ALLOW'\n+                 % (interface, address))\n+    rules.append('INPUT -i %s --dst %s -j DROP'\n+                 % (interface, address))\n+    ensure_ebtables_rules(rules)\n \n def isolate_dhcp_address(interface, address):\n     # block arp traffic to address across the interface\n\n--- a/nova/network/linux_net.py\n+++ b/nova/network/linux_net.py\n@@ -1430,6 +1430,9 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):\n \n         if CONF.share_dhcp_address:\n             isolate_dhcp_address(iface, network['dhcp_server'])\n+        else\n+            isolate_compute_node(iface, network['dhcp_server'])\n+\n         # NOTE(vish): applying here so we don't get a lock conflict\n         iptables_manager.apply()\n         return network['bridge']\n@@ -1447,6 +1450,9 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):\n \n         if CONF.share_dhcp_address:\n             remove_isolate_dhcp_address(iface, network['dhcp_server'])\n+       else \n+            remove_isolate_compute_node(iface, network['dhcp_server'])\n+\n \n         iptables_manager.apply()\n         return self.get_dev(network)\n@@ -1627,6 +1633,13 @@ def remove_ebtables_rules(rules, table='filter'):\n         cmd = ['ebtables', '-t', table, '-D'] + rule.split()\n         _execute(*cmd, check_exit_code=False, run_as_root=True)\n \n+def isolate_compute_node(interface, address):\n+    rules = []\n+    rules.append('INPUT -p TCP -i %s --dst %s --ip-destination-port 8776 -j ALLOW'\n+                 % (interface, address))\n+    rules.append('INPUT -i %s --dst %s -j DROP'\n+                 % (interface, address))\n+    ensure_ebtables_rules(rules)\n \n def isolate_dhcp_address(interface, address):\n     # block arp traffic to address across the interface\n@@ -1659,6 +1672,13 @@ def isolate_dhcp_address(interface, address):\n                           % (interface, address, CONF.iptables_drop_action)),\n                          top=True)\n \n+def remove_isolate_compute_node(interface, address):\n+    rules = []\n+    rules.append('INPUT -p TCP -i %s --dst %s --ip-destination-port 8776 -j ALLOW'\n+                 % (interface, address))\n+    rules.append('INPUT -i %s --dst %s -j DROP'\n+                 % (interface, address))\n+    remove_ebtables_rules(rules)\n \n def remove_isolate_dhcp_address(interface, address):\n     # block arp traffic to address across the interface\n", 
+            "date_created": "2014-05-15 02:15:36.836890+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "nova coresec: care to comment on this one ?", 
+            "date_created": "2014-05-19 14:55:50.771806+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I'm not working on nova-network currently, but did in a previous life so will add a comment.\n\nOne of the better ways to do this is to add a rule to the libvirt xml file to drop all inbound packets to the compute host, something like this in nova/virt/libvirt/firewall.py:\n\n+    def nova_no_my_ip_address(self):\n+        # Drop all IPv4 packets going to CONF.my_ip, since the network\n+        # stack will loop them back.\n+        retval = \"<filter name='nova-no-my-ip-address' chain='ipv4'>\"\n+        retval += \"\"\"<rule action='drop' direction='out'>\n+                       <ip dstipaddr='%s' />\n+                     </rule>\"\"\" % CONF.my_ip\n+        retval += '</filter>'\n+        return retval\n\nThen just put some code in _ensure_static_filters() to define and append that to the existing filter set.\n\nThat's untested and based on older code, I see there is a get_host_ip_addr() method now that might be a better choice.\n\nMy $.02", 
+            "date_created": "2014-05-19 16:28:10.603239+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-haley"
+        }, 
+        {
+            "content": "What workarounds might be available that could form an OSSN to cover this and previous releases?", 
+            "date_created": "2014-05-27 08:47:40.348634+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "For some reason I was thinking there was an OSSN covering this, but the closest I found was the one on poor configuration instructions for live migration exposing libvirt's control interface to tenant instances. I also don't see anything in the security guide specifically addressing network hardening for compute nodes (recommended filter rules for local interfaces, isolating running services onto separate VLANs from instance virtual interfaces, et cetera) though it's possible I've overlooked it.", 
+            "date_created": "2014-05-27 14:10:22.044348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I think this falls into \"hardening\" -- it's not an exploitable vulnerability per se, and fixing this would significantly alter behavior and therefore can't really be backported.\n\nIt sounds like very welcome hardening though, so it would really be great if (1) we had an OSSN to cover for this and maybe (2) we improved the default situation in future releases.", 
+            "date_created": "2014-05-30 15:17:39.571187+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hmmm. The default behaviour of a compute system should be to isolate the host from the guests, so I think this is a vulnerability. However if the judgement of the VMT is that this isn't a vulnerability worth releasing an OSSA for, we'd certainly like to keep users informed by issuing an OSSN.", 
+            "date_created": "2014-05-30 15:30:12.803187+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "It seems to me that people should be deploying nodes such that this interface isn't used for anything other than the instance's dhcp service.  I suspect that many people are already doing this, but perhaps it isn't obvious that it is a necessary step for security reasons?", 
+            "date_created": "2014-05-30 16:34:26.793850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bdpayne"
+        }, 
+        {
+            "content": "That would certainly put it square in OSSN territory. ", 
+            "date_created": "2014-05-30 16:43:37.990357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Are there any downsides to enforcing that the interface can only be used for the dhcp service?\u2014\nSent from Mailbox\n\nOn Fri, May 30, 2014 at 12:42 PM, Bryan D. Payne <email address hidden> wrote:\n\n> It seems to me that people should be deploying nodes such that this\n> interface isn't used for anything other than the instance's dhcp\n> service.  I suspect that many people are already doing this, but perhaps\n> it isn't obvious that it is a necessary step for security reasons?\n> -- \n> You received this bug notification because you are a member of OpenStack\n> Security Group, which is subscribed to OpenStack.\n> https://bugs.launchpad.net/bugs/1316271\n> Title:\n>   Network Security: VM hosts can SSH to compute node\n> Status in OpenStack Compute (Nova):\n>   New\n> Status in OpenStack Security Advisories:\n>   Incomplete\n> Bug description:\n>   Hi guys,\n>       We're still using nova-network and we'll be using it for a while\n>   and we noticed that the VM guests can contact the compute nodes on all\n>   ports ... The one we're the most preoccupied with is SSH.   We've\n>   written the following patch in order to isolate the VM guests from the\n>   VM hosts.\n>   --- linux_net.py.orig   2014-05-05 17:25:10.171746968 +0000\n>   +++ linux_net.py        2014-05-05 18:42:54.569209220 +0000\n>   @@ -805,6 +805,24 @@\n>   \n>    @utils.synchronized('lock_gateway', external=True)\n>   +def isolate_compute_from_guest(network_ref):\n>   +    if not network_ref:\n>   +        return\n>   +\n>   +    iptables_manager.ipv4['filter'].add_rule('INPUT',\n>   +                                             '-p tcp -d %s --dport 8775 '\n>   +                                             '-j ACCEPT' % network_ref['dhcp_server'])\n>   +    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n>   +                                             '-p tcp -d %s --dport 8775 '\n>   +                                             '-j ACCEPT' % network_ref['dhcp_server'])\n>   +    iptables_manager.ipv4['filter'].add_rule('INPUT',\n>   +                                             '-d %s '\n>   +                                             '-j DROP' % network_ref['dhcp_server'])\n>   +    iptables_manager.ipv4['filter'].add_rule('FORWARD',\n>   +                                             '-d %s '\n>   +                                             '-j DROP' % network_ref['dhcp_server'])\n>   +    iptables_manager.apply()\n>   +\n>    def initialize_gateway_device(dev, network_ref):\n>        if not network_ref:\n>            return\n>   @@ -1046,6 +1064,7 @@\n>                try:\n>                    _execute('kill', '-HUP', pid, run_as_root=True)\n>                    _add_dnsmasq_accept_rules(dev)\n>   +                isolate_compute_from_guest(network_ref)\n>                    return\n>                except Exception as exc:  # pylint: disable=W0703\n>                    LOG.error(_('Hupping dnsmasq threw %s'), exc)\n>   @@ -1098,6 +1117,7 @@\n>        _add_dnsmasq_accept_rules(dev)\n>   +    isolate_compute_from_guest(network_ref)\n>    @utils.synchronized('radvd_start')\n>    def update_ra(context, dev, network_ref):\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1316271/+subscriptions\n> _______________________________________________\n> Openstack-security mailing list\n> <email address hidden>\n> http://lists.openstack.org/cgi-bin/mailman/listinfo/openstack-security", 
+            "date_created": "2014-05-30 17:14:29+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bfschott"
+        }, 
+        {
+            "content": "We're enforcing it at the IPtables level and everything seems to be working but we also implemented iptables rules for isolating further the compute nodes in the network.", 
+            "date_created": "2014-05-30 17:32:22.130322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "OSSN Published, congratulations Stan!\nhttps://wiki.openstack.org/wiki/OSSN/OSSN-0018", 
+            "date_created": "2014-07-01 10:15:36.605277+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Fixing this bug by binding all services to a specific IP adress can be teadious ...  Since we're talking about automating everything, I would sugggest to adress this issue by filtering it instead.\n\nOtherwise, each operator will have to end with its own set off solutions in order to secure their network.\n\nIe: NFS, ssh, xinetd (inetd), ftp, etc", 
+            "date_created": "2014-07-01 12:09:20.925089+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/118476", 
+            "date_created": "2014-09-02 22:04:50.548420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I created a blueprint in order to further development of logging features for the network layer.\n\nhttps://blueprints.launchpad.net/nova/+spec/nova-compute-instance-traffic-logging", 
+            "date_created": "2014-09-07 01:29:32.041912+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-hill-ubisoft"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/119589", 
+            "date_created": "2014-09-07 03:04:17.252763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Daniel Berrange (<email address hidden>) on branch: master\nReview: https://review.openstack.org/119589\nReason: You've already got this uploaded under a different review\n\nhttps://review.openstack.org/#/c/117628/\n\nSoince that review is older and has alot of relevant historical comments I'm marking this one abandoned. Please continue to post new versions to your original review.", 
+            "date_created": "2014-10-08 10:06:59.614817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/117628\nReason: This review is > 4 weeks without comment and currently blocked by a core reviewer with a -2. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and contacting the reviewer with the -2 on this review to ensure you address their concerns.", 
+            "date_created": "2014-11-20 15:18:10.690517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/118476\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-01-23 15:27:05.063012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/119589\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-01-23 15:29:39.778098+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Agreed by core team that this is mostly a deployment topology issue, and nova-network was never designed to address it. Will not fix it.", 
+            "date_created": "2015-01-27 17:47:20.946300+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2015-01-27 17:44:35.794824+00:00"
+}

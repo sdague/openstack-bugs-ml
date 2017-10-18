@@ -1,0 +1,123 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-15 15:40:24.384230+00:00", 
+    "description": "This is a follow on from bug 1670627. As pointed out in comments 23 and 25, in the local delete case where there is no host and the instance is in a cell, we're decrementing quota even if the instance.destroy() operation fails.\n\nWe commit the usage decrement here:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1878\n\nAttempt to destroy the instance here:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1887\n\nAnd if the instance.destroy() fails, we rollback the usage decrement here:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1891\n\nThat rollback has no effect because once we commit a reservation, it's wiped out in the quotas object:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/objects/quotas.py#L105\n\nAttempting to rollback reservations on a quotas object that has already committed reservations is a noop:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/objects/quotas.py#L111\n\n--\n\nUnlike the 'normal' (pre-cellsv2) local delete case which does the commit after the instance is destroyed:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L2023\n\nAnd we rollback (but not commit) if instance.destroy() fails because the instance is already deleted:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L2028\n\n--\n\nThe code in _delete() is wrong because it was copied from the code in _delete_while_booting() which is also wrong:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1784\n\nSo we have to fix both places.\n\nI suggest that we also change the noop behavior on the Quotas object such that if we attempt a reservation commit or rollback operation on a Quotas object that does not have any reservations, it is considered a programming error rather than a noop, because that's how this bug was introduced in the first place.", 
+    "tags": [
+        "api", 
+        "in-stable-ocata", 
+        "ocata-backport-potential", 
+        "quotas"
+    ], 
+    "importance": "High", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1678326", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1678326, 
+    "index": 2058, 
+    "openned": "2017-03-31 22:39:41.192707+00:00", 
+    "created": "2017-03-31 22:39:41.192707+00:00", 
+    "title": "Quota is decremented during instance delete in cell0 even if the instance destroy fails", 
+    "comments": [
+        {
+            "content": "This is a follow on from bug 1670627. As pointed out in comments 23 and 25, in the local delete case where there is no host and the instance is in a cell, we're decrementing quota even if the instance.destroy() operation fails.\n\nWe commit the usage decrement here:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1878\n\nAttempt to destroy the instance here:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1887\n\nAnd if the instance.destroy() fails, we rollback the usage decrement here:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1891\n\nThat rollback has no effect because once we commit a reservation, it's wiped out in the quotas object:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/objects/quotas.py#L105\n\nAttempting to rollback reservations on a quotas object that has already committed reservations is a noop:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/objects/quotas.py#L111\n\n--\n\nUnlike the 'normal' (pre-cellsv2) local delete case which does the commit after the instance is destroyed:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L2023\n\nAnd we rollback (but not commit) if instance.destroy() fails because the instance is already deleted:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L2028\n\n--\n\nThe code in _delete() is wrong because it was copied from the code in _delete_while_booting() which is also wrong:\n\nhttps://github.com/openstack/nova/blob/88bc8dc5ce32748452c9d3acda9f35e77fedb6ce/nova/compute/api.py#L1784\n\nSo we have to fix both places.\n\nI suggest that we also change the noop behavior on the Quotas object such that if we attempt a reservation commit or rollback operation on a Quotas object that does not have any reservations, it is considered a programming error rather than a noop, because that's how this bug was introduced in the first place.", 
+            "date_created": "2017-03-31 22:39:41.192707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/452346", 
+            "date_created": "2017-03-31 23:00:47.368511+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/452351", 
+            "date_created": "2017-03-31 23:59:36.192494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/452359", 
+            "date_created": "2017-04-01 01:30:42.558383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/452363", 
+            "date_created": "2017-04-01 02:26:57.248706+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/452364", 
+            "date_created": "2017-04-01 02:27:08.954580+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/453859", 
+            "date_created": "2017-04-05 20:32:00.542263+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/452351\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=032937ce51c64e0f5292ca3149e3b244863fffca\nSubmitter: Jenkins\nBranch:    master\n\ncommit 032937ce51c64e0f5292ca3149e3b244863fffca\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Mar 31 19:56:14 2017 -0400\n\n    Add regression test for quota decrement bug 1678326\n    \n    This was spotted from someone validating the fix for\n    bug 1670627. They reported that even though they failed\n    to delete an instance in ERROR state that was in cell0,\n    the quota usage was decremented.\n    \n    This is because we committed the quota reservation\n    to decrement the usage before actually attempting to destroy\n    the instance, rather than upon successful deletion.\n    \n    The rollback after InstanceNotFound is a noop because of\n    how the Quotas.rollback method noops if the reservations\n    were already committed. That is in itself arguably a bug,\n    but not fixed here, especially since the counting quotas\n    work in Pike will remove all of the reservations commit and\n    rollback code.\n    \n    Change-Id: I12d1fa1a10f9014863123ac9cc3c63ddfb48378e\n    Partial-Bug: #1678326\n", 
+            "date_created": "2017-04-05 21:54:34.194444+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/452359\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=42d4ea0b6289b1f26a44a95dcfadfc75587d7c2c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 42d4ea0b6289b1f26a44a95dcfadfc75587d7c2c\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Mar 31 21:08:55 2017 -0400\n\n    Commit usage decrement after destroying instance\n    \n    This fixes a regression in Ocata where we were always\n    decrementing quota usage during instance delete even\n    if we failed to delete the instance. Now the reservation\n    is properly committed after the instance is destroyed.\n    \n    The related functional test is updated to show this working\n    correctly now.\n    \n    Change-Id: I5200e72c195e12b5a069cbae3f209492ed569fb4\n    Closes-Bug: #1678326\n", 
+            "date_created": "2017-04-05 21:55:12.144553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/454414", 
+            "date_created": "2017-04-07 01:39:03.927137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/453859\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9245bbf79ddbfd8a2e2310af654711f9d3a547b1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9245bbf79ddbfd8a2e2310af654711f9d3a547b1\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Apr 5 16:27:41 2017 -0400\n\n    Perform old-style local delete for shelved offloaded instances\n    \n    This fixes a regression from some local delete code added for cells v2\n    where it assumed that if an instance did not have a host, it wasn't\n    scheduled to a cell yet. That assumption misses the fact that the\n    instance won't have a host if it was shelved offloaded. And to be\n    shelved offloaded, the instance had to have first been built on a host\n    in a cell.\n    \n    So we simply duplicate the same check as later in the _delete() method\n    for instance.host or shelved-offloaded to decide what the case is.\n    \n    Obviously this is all a giant mess of duplicate delete path code that\n    needs to be unwound, and that's the plan, but first we're fixing\n    regressions and then we can start rolling this duplication all back\n    so we can get back to the single local delete flow that we know and love.\n    \n    Change-Id: Ie2063f621618c1d90aeb59f0f1d7da351862ea9f\n    Closes-Bug: #1678326\n", 
+            "date_created": "2017-04-07 01:56:34.984370+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/452363\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=01fa555b36055c1042e342d9f332f38e106d5d0d\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 01fa555b36055c1042e342d9f332f38e106d5d0d\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Mar 31 19:56:14 2017 -0400\n\n    Add regression test for quota decrement bug 1678326\n    \n    This was spotted from someone validating the fix for\n    bug 1670627. They reported that even though they failed\n    to delete an instance in ERROR state that was in cell0,\n    the quota usage was decremented.\n    \n    This is because we committed the quota reservation\n    to decrement the usage before actually attempting to destroy\n    the instance, rather than upon successful deletion.\n    \n    The rollback after InstanceNotFound is a noop because of\n    how the Quotas.rollback method noops if the reservations\n    were already committed. That is in itself arguably a bug,\n    but not fixed here, especially since the counting quotas\n    work in Pike will remove all of the reservations commit and\n    rollback code.\n    \n    Change-Id: I12d1fa1a10f9014863123ac9cc3c63ddfb48378e\n    Partial-Bug: #1678326\n    (cherry picked from commit 032937ce51c64e0f5292ca3149e3b244863fffca)\n", 
+            "date_created": "2017-04-10 13:30:16.269222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/452364\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=361b88383130be8da9d474d02a9f62136239d506\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 361b88383130be8da9d474d02a9f62136239d506\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Mar 31 21:08:55 2017 -0400\n\n    Commit usage decrement after destroying instance\n    \n    This fixes a regression in Ocata where we were always\n    decrementing quota usage during instance delete even\n    if we failed to delete the instance. Now the reservation\n    is properly committed after the instance is destroyed.\n    \n    The related functional test is updated to show this working\n    correctly now.\n    \n    Conflicts:\n          nova/compute/api.py\n          nova/tests/unit/compute/test_compute_api.py\n    \n    NOTE(mriedem): The conflict is due to not having change\n    edf51119fa59ff8a3337abb9107a06fa33d3c68f in stable/ocata.\n    \n    Change-Id: I5200e72c195e12b5a069cbae3f209492ed569fb4\n    Closes-Bug: #1678326\n    (cherry picked from commit 5c1af55cbe526dea72308767df8709064ffae6a8)\n", 
+            "date_created": "2017-04-10 13:30:32.415482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/454414\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6384e935be147d3f454c264703136c5e82eebafd\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit 6384e935be147d3f454c264703136c5e82eebafd\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Apr 5 16:27:41 2017 -0400\n\n    Perform old-style local delete for shelved offloaded instances\n    \n    This fixes a regression from some local delete code added for cells v2\n    where it assumed that if an instance did not have a host, it wasn't\n    scheduled to a cell yet. That assumption misses the fact that the\n    instance won't have a host if it was shelved offloaded. And to be\n    shelved offloaded, the instance had to have first been built on a host\n    in a cell.\n    \n    So we simply duplicate the same check as later in the _delete() method\n    for instance.host or shelved-offloaded to decide what the case is.\n    \n    Obviously this is all a giant mess of duplicate delete path code that\n    needs to be unwound, and that's the plan, but first we're fixing\n    regressions and then we can start rolling this duplication all back\n    so we can get back to the single local delete flow that we know and love.\n    \n    Change-Id: Ie2063f621618c1d90aeb59f0f1d7da351862ea9f\n    Closes-Bug: #1678326\n    (cherry picked from commit 9245bbf79ddbfd8a2e2310af654711f9d3a547b1)\n", 
+            "date_created": "2017-04-10 13:31:28.313145+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "For anyone confused, Ie2063f621618c1d90aeb59f0f1d7da351862ea9f was targeting the wrong bug, it doesn't fix this one, it fixes bug 1675570.", 
+            "date_created": "2017-04-12 17:14:29.506092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.3 release.", 
+            "date_created": "2017-04-12 18:55:05.078263+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.3 release.", 
+            "date_created": "2017-04-12 18:55:06.665878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b1 development milestone.", 
+            "date_created": "2017-04-14 09:22:12.803566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b1 development milestone.", 
+            "date_created": "2017-04-14 09:22:14.345249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/452346", 
+            "date_created": "2017-06-15 15:40:23.733169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-04-05 21:55:09.687856+00:00"
+}

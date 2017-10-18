@@ -1,0 +1,115 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 09:03:40.502656+00:00", 
+    "description": "I have an OpenStack kilo setup on RHEL7.1 with a controller and a compute node (network-compute + network-network)\uff0cthe config is following:\n\n# /etc/nova.nova.conf on contrller node\n[DEFAULT]\nnetwork_api_class = nova.network.api.API\nsecurity_group_api = nova\n\n# /etc/nova/nova.conf on compute node\n[DEFAULT]\nnetwork_api_class = nova.network.api.API\nsecurity_group_api = nova\nfirewall_driver = nova.virt.libvirt.firewall.IptablesFirewallDriver\nnetwork_manager = nova.network.manager.FlatDHCPManager\nnetwork_size = 254\nallow_same_net_traffic = False\nmulti_host = True\nsend_arp_for_ha = True\nshare_dhcp_address = True\nforce_dhcp_release = True\nflat_network_bridge = br100\nflat_interface = eth0\npublic_interface = eth0\n\nsteps for test 1:\n1) create and start VM instance-1 with secgroup default;\n2) VM instance-1 ping br100:  OK;  \n3) br100 ping VM instance-1: operation not permitted (because of no secgroup-rules for ICMP)\n4) nova secgroup-add-rule default icmp -1 -1 0.0.0.0/0\n5) br100 ping VM instance-1: i got the same wrong message, not expected.\n\nsteps for test 2:\n1) nova secgroup-add-rule default icmp -1 -1 0.0.0.0/0;\n2) create and start VM instance-2 with secgroup default;\n3) br100 ping instance-2: OK\n\nIt seems that command \"nova secgroup-add-rule ...\" doesn't work immediately for the existed or running VM instances?", 
+    "tags": [
+        "security"
+    ], 
+    "importance": "High", 
+    "heat": 276, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1491307", 
+    "owner": "https://api.launchpad.net/1.0/~sreesiv", 
+    "id": 1491307, 
+    "index": 1803, 
+    "openned": "2015-09-02 09:30:03.096708+00:00", 
+    "created": "2015-09-02 09:30:03.096708+00:00", 
+    "title": "[OSSA 2015-021] secgroup rules doesn't work for instance immediately (CVE-2015-7713)", 
+    "comments": [
+        {
+            "content": "I have an OpenStack kilo setup on RHEL7.1 with a controller and a compute node (network-compute + network-network)\uff0cthe config is following:\n\n# /etc/nova.nova.conf on contrller node\n[DEFAULT]\nnetwork_api_class = nova.network.api.API\nsecurity_group_api = nova\n\n# /etc/nova/nova.conf on compute node\n[DEFAULT]\nnetwork_api_class = nova.network.api.API\nsecurity_group_api = nova\nfirewall_driver = nova.virt.libvirt.firewall.IptablesFirewallDriver\nnetwork_manager = nova.network.manager.FlatDHCPManager\nnetwork_size = 254\nallow_same_net_traffic = False\nmulti_host = True\nsend_arp_for_ha = True\nshare_dhcp_address = True\nforce_dhcp_release = True\nflat_network_bridge = br100\nflat_interface = eth0\npublic_interface = eth0\n\nsteps for test 1:\n1) create and start VM instance-1 with secgroup default;\n2) VM instance-1 ping br100:  OK;  \n3) br100 ping VM instance-1: operation not permitted (because of no secgroup-rules for ICMP)\n4) nova secgroup-add-rule default icmp -1 -1 0.0.0.0/0\n5) br100 ping VM instance-1: i got the same wrong message, not expected.\n\nsteps for test 2:\n1) nova secgroup-add-rule default icmp -1 -1 0.0.0.0/0;\n2) create and start VM instance-2 with secgroup default;\n3) br100 ping instance-2: OK\n\nIt seems that command \"nova secgroup-add-rule ...\" doesn't work immediately for the existed or running VM instances?", 
+            "date_created": "2015-09-02 09:30:03.096708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~244914362-q"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.\n\nSo does new nova net security-group-rules are supposed to be applied on existing instance ?", 
+            "date_created": "2015-09-02 11:59:35.354938+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I'm switching this bug to public security since it's been independently reported in public security bug 1492961 today.", 
+            "date_created": "2015-09-07 13:39:22.312764+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": ">> So does new nova net security-group-rules are supposed to be applied on existing instance ?\n\nI believe it should, especially important in cases where new rules are added to make the group more restrictive. The  admin would think that his rule is applied and safe, whereas actually he needs to manually re-associate that group with 'one of the instances' for it to be applied across all VMs. More details can be seen in the public security bug 1492961 raised be me.\n\nI think it has to do something with the sec group rules not being refreshed in the code path... \"refresh_security_group_rules\" func not being called I suppose!\n\nI am new to OpenStack and would like to work on investigating and fixing this issue. I've assigned this to myself. Request reviewers to confirm and discuss the vulnerabilities and possible solutions.   ", 
+            "date_created": "2015-09-08 05:12:52.842554+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sreesiv"
+        }, 
+        {
+            "content": "Can someone familiar with nova-net security group please confirm the issue here ?", 
+            "date_created": "2015-09-08 14:26:34.268538+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I've found the root cause of this issue.\n\nThe call chain goes like this... \n\nIn \"./nova/compute/api.py\" \nadd_rules() AND remove_rules() calls\n trigger_rules_refresh() which in turn calls refresh_instance_security_rules() [RPC]\n\nThis ends up in ./nova/compute/manager.py\n[RPC] _ComputeV4Proxy::refresh_instance_security_rules() which calls ComputeManager::refresh_instance_security_rules(). But the manager's function decorated with '@object_compat' calls decorated_function() \n  which calls _load_instance(kwargs['instance']). This fails since there is no 'instance' key there and once again calls _load_instance from the except catch...\n        except KeyError:\n            args = (_load_instance(args[0]),) + args[1:]\n\nFrom there it calls objects.Instance._from_db_object() with argument 'expected_attrs=metas' which is initialized to \nmetas = ['metadata', 'system_metadata']\n\nThe db instance dict doesn't have the keys in 'metas' because in trigger_rules_refresh() the sec groups are got from db by joining on the instances column, but it doesn't join on the metadata/system_metadata fields.\n\nThis again causes 'KeyError' because when db instance dict is converted to the Instance object, it expects fields that aren't in the dict. So the manager's function do not call refresh_instance_security_rules() on the LibvirtDriver and thereby IptablesFirewallDriver.\n\n\nThis same issue is mentioned in bug 1484738, although the end problems they cause differ. I've verified the fix proposed by Matt Riedemann and it resolves the issue. \n\nMore details: https://bugs.launchpad.net/nova/+bug/1484738/comments/11\n\nWhy this is not repro'ed  in Liberty and why can't those changes be backported: https://bugs.launchpad.net/nova/+bug/1484738/comments/13\n\nMore details in commit msg: https://bugs.launchpad.net/nova/+bug/1484738/comments/17\n\nSo once the fix for bug 1484738 is merged to stable/kilo, it will resolve this issue as well.\n", 
+            "date_created": "2015-09-11 13:06:43.450848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sreesiv"
+        }, 
+        {
+            "content": "Per comment 5, this sounds like a duplicate of bug 1484738.  Before comment 5 I was going to ask if there were any errors in the logs, but comment 5 seems to confirm that.  So I wouldn't consider this a security issue per se, it's just a code bug that was preventing things from working properly and is now fixed in master (liberty) and backport to stable/kilo and stable/juno.  As of this morning it's merged in stable/juno and the fix in stable/kilo is going through the gate.", 
+            "date_created": "2015-09-11 13:59:10.134217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It sounds like the extent of the risk here is that a user may extend a security group with a change to block some malicious traffic or close off a vulnerable service, then assume they're protected from it without double-checking.", 
+            "date_created": "2015-09-11 14:10:43.191454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Looking at the 2 security group APIs in nova, in the case of nova-network when you add a new secgroup rule it gets into the db but doesn't get down to the virt driver which actually does the iptables stuff (in the case of libvirt) if you hit the KeyError when it calls refresh_instance_security_rules.  That failure doesn't get back to the user because the nova-network secgroup API does a cast to refresh the rules. So, yeah, the operation from the CLI would not return an error, but the rules aren't applied for the guest if you hit the KeyError, so you might have a false sense of security.", 
+            "date_created": "2015-09-11 14:46:20.021096+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I wouldn't consider Neutron affected by this since it doesn't do the cast to refresh_instance_security_rules.", 
+            "date_created": "2015-09-11 14:46:47.287708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I am new to OpenStack and Python in general, so didn't understand the 'cast' part.\n\nBut as I mentioned in the bug I raised (bug 1492961, which was marked duplicate to this one) I've verified the same with neutron network and is working fine there. So it's nova-network only and is resolved with mriedem's changes to bug 1484738.", 
+            "date_created": "2015-09-14 04:44:16.980119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sreesiv"
+        }, 
+        {
+            "content": "Since it's quite a security defect, and already fixed in supported stable release, I suggest we issue an OSSA with this impact description:\n\nTitle: Nova network security group changes are not applied to running instances\nProducts: Nova\nAffects: versions through 2014.2.3, and 2015.1 versions through 2015.1.1\n\nDescription:\nSecurity group changes silently fails to be applied to already running instances, potentially resulting in instances not being protected by security group. All Nova network setups are affected.\n\n\nNow about attributions, It seems like this was independently reported by suntao, Sreekumar S. Are those your name and is there affiliations to mention along or are you independent contributors ?", 
+            "date_created": "2015-09-14 20:36:45.189576+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Yes, 'Sreekumar S' is my name, and I am an independent contributor.", 
+            "date_created": "2015-09-15 07:41:21.173128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sreesiv"
+        }, 
+        {
+            "content": "Tristan, this was fixed under bug 1484738 but the OSSA is on this bug - how do we resolve that?  Should the OSSA move to 1484738?", 
+            "date_created": "2015-09-23 14:03:19.592183+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Matt, that is fine to me, this bug describe the security impact of bug 1484738, and I propose to use it for the OSSA tasks. The advisory can reference the former bug 1484738.\n\n@suntao, can you confirm your attribution is correct:\n\nTitle: Nova network security group changes are not applied to running instances\nReporter: Sreekumar S and Suntao\nProducts: Nova\nAffects: versions through 2014.2.3, and 2015.1 versions through 2015.1.1\n\nDescription:\nSreekumar S and Suntao independently reported a vulnerability in Nova network. Security group changes silently fails to be applied to already running instances, potentially resulting in instances not being protected by security group. All Nova network setups are affected.", 
+            "date_created": "2015-09-23 14:23:33.885904+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Oups, forgot to update the affect line:\n\nAffects: <=2014.2.3, >=2015.1.0, <=2015.1.1", 
+            "date_created": "2015-09-23 14:24:09.561346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "+1 with affects line update", 
+            "date_created": "2015-10-05 14:12:53.167064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Also a slight phrasing improvement to suggest over the second sentence of Tristan's impact description from comment #14:\n\n\"Security group changes silently fail to be applied to already running instances, potentially resulting in instances not being protected by the security group.\"\n\nOtherwise looks good to me.", 
+            "date_created": "2015-10-05 17:05:20.813968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Thanks, CVE requested with:\n\nTitle: Nova network security group changes are not applied to running instances\nReporter: Sreekumar S and Suntao\nProducts: Nova\nAffects: <=2014.2.3, >=2015.1.0, <=2015.1.1\n\nDescription:\nSreekumar S and Suntao independently reported a vulnerability in Nova network. Security group changes silently fail to be applied to already running instances, potentially resulting in instances not being protected by the security group. All Nova network setups are affected.", 
+            "date_created": "2015-10-05 18:20:31.316650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }
+    ], 
+    "closed": "2015-09-24 07:01:19.868594+00:00"
+}

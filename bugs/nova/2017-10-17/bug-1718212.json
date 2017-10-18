@@ -1,0 +1,65 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-09-29 06:57:43.536550+00:00", 
+    "description": "The compute resource tracker is ignoring values coming from compute drivers such as vSphere. Specifically, the resource tracker is accepting disk_total from the driver, but not disk_available and disk_used. \n\nWe've checked the vSphere driver, and the driver is indeed reporting the correct values for this.\n\n<snip>\n        data[\"vcpus\"] = stats['vcpus']\n        data[\"disk_total\"] = capacity / units.Gi\n        data[\"disk_available\"] = freespace / units.Gi\n        data[\"disk_used\"] = data[\"disk_total\"] - data[\"disk_available\"]\n        data[\"host_memory_total\"] = stats['mem']['total']\n        data[\"host_memory_free\"] = stats['mem']['free']\n        data[\"hypervisor_type\"] = about_info.name\n        data[\"hypervisor_version\"] = versionutils.convert_version_to_int(\n                str(about_info.version))\n        data[\"hypervisor_hostname\"] = self._host_name\n        data[\"supported_instances\"] = [\n            (arch.I686, hv_type.VMWARE, vm_mode.HVM),\n            (arch.X86_64, hv_type.VMWARE, vm_mode.HVM)]\n</snip>\n\nIt looks like a patch was made to the resource tracker @ https://review.openstack.org/#/c/126237/ but the change was voted down and not approved.\n\nSince vSphere is reporting the correct data, maybe someone can tell us why Nova is ignoring these values and provide us with some guidance on correcting the problem in the driver, if that's where the change is needed.\n\nThis is affecting our production environment because I use upstream code and I have clusters that get overcommitted as a direct result of the scheduler seeing that no disk is \"used\"\n\nThis should get extreme priority since it affects the ability to launch things!!!", 
+    "tags": [
+        "placement", 
+        "vmware"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1718212", 
+    "owner": "https://api.launchpad.net/1.0/~rgerganov", 
+    "id": 1718212, 
+    "index": 8, 
+    "openned": "2017-09-19 13:51:41.868458+00:00", 
+    "created": "2017-09-19 13:51:41.868458+00:00", 
+    "title": "Compute resource tracker does not report correct information for drivers such as vSphere", 
+    "comments": [
+        {
+            "content": "The compute resource tracker is ignoring values coming from compute drivers such as vSphere. Specifically, the resource tracker is accepting disk_total from the driver, but not disk_available and disk_used. \n\nWe've checked the vSphere driver, and the driver is indeed reporting the correct values for this.\n\n<snip>\n        data[\"vcpus\"] = stats['vcpus']\n        data[\"disk_total\"] = capacity / units.Gi\n        data[\"disk_available\"] = freespace / units.Gi\n        data[\"disk_used\"] = data[\"disk_total\"] - data[\"disk_available\"]\n        data[\"host_memory_total\"] = stats['mem']['total']\n        data[\"host_memory_free\"] = stats['mem']['free']\n        data[\"hypervisor_type\"] = about_info.name\n        data[\"hypervisor_version\"] = versionutils.convert_version_to_int(\n                str(about_info.version))\n        data[\"hypervisor_hostname\"] = self._host_name\n        data[\"supported_instances\"] = [\n            (arch.I686, hv_type.VMWARE, vm_mode.HVM),\n            (arch.X86_64, hv_type.VMWARE, vm_mode.HVM)]\n</snip>\n\nIt looks like a patch was made to the resource tracker @ https://review.openstack.org/#/c/126237/ but the change was voted down and not approved.\n\nSince vSphere is reporting the correct data, maybe someone can tell us why Nova is ignoring these values and provide us with some guidance on correcting the problem in the driver, if that's where the change is needed.\n\nThis is affecting our production environment because I use upstream code and I have clusters that get overcommitted as a direct result of the scheduler seeing that no disk is \"used\"\n\nThis should get extreme priority since it affects the ability to launch things!!!", 
+            "date_created": "2017-09-19 13:51:41.868458+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jjahns"
+        }, 
+        {
+            "content": "In https://review.openstack.org/#/c/441543/ a new virt driver method, get_inventory(), was added that ought to be able to help this problem once implemented in the vmwareapi virt driver. This will allow the disk, memory, etc to express a \"real\" \"total\" and a \"reserved\" value which represents any resources that are consumed by anything that nova does not track (e.g. pre-existing vms).\n\nWhen get_inventory is used, it allows the virt driver to become authoritative for Inventory information. Anything that get_inventory doesn't provide falls back to the old way. The libvirt of get_inventory has a bit more information: https://review.openstack.org/#/c/457782/\n\nSo I would guess that the way forward here is to provide a get_inventory method in the vmwareapi driver. If you can do that Jay Jahns, great, please say so. If not you, then I guess it will be me or Rado Gerganov.", 
+            "date_created": "2017-09-19 18:33:15.726060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "What version of nova are you running? https://review.openstack.org/#/c/126237/ was proposed over 2 years ago and bug 1240200 was opened in 2013. So I would not consider this an extreme priority given how latent it is.\n\nThe reason https://review.openstack.org/#/c/126237/ was rejected was because of the proposed solution, which was adding a global config option to make the operator have to know if they trust the resource tracker or the virt driver. The rejection of that patch was about the solution, not saying it wasn't a problem. That was also expressed in this mailing list thread:\n\nhttp://lists.openstack.org/pipermail/openstack-dev/2014-October/047849.html\n\nFrom what I read, there was general favor of fixing the virt drivers to report the correct information and removing the code in the resource tracker that is being used today. The question was what other virt drivers needed to be fixed, which would require an audit and probably a blueprint. The change from Gary Kotton was abandoned as a result.\n\nAs Chris noted, I think the get_inventory() method is probably the solution here since (1) we're working toward removing, or very much slimming down, the ResourceTracker code's role in resource claims and scheduling. That's being replaced with Nova's usage of the Placement service, and the get_inventory() method feeds into that. Looking at the original bug 1240200, the issue is with reporting reserved space, which can be solved by implementing the get_inventory() method to report whatever amount of reserved VCPU/MEMORY_MB/DISK_GB is on the hypervisor. The ResourceTracker then feeds that data into the Placement service which the nova scheduler relies on for scheduling decisions.", 
+            "date_created": "2017-09-19 21:52:39.067559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Thank you for responding.\n\nThe version I am running in prod is Newton.\n\nWe are upgrading to Pike in the coming days/weeks. First we are going to go to Ocata.\n\nI'll take a look at this item and confirm.", 
+            "date_created": "2017-09-19 22:08:30.961659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jjahns"
+        }, 
+        {
+            "content": "Rado is looking into this", 
+            "date_created": "2017-09-20 18:43:44.397941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/506175", 
+            "date_created": "2017-09-21 13:42:33.396385+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Unfortunately there is no easy way to calculate the \"reserved\" disk space, i.e. the non-OpenStack usage. In the VMware case this is not a static value, especially if you are using a shared datastore for both OpenStack and non-OpenStack workloads.\n\nWe may try to report the used disk space as \"reserved\" but I am not sure what kind of implications that would have. IMO, calculating the resource usage in Nova instead of using the data returned by the hypervisor is poor design choice.\n\nJay, as a workaround you may try setting \"reserved_host_disk_mb\" in nova.conf.", 
+            "date_created": "2017-09-27 12:17:22.203139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rgerganov"
+        }, 
+        {
+            "content": "Hi,\n\nHere is what the virt driver is returning for my cluster. I am using one vSphere cluster (1 compute node) and there are no non-OpenStack instances on this cluster.\n\n2017-09-28 23:04:35.562 3304 DEBUG nova.compute.resource_tracker [req-ae33aa02-bcf8-48dc-8884-9d6ddad56b61 - - - - -] Hypervisor/Node resource view: name=domain-c192.b9564b6d-07ee-4a65-89f2-48244db310b9 free_ram=4549438MB free_disk=74717GB free_vcpus=936 pci_devices=None _report_hypervisor_resource_view /opt/mhos/openstack/nova/lib/python2.7/site-packages/nova/compute/resource_tracker.py:672\n\nIf you notice, free_disk is 74717GB.\n\nNext log output:\n\n2017-09-28 22:21:59.466 3304 INFO nova.compute.resource_tracker [req-ae33aa02-bcf8-48dc-8884-9d6ddad56b61 - - - - -] Final resource view: name=domain-c192.b9564b6d-07ee-4a65-89f2-48244db310b9 phys_ram=6241318MB used_ram=2706944MB phys_disk=101720GB used_disk=0GB total_vcpus=936 used_vcpus=1575 pci_stats=[]\n\nUsed disk says 0GB and phys_disk says 101720GB.\n\nThat's incorrect. The value should be 101720 - 74717.\n\nAll of my instances do not have root disks. They are completely ephemeral and our users use volumes to store persistent data. Even then, we should be reporting what the compute node has reported back with.\n\nHow this impacts production: There is no check to prevent gross oversubscription of storage.\n\nIn theory, I can login, create a 500GB image in Glance, launch 1000 instances on it (which the maths add up to potentially 500000GB, or 500TB) and then run a dd command in all of them simultaneously and destroy my vSphere cluster.\n\n", 
+            "date_created": "2017-09-29 06:48:35.752907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jjahns"
+        }, 
+        {
+            "content": "I should also add - instead of launching 1000 instances, they could create 1000 volumes, and assume they are 500GB each, run a dd command in them and do the same thing.\n\nWe *have* to be able to report this data, or OpenStack will continue to provision things to this compute node and we end up in a really nasty, possibly catastrophic, situation.", 
+            "date_created": "2017-09-29 06:57:42.682683+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jjahns"
+        }
+    ]
+}

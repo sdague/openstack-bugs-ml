@@ -1,0 +1,60 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2015-09-04 19:08:43.565744+00:00", 
+    "description": "I've been trying to unskip the test_stamp_pattern scenario in tempest and it's been randomly failing (but very recreatable) because when we attach the 2nd volume (from volume snapshot) to the 2nd instance (from snapshot), the attach API operation is successful but the device partition never shows up on the guest.\n\nhttps://review.openstack.org/#/c/218355/6,publish\n\nThere is dmesg debug output when the test fails and it clearly shows there is no vdb attach:\n\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/console.html#_2015-09-02_17_48_53_884\n\nChecking the libvirtd logs, test_stamp_pattern is running against domain 00000006 and I don't see any call to virDomainAttachDeviceFlags for that domain.\n\nI do see it for others, like:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/libvirt/libvirtd.txt.gz#_2015-09-02_17_25_13_297\n\nSo it appears that libvirt just completely fails to do the attach device call.\n\nFrom the n-cpu log, here is where we've come back from connecting the iscsi volume via os-brick and we get the device xml for the attach all to libvirt:\n\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/screen-n-cpu.txt.gz#_2015-09-02_17_42_10_274\n\n2015-09-02 17:42:10.274 DEBUG nova.virt.libvirt.config [req-6b7dde2f-4466-4cbc-a0c6-de05880c3275 tempest-TestStampPattern-1375625978 tempest-TestStampPattern-227460230] Generated XML ('<disk type=\"block\" device=\"disk\">\\n <driver name=\"qemu\" type=\"raw\" cache=\"none\"/>\\n <source dev=\"/dev/disk/by-path/ip-10.0.0.126:3260-iscsi-iqn.2010-10.org.openstack:volume-c0604f38-eb3d-4840-8ee3-6b0444faddb5-lun-1\"/>\\n <target bus=\"virtio\" dev=\"vdb\"/>\\n <serial>c0604f38-eb3d-4840-8ee3-6b0444faddb5</serial>\\n</disk>\\n',) to_xml /opt/stack/new/nova/nova/virt/libvirt/config.py:82\n\nBut there is no corresponding call for virDomainAttachDeviceFlags and that domain in libvirtd logs - but it doesn't fail either, it's like it's just silently ignored or something.", 
+    "tags": [
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "Low", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1492026", 
+    "owner": "None", 
+    "id": 1492026, 
+    "index": 1836, 
+    "openned": "2015-09-03 20:53:37.776455+00:00", 
+    "created": "2015-09-03 20:53:37.776455+00:00", 
+    "title": "Attached volume partition sometimes doesn't show up in guest if previous volume detach was not complete", 
+    "comments": [
+        {
+            "content": "I've been trying to unskip the test_stamp_pattern scenario in tempest and it's been randomly failing (but very recreatable) because when we attach the 2nd volume (from volume snapshot) to the 2nd instance (from snapshot), the attach API operation is successful but the device partition never shows up on the guest.\n\nhttps://review.openstack.org/#/c/218355/6,publish\n\nThere is dmesg debug output when the test fails and it clearly shows there is no vdb attach:\n\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/console.html#_2015-09-02_17_48_53_884\n\nChecking the libvirtd logs, test_stamp_pattern is running against domain 00000006 and I don't see any call to virDomainAttachDeviceFlags for that domain.\n\nI do see it for others, like:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/libvirt/libvirtd.txt.gz#_2015-09-02_17_25_13_297\n\nSo it appears that libvirt just completely fails to do the attach device call.\n\nFrom the n-cpu log, here is where we've come back from connecting the iscsi volume via os-brick and we get the device xml for the attach all to libvirt:\n\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/screen-n-cpu.txt.gz#_2015-09-02_17_42_10_274\n\n2015-09-02 17:42:10.274 DEBUG nova.virt.libvirt.config [req-6b7dde2f-4466-4cbc-a0c6-de05880c3275 tempest-TestStampPattern-1375625978 tempest-TestStampPattern-227460230] Generated XML ('<disk type=\"block\" device=\"disk\">\\n <driver name=\"qemu\" type=\"raw\" cache=\"none\"/>\\n <source dev=\"/dev/disk/by-path/ip-10.0.0.126:3260-iscsi-iqn.2010-10.org.openstack:volume-c0604f38-eb3d-4840-8ee3-6b0444faddb5-lun-1\"/>\\n <target bus=\"virtio\" dev=\"vdb\"/>\\n <serial>c0604f38-eb3d-4840-8ee3-6b0444faddb5</serial>\\n</disk>\\n',) to_xml /opt/stack/new/nova/nova/virt/libvirt/config.py:82\n\nBut there is no corresponding call for virDomainAttachDeviceFlags and that domain in libvirtd logs - but it doesn't fail either, it's like it's just silently ignored or something.", 
+            "date_created": "2015-09-03 20:53:37.776455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/220357", 
+            "date_created": "2015-09-04 00:08:23.953507+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "My current theory now is that test_stamp_pattern is racing with the volume detach on the first instance/volume combo where the partition isn't gone when we create the volume snapshot (even though cinder says the volume is detach and 'available').  So when we go to attach the volume snapshot to the 2nd instance, maybe there is something on the volume that makes libvirt think the partition is already there and doesn't do the attach.  It's still odd that libvirt's virDomainAttachDeviceFlags wouldn't log a debug statement at all in that case - even if it was just ignoring it thinking it's already there - or raise an error or something.  To test this, we can add some code to test_stamp_pattern to wait for the partition to be gone from the instance after we've detached the volume but before we take the snapshot of the volume.", 
+            "date_created": "2015-09-04 01:14:30.241625+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "After more digging I don't think this is a libvirt problem.  it *could* be a qemu problem or guest kernel problem.\n\nLooking at the logs starting at:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/console.html#_2015-09-02_17_48_53_884\n\nYou can trace the process of test_stamp_pattern() down to:\n215: server_from_snapshot = self._boot_image(snapshot_image['id'])\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/console.html#_2015-09-02_17_48_54_005\nwhere we see:\n2015-09-02 17:41:56,742 8653 DEBUG    [tempest.scenario.manager] Creating a server (name: tempest-TestStampPattern-811565472, image: eb0ab3d7-8cbe-479e-9e7f-1d106f02ddf4, flavor: 42)\n\nChecking the n-cpu logs we see:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/screen-n-cpu.txt.gz#_2015-09-02_17_42_01_490\n\"\n  <uuid>3ac46e96-ab71-4808-9fe0-4d97f16f9dca</uuid>\n  <name>instance-00000062</name>\n  <memory>65536</memory>\n  <vcpu>1</vcpu>\n  <metadata>\n    <nova:instance xmlns:nova=\"http://openstack.org/xmlns/libvirt/nova/1.0\">\n      <nova:package version=\"12.0.0\"/>\n      <nova:name>tempest-TestStampPattern-811565472</nova:name>\n\"\nSo we booted instance-00000062 to fulfil this request.\n\nWe then get down to:\n226:         device = self._attach_volume(server_from_snapshot,\n227:                                     volume_from_snapshot)\n228:        self._wait_for_volume_available_on_the_system(ip_for_snapshot, device)\n\nWe see the  virDomainAttachDeviceFlags for instance-00000062 at:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/libvirt/libvirtd.txt.gz#_2015-09-02_17_42_10_274\n\nand from:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/libvirt/libvirtd.txt.gz#_2015-09-02_17_42_10_829\nto:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/libvirt/libvirtd.txt.gz#_2015-09-02_17_42_10_841\n\nWe can see what appears to be libvirt successfully attaching the device to the guest  The last command shows the new disk in the peripherals list.\n\nI suspect qemu/ guest kernel as we can see at:\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/console.html#_2015-09-02_17_48_53_953\n\nthat the new PCI device was never visible to the guest it should have been 00:05.0.\n\n\n", 
+            "date_created": "2015-09-04 05:47:06.770783+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "I'm totally fine with being told how I messed up that investigation.", 
+            "date_created": "2015-09-04 05:48:16.685363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/220357\nReason: Turns out that this wasn't the problem, we found the attach\ncall in the libvirtd logs, I just didn't see it the first\ntime:\n\nhttp://logs.openstack.org/55/218355/6/check/gate-tempest-dsvm-full/e0da291/logs/libvirt/libvirtd.txt.gz#_2015-09-02_17_42_10_274", 
+            "date_created": "2015-09-04 14:32:42.417214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "In talking with danpb about this today, our current theory is that due to the async nature of the virDomainDetachDeviceFlags call with libvirt and the fact that tempest isn't waiting for the partition to be gone from the guest before it starts taking snapshots of the volume and instance, that maybe the instance isn't 'clean' when it does the instance snapshot, so that when we boot the 2nd instance from the snapshot image things go wonky.\n\ndanpb said there is an VIR_DOMAIN_EVENT_ID_DEVICE_REMOVED event in libvirt >= 1.1.1 which could be used to monitor for when the device is actually detached.\n\n(9:42:11 AM) danpb: mriedem: we'd have to wire up the libvirt event thread to handle     vc.domainEventRegisterAny(None, libvirt.VIR_DOMAIN_EVENT_ID_DEVICE_REMOVED, myDomainEventDeviceRemovedCallback, None)\n(9:42:24 AM) danpb: currently we only monitor for libvirt.VIR_DOMAIN_EVENT_ID_LIFECYCLE,", 
+            "date_created": "2015-09-04 14:44:14.882128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Looks like bug 1374508 might be related to the issues I'm seeing in test_stamp_pattern.", 
+            "date_created": "2015-09-04 19:08:42.927099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

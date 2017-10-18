@@ -1,0 +1,47 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:14:29.581669+00:00", 
+    "description": "When running InstanceGroup.get_hosts() on a havana installation that uses postgres I get the following error:\n\n\nRemoteError: Remote error: ProgrammingError (ProgrammingError) operator does not exist: timestamp without time zone ~ unknown\n2014-03-14 09:58:57.193 8164 TRACE nova.compute.manager [instance: 83439206-3a88-495b-b6c7-6aea1287109f] LINE 3: ....uuid != instances.uuid AND (instances.deleted_at ~ 'None') ...\n2014-03-14 09:58:57.193 8164 TRACE nova.compute.manager [instance: 83439206-3a88-495b-b6c7-6aea1287109f]                            ^\n2014-03-14 09:58:57.193 8164 TRACE nova.compute.manager [instance: 83439206-3a88-495b-b6c7-6aea1287109f] HINT:  No operator matches the given name and argument type(s). You might need to add explicit type casts.\n\n\nI'm not a database expert, but after doing some digging, it seems that the problem is this line in get_hosts():\n\nfilters = {'uuid': filter_uuids, 'deleted_at': None}\n\nIt seems that current postgres doesn't allow implicit casts.  If I change the line to:\n\nfilters = {'uuid': filter_uuids, 'deleted': 0}\n\n\nThen it seems to work.", 
+    "tags": [
+        "db", 
+        "icehouse-rc-potential", 
+        "postgresql"
+    ], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1292963", 
+    "owner": "https://api.launchpad.net/1.0/~cbf123", 
+    "id": 1292963, 
+    "index": 1435, 
+    "openned": "2014-03-15 19:58:40.749760+00:00", 
+    "created": "2014-03-15 19:58:40.749760+00:00", 
+    "title": "postgres incompatibility in InstanceGroup.get_hosts()", 
+    "comments": [
+        {
+            "content": "When running InstanceGroup.get_hosts() on a havana installation that uses postgres I get the following error:\n\n\nRemoteError: Remote error: ProgrammingError (ProgrammingError) operator does not exist: timestamp without time zone ~ unknown\n2014-03-14 09:58:57.193 8164 TRACE nova.compute.manager [instance: 83439206-3a88-495b-b6c7-6aea1287109f] LINE 3: ....uuid != instances.uuid AND (instances.deleted_at ~ 'None') ...\n2014-03-14 09:58:57.193 8164 TRACE nova.compute.manager [instance: 83439206-3a88-495b-b6c7-6aea1287109f]                            ^\n2014-03-14 09:58:57.193 8164 TRACE nova.compute.manager [instance: 83439206-3a88-495b-b6c7-6aea1287109f] HINT:  No operator matches the given name and argument type(s). You might need to add explicit type casts.\n\n\nI'm not a database expert, but after doing some digging, it seems that the problem is this line in get_hosts():\n\nfilters = {'uuid': filter_uuids, 'deleted_at': None}\n\nIt seems that current postgres doesn't allow implicit casts.  If I change the line to:\n\nfilters = {'uuid': filter_uuids, 'deleted': 0}\n\n\nThen it seems to work.", 
+            "date_created": "2014-03-15 19:58:40.749760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/80808", 
+            "date_created": "2014-03-15 23:31:56.252747+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Since this isn't actually a regression, I'm going to move this to the icehouse-rc-potential list instead of listing it as a blocker for RC1.", 
+            "date_created": "2014-03-18 17:30:38.737468+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/82869\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0aecc86987794e3cb433723afbec744a11e1e720\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0aecc86987794e3cb433723afbec744a11e1e720\nAuthor: Chris Friesen <email address hidden>\nDate:   Tue Mar 25 08:29:58 2014 -0600\n\n    Add missing test for None in sqlalchemy query filter\n    \n    In sqlalchemy a comparison against a non-null value will not match\n    null values, so the existing code at the end of\n    db.sqlalchemy.api.instance_get_all_by_filters() will not return\n    instances where vm_state is NULL.\n    \n    This would be fine if the vm_state could never be null, but it\n    is declared as \"nullable\" in the Instance object. In many cases\n    \"vm_state\" will in fact have a value, but not all--in\n    get_test_instance() in test/utils.py the value of \"vm_state\" is not\n    specified.  There may be other similar cases.\n    \n    Accordingly, this commit updates the test to explicitly check for None.\n    \n    Without this fix the unit tests for bug 1292963 will fail because\n    the test instances have a vm_state of None.\n    \n    Closes-Bug: 1294756\n    Related-Bug: 1292963\n    Change-Id: I271cff22dec160fd0e76abadefd0fe06d32c3227\n", 
+            "date_created": "2014-03-26 22:17:00.462261+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/80808\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8538dd42d0c20e400e040a1a3349b07c6978c428\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8538dd42d0c20e400e040a1a3349b07c6978c428\nAuthor: Chris Friesen <email address hidden>\nDate:   Sat Mar 15 17:20:09 2014 -0600\n\n    postgres incompatibility in InstanceGroup.get_hosts()\n    \n    The original code fails in postgresql with:\n    \n    \"No operator matches the given name and argument type(s).\n    You might need to add explicit type casts.\"\n    \n    It looks like the problem is that postgres doesn't do\n    implicit casts, so I changed the code to check a different column\n    that didn't require any.\n    \n    Change-Id: I9342ec2bfbdd991d5f7a238eca59af003c7e7eac\n    Closes-bug: 1292963\n", 
+            "date_created": "2014-03-26 22:22:43.064800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-03-31 19:05:33.226383+00:00"
+}

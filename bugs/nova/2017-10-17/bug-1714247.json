@@ -1,0 +1,79 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-10-13 06:35:33.936890+00:00", 
+    "description": "When the '_cleanup_running_deleted_instances' nova-compute manager periodic task cleans up an instance that still exists on the host although being deleted from the DB, the according network info is not properly retrieved. For this reason, vif ports will not be cleaned up.\n\nIn this situation there may also be stale volume connections. Those will be leaked as well as os-brick attempts to flush those inaccessible devices, which will fail. As per a recent os-brick change, a 'force' flag must be set in order to ignore flush errors.\n\nLog: http://paste.openstack.org/raw/620048/", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1714247", 
+    "owner": "https://api.launchpad.net/1.0/~oss-xzdong", 
+    "id": 1714247, 
+    "index": 8278, 
+    "openned": "2017-08-31 13:25:33.346191+00:00", 
+    "created": "2017-08-31 13:25:33.346191+00:00", 
+    "title": "Cleaning up deleted instances leaks resources", 
+    "comments": [
+        {
+            "content": "When the nova-compute service cleans up an instance that still exists on the host although being deleted from the DB, the according network info is not properly retrieved.\n\nFor this reason, vif ports will not be cleaned up.\n\nIn this situation there may also be stale volume connections. Those will be leaked as well as os-brick attempts to flush those inaccessible devices, which will fail. As per a recent os-brick change, a 'force' flag must be set in order to ignore flush errors.\n\nLog: http://paste.openstack.org/raw/620048/", 
+            "date_created": "2017-08-31 13:25:33.346191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~petrutlucian94"
+        }, 
+        {
+            "content": "Isn't this fixed by https://review.openstack.org/#/c/486955/ so it's a duplicate of bug 1705683?", 
+            "date_created": "2017-08-31 20:53:28.390131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Well, maybe this is something else. Can you be more specific? Are you talking about a periodic task in the compute manager?", 
+            "date_created": "2017-08-31 20:54:03.474653+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Indeed, I was talking about the compute manager periodic task, sorry for being vague. Updating the description.", 
+            "date_created": "2017-09-01 06:49:45.708637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~petrutlucian94"
+        }, 
+        {
+            "content": "Can you be more specific where we're not passing through network info or terminating block device connections? Because looking at the periodic task code when it shuts down an instance to delete it locally, we call here:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L6764-L6766\n\nAnd the block_device_info and network_info is passed through here:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L2278\n\nAnd volume connections should be terminated here:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L2307\n\nSo what's missing? Is there a stacktrace in the nova-compute logs when this fails?", 
+            "date_created": "2017-09-01 15:05:31.935407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The network info fetched here [1] will be empty as it relies on the info cache [2], which won't contain vif details for deleted instances, as far as I can see.\n\nThere won't be any trace in the logs, it's just that those vifs will not be unplugged. It's really easy to reproduce, all you have to do is:\n1. boot an instance, while using ovs ports\n2. kill the nova compute service and wait for it to be reported as 'down'.\n3. destroy the instance\n4. bring the nova compute service back up. it will destroy the instance but the ports will not be unplugged. If iSCSI volumes were attached to that instance, the according iSCSI sessions will be leaked as well.\n\nAs for the volume connections, the BDMs are properly fetched. But if the nova compute service comes back up after the instances have been deleted from the db and volumes disconnected on the Cinder side, we end up having stale iSCSI sessions (of course, if using an iSCSI backend). The issue is that os-brick attempts to flush an inaccessible device, which fails. Until recently, it wasn't erroring out, moving on and removing the iSCSI session, but as per a recent change [3], it requires a 'force' flag in order to ignore flush exceptions.\n\n\n[1] https://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L2264\n[2] https://github.com/openstack/nova/blob/16.0.0.0rc2/nova/objects/instance.py#L1169-L1172\n[3] https://github.com/openstack/os-brick/commit/400ca5d6db818b966065001571e59198c6966e2f", 
+            "date_created": "2017-09-01 16:13:37.280089+00:00", 
+            "author": "https://api.launchpad.net/1.0/~petrutlucian94"
+        }, 
+        {
+            "content": "Tested in the latest master branch using devstack: \n\n1. vif is unplugged\n\nSee logs in: paste.openstack.org/show/623286/\n\n2. no stale iscsi session\n\nSee logs in: http://paste.openstack.org/show/623288/\n\nHi, Lucian,\n\nCould you check the logs to see if you do things differently?\n\nBR/Perry\n\n\n", 
+            "date_created": "2017-10-11 08:06:36.521267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oss-xzdong"
+        }, 
+        {
+            "content": "This happens when cleaning up instances that were deleted while the nova-compute service was down. I've checked your paste and I think that the missing step is exactly that: stopping the nova-compute service before deleting the instance and turning it back on afterwards.\n\nThanks for looking into this.\n\nLucian", 
+            "date_created": "2017-10-11 09:21:16.314929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~petrutlucian94"
+        }, 
+        {
+            "content": "Thanks for the response. I have stopped and started the nova-compute service. The re-starting of nova-compute service is shown in the log (I am not sure why the stopping of nova-compute service is not shown; probably I should use \"raw\").\n\nstack@devstack01:~/devstack$ systemctl start <email address hidden>                                                                                                                     \n==== AUTHENTICATING FOR org.freedesktop.systemd1.manage-units ===\nAuthentication is required to start '<email address hidden>'.\nAuthenticating as: stack,,, (stack)\nPassword: \n==== AUTHENTICATION COMPLETE ===\n\nBR/Perry", 
+            "date_created": "2017-10-12 02:52:43.649553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oss-xzdong"
+        }, 
+        {
+            "content": "Attach a script log as a file so that the log won't get truncated.", 
+            "date_created": "2017-10-12 04:05:03.046242+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oss-xzdong"
+        }, 
+        {
+            "content": "I've added a cmd log that describes and helps recreating the issue. I tried to keep it as simple as possible.", 
+            "date_created": "2017-10-12 09:45:29.327429+00:00", 
+            "author": "https://api.launchpad.net/1.0/~petrutlucian94"
+        }, 
+        {
+            "content": "Lucian, thanks. I can reproduce the issue now.", 
+            "date_created": "2017-10-13 06:35:33.223249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oss-xzdong"
+        }
+    ]
+}

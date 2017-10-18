@@ -1,0 +1,60 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:14:34.850719+00:00", 
+    "description": "Libvirt's close callback causes deadlocks\n\nUnlike libvirt's lifecycle event callback which is triggered every time an event occurs, the close callback is only triggered when an attempt is made to use a connection that has been closed.  In that case, the sequence of events is usually as follows:\n\nLibvirtDriver._get_connection acquires _wrapped_conn_lock\nLibvirtDriver._get_connection calls _test_connection\nLibvirtDriver._test_connection calls libvirt.getLibVersion\nlibvirt.getLibVersion triggers LibvirtDriver._close_callback (because the connection is closed and this method is the registered handler)\nLibvirtDriver._close_callback attempts to acquire _wrapped_conn_lock\n\n_get_connection cannot release the lock because it is waiting for _close_callback to return and the latter cannot complete until it has acquired the lock.\n\nMaking the handling of the close callback asynchronous (like the lifecycle event handling) won't work, because by the time the lock is released, the connection object that was passed into the callback will no longer be equal to LibvirtDriver._wrapped_conn.  Even if the connection object is ignored, the instance will have already been disabled via the _get_new_connection method's existing error-handling logic.\n\nThe best solution would appear to be to simply not register a close callback.  The only case where it might provide some benefit is when a connection is closed after _get_connection has returned a reference to it.  The benefit of disabling the instance a little earlier in such marginal cases is arguably outweighed by the complexity of a thread-safe implementation, especially when the difficulty of testing such an implementation (to ensure it is indeed thread safe) is taken into consideration.\n\nNote that having _close_callback use _wrapped_conn_lock.acquire(False) instead of \"with _wrapped_conn_lock\" by itself is not a viable solution, because due to connections being opened via tpool.proxy_call, the close callback is called by a native thread, which means it should not be used to perform the various operations (including logging) involved in disabling the instance.", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "High", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1293641", 
+    "owner": "https://api.launchpad.net/1.0/~jswarren", 
+    "id": 1293641, 
+    "index": 1437, 
+    "openned": "2014-03-17 15:58:47.450477+00:00", 
+    "created": "2014-03-17 15:58:47.450477+00:00", 
+    "title": "Libvirt's close callback causes deadlocks", 
+    "comments": [
+        {
+            "content": "Libvirt's close callback causes deadlocks\n\nUnlike libvirt's lifecycle event callback which is triggered every time an event occurs, the close callback is only triggered when an attempt is made to use a connection that has been closed.  In that case, the sequence of events is usually as follows:\n\nLibvirtDriver._get_connection acquires _wrapped_conn_lock\nLibvirtDriver._get_connection calls _test_connection\nLibvirtDriver._test_connection calls libvirt.getLibVersion\nlibvirt.getLibVersion triggers LibvirtDriver._close_callback (because the connection is closed and this method is the registered handler)\nLibvirtDriver._close_callback attempts to acquire _wrapped_conn_lock\n\n_get_connection cannot release the lock because it is waiting for _close_callback to return and the latter cannot complete until it has acquired the lock.\n\nMaking the handling of the close callback asynchronous (like the lifecycle event handling) won't work, because by the time the lock is released, the connection object that was passed into the callback will no longer be equal to LibvirtDriver._wrapped_conn.  Even if the connection object is ignored, the instance will have already been disabled via the _get_new_connection method's existing error-handling logic.\n\nThe best solution would appear to be to simply not register a close callback.  The only case where it might provide some benefit is when a connection is closed after _get_connection has returned a reference to it.  The benefit of disabling the instance a little earlier in such marginal cases is arguably outweighed by the complexity of a thread-safe implementation, especially when the difficulty of testing such an implementation (to ensure it is indeed thread safe) is taken into consideration.\n\nNote that having _close_callback use _wrapped_conn_lock.acquire(False) instead of \"with _wrapped_conn_lock\" by itself is not a viable solution, because due to connections being opened via tpool.proxy_call, the close callback is called by a native thread, which means it should not be used to perform the various operations (including logging) involved in disabling the instance.", 
+            "date_created": "2014-03-17 15:58:47.450477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jswarren"
+        }, 
+        {
+            "content": "adding to rc1 for visibility ", 
+            "date_created": "2014-03-18 23:45:09.953622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "We are tracking several known libvirt bugs at the moment  (https://blueprints.launchpad.net/nova/+spec/support-libvirt-1x). What version of libvirt are you using, and do any of the known bugs sound like they are a duplicate of this?", 
+            "date_created": "2014-03-18 23:55:30.181622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "I am using version 1.1.1 and none of the other bugs look like a duplicate of this one.", 
+            "date_created": "2014-03-19 13:29:36.760880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jswarren"
+        }, 
+        {
+            "content": "NB This isn't a deadlock in libvirt code - it is in the libvirt nova driver itself  - recursive acquisition of _wrapped_conn_lock", 
+            "date_created": "2014-03-19 13:44:34.447345+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I think we can just move the call to 'test_connection' outside the lock, and loop to re-try upon failure eg\n\n    def _get_connection(self):\n        wrapped_conn = None\n        # multiple concurrent connections are protected by _wrapped_conn_lock\n        while not wrapped_conn:\n            with self._wrapped_conn_lock:\n                if not self._wrapped_conn\n                    wrapped_conn = self._get_new_connection()\n               wrapped_conn = self._wrapped_conn\n\n            if not self._test_connection(wrapped_conn):\n               wrapped_conn = None\n\n        return wrapped_conn\n\n", 
+            "date_created": "2014-03-19 13:51:19.524099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "That solution does not solve the problem that _close_callback is being called by a native thread--none of the operations involved in disabling the host, including logging, can be called by a native thread.  A proposed solution is already in the works: https://review.openstack.org/#/c/79617/  It also covers a separate bug that explains the native-thread issue.", 
+            "date_created": "2014-03-19 14:08:24.144501+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jswarren"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/79617\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=dba898226ec26ab49cecd24e9d6c255cf6153cd1\nSubmitter: Jenkins\nBranch:    master\n\ncommit dba898226ec26ab49cecd24e9d6c255cf6153cd1\nAuthor: John Warren <email address hidden>\nDate:   Tue Mar 11 14:40:31 2014 +0000\n\n    Change libvirt close callback to use green thread\n    \n    The native thread that calls the close callback is being\n    used to update a host's status, potentially causing threading\n    issues, since it involves operations that should only be\n    performed by green threads. This change fixes the issue\n    by limiting the native thread's interaction to adding data\n    to a queue and leaving the remaining work for\n    a green thread.\n    \n    Closes-Bug: #1290487\n    Closes-Bug: #1293641\n    \n    Change-Id: I59c14da15e4655dc4bf21d4de3d509472b146f7a\n", 
+            "date_created": "2014-03-26 02:15:56.197899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-03-31 19:05:40.345933+00:00"
+}

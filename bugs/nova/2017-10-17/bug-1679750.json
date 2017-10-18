@@ -1,0 +1,64 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-09-07 13:48:22.722101+00:00", 
+    "description": "This is semi-related to bug 1661312 for evacuate.\n\nThis is the case:\n\n1. Create an instance on host A successfully. There are allocation records in the placement API for the instance (consumer for the allocation records) and host A (resource provider).\n\n2. Host A goes down.\n\n3. Delete the instance. This triggers the local delete flow in the compute API where we can't RPC cast to the compute to delete the instance because the nova-compute service is down. So we do the delete in the database from the compute API (local to compute API, hence local delete).\n\nThe problem is in #3 we don't remove the allocations for the instance from the host A resource provider during the local delete flow.\n\nMaybe this doesn't matter while host A is down, since the scheduler can't schedule to it anyway. But if host A comes back up, it will have allocations tied to it for deleted instances.\n\nOn init_host in the compute service we call _complete_partial_deletion but that's only for instances with a vm_state of 'deleted' but aren't actually deleted in the database. I don't think that's going to cover this case because the local delete code in the compute API calls instance.destroy() which deletes the instance from the database (updates instances.deleted != 0 in the DB so it's \"soft\" deleted).", 
+    "tags": [
+        "placement"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1679750", 
+    "owner": "None", 
+    "id": 1679750, 
+    "index": 4787, 
+    "openned": "2017-04-04 16:00:01.225723+00:00", 
+    "created": "2017-04-04 16:00:01.225723+00:00", 
+    "title": "Allocations are not cleaned up in placement for instance 'local delete' case", 
+    "comments": [
+        {
+            "content": "This is semi-related to bug 1661312 for evacuate.\n\nThis is the case:\n\n1. Create an instance on host A successfully. There are allocation records in the placement API for the instance (consumer for the allocation records) and host A (resource provider).\n\n2. Host A goes down.\n\n3. Delete the instance. This triggers the local delete flow in the compute API where we can't RPC cast to the compute to delete the instance because the nova-compute service is down. So we do the delete in the database from the compute API (local to compute API, hence local delete).\n\nThe problem is in #3 we don't remove the allocations for the instance from the host A resource provider during the local delete flow.\n\nMaybe this doesn't matter while host A is down, since the scheduler can't schedule to it anyway. But if host A comes back up, it will have allocations tied to it for deleted instances.\n\nOn init_host in the compute service we call _complete_partial_deletion but that's only for instances with a vm_state of 'deleted' but aren't actually deleted in the database. I don't think that's going to cover this case because the local delete code in the compute API calls instance.destroy() which deletes the instance from the database (updates instances.deleted != 0 in the DB so it's \"soft\" deleted).", 
+            "date_created": "2017-04-04 16:00:01.225723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "There might be something in the periodic resource tracker updates that fixes the allocations once host A comes back up, but I'm not sure.\n\nWe probably need a functional test to run this scenario and see what happens.", 
+            "date_created": "2017-04-04 16:09:57.074211+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Another thing to note here is the nova-api service does not currently use the placement API for anything. If we fixed this by doing allocation cleanup from nova-api, we'd have to make nova-api dependent on placement, which is something we might not want to do since only nova-scheduler and nova-compute depend on placement today. We might be able to just fix this by doing a cleanup during init_host in the compute service.", 
+            "date_created": "2017-04-04 19:12:33.642030+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "To move forward on this, we should write a functional test which does the following:\n\n0. get the allocations for our single compute host, this is used later (it should be 0 to start)\n1. create a server (this would be on our single compute host in the functional test env)\n2. stop the compute (this triggers the local delete path in the api)\n3. delete the instance (goes down the _local_delete path in the api code)\n4. bring up the compute host again, this runs through the init_host routine and should update anything with the resource tracker and placement; I'm not sure how to tell when this is 'done'.\n5. get the allocations for the compute host and compare it to the original allocations in step 0. If they are the same, then everything is good, we cleaned up somewhere. If they are different, meaning the deleted instance is still consuming allocations on the host, then we have this bug and it needs to be fixed.", 
+            "date_created": "2017-04-10 14:46:34.738832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/470578", 
+            "date_created": "2017-06-02 23:15:25.484990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/470578\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4ba7baf451512d72b14f51cefe762642fabeda3e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4ba7baf451512d72b14f51cefe762642fabeda3e\nAuthor: melanie witt <email address hidden>\nDate:   Fri Jun 2 23:09:30 2017 +0000\n\n    Add functional test for local delete allocations\n    \n    This adds a test that shows we clean up allocations for an instance\n    that was local deleted while the compute host was down, when the\n    compute host comes back up.\n    \n    There might still be a problem if the compute host is never brought\n    back up, as allocations will still exist for the instance and show\n    up as usage during usage queries to placement.\n    \n    Related-Bug: #1679750\n    \n    Change-Id: Ia68a5a69783963b063264edde84006973bb77ceb\n", 
+            "date_created": "2017-08-09 03:01:25.652680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is this still a valid bug? It seems that the related functional test asserts the expected behavior and it is passing.", 
+            "date_created": "2017-08-15 13:52:49.298787+00:00", 
+            "author": "https://api.launchpad.net/1.0/~balazs-gibizer"
+        }, 
+        {
+            "content": "As the commit message in Mel's test patch points out:\n\n\"There might still be a problem if the compute host is never brought\nback up, as allocations will still exist for the instance and show\nup as usage during usage queries to placement.\"\n\nIf the compute is brought back up and \"heals\" the allocation, things are OK, but if the compute is never brought back up it'll be a problem as the GET /usages call to placement would be wrong, and we plan on eventually using that for our quota/limit checks in the API if a cell is down.", 
+            "date_created": "2017-08-22 19:27:03.534091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Alex also raised a good question in this conductor code during a build:\n\nhttps://review.openstack.org/#/c/501408/8/nova/conductor/manager.py@1049\n\nThat is a similar type of 'local delete' issue, but might be a separate bug.", 
+            "date_created": "2017-09-07 13:48:21.030378+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

@@ -1,0 +1,42 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2017-07-11 17:21:07.343889+00:00", 
+    "description": "This is based on code inspection currently but it looks like this should fail in the following case:\n\nhttps://github.com/openstack/nova/blob/56cd608d3a199dcb02ac2ae071ff3057241259da/nova/compute/api.py#L3723\n\nWhen we attach a volume to a shelved offloaded server, we create the BDM in the API. If the API is configured to point at cell0, then the BDM would be created in cell0.\n\nWhen we unshelve the instance, conductor asks the scheduler for a host (which is in some cell) and we build the instance in that cell. This could be a different cell because we currently don't restrict that in the conductor task manager when unshelving like we do for migrate:\n\nhttps://github.com/openstack/nova/blob/56cd608d3a199dcb02ac2ae071ff3057241259da/nova/conductor/tasks/migrate.py#L63-L66\n\nThe fact we don't restrict where the instance goes when it's unshelved is a separate bug.\n\nWhen unshelving the instance, it gets built on some compute and we pull the BDMs from the database configured for that cell (should be cell1, cell2, ..., cellN - some specific non-cell0 database).\n\nhttps://github.com/openstack/nova/blob/56cd608d3a199dcb02ac2ae071ff3057241259da/nova/compute/manager.py#L4513\n\nIf the BDM was created in the API in cell0, it shouldn't come back from that query in the compute manager code.\n\nWhat's most confusing about this is Tempest has tests for testing attach/detach a volume to a shelved offloaded instance:\n\nhttps://github.com/openstack/tempest/blob/21dd8a5ee2ab5a068cbb20d0468bd5f444fef59a/tempest/api/compute/volumes/test_attach_volume.py#L148\n\nAnd those are passing on the devstack change that runs with multiple cells and configures the API to use cell0 for the [database] section where the BDM would live:\n\nhttps://review.openstack.org/#/c/473565/\n\nUnless maybe that test is broken.\n\nWe are configured to run ssh validation in the gate jobs on master (pike) though, so the test is counting the number of partitions on the guest before and after the unshelve operation to see that they show up. It's also listing volume attachments for the instance after unshelve.", 
+    "tags": [
+        "cells", 
+        "shelve", 
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1702932", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1702932, 
+    "index": 2098, 
+    "openned": "2017-07-07 15:52:56.078564+00:00", 
+    "created": "2017-07-07 15:52:56.078564+00:00", 
+    "title": "Unshelving an offloaded server with volume attachments may not attach to the guest in multi-cell env", 
+    "comments": [
+        {
+            "content": "This is based on code inspection currently but it looks like this should fail in the following case:\n\nhttps://github.com/openstack/nova/blob/56cd608d3a199dcb02ac2ae071ff3057241259da/nova/compute/api.py#L3723\n\nWhen we attach a volume to a shelved offloaded server, we create the BDM in the API. If the API is configured to point at cell0, then the BDM would be created in cell0.\n\nWhen we unshelve the instance, conductor asks the scheduler for a host (which is in some cell) and we build the instance in that cell. This could be a different cell because we currently don't restrict that in the conductor task manager when unshelving like we do for migrate:\n\nhttps://github.com/openstack/nova/blob/56cd608d3a199dcb02ac2ae071ff3057241259da/nova/conductor/tasks/migrate.py#L63-L66\n\nThe fact we don't restrict where the instance goes when it's unshelved is a separate bug.\n\nWhen unshelving the instance, it gets built on some compute and we pull the BDMs from the database configured for that cell (should be cell1, cell2, ..., cellN - some specific non-cell0 database).\n\nhttps://github.com/openstack/nova/blob/56cd608d3a199dcb02ac2ae071ff3057241259da/nova/compute/manager.py#L4513\n\nIf the BDM was created in the API in cell0, it shouldn't come back from that query in the compute manager code.\n\nWhat's most confusing about this is Tempest has tests for testing attach/detach a volume to a shelved offloaded instance:\n\nhttps://github.com/openstack/tempest/blob/21dd8a5ee2ab5a068cbb20d0468bd5f444fef59a/tempest/api/compute/volumes/test_attach_volume.py#L148\n\nAnd those are passing on the devstack change that runs with multiple cells and configures the API to use cell0 for the [database] section where the BDM would live:\n\nhttps://review.openstack.org/#/c/473565/\n\nUnless maybe that test is broken.\n\nWe are configured to run ssh validation in the gate jobs on master (pike) though, so the test is counting the number of partitions on the guest before and after the unshelve operation to see that they show up. It's also listing volume attachments for the instance after unshelve.", 
+            "date_created": "2017-07-07 15:52:56.078564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/481683", 
+            "date_created": "2017-07-07 15:55:10.188832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Dan Smith (<email address hidden>) on branch: master\nReview: https://review.openstack.org/481683", 
+            "date_created": "2017-07-11 14:26:09.714113+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Turns out this was invalid. Volume attach works for a shelved offloaded instance with cells v2 because the context is targeted to the cell that the target instance lives in when we lookup the instance in the API code, in nova.compute.api.API._get_instance. So when the BDM is created using that context, it's also created in the same cell as the instance.", 
+            "date_created": "2017-07-11 17:21:06.903250+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ], 
+    "closed": "2017-07-11 17:20:07.510125+00:00"
+}

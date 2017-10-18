@@ -1,0 +1,59 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-08-16 22:46:48.234801+00:00", 
+    "description": "Hi,\n\nI got this weird Tempest run here: http://logs.openstack.org/35/206935/1/gate/gate-tempest-dsvm-neutron-full/ef5a1a9/console.html.gz#_2015-08-18_18_20_26_980 where the server has \"OS-EXT-STS:vm_state\": \"active\" and \"OS-EXT-STS:power_state\": 3.\n\nPower_state 3 is \"PAUSED\" according to nova/compute/power_state.py So it seems there\"s a kind of mismatch with the vm_state being \"active\".\n\nThe discrepancy last only a fraction of second, but as Tempest is hitting hard on Nova, Tempest got into this intermediary state and my build was marked as \"failed\".\n\nCould someone confirm that right after the VM transitioned from BUILD/spawning to ACTIVE/None there could be a window of inconsistency ?", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1486475", 
+    "owner": "None", 
+    "id": 1486475, 
+    "index": 1821, 
+    "openned": "2015-08-19 09:34:44.220069+00:00", 
+    "created": "2015-08-19 09:34:44.220069+00:00", 
+    "title": "Transient mismatch between OS-EXT-STS:vm_state and OS-EXT-STS:power_state", 
+    "comments": [
+        {
+            "content": "Hi,\n\nI got this weird Tempest run here: http://logs.openstack.org/35/206935/1/gate/gate-tempest-dsvm-neutron-full/ef5a1a9/console.html#_2015-08-18_18_20_26_980 where the server has \"OS-EXT-STS:vm_state\": \"active\" and \"OS-EXT-STS:power_state\": 3.\n\nPower_state 3 is \"PAUSED\" according to nova/compute/power_state.py So it seems there\"s a kind of mismatch with the vm_state being \"active\".\n\nThe discrepancy last only a fraction of second, but as Tempest is hitting hard on Nova, Tempest got into this intermediary state and my build was marked as \"failed\".\n\nCould someone confirm that right after the VM transitioned from BUILD/spawning to ACTIVE/None there could be a window of inconsistency ?", 
+            "date_created": "2015-08-19 09:34:44.220069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jordan-pittier"
+        }, 
+        {
+            "content": "Adding tempest because it prevented https://review.openstack.org/#/c/206935/ to be smoothly merged. I am going to submit a match to relax the check we do on the \"EXT-STS:power_state\" and \"updated\" fields.", 
+            "date_created": "2015-08-19 09:36:50.817427+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jordan-pittier"
+        }, 
+        {
+            "content": "So Tempest expected EXT-STS:power_state = 3 because that's what it got right after https://github.com/openstack/tempest/blob/23e642498e50f4527847fe1cdf5c46c05454d955/tempest/scenario/test_minimum_basic.py#L55  but then Nova updated (asynchronously ?) the server to put the power_state to 1 (and update the \"update\" field). So when, Tempest get the server again (https://github.com/openstack/tempest/blob/23e642498e50f4527847fe1cdf5c46c05454d955/tempest/scenario/test_minimum_basic.py#L65) there's the mismatch.", 
+            "date_created": "2015-08-19 10:01:16.327791+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jordan-pittier"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/214562", 
+            "date_created": "2015-08-19 11:15:16.244713+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/214562\nCommitted: https://git.openstack.org/cgit/openstack/tempest/commit/?id=5d367151817bd612117707e86f099a8f52e646f4\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5d367151817bd612117707e86f099a8f52e646f4\nAuthor: Jordan Pittier <email address hidden>\nDate:   Wed Aug 19 12:03:49 2015 +0200\n\n    scenario/test_minimum_basic: relax a MatchesDictExceptForKeys check\n    \n    In the test_minimum_basic scenario, we check that a server that was\n    created a moment ago is the same as the server we just got. To do\n    that each fields of the expected vs actual servers are compared including\n    the \"update\" field. But the \"update\" could be updated asynchronously\n    by Nova, without Tempest knowing, causing a mismatchError.\n    \n    This patch exclude the 'update' and 'OS-EXT-STS:power_state' (that\n    can be updated in background) fields from the comparison.\n    \n    Change-Id: I50d1319b690453923b470733e94f3a11fd1cd249\n    Related-Bug: #1486475\n", 
+            "date_created": "2015-09-01 10:39:29.381918+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "FWIW, in nova, I don't know if it's expected for an instance to go from power state 0 (None) to 3 (Paused) to 1 (Running) during provisioning. Power state information comes from the virt driver and there's a periodic sync task in compute manager that attempts to make vm_state and power_state match if there's a discrepancy. The periodic task runs by default every 10 minutes (and can be disabled). Note that there's no sync attempted when vm_state is \"building\" -- that case is ignored. When vm_state is \"active\", the \"paused\" power state is ignored because of [1].\n\nSo even if the sync periodic task fired while you were waiting, it wouldn't have done anything to the instance. So, I think the question is whether it's \"normal\" for the virt driver to report power state as \"paused\" during the domain bringup.\n\n[1] https://bugs.launchpad.net/nova/+bug/1097806", 
+            "date_created": "2015-09-02 00:26:59.501954+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Marking this as confirmed as the behavior is clearly happening, but this needs further triaging per melwitt's comments above of whether this is a realistic expectation.", 
+            "date_created": "2016-01-27 14:04:44.497231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "So during VM create the libvirt driver always starts the instance paused, then turns active after the neutron event comes in. That is expected.\n\nsounds like the power state sync races the create somehow, we do have instance locks in there to try and prevent that and power state sync usually skips instance that are busy doing some task.", 
+            "date_created": "2016-07-12 15:57:28.211561+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }
+    ]
+}

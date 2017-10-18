@@ -1,0 +1,149 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-10-15 01:51:16.241061+00:00", 
+    "description": "Here are the scenario:\n1). Nova scheduler/conductor selects a nova-compute A to spin a VM\n2). Nova compute A tries to spin the VM, but the process failed, and generates a RE-SCHEDULE exception.\n3). in re-schedule exception, only when retry is none, network resource is properly cleaned up. when retry is not none, the network is not cleaned up, the port information still stays with the VM.\n4). Nova condutor was notified about the failure. It selects nova-compute-B to spin VM.\n5). nova compute B spins up VM successfully. However, from the instance_info_cache, the network_info showed two ports allocated for VM, one from the origin network A that associated with nova-compute A nad one from network B that associated with nova compute B.\n\nTo simulate the case, raise a fake exception in _do_build_and_run_instance in nova-compute A:\n\ndiff --git a/nova/compute/manager.py b/nova/compute/manager.py\nindex ac6d92c..8ce8409 100644\n--- a/nova/compute/manager.py\n+++ b/nova/compute/manager.py\n@@ -1746,6 +1746,7 @@ class ComputeManager(manager.Manager):\n                         filter_properties)\n             LOG.info(_LI('Took %0.2f seconds to build instance.'),\n                      timer.elapsed(), instance=instance)\n+            raise exception.RescheduledException( instance_uuid=instance.uuid, reason=\"simulated-fault\")\n             return build_results.ACTIVE\n         except exception.RescheduledException as e:\n             retry = filter_properties.get('retry')\n\nenvironments: \n*) nova master branch\n*) ubuntu 12.04\n*) kvm\n*) bridged network.", 
+    "tags": [
+        "network"
+    ], 
+    "importance": "Medium", 
+    "heat": 40, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1597596", 
+    "owner": "None", 
+    "id": 1597596, 
+    "index": 4566, 
+    "openned": "2016-06-30 04:38:40.475753+00:00", 
+    "created": "2016-06-30 04:38:40.475753+00:00", 
+    "title": "network not always cleaned up when spawning VMs", 
+    "comments": [
+        {
+            "content": "Here are the scenario:\n1). Nova scheduler/conductor selects a nova-compute A to spin a VM\n2). Nova compute A tries to spin the VM, but the process failed, and generates a RE-SCHEDULE exception.\n3). in re-schedule exception, only when retry is none, network resource is properly cleaned up. when retry is not none, the network is not cleaned up, the port information still stays with the VM.\n4). Nova condutor was notified about the failure. It selects nova-compute-B to spin VM.\n5). nova compute B spins up VM successfully. However, from the instance_info_cache, the network_info showed two ports allocated for VM, one from the origin network A that associated with nova-compute A nad one from network B that associated with nova compute B.\n\nTo simulate the case, raise a fake exception in _do_build_and_run_instance in nova-compute A:\n\ndiff --git a/nova/compute/manager.py b/nova/compute/manager.py\nindex ac6d92c..8ce8409 100644\n--- a/nova/compute/manager.py\n+++ b/nova/compute/manager.py\n@@ -1746,6 +1746,7 @@ class ComputeManager(manager.Manager):\n                         filter_properties)\n             LOG.info(_LI('Took %0.2f seconds to build instance.'),\n                      timer.elapsed(), instance=instance)\n+            raise exception.RescheduledException( instance_uuid=instance.uuid, reason=\"simulated-fault\")\n             return build_results.ACTIVE\n         except exception.RescheduledException as e:\n             retry = filter_properties.get('retry')\n\nenvironments: \n*) nova master branch\n*) ubuntu 12.04\n*) kvm\n*) bridged network.", 
+            "date_created": "2016-06-30 04:38:40.475753+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aihuaedwardli"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/335788", 
+            "date_created": "2016-06-30 05:03:29.547771+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The status is 'Fix Committed'.\nBut the patch has not been merged yet.\n\nHas the issue already been fixed?\n", 
+            "date_created": "2016-07-05 08:42:01.054959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~natsume-takashi"
+        }, 
+        {
+            "content": "The patch is in review state. I am waiting for core reviewer's +2. Any help would be appreciated.\n", 
+            "date_created": "2016-07-05 15:15:11.495796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aihuaedwardli"
+        }, 
+        {
+            "content": "Cleanup of inconsistency: Bug reports which have a change for review in Gerrit should have the status \"In Progress\". When the change gets merged the status changes automatically to \"Fix Released\". We don't use \"Fix Committed\" anymore [1].\n\nReferences:\n[1] \"[openstack-dev] [release][all] bugs will now close automatically\n    when patches merge\"; Doug Hellmann; 2015-12-07;\n    http://lists.openstack.org/pipermail/openstack-dev/2015-December/081612.html", 
+            "date_created": "2016-07-06 11:14:23.027395+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "So I'm wondering whether the proper fix for this bug indeed is to delete the first port. If I understand the code correctly, the intention of not deleting the port when rescheduling is that it could be reused on the second compute node. But that reuse does not seem to happen, instead nova allocates another port, leaving the first one pending. I've added some sample output at http://paste.openstack.org/show/526875/", 
+            "date_created": "2016-07-07 10:45:55.020258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "Also note that cleanup if the rescheduling fails three times seems to have been implemented in https://bugs.launchpad.net/nova/+bug/1510979. So when I have permanent rescheduling failures, I will get an instance with three ports assigned, but after a short interval, these will be cleaned up and the failed instance will have no network assigned anymore.\n\nThe real issue happens if the instance can be created successfully after one or two reschedules, then only the last address will be active on the instance, while e.g. associating a floatingip will by default bind it to the first address, leading to broken connectivity.", 
+            "date_created": "2016-07-07 13:35:20.722993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "Looking at nova/compute/manager.py in _allocate_network_async() there is code and comment\n\n                instance.system_metadata['network_allocated'] = 'True'\n                # NOTE(JoshNang) do not save the instance here, as it can cause\n                # races. The caller shares a reference to instance and waits\n                # for this async greenthread to finish before calling\n                # instance.save().\n\nBut that doesn't seem to be true, the corresponding code in\n\n                    # NOTE(JoshNang) This also saves the changes to the\n                    # instance from _allocate_network_async, as they aren't\n                    # saved in that function to prevent races.\n                    instance.save(expected_task_state=\n                            task_states.BLOCK_DEVICE_MAPPING)\n\ngets executed earlier, as in the log I can see the self.driver.spawn() call below this code being executed before _allocate_network_async logs the assigned network info.", 
+            "date_created": "2016-07-07 14:03:59.036821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "In response to Dr. Rosenboom's comments:\n1. \"the intention of not deleting the port when rescheduling is that it could be reused on the second compute node.\"\nIn our use case, we are using bridged network mode, the network_info allocated initially on first compute is useless and cause adverse side effect. We need to clean up the network_resource associated with the first compute.\n2. \"Also note that cleanup if the rescheduling fails three times seems to have been implemented in https://bugs.launchpad.net/nova/+bug/1510979.\"\nThis is a different issue than what we encounter, in our case, the VM was retried and spawn up on a second compute, there is no \"failure\" to nova code and there is no chance for the network to get cleaned up.\n3. \"the self.driver.spawn() call below this code being executed before _allocate_network_async logs the assigned network info.\"\nThis is also a separate issue. We like to address the issue that network info was not cleaned up on some code path.\n", 
+            "date_created": "2016-07-07 22:37:44.009042+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aihuaedwardli"
+        }, 
+        {
+            "content": "> In our use case, we are using bridged network mode, the network_info allocated initially on \n> first compute is useless and cause adverse side effect. We need to clean up \n> the network_resource associated with the first compute.\n\nIf that is indeed the case, then your driver should return true instead of false in self.driver.deallocate_networks_on_reschedule() and your issue would be fixed.", 
+            "date_created": "2016-07-11 08:58:12.388354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "We used standard nova/virt/driver.py, the current implementation is \n\n    def deallocate_networks_on_reschedule(self, instance):\n        \"\"\"Does the driver want networks deallocated on reschedule?\"\"\"\n        return False\n\n", 
+            "date_created": "2016-07-11 18:07:19.565708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aihuaedwardli"
+        }, 
+        {
+            "content": "This looks like a similar issue that we're seeing, and we're using the libvirt driver, which doesn't override deallocate_networks_on_reschedule.\n\nIn our scenario, we're seeing the instance get built with 2 or 3 fixed IPs instead of just the one. It seems that on retry a whole new port is allocated, even though there was already one allocated from the first attempt. Since our networks are more portable, they succeed in building with multiple ports, which is slightly different than what the proposed patch is trying to address.", 
+            "date_created": "2016-07-19 00:02:26.464243+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-keating"
+        }, 
+        {
+            "content": "Hi, Jesse, \n\nThanks for the info. Yes, we also see multiple ports allocated after retry. The root cause is the same, the network resources are not cleaned up. The proposed fix should resolve your issue as well.\n\nAihua\n ", 
+            "date_created": "2016-07-19 04:08:19.870738+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aihuaedwardli"
+        }, 
+        {
+            "content": "@Jesse: When you say that building with multiple ports succeeds, do you see all of the ports connected to your instance or only the final one?", 
+            "date_created": "2016-07-19 06:47:58.301033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "@Aihua Looking at the patch, it seems to only clean up the network resources if the ports are not portable, in your case the ports only work on specific HVs. This isn't the case for us, so I don't think your change would impact our scenario.\n\n@Jens, I will research this and report back. ", 
+            "date_created": "2016-07-19 16:00:59.310186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-keating"
+        }, 
+        {
+            "content": "@Jens It appears that only the final address exists in the VM itself, and the other ports are just assigned to the VM in the databases.", 
+            "date_created": "2016-07-20 17:10:59.925151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-keating"
+        }, 
+        {
+            "content": "@Jesse Ok, that matches what I am seeing, thanks for confirming. If you still have some of these instances online, you could also check in the nova DB whether any of them have entries for 'network_allocated' in the system_metadata table (cf. https://bugs.launchpad.net/nova/+bug/1597596/comments/7). Assuming there are none, that would undermine my assumption that these async processes are not executed in the way described in the code. ", 
+            "date_created": "2016-07-20 18:16:47.746131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "@jens, I'm attaching photos to show the instance in question and the system metadata associated with it.", 
+            "date_created": "2016-07-22 17:04:07.439542+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-keating"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-07-22 17:05:20.687727+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-keating"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-07-22 17:05:43.127222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-keating"
+        }, 
+        {
+            "content": "@Jesse, Thanks for sharing. This matches to what we see. \nAre you planning to propose a fix ( in nova scheduler )? That might fix my problem also.\n", 
+            "date_created": "2016-07-23 14:37:31.813063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aihuaedwardli"
+        }, 
+        {
+            "content": "I have no plans to propose a fix. That's a bit beyond what I'm capable of at this time.", 
+            "date_created": "2016-08-04 01:25:16.731119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-keating"
+        }, 
+        {
+            "content": "I've still not found a proper way to fix this, but I would like to share the attached patch that will allow to easily reproduce the issue on a simple devstack node. It consists of three parts:\n\n1. Patch nova/virt/libvirt/driver.py to insert a single error when spawning an instance. This will trigger a Reschedule and let spawning succeed on the second attempt.\n2. Patch nova/scheduler/utils.py so that the Reschedule may happen on the same host again. The default behaviour will exclude the hosts where the instance has been scheduled first, which would imply that one needs a multi-node setup in order to reproduce this issue.\n3. Add some debugging output to nova/compute/manager.py\n\nThe first instance booted after applying this patch (and restarting n-cond & n-cpu) will be running fine but with two addresses allocated.\n\nIt looks to me like the first address is generated properly in the n-cpu manager, but is then treated correctly in the conductor during rescheduling.", 
+            "date_created": "2016-08-25 00:45:57.333279+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "@Aihua: Are you still working on this? https://review.openstack.org/335788 is in merge conflict and hasn't been updated for some time. If not, please unassign and let someone else take over.", 
+            "date_created": "2016-10-11 09:46:42.023673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/335788\nReason: This review is > 6 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2016-12-09 21:05:36.911913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "comment #13 , \n\nIn my environment\uff0cI experienced both two scenes, \n1. one port is existed in DB, but only the last port is attached VM.\n2. two ports are attached VM (refer https://bugs.launchpad.net/nova/+bug/1722559)\n\n", 
+            "date_created": "2017-10-15 01:51:14.755405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~margin2017"
+        }
+    ]
+}

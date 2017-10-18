@@ -1,0 +1,48 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 12:14:06.942692+00:00", 
+    "description": "During the instance boot (spawn/run) process, neutron ports are allocated for the instance if necessary. If the instance fails to spawn (say as a result of a compute host failure), the default behavior is to reschedule the instance and leave it's networking resources in-tact for potential reuse on the rescheduled host (as per deallocate_networks_on_reschedule() [1] which returns False for most compute drivers).\n\nAll is good if the instance is successfully rescheduled, but if the reschedule fails (say no more applicable hosts) the allocated ports are left as-is and effectively orphaned.\n\nThere are some related defects ([2] and [3]), but they don't quite touch on the particular behavior described herein.\n\nObviously there are a number of ways to address this issue, but the most obvious is perhaps nova should be aware of the reschedule failure and deallocate any resources which may have been left in-tact for the reschedule.\n\nI'm running devstack all-in-one setup from openstack master branches.\n\nnova --version\n2.32.0\nneutron --version\n3.1.0\n\nThe easiest way to repo is to use an all-in-one devstack (only 1 compute host) simulate a host spawn failure by editing the spwan() method of your compute driver to raise an exception at the end of the method and simply try to boot a server. In this setup there's only 1 host so the reschedule will fail and you can verify the port allocated for the instance still exists after trying to boot the instance.\n\n\n[1] https://github.com/openstack/nova/blob/master/nova/virt/driver.py#L1273\n[2] https://bugs.launchpad.net/nova/+bug/1410739\n[3] https://bugs.launchpad.net/nova/+bug/1327124", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1510979", 
+    "owner": "https://api.launchpad.net/1.0/~yuywz", 
+    "id": 1510979, 
+    "index": 1833, 
+    "openned": "2015-10-28 15:14:35.783978+00:00", 
+    "created": "2015-10-28 15:14:35.783978+00:00", 
+    "title": "Instance reschedule failure leaves orphaned neutron ports", 
+    "comments": [
+        {
+            "content": "During the instance boot (spawn/run) process, neutron ports are allocated for the instance if necessary. If the instance fails to spawn (say as a result of a compute host failure), the default behavior is to reschedule the instance and leave it's networking resources in-tact for potential reuse on the rescheduled host (as per deallocate_networks_on_reschedule() [1] which returns False for most compute drivers).\n\nAll is good if the instance is successfully rescheduled, but if the reschedule fails (say no more applicable hosts) the allocated ports are left as-is and effectively orphaned.\n\nThere are some related defects ([2] and [3]), but they don't quite touch on the particular behavior described herein.\n\nObviously there are a number of ways to address this issue, but the most obvious is perhaps nova should be aware of the reschedule failure and deallocate any resources which may have been left in-tact for the reschedule.\n\nI'm running devstack all-in-one setup from openstack master branches.\n\nnova --version\n2.32.0\nneutron --version\n3.1.0\n\nThe easiest way to repo is to use an all-in-one devstack (only 1 compute host) simulate a host spawn failure by editing the spwan() method of your compute driver to raise an exception at the end of the method and simply try to boot a server. In this setup there's only 1 host so the reschedule will fail and you can verify the port allocated for the instance still exists after trying to boot the instance.\n\n\n[1] https://github.com/openstack/nova/blob/master/nova/virt/driver.py#L1273\n[2] https://bugs.launchpad.net/nova/+bug/1410739\n[3] https://bugs.launchpad.net/nova/+bug/1327124", 
+            "date_created": "2015-10-28 15:14:35.783978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boden"
+        }, 
+        {
+            "content": "For the scenario described in description, if the reschedule fails, a \"NoValidHost_Remote(u'No valid host was found. There are not enough hosts available.',)\" exception will be captured in nova conductor manager. \nAt this point, conductor.build_instances method will set state of the instance as vm_states.ERROR and send related notification, return without cleaning up allocated network resources, see [1].\nI think one way to fix this bug is adding code to clean up allocated network resources(like we do in compute manager, see [2]) in the exception handling section.\n\n[1] https://github.com/openstack/nova/blob/12.0.0.0rc3/nova/conductor/manager.py#L740-L746\n[2] https://github.com/openstack/nova/blob/12.0.0.0rc3/nova/compute/manager.py#L1968", 
+            "date_created": "2015-11-03 06:42:00.510214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yuywz"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/243477", 
+            "date_created": "2015-11-10 09:18:29.134824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/243477\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=08d24b733ee9f4da44bfbb8d6d3914924a41ccdc\nSubmitter: Jenkins\nBranch:    master\n\ncommit 08d24b733ee9f4da44bfbb8d6d3914924a41ccdc\nAuthor: Wen Zhi Yu <email address hidden>\nDate:   Tue Nov 10 17:16:36 2015 +0800\n\n    Clean up network resources when reschedule fails\n    \n    During the instance boot (spawn/run) process, neutron ports are\n    allocated for the instance if necessary. If the instance fails\n    to spawn (say as a result of a compute host failure), the default\n    behaviour is to reschedule the instance and leave its networking\n    resources in-tact for potential reuse on the rescheduled host.\n    All is good if the instance is successfully rescheduled, but if\n    the reschedule fails (say no more applicable hosts) the allocated\n    ports are left as-is and effectively orphaned.\n    \n    This commit add code to clean up allocated network resources\n    when the reschedule fails.\n    \n    Change-Id: Ic670dd4dc192603c2faecf18e14ef59ebca9e420\n    Closes-Bug: #1510979\n", 
+            "date_created": "2016-01-16 03:46:45.177317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b2 development milestone.", 
+            "date_created": "2016-01-21 13:42:46.662731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/367316", 
+            "date_created": "2016-09-08 11:54:25.028796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-01-16 03:46:43.557137+00:00"
+}

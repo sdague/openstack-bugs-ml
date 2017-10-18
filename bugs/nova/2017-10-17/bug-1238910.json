@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:16:14.785213+00:00", 
+    "description": "If a server with greater then 63 characters is attempted to be booted, the servers will boot but fail to obtain DHCP addresses with nova networking and neutron.  dnsmsq is fully configured for the full server name, however, Linux has a 64 character hostname limit.\n\n[sdake@bigiron ~]$ getconf HOST_NAME_MAX\n64\n\nRecommend a nova exception if a server greater then 63 characters is created so the user is aware of the problem at the api level rather then wondering why their vm doesn't appear to work.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1238910", 
+    "owner": "https://api.launchpad.net/1.0/~cfb-n", 
+    "id": 1238910, 
+    "index": 5442, 
+    "openned": "2013-10-11 18:05:10.652613+00:00", 
+    "created": "2013-10-11 18:05:10.652613+00:00", 
+    "title": "nova boot operation with servers greater then 63 characters don't get DHCP address", 
+    "comments": [
+        {
+            "content": "If a server with greater then 63 characters is attempted to be booted, the servers will boot but fail to obtain DHCP addresses with nova networking and neutron.  dnsmsq is fully configured for the full server name, however, Linux has a 64 character hostname limit.\n\n[sdake@bigiron ~]$ getconf HOST_NAME_MAX\n64\n\nRecommend a nova exception if a server greater then 63 characters is created so the user is aware of the problem at the api level rather then wondering why their vm doesn't appear to work.", 
+            "date_created": "2013-10-11 18:05:10.652613+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdake"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/51390", 
+            "date_created": "2013-10-12 13:57:50.655593+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "nova-network generates invalid entries in the dnsmasq hosts file when the hostname of the instance is longer than 63 characters.\n\n$ cat /opt/stack/data/nova/networks/nova-br100.conf\nfa:16:3e:6c:93:03,testvm1.novalocal,10.0.0.2\nfa:16:3e:50:95:a8,testvm1hejazkhejkazehjzakhejazklehazjklehazjklehazjklehazjkelhazjelhazjelhazjeklazhejklazhejkazlehjazklehazjklehazjkelhazjeklazhej.novalocal,10.0.0.3\n\n$ grep dnsmasq /var/log/syslog\nOct 16 12:12:22 r421-e3-4 dnsmasq-dhcp[15975]: DHCPDISCOVER(br100) fa:16:3e:6c:93:03\nOct 16 12:12:22 r421-e3-4 dnsmasq-dhcp[15975]: DHCPOFFER(br100) 10.0.0.2 fa:16:3e:6c:93:03\nOct 16 12:12:24 r421-e3-4 dnsmasq-dhcp[15975]: DHCPDISCOVER(br100) fa:16:3e:50:95:a8 no address available\n\nAs per RFC 1035:\nThe labels must follow the rules for ARPANET host names. They must\nstart with a letter, end with a letter or digit, and have as interior\ncharacters only letters, digits, and hyphen. There are also some\nrestrictions on the length. Labels must be 63 characters or less.\n\nThe problem was found while investigating bug #1238272.", 
+            "date_created": "2013-10-17 23:26:20.534306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "As noted in bug #1238272, I couldn't reproduce the error with Neutron. But for sure there is an issue with dnsmasq configuration in nova-network.", 
+            "date_created": "2013-10-18 07:13:30.913892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~simon-pasquier"
+        }, 
+        {
+            "content": "see discussion at https://review.openstack.org/#/c/51390/", 
+            "date_created": "2014-07-10 01:19:20.371180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Bring this one back from the dead since i just hit it with a client.\n\nI agree with Dan Smith's comments in the review that the API shouldn't limit this. Where I disagree is that we *should* fix this in nova-network. The assertion that we should allow 255 character DNS names in nova-network is all well and good except the *only* implementation for DHCP in nova-network is with dnsmasq and it has a 63 character limit. As such the code that generates the dnsmasq host file for nova-network should implement some type of semi-intelligent truncation strategy, its better then outright breaking.\n\nSince I'm going to be fixing this locally in our code base I'll upstream our work as well.", 
+            "date_created": "2014-11-20 02:33:02.716516+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cfb-n"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/136477", 
+            "date_created": "2014-11-21 20:07:25.186772+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/136477\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f58e1fd6c701132297c01af4eb239284ef4c2e7d\nSubmitter: Jenkins\nBranch:    master\n\ncommit f58e1fd6c701132297c01af4eb239284ef4c2e7d\nAuthor: Chet Burgess <email address hidden>\nDate:   Fri Nov 21 10:02:53 2014 -0800\n\n    Fix long hostname in dnsmasq\n    \n    dnsmasq only supports 63 character hostnames. Longer names cause\n    dnsmasq to ignore the entry and not hand out a DHCP address.\n    \n    Trunacte hostnames longer then 63 characters in order to make\n    DHCP work.\n    \n    Closes-Bug: #1238910\n    Change-Id: Ie1697577bc14038faccd50caf2fea20cac342388\n", 
+            "date_created": "2014-12-05 23:46:53.458654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-12-18 20:10:01.155603+00:00"
+}

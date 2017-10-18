@@ -1,0 +1,110 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-04-11 19:57:42.637368+00:00", 
+    "description": "Hi,\nIf the Quantum service starts before QPID then it does not listen on port 9696. The reason for is that the connection setup with the RPC hangs with the call: self.connection.open()\" in the method reconnect in impl_qpid.py. \nEven when the qpidd service starts this does not work and Quantum is still waiting to get out of this function.\nThanks\nGary", 
+    "tags": [
+        "verification-needed"
+    ], 
+    "importance": "Undecided", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1073999", 
+    "owner": "None", 
+    "id": 1073999, 
+    "index": 4445, 
+    "openned": "2012-11-01 16:15:10.882091+00:00", 
+    "created": "2012-11-01 15:19:05.001794+00:00", 
+    "title": "Quantum service does not restart after reboot", 
+    "comments": [
+        {
+            "content": "Hi,\nIf the Quantum service starts before QPID then it does not listen on port 9696. The reason for is that the connection setup with the RPC hangs with the call: self.connection.open()\" in the method reconnect in impl_qpid.py. \nEven when the qpidd service starts this does not work and Quantum is still waiting to get out of this function.\nThanks\nGary", 
+            "date_created": "2012-11-01 15:19:05.001794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "The problem is also reproducible with nova-network. \nSimple reproduction:\n - shut down qpidd\n - restart nova-network", 
+            "date_created": "2012-11-01 15:54:25.550319+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "I just tried to reproduce this using nova.  Specifically, I did ...\n\n1) Get everything up and running with devstack using qpid\n2) Stop qpidd\n3) Stop nova-network\n4) Start nova-network (and observe it hang at trying to connect to qpidd)\n5) Start qpidd\n6) Observe nova-network connect to qpidd within 20 seconds or so.\n\nThis behavior was repeatedly repduceble for me", 
+            "date_created": "2012-11-02 18:54:40.548714+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Hi Russel,\nThanks for taking a look. I did the following:\n\n1. Installed devstack on fedora\n2. Stopped QPID. nov-network had an exception (below [1] - this is a separate issue and I would guess that one woud want to catch the exception and retry to connect)\n3.  When QPID restarts nova-network manages to reconnect again (with an exception and then terminates).\n\nThe example that I had with the nova-network was with packages and not devstack. Any idea why this may be different behaviour?\n\nI will take a look at devstack with Quantum service and post my findings.\n\nThanks\nGary\n\n[1] Trace of crach for nova-network when qpid terminates\n\n2012-11-03 18:54:41 INFO nova.openstack.common.rpc.impl_qpid [-] Connected to AMQP server on localhost:5672\n2012-11-03 18:54:41 DEBUG nova.service [-] Creating Consumer connection for Service network from (pid=7002) start /opt/stack/nova/nova/service.py:404\nTraceback (most recent call last):\n  File \"/usr/lib/python2.7/site-packages/eventlet/hubs/poll.py\", line 97, in wait\n    readers.get(fileno, noop).cb(fileno)\n  File \"/usr/lib/python2.7/site-packages/eventlet/green/select.py\", line 48, in on_read\n    current.switch(([original], [], []))\n  File \"/usr/lib/python2.7/site-packages/eventlet/greenthread.py\", line 192, in main\n    result = function(*args, **kwargs)\n  File \"/opt/stack/nova/nova/service.py\", line 123, in run_server\n    server.start()\n  File \"/opt/stack/nova/nova/service.py\", line 412, in start\n    self.conn.create_consumer(node_topic, rpc_dispatcher, fanout=False)\n  File \"/opt/stack/nova/nova/openstack/common/rpc/amqp.py\", line 136, in create_consumer\n    self.connection.create_consumer(topic, proxy, fanout)\n  File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 526, in create_consumer\n    consumer = TopicConsumer(self.conf, self.session, topic, proxy_cb)\n  File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 187, in __init__\n    {}, name or topic, {})\n  File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 130, in __init__\n    self.reconnect(session)\n  File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 135, in reconnect\n    self.receiver = session.receiver(self.address)\n  File \"<string>\", line 6, in receiver\n  File \"/usr/lib/python2.7/site-packages/qpid/messaging/endpoints.py\", line 619, in receiver\n    raise e\nMalformedAddress: unrecognized characters line:1,18: openstack/network.(none) ; {\"node\": {\"x-declare\": {\"auto-delete\": true, \"durable\": true}, \"type\": \"topic\"}, \"create\": \"always\", \"link\": {\"x-declare\": {\"auto-delete\": true, \"exclusive\": false, \"durable\": false}, \"durable\": true, \"name\": \"network.(none)\"}}\nRemoving descriptor: 9\n2012-11-03 18:54:41 CRITICAL nova [-] unrecognized characters line:1,18: openstack/network.(none) ; {\"node\": {\"x-declare\": {\"auto-delete\": true, \"durable\": true}, \"type\": \"topic\"}, \"create\": \"always\", \"link\": {\"x-declare\": {\"auto-delete\": true, \"exclusive\": false, \"durable\": false}, \"durable\": true, \"name\": \"network.(none)\"}}\n2012-11-03 18:54:41 TRACE nova Traceback (most recent call last):\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/bin/nova-network\", line 50, in <module>\n2012-11-03 18:54:41 TRACE nova     service.wait()\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/service.py\", line 655, in wait\n2012-11-03 18:54:41 TRACE nova     _launcher.wait()\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/service.py\", line 183, in wait\n2012-11-03 18:54:41 TRACE nova     super(ServiceLauncher, self).wait()\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/service.py\", line 153, in wait\n2012-11-03 18:54:41 TRACE nova     service.wait()\n2012-11-03 18:54:41 TRACE nova   File \"/usr/lib/python2.7/site-packages/eventlet/greenthread.py\", line 166, in wait\n2012-11-03 18:54:41 TRACE nova     return self._exit_event.wait()\n2012-11-03 18:54:41 TRACE nova   File \"/usr/lib/python2.7/site-packages/eventlet/event.py\", line 116, in wait\n2012-11-03 18:54:41 TRACE nova     return hubs.get_hub().switch()\n2012-11-03 18:54:41 TRACE nova   File \"/usr/lib/python2.7/site-packages/eventlet/hubs/hub.py\", line 177, in switch\n2012-11-03 18:54:41 TRACE nova     return self.greenlet.switch()\n2012-11-03 18:54:41 TRACE nova   File \"/usr/lib/python2.7/site-packages/eventlet/greenthread.py\", line 192, in main\n2012-11-03 18:54:41 TRACE nova     result = function(*args, **kwargs)\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/service.py\", line 123, in run_server\n2012-11-03 18:54:41 TRACE nova     server.start()\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/service.py\", line 412, in start\n2012-11-03 18:54:41 TRACE nova     self.conn.create_consumer(node_topic, rpc_dispatcher, fanout=False)\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/openstack/common/rpc/amqp.py\", line 136, in create_consumer\n2012-11-03 18:54:41 TRACE nova     self.connection.create_consumer(topic, proxy, fanout)\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 526, in create_consumer\n2012-11-03 18:54:41 TRACE nova     consumer = TopicConsumer(self.conf, self.session, topic, proxy_cb)\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 187, in __init__\n2012-11-03 18:54:41 TRACE nova     {}, name or topic, {})\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 130, in __init__\n2012-11-03 18:54:41 TRACE nova     self.reconnect(session)\n2012-11-03 18:54:41 TRACE nova   File \"/opt/stack/nova/nova/openstack/common/rpc/impl_qpid.py\", line 135, in reconnect\n2012-11-03 18:54:41 TRACE nova     self.receiver = session.receiver(self.address)\n2012-11-03 18:54:41 TRACE nova   File \"<string>\", line 6, in receiver\n2012-11-03 18:54:41 TRACE nova   File \"/usr/lib/python2.7/site-packages/qpid/messaging/endpoints.py\", line 619, in receiver\n2012-11-03 18:54:41 TRACE nova     raise e\n2012-11-03 18:54:41 TRACE nova MalformedAddress: unrecognized characters line:1,18: openstack/network.(none) ; {\"node\": {\"x-declare\": {\"auto-delete\": true, \"durable\": true}, \"type\": \"topic\"}, \"create\": \"always\", \"link\": {\"x-declare\": {\"auto-delete\": true, \"exclusive\": false, \"durable\": false}, \"durable\": true, \"name\": \"network.(none)\"}}\n2012-11-03 18:54:41 TRACE nova \n[openstack@(none) nova]$                                                             ", 
+            "date_created": "2012-11-03 17:09:03.322172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Hi,\nWhen doing the same test with devstack the quantum service also recovers. I will go back to the packaging version and continue debugging. Any ideas?\nThanks\nGary", 
+            "date_created": "2012-11-03 17:16:56.904756+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Hi,\nI have done a little extra investigation. In the devstack scanerio described above not all of the service recover when QPID is started.\nThanks\nGary", 
+            "date_created": "2012-11-04 06:06:22.467420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Hi,\nWhen I remove the call eventlet.monkey_patch() it works! This leaves us between a rock and a hard place as I understand that this is required for the RPC. Correct?\nThanks\nGary", 
+            "date_created": "2012-11-05 09:24:01.058025+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Hi,\nThe problem is very easily reproducible. Please use the following script (if the eventlet.monkey_patch is commented then the open function will try and reconnect. If this is not commented then the function will hang). \nThanks\nGary\n\n#!/usr/bin/env python\n\n#import eventlet\n#eventlet.monkey_patch()\n\nimport os\nimport time\n\nfrom qpid.messaging import endpoints\n\nprint \"QPID Test!\"\n\nsession = None\nconsumers = {}\nconsumer_thread = None\n\ndefault_params = dict(hostname='localhost',\n                      port=5672,\n                      username='',\n                      password='')\n\nparams = {} \nfor key in default_params.keys():\n    params.setdefault(key, default_params[key])\n\nbroker = params['hostname'] + \":\" + str(params['port'])\n# Create the connection - this does not open the connection\nprint \"======> broker %s\" % broker\nconnection = endpoints.Connection(broker)\n\n# Check if flags are set and if so set them for the connection\n# before we call open\nconnection.username = params['username']\nconnection.password = params['password']\nconnection.sasl_mechanisms = ''\nconnection.reconnect = True\nconnection.heartbeat = 60 \nconnection.protocol = 'tcp' \nconnection.tcp_nodelay = True\n\nwhile True:\n    try:\n        connection.open()\n    except endpoints.exceptions.ConnectionError, e:\n        print 'Unable to connect to AMQP server: %s' % e\n        time.sleep(1)\n    else:\n        break\n\nprint 'Connected to AMQP server on %s' % broker\n\n\n", 
+            "date_created": "2012-11-05 12:20:13.636689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "We certainly cannot remove eventlet.monkey_patch().  All of the nova services are monkey patched, including nova-network which was working fine.", 
+            "date_created": "2012-11-05 14:46:56.450099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Hi,\nA proposed fix can be seen at https://review.openstack.org/#/c/15558/\nThanks\nGary", 
+            "date_created": "2012-11-07 18:07:02.013705+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "An update of what I've seen looking at this ... http://qpid.2158936.n2.nabble.com/QPID-and-eventlet-monkey-patch-tt7584370.html#a7584433", 
+            "date_created": "2012-11-07 20:45:54.688982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "The fix is currently under review in common - https://review.openstack.org/#/c/15663/", 
+            "date_created": "2012-11-11 14:18:21.735961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/15943", 
+            "date_created": "2012-11-13 07:18:51.313349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/15943\nCommitted: http://github.com/openstack/quantum/commit/8eb832715117b9f79d6d20d2dd17b6ff7efe4473\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8eb832715117b9f79d6d20d2dd17b6ff7efe4473\nAuthor: Gary Kotton <email address hidden>\nDate:   Thu Nov 8 21:16:01 2012 +0000\n\n    Update latest openstack-common code\n    \n    This fixes bug 1073999 (quantum/openstack/common/rpc/impl_qpid.py)\n    \n    In addition to this the common code is updated.\n    \n    Change-Id: I41223963baf34772edcd0d6d7ef5686a5fad1035\n", 
+            "date_created": "2012-11-13 07:54:11.633928+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/16095\nCommitted: http://github.com/openstack/quantum/commit/82b1a55cc98519240169c27be0652ee00fd1dffc\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 82b1a55cc98519240169c27be0652ee00fd1dffc\nAuthor: Gary Kotton <email address hidden>\nDate:   Sat Nov 10 06:59:33 2012 +0000\n\n    Update stable with stable oslo (aka common)\n    \n    This fixes bug 1073999\n    \n    Change-Id: I191af50a7b0ab6c3c19fd24757d7466e67549615\n", 
+            "date_created": "2012-11-15 17:08:59.101196+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hello Gary, or anyone else affected,\n\nAccepted quantum into quantal-proposed. The package will build now and be available at http://launchpad.net/ubuntu/+source/quantum/2012.2.1-0ubuntu1 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2012-12-28 16:23:04.204499+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "This bug was fixed in the package quantum - 2012.2.1-0ubuntu1\n\n---------------\nquantum (2012.2.1-0ubuntu1) quantal-proposed; urgency=low\n\n  * Resynchronize with stable/folsom (1e774867) (LP: #1085255):\n    - [aeabb42] There are routing problems when the dnsmasq port does not come\n      first in the routing table (LP: #1083238)\n    - [04aab72] Quantum linux bridge not optimized with libvirt (LP: #1078210)\n    - [ca7fc10] getting quotas from database has severe performance implications\n      (LP: #1075369)\n    - [66605e8] failed to update an external network into non external network\n      (LP: #1083387)\n    - [c60051a] Quantum test suite leaks memory like a sieve (LP: #1065276)\n    - [3179dfc] clear_db() does incomplete db teardown (LP: #1080988)\n    - [c1e19d7] Unauthorized command: cat /proc/None/cmdline (LP: #1077651)\n    - [af9e076] At times a instance will not receive an IP address from the DHCP\n      agent (LP: #1081664)\n    - [e0d1a7d] allow multiple floating-ip on single port if they use different\n      fixed ips and/or external nets (LP: #1057844)\n    - [8471d79] Delete port fails to gateway ip (LP: #1079980)\n    - [aca8b4a] fixed_ip allocation which is not included within\n      allocation_pools makes error when delete port or re-create port\n      (LP: #1077292)\n    - [eacc9d3] Mapping same bridge to different phyiscal networks succeed\n      (LP: #1067669)\n    - [51b4c82] python-quantum: not region aware (LP: #1080793)\n    - [6f0a486] delete floatingip should be in one transaction to delete port\n      (LP: #1080516)\n    - [db6cda7] Remove qpid configuration variables no longer supported\n    - [a112840] Allow NVP plugin to use per-tenant quota extension\n    - [82b1a55] Quantum service does not restart after reboot (LP: #1073999)\n    - [c01a839] There are some cases that L3 API with an invalid parameter\n      returns 500. (LP: #1064765)\n    - [26b383f] external network can be plugged also as internal network for one\n      router (LP: #1053633)\n    - [49f649c] There is a lot of cases that API with an invalid parameter\n      returns 500. (LP: #1062046)\n    - [4546a18] When create subnet, you con set up the value as cidr (the value\n      isn't cidr form). (LP: #1067959)\n    - [9ba453a] killfilter should handle updated/deleted executables\n      (LP: #1073768)\n    - [7c8a55c] a port which is not able to delete is made when floatingip\n      create fails. (LP: #1064748)\n    - [c9b84cf] Linux bridge port update causes exception (LP: #1072713)\n    - [cb57932] I can't add interface to router, if there is another port in\n      non-shared network of other tenant (LP: #1057558)\n    - [574e278] Ryu plugin does not support Security Groups (LP: #1059393)\n    - [607f486] tap device added to integration bridge without tag\n      (LP: #1064070)\n    - [21a0fdf] L3 agent external network flag (LP: #1056720)\n    - [5cbaff4] router create with external_gateway_info fails with 500 always.\n      (LP: #1064235)\n    - [63b81f6] l3 db operations failed in multiple transactions (LP: #1070335)\n    - [bff17fb] Ensure that the SqlSoup import is still supported.\n    - [e091a29] l3_nat_agent was renamed to l3_agent\n    - [9030969] remove default value of 'local_ip' of 10.0.0.3 in\n      ovs_quantum_plugin.ini  (LP: #1051744)\n    - [425e942] rootwrap error with L3 agent (LP: #1069966)\n    - [51c8799] Port create with invalid IP data creates port. (LP: #1064261)\n    - [fc97da9] nvp_plugin does not update device_id in nvplib (LP: #1061391)\n    - [2504f62] get_network in nvp plugin didn't return subnet information\n      (LP: #1061781)\n    - [b4f9b1f] l3_agent not disabling namespace use (LP: #1060559)\n    - [3bbf281] Add SIGPIPE handler to subprocess execution in rootwrap and\n      utils.execute (LP: #1053364)\n    - [c623f72] Set defaultbranch in .gitreview to stable/folsom\n -- Adam Gandelman <email address hidden>   Tue, 04 Dec 2012 09:19:46 -0800", 
+            "date_created": "2013-01-29 13:16:05.680367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/22244\nCommitted: http://github.com/openstack/cinder/commit/ce516f6a2367b50ccfd4a1d061acae109cd9b7d2\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit ce516f6a2367b50ccfd4a1d061acae109cd9b7d2\nAuthor: Eric Harney <email address hidden>\nDate:   Mon Feb 18 16:15:45 2013 -0500\n\n    Sync rpc changes from oslo stable/folsom\n    \n    Contains code from the following oslo commits:\n    \n    9f938720 Update common code to support pep 1.3.\n    7e36792c kombu's fanout_cast_to_server was calling wrong method\n     - Fixes bug 1074113\n    c3ec615c LOG.exception() should only be used in exception handler\n    17c5188c Use pep8 v1.3.3\n    d147d9f2 Fix QPID reconnect issues\n     - Fixes bug 1073999\n    \n    Change-Id: Ia4504cb4d8f2108b743efc4639450254d6e3fb8e\n", 
+            "date_created": "2013-04-05 16:36:21.358782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-11-14 16:45:58.906520+00:00"
+}

@@ -1,0 +1,77 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-09-22 22:21:31.488268+00:00", 
+    "description": "This: https://github.com/openstack/nova/blob/stable/essex/nova/network/linux_net.py#L1033\n\nAlso prevalent in Folsom can cause nova-network to fail with the following error:\n\n---\nCommand: sudo nova-rootwrap ip addr del xxx.xxx.xxx.xxx/24 brd 172.30.255.255 scope global secondary dev br0\nExit code: 255\nStdout: ''\nStderr: 'Error: either \"local\" is duplicate, or \"secondary\" is a garbage.\\n'\n---\n\nThis is due to the invalid passing of params to the ip addr del \n\nirc conversation:\n\n---\nApsu`: oneiroi: Yeah, just verified it on a box, to be sure. Can't specify the \"secondary\" part in the del call. It's not part of the syntax, because it's not user-controllable. A \"secondary\" is an IP in the same network as one already on the interface in the same scope\n[4:36pm] Apsu`: Let's see if it's different in Folsom\n[4:37pm] oneiroi: Apsu`: abstracted code and output http://fpaste.org/hFe3/\n[4:37pm] uvirtbot`: New bug: #1077056 in tempest \"images whitebox test fails with bad SQL connection URI\" [High,Confirmed] https://launchpad.net/bugs/1077056\n[4:37pm] AnilV4 left the chat room. (Read error: Connection reset by peer)\n[4:37pm] Apsu`: Nope. Appears to do the same. https://github.com/openstack/nova/blob/stable/folsom/nova/network/linux_net.py#L1193\n[4:37pm] \u2022 Apsu` nods\n[4:37pm] Apsu`: Exactly the issue. It's trying to ensure_bridge, and reorder the IPs so nova's bridge IP is first\n[4:38pm] maurosr left the chat room. (Quit: WeeChat 0.3.8)\n[4:38pm] Apsu`: There's a comment from vish in initialize_gateway_device about the same issue\n[4:39pm] Apsu`: So that field splitting code needs to filter out anything past the scope.\n[4:39pm] Apsu`: It's currently using [1:-1] to skip the first and last\n[4:40pm] oneiroi: indeed, filing a bug will then look at a quick fix, and submit patch\n[4:40pm] Apsu`: Cool.\n\n---\n\n\nAbstracted code showing the issue:\n\n---\n#!/usr/bin/env python\n\nstr='''\n6: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP \n    link/ether 00:15:17:aa:46:04 brd ff:ff:ff:ff:ff:ff\n    inet aa.bb.cc.dd/16 brd 172.30.255.255 scope global br0\n    inet xxx.xxx.xxx.xxx/24 brd 192.168.1.255 scope global br0:1\n    inet6 fe80::215:17ff:feaa:4604/64 scope link \n       valid_lft forever preferred_lft forever\n'''\n\nfor line in str.split('\\n'):\n  fields = line.split()\n  if fields and fields[0] == 'inet':\n    params = fields[1:-1]\n    print params\t\n\n---\n\n\n['aa.bb.cc.dd/16', 'brd', '172.30.255.255', 'scope', 'global']\n['xxx.xxx.xxx.xxx/24', 'brd', '192.168.1.255', 'scope', 'global']", 
+    "tags": [
+        "folsom-backport-potential", 
+        "in-stable-havana", 
+        "low-hanging-fruit"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1077066", 
+    "owner": "https://api.launchpad.net/1.0/~ethuleau", 
+    "id": 1077066, 
+    "index": 3142, 
+    "openned": "2012-11-09 16:45:17.227745+00:00", 
+    "created": "2012-11-09 16:45:17.227745+00:00", 
+    "title": "nova-network bridge existing system alias handeling failiure.", 
+    "comments": [
+        {
+            "content": "This: https://github.com/openstack/nova/blob/stable/essex/nova/network/linux_net.py#L1033\n\nAlso prevalent in Folsom can cause nova-network to fail with the following error:\n\n---\nCommand: sudo nova-rootwrap ip addr del xxx.xxx.xxx.xxx/24 brd 172.30.255.255 scope global secondary dev br0\nExit code: 255\nStdout: ''\nStderr: 'Error: either \"local\" is duplicate, or \"secondary\" is a garbage.\\n'\n---\n\nThis is due to the invalid passing of params to the ip addr del \n\nirc conversation:\n\n---\nApsu`: oneiroi: Yeah, just verified it on a box, to be sure. Can't specify the \"secondary\" part in the del call. It's not part of the syntax, because it's not user-controllable. A \"secondary\" is an IP in the same network as one already on the interface in the same scope\n[4:36pm] Apsu`: Let's see if it's different in Folsom\n[4:37pm] oneiroi: Apsu`: abstracted code and output http://fpaste.org/hFe3/\n[4:37pm] uvirtbot`: New bug: #1077056 in tempest \"images whitebox test fails with bad SQL connection URI\" [High,Confirmed] https://launchpad.net/bugs/1077056\n[4:37pm] AnilV4 left the chat room. (Read error: Connection reset by peer)\n[4:37pm] Apsu`: Nope. Appears to do the same. https://github.com/openstack/nova/blob/stable/folsom/nova/network/linux_net.py#L1193\n[4:37pm] \u2022 Apsu` nods\n[4:37pm] Apsu`: Exactly the issue. It's trying to ensure_bridge, and reorder the IPs so nova's bridge IP is first\n[4:38pm] maurosr left the chat room. (Quit: WeeChat 0.3.8)\n[4:38pm] Apsu`: There's a comment from vish in initialize_gateway_device about the same issue\n[4:39pm] Apsu`: So that field splitting code needs to filter out anything past the scope.\n[4:39pm] Apsu`: It's currently using [1:-1] to skip the first and last\n[4:40pm] oneiroi: indeed, filing a bug will then look at a quick fix, and submit patch\n[4:40pm] Apsu`: Cool.\n\n---\n\n\nAbstracted code showing the issue:\n\n---\n#!/usr/bin/env python\n\nstr='''\n6: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP \n    link/ether 00:15:17:aa:46:04 brd ff:ff:ff:ff:ff:ff\n    inet aa.bb.cc.dd/16 brd 172.30.255.255 scope global br0\n    inet xxx.xxx.xxx.xxx/24 brd 192.168.1.255 scope global br0:1\n    inet6 fe80::215:17ff:feaa:4604/64 scope link \n       valid_lft forever preferred_lft forever\n'''\n\nfor line in str.split('\\n'):\n  fields = line.split()\n  if fields and fields[0] == 'inet':\n    params = fields[1:-1]\n    print params\t\n\n---\n\n\n['aa.bb.cc.dd/16', 'brd', '172.30.255.255', 'scope', 'global']\n['xxx.xxx.xxx.xxx/24', 'brd', '192.168.1.255', 'scope', 'global']", 
+            "date_created": "2012-11-09 16:45:17.227745+00:00", 
+            "author": "https://api.launchpad.net/1.0/~d-busby"
+        }, 
+        {
+            "content": "I am curious about how this situation happens ,for  in a normal usecase ,br100 is created by nova automately and  we only  need to config one IP  on the bridge . how can we  have the two IPs that have the same netmask and in a broadcast domain?\nif this is not caused by  nova. this should not be bug. ", 
+            "date_created": "2012-11-10 13:04:14.129148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heut2008"
+        }, 
+        {
+            "content": "In this instance the aliases are being maintained for a soon to be retired legacy setup, nova.conf is set with: `public_interface = br0`\n\nThis is the main bridged interface on the host, the issue arrises when the defined public_interface allready has aliases, per information above the command would appear to be outputting:\n\nip addr del aa.bb.cc.dd/16 brd 172.30.255.255 scope global dev br0\n\nwhich in itself is invalid.\n\npseudo code:\n\nif scope <> global\n  cmd = ip addr del $1 scope $5\n\nI am unsure as to the handeling of labels etc, I am looking into this at this time.\n\n\n", 
+            "date_created": "2012-11-12 11:14:38.736363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~d-busby"
+        }, 
+        {
+            "content": "looks like a pretty easy fix to make it handle scope properly:\n", 
+            "date_created": "2013-02-26 21:07:26.999428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/23966", 
+            "date_created": "2013-03-08 22:51:56.170498+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/23966\nCommitted: http://github.com/openstack/nova/commit/f5a45dde519c521921240dfda835a805f1eb05b3\nSubmitter: Jenkins\nBranch:    master\n\ncommit f5a45dde519c521921240dfda835a805f1eb05b3\nAuthor: \u00c9douard Thuleau <email address hidden>\nDate:   Fri Feb 15 12:49:37 2013 +0100\n\n    Nova network needs to take care of existing alias\n    \n    Nova network should take care of existing aliases on bridge\n    interfaces when it adds address on top of the list.\n    \n    Change-Id: Ife54c9eba64906406f7c44a66b596f3162ad16b6\n    Fixes: bug #1077066\n", 
+            "date_created": "2013-03-09 15:27:19.073728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/70164\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0d447f6edd406547e828c592823ac6624e56e91f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0d447f6edd406547e828c592823ac6624e56e91f\nAuthor: Xavier Queralt <email address hidden>\nDate:   Thu Jan 30 17:28:31 2014 +0100\n\n    Ignore 'dynamic' addr flag on bridge configuration\n    \n    When setting the bridge up, if that flag is present but not\n    ignored, the delete command will fail and may leave the\n    interface and the bridge in an inconsistent state.\n    \n    Closes-Bug: #1274611\n    Related-Bug: #1077066\n    Change-Id: Iff65d61d724d0de5d8173ac37f7f748aa23e5d8b\n", 
+            "date_created": "2014-02-06 18:32:45.088638+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/havana\nReview: https://review.openstack.org/116150", 
+            "date_created": "2014-08-22 01:09:47.915565+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Can ZHANG (<email address hidden>) on branch: stable/havana\nReview: https://review.openstack.org/116150\nReason: sorry, duplicate patch", 
+            "date_created": "2014-08-22 01:12:53.106319+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Alan Pevec (<email address hidden>) on branch: stable/havana\nReview: https://review.openstack.org/115888\nReason: https://review.openstack.org/116150 is the correct backport", 
+            "date_created": "2014-09-07 21:36:12.318980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/116150\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6cbbb615787844d6d0f084e16605d30b56079c97\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 6cbbb615787844d6d0f084e16605d30b56079c97\nAuthor: Xavier Queralt <email address hidden>\nDate:   Thu Jan 30 17:28:31 2014 +0100\n\n    Ignore 'dynamic' addr flag on bridge configuration\n    \n    When setting the bridge up, if that flag is present but not\n    ignored, the delete command will fail and may leave the\n    interface and the bridge in an inconsistent state.\n    \n    Closes-Bug: #1274611\n    Related-Bug: #1077066\n    Change-Id: Iff65d61d724d0de5d8173ac37f7f748aa23e5d8b\n    (cherry picked from commit 0d447f6edd406547e828c592823ac6624e56e91f)\n", 
+            "date_created": "2014-09-08 16:33:35.652272+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-03-20 16:08:47.213886+00:00"
+}

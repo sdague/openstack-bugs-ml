@@ -1,0 +1,60 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 10:51:01.189299+00:00", 
+    "description": "I have a 2 compute-node setup running multi_host.  If I assign a floating IP address to a VM and then migrate that VM to another compute host, the iptables NAT for that floating IP and the assignment of the IP to the physical network interface remain on the original host.  I would expect these to move with the live migration.\n\nThe networking entries from my nova.conf:\n\n# Networking\n--network_manager=nova.network.manager.FlatDHCPManager\n--force_dhcp_release\n--fixed_range=10.55.100.0/25\n--flat_network_dhcp_start=10.55.100.2\n--flat_interface=eth2.100\n--flat_network_bridge=br100\n--libvirt_use_virtio_for_bridges\n--dhcpbridge_flagfile=/etc/nova/nova.conf\n--dhcpbridge=/usr/bin/nova-dhcpbridge\n--allow_same_net_traffic\n--public_interface=eth1\n--multi_host\n\nIf I have a VM starting on node2 (fixed ip 10.55.100.2), I see this interface assignment for the floating IP (10.54.100.225):\neth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000\n    link/ether 00:30:48:f3:49:5d brd ff:ff:ff:ff:ff:ff\n    inet 10.54.0.2/16 scope global eth1\n    inet 10.54.100.225/32 scope global eth1\n\nand iptables NAT entries (seen from iptables-save):\n-A nova-network-OUTPUT -d 10.54.100.225/32 -j DNAT --to-destination 10.55.100.2\n-A nova-network-PREROUTING -d 10.54.100.225/32 -j DNAT --to-destination 10.55.100.2\n-A nova-network-float-snat -s 10.55.100.2/32 -j SNAT --to-source 10.54.100.225\n\nAll those entries look good/correct to me.  Then I do a live-migration from node2 to node1.  After that, I verify that the VM has moved successfully (it has) and I can reach it through the fixed network (I can).  However, when I look at the floating network, all the entries from above are still present on node2!  Here's node2 output from \"ip a\" again:\n\neth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000\n    link/ether 00:30:48:f3:49:5d brd ff:ff:ff:ff:ff:ff\n    inet 10.54.0.2/16 scope global eth1\n    inet 10.54.100.225/32 scope global eth1\n\nAnd then from node1:\neth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000\n    link/ether 00:30:48:f3:49:5f brd ff:ff:ff:ff:ff:ff\n    inet 10.54.0.1/16 scope global eth1\n\nI definitely would have expected that IP address to change from eth1 on node2 to eth1 on node1, since I'm running multi_host.  Consider that I may have done the live migration because I'm about to take node2 down for maintenance.  Additionally, no NAT entries for that floating ip were made on node1.  They remain on node2 as well.  All the fixed ip entries were moved as expected.\n\nRunning on Ubuntu 12.04.  Everything installed via apt-get.  Latest packages as of 3/27.\nnode1:~# lsb_release -a\nNo LSB modules are available.\nDistributor ID:\tUbuntu\nDescription:\tUbuntu precise (development branch)\nRelease:\t12.04\nCodename:\tprecise\n\nnode1:~# dpkg -l nova-compute\nii  nova-compute                         2012.1~rc1-0ubuntu2                  OpenStack Compute - compute node\nnode1:~# dpkg -l nova-network\nii  nova-network                         2012.1~rc1-0ubuntu2                  OpenStack Compute - Network manager", 
+    "tags": [
+        "essex-release-notes"
+    ], 
+    "importance": "High", 
+    "heat": 34, 
+    "link": "https://bugs.launchpad.net/nova/+bug/966529", 
+    "owner": "https://api.launchpad.net/1.0/~wenjianhn", 
+    "id": 966529, 
+    "index": 647, 
+    "openned": "2012-03-27 19:51:14.621054+00:00", 
+    "created": "2012-03-27 19:51:14.621054+00:00", 
+    "title": "floating ip does not move with live migration with multi_host", 
+    "comments": [
+        {
+            "content": "I have a 2 compute-node setup running multi_host.  If I assign a floating IP address to a VM and then migrate that VM to another compute host, the iptables NAT for that floating IP and the assignment of the IP to the physical network interface remain on the original host.  I would expect these to move with the live migration.\n\nThe networking entries from my nova.conf:\n\n# Networking\n--network_manager=nova.network.manager.FlatDHCPManager\n--force_dhcp_release\n--fixed_range=10.55.100.0/25\n--flat_network_dhcp_start=10.55.100.2\n--flat_interface=eth2.100\n--flat_network_bridge=br100\n--libvirt_use_virtio_for_bridges\n--dhcpbridge_flagfile=/etc/nova/nova.conf\n--dhcpbridge=/usr/bin/nova-dhcpbridge\n--allow_same_net_traffic\n--public_interface=eth1\n--multi_host\n\nIf I have a VM starting on node2 (fixed ip 10.55.100.2), I see this interface assignment for the floating IP (10.54.100.225):\neth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000\n    link/ether 00:30:48:f3:49:5d brd ff:ff:ff:ff:ff:ff\n    inet 10.54.0.2/16 scope global eth1\n    inet 10.54.100.225/32 scope global eth1\n\nand iptables NAT entries (seen from iptables-save):\n-A nova-network-OUTPUT -d 10.54.100.225/32 -j DNAT --to-destination 10.55.100.2\n-A nova-network-PREROUTING -d 10.54.100.225/32 -j DNAT --to-destination 10.55.100.2\n-A nova-network-float-snat -s 10.55.100.2/32 -j SNAT --to-source 10.54.100.225\n\nAll those entries look good/correct to me.  Then I do a live-migration from node2 to node1.  After that, I verify that the VM has moved successfully (it has) and I can reach it through the fixed network (I can).  However, when I look at the floating network, all the entries from above are still present on node2!  Here's node2 output from \"ip a\" again:\n\neth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000\n    link/ether 00:30:48:f3:49:5d brd ff:ff:ff:ff:ff:ff\n    inet 10.54.0.2/16 scope global eth1\n    inet 10.54.100.225/32 scope global eth1\n\nAnd then from node1:\neth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000\n    link/ether 00:30:48:f3:49:5f brd ff:ff:ff:ff:ff:ff\n    inet 10.54.0.1/16 scope global eth1\n\nI definitely would have expected that IP address to change from eth1 on node2 to eth1 on node1, since I'm running multi_host.  Consider that I may have done the live migration because I'm about to take node2 down for maintenance.  Additionally, no NAT entries for that floating ip were made on node1.  They remain on node2 as well.  All the fixed ip entries were moved as expected.\n\nRunning on Ubuntu 12.04.  Everything installed via apt-get.  Latest packages as of 3/27.\nnode1:~# lsb_release -a\nNo LSB modules are available.\nDistributor ID:\tUbuntu\nDescription:\tUbuntu precise (development branch)\nRelease:\t12.04\nCodename:\tprecise\n\nnode1:~# dpkg -l nova-compute\nii  nova-compute                         2012.1~rc1-0ubuntu2                  OpenStack Compute - compute node\nnode1:~# dpkg -l nova-network\nii  nova-network                         2012.1~rc1-0ubuntu2                  OpenStack Compute - Network manager", 
+            "date_created": "2012-03-27 19:51:14.621054+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trhoden"
+        }, 
+        {
+            "content": "This is correct.  We move the dhcp but not the floating ips.", 
+            "date_created": "2012-03-27 21:50:45.904681+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I don't think this will make it in to essex, so we will probably have to add something in the release notes letting people know that they will need to:\nremove floating ip\nmigrate\nadd floating ip", 
+            "date_created": "2012-03-27 22:00:35.866116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I can make do with the workaround from #2.  +1 for release notes comments.\n\nThanks for the info.", 
+            "date_created": "2012-03-27 22:49:26.042690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trhoden"
+        }, 
+        {
+            "content": "So this bug will be solved with that workaround?", 
+            "date_created": "2012-09-13 18:04:15.856407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tagliapietra.alessandro"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/15996", 
+            "date_created": "2012-11-13 17:24:50.441948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/15996\nCommitted: http://github.com/openstack/nova/commit/3c173a744a5d4ae7845411865a7f85d9c2411e74\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3c173a744a5d4ae7845411865a7f85d9c2411e74\nAuthor: Jian Wen <email address hidden>\nDate:   Wed Nov 14 01:22:40 2012 +0800\n\n    Migrate floating ip addresses in multi_host live_migration\n    \n    Make migration of floating ip addresses work and work only\n    in multi_host mode.\n    Add test case for post_live_migration_at_destination.\n    \n    Fixes bug 966529 and bug 1029291\n    \n    Change-Id: Ia79030e5bcfc55e5a33b20a3d6eead01fa5b255a\n", 
+            "date_created": "2012-11-20 02:18:10.665007+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/25715", 
+            "date_created": "2013-03-29 14:52:27.834441+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-11-21 09:42:25.071988+00:00"
+}

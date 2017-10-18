@@ -1,0 +1,52 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-10-05 12:25:22.756962+00:00", 
+    "description": "When I attempt to attach a volume using the nova cli or horizon:\n\n$ nova volume-attach 7a0a3ffa-603a-4758-8533-32ffd9974d03 66e834db-0f98-45fd-bfa0-6386f4a965a4 /dev/vdb\n+----------+--------------------------------------+\n| Property | Value                                |\n+----------+--------------------------------------+\n| device   | /dev/hdb                             |\n| serverId | 7a0a3ffa-603a-4758-8533-32ffd9974d03 |\n| id       | 66e834db-0f98-45fd-bfa0-6386f4a965a4 |\n| volumeId | 66e834db-0f98-45fd-bfa0-6386f4a965a4 |\n+----------+--------------------------------------+\n\n(note the returned device is /dev/hdb not /dev/vdb)\n\nIn the error logs on the compute host:\n\n... a large stack dump and ...\n/var/log/nova/nova-compute.log: 2013-09-10 16:57:26.979 4774 TRACE nova.openstack.common.rpc.amqp libvirtError: unsupported configuration: disk bus 'ide' cannot be hotplugged.\n/var/log/libvirt/libvirtd.log: 2013-09-10 23:57:23.529+0000: 1886: error : qemuDomainAttachDeviceDiskLive:5870 : unsupported configuration: disk bus 'ide' cannot be hotplugged.\n\n\nlibvirt uses the device name as a hint as to what driver to use when attaching a new device. The instance has been booted from another volume which means volumes can be attached successfully (but only on boot.)\n\nI have also tried specifying /dev/sdb, /dev/xvdb with the same failure. Specifying just 'vdb' raises InvalidDevicePath.\n\nI am running nova-compute on Ubuntu from a package, version 2013.1.2-0ubuntu1.", 
+    "tags": [
+        "ceph", 
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "Undecided", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1223611", 
+    "owner": "None", 
+    "id": 1223611, 
+    "index": 5337, 
+    "openned": "2013-09-11 00:05:09.320409+00:00", 
+    "created": "2013-09-11 00:05:09.320409+00:00", 
+    "title": "Can not attach a volume to a running compute instance", 
+    "comments": [
+        {
+            "content": "When I attempt to attach a volume using the nova cli or horizon:\n\n$ nova volume-attach 7a0a3ffa-603a-4758-8533-32ffd9974d03 66e834db-0f98-45fd-bfa0-6386f4a965a4 /dev/vdb\n+----------+--------------------------------------+\n| Property | Value                                |\n+----------+--------------------------------------+\n| device   | /dev/hdb                             |\n| serverId | 7a0a3ffa-603a-4758-8533-32ffd9974d03 |\n| id       | 66e834db-0f98-45fd-bfa0-6386f4a965a4 |\n| volumeId | 66e834db-0f98-45fd-bfa0-6386f4a965a4 |\n+----------+--------------------------------------+\n\n(note the returned device is /dev/hdb not /dev/vdb)\n\nIn the error logs on the compute host:\n\n... a large stack dump and ...\n/var/log/nova/nova-compute.log: 2013-09-10 16:57:26.979 4774 TRACE nova.openstack.common.rpc.amqp libvirtError: unsupported configuration: disk bus 'ide' cannot be hotplugged.\n/var/log/libvirt/libvirtd.log: 2013-09-10 23:57:23.529+0000: 1886: error : qemuDomainAttachDeviceDiskLive:5870 : unsupported configuration: disk bus 'ide' cannot be hotplugged.\n\n\nlibvirt uses the device name as a hint as to what driver to use when attaching a new device. The instance has been booted from another volume which means volumes can be attached successfully (but only on boot.)\n\nI have also tried specifying /dev/sdb, /dev/xvdb with the same failure. Specifying just 'vdb' raises InvalidDevicePath.\n\nI am running nova-compute on Ubuntu from a package, version 2013.1.2-0ubuntu1.", 
+            "date_created": "2013-09-11 00:05:09.320409+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tims-t"
+        }, 
+        {
+            "content": "The volume attach device isn't really honored inside the VM, FYI.\r\n\r\nThe more confusing part is why the VM appears to  have its disks on an IDE controller. That makes hotplugging a no-go, so I don't think that this is really a volumes and hotplug bug, but rather something else.\r\n\r\nCan you confirm that virsh dumpxml of your instance shows only IDE controllers? Are you using any metadata on your image that would cause libvirt to use IDE?", 
+            "date_created": "2013-09-17 16:49:10.308738+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Yes it is honored but the semantics of the VM are not what this bug refers to.\n\nDepending on the device name, KVM will use a different style of virtual device. I think we agree that /dev/hdX (emulated as IDE) is not hot-pluggable. /dev/vdX is hot-pluggable and is even used for the initially specified instance disks.\n\nWhen I specify a new volume to attach after the host is running, no matter what device string I give, it gets translated to /dev/hdX by openstack. I should be able to specify /dev/vdb and /dev/vdb should make it all the way through to KVM. Somewhat beside the point but related, adding a device should probably default to /dev/vdX instead of /dev/hdX if there needs to be some form of default for KVM.", 
+            "date_created": "2013-09-17 17:20:46.051406+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tims-t"
+        }, 
+        {
+            "content": "Hello i have the same issue when i try to attach a volume disk to a running instance.\nYou can watch my dumpxml at http://paste.openstack.org/show/47705/.\n\n$ nova volume-attach 333034af-0d2e-4767-8955-da3abaee4edd a9991bf9-97e7-4f04-ba2a-f313e8026280 /dev/vdc\n+----------+--------------------------------------+\n| Property | Value                                |\n+----------+--------------------------------------+\n| device   | /dev/hdc                             |\n| serverId | 333034af-0d2e-4767-8955-da3abaee4edd |\n| id       | a9991bf9-97e7-4f04-ba2a-f313e8026280 |\n| volumeId | a9991bf9-97e7-4f04-ba2a-f313e8026280 |\n+----------+--------------------------------------+\n\nI hope it will help in resolving issue", 
+            "date_created": "2013-09-30 16:23:33.737195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yannick-foeillet"
+        }, 
+        {
+            "content": "Any update on this?", 
+            "date_created": "2014-07-15 05:54:49.441703+00:00", 
+            "author": "https://api.launchpad.net/1.0/~h-tanizawa"
+        }, 
+        {
+            "content": "Hi,\n\nI am also getting the same error while trying to attach a IDE disk to an instance using HOT.\nBut the same code is working well for virtio disks. This is the converted qcow2 image from a vmdk.\n\nLet me know if there is a way to fix it.\n\nThanks,\nUday", 
+            "date_created": "2016-10-05 12:25:21.959650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~udayendu-kar"
+        }
+    ], 
+    "closed": "2014-09-10 15:34:44.392747+00:00"
+}

@@ -1,0 +1,41 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-05-10 23:07:30.436741+00:00", 
+    "description": "Description\n===========\n\nWhen scheduling an instance with Nova and Ironic, some hypervisors are ignored by ComputeFilter because they \"has not been heard from in a while\".\n\nExpected result\n===============\n\nI expect all hypervisors to be available to nova-scheduler.\n\nActual result\n=============\n\nSome hypervisors are ignored due to the service being \"down\".\n\nI found that:\n* ComputeFilter is ignoring hypervisors if the \"nova.compute_nodes.updated_at\" field is outdated according to the \"service_down_time\" config.\n* When starting nova-compute service, the field is updated correctly.\n* Next resource usage updates do not update the field until the service is restarted.\n* Resource tracker does not update scheduler state (and field) if no change is found for the hypervisor. [1] Commenting out those lines makes nova-compute update the updated_at field correctly and nova-scheduler is happy.\n\nThis makes nova-scheduler sad and not all hypervisors are available during scheduling.\n\nEnvironment\n===========\n\nNova 2015.1.2\n\n[1] https://github.com/openstack/nova/blob/d619ad6ba15df1cf7dc92ddf84d1c65af018682f/nova/compute/resource_tracker.py#L632-L633", 
+    "tags": [
+        "compute", 
+        "scheduler"
+    ], 
+    "importance": "Undecided", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1579213", 
+    "owner": "None", 
+    "id": 1579213, 
+    "index": 7464, 
+    "openned": "2016-05-06 20:05:07.649926+00:00", 
+    "created": "2016-05-06 20:05:07.649926+00:00", 
+    "title": "ComputeFilter fails because compute node has not been heard from in a while", 
+    "comments": [
+        {
+            "content": "Description\n===========\n\nWhen scheduling an instance with Nova and Ironic, some hypervisors are ignored by ComputeFilter because they \"has not been heard from in a while\".\n\nExpected result\n===============\n\nI expect all hypervisors to be available to nova-scheduler.\n\nActual result\n=============\n\nSome hypervisors are ignored due to the service being \"down\".\n\nI found that:\n* ComputeFilter is ignoring hypervisors if the \"nova.compute_nodes.updated_at\" field is outdated according to the \"service_down_time\" config.\n* When starting nova-compute service, the field is updated correctly.\n* Next resource usage updates do not update the field until the service is restarted.\n* Resource tracker does not update scheduler state (and field) if no change is found for the hypervisor. [1] Commenting out those lines makes nova-compute update the updated_at field correctly and nova-scheduler is happy.\n\nThis makes nova-scheduler sad and not all hypervisors are available during scheduling.\n\nEnvironment\n===========\n\nNova 2015.1.2\n\n[1] https://github.com/openstack/nova/blob/d619ad6ba15df1cf7dc92ddf84d1c65af018682f/nova/compute/resource_tracker.py#L632-L633", 
+            "date_created": "2016-05-06 20:05:07.649926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgagne"
+        }, 
+        {
+            "content": "The service up/down is is based on the 'last_seen_up' or 'updated_at' or 'created_at' fields of the Service record, not the ComputeNode record (see nova/servicegroup/drivers/db.py assuming you're using the db driver). The ComputeFilter calls the 'is_up' method to check up/down.\r\n\r\nThe Service record is updated by the '_report_state' method running periodically on a timer based on 'CONF.report_interval'. In '_report_state' the 'report_count' is incremented and the Service record is saved, causing an update in the 'updated_at' field that's used in the up/down check.\r\n\r\nResource usage updates aren't related to the up/down state as they update 'compute_nodes', not 'services'. So, I don't understand how commenting out the lines in resource_tracker.py helped in your environment.\r\n\r\nOne thing I have seen before, is if the scheduling step takes longer than the expiration time for \"up/down\" and the ComputeFilter is later in the list of filters, those nodes will be seen as \"down\" even though they aren't, because the scheduler is still looking seeing an \"old\" view of the records it pulled and won't see that a heartbeat came in while it was scheduling. What order are your scheduler filters in? Is ComputeFilter early in the list or later in the nova.conf?", 
+            "date_created": "2016-05-10 22:06:40.886895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Thanks Melanie for the follow up. For some reasons (maybe lack of coffee), I didn't see the updated_at field in the nova.services table.\n\nLet me reassess the situation so we don't both lose time debugging something that could be fixed with a higher service_downtime timeout in nova.conf.", 
+            "date_created": "2016-05-10 22:33:12.820216+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgagne"
+        }, 
+        {
+            "content": "Melanie Witt explained to me on IRC that in environment with a high number of nodes (Ironic happens to be one of them), the ComputeFilter filter should be listed first to avoid those errors.\n\nThe scheduling process could take more than 60s (which happens to be the default value of the service_down_time config) and when ComputeFilter is finally invoked, the servicegroup API will think the compute service is down and therefore reject the node.\n\nIt is unclear why forcing systematic scheduler state updates from resource tracker improves the situation. I will assume this is caused by some unknown side effects.", 
+            "date_created": "2016-05-10 23:07:13.209140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgagne"
+        }
+    ], 
+    "closed": "2016-05-10 23:07:28.772250+00:00"
+}

@@ -1,0 +1,60 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-10-13 08:13:52.032257+00:00", 
+    "description": "Description\n===========\nAfter an evacuation, when nova-compute is restarted on the source host, the clean up of the old instance on the source host fails. The traceback in nova-compute.log ends with:\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 679, in _destroy_evacuated_instances\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service     instance, migration.source_node)\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service   File \"/usr/lib/python2.7/dist-packages/nova/compute/resource_tracker.py\", line 1216, in delete_allocation_for_evacuated_instance\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service     instance, node, 'evacuated', node_type)\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service   File \"/usr/lib/python2.7/dist-packages/nova/compute/resource_tracker.py\", line 1227, in _delete_allocation_for_moved_instance\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service     cn_uuid = self.compute_nodes[node].uuid\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service KeyError: u'<SOURCE_HOST_NAME>'\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service\n\n\n\nSteps to reproduce\n==================\nDeploy instance on Host A.\nShut down Host A.\nEvacuate instance to Host B.\nTurn back on Host A.\nWait for cleanup of old instance allocation to occur\n\nExpected result\n===============\nClean up of old instance from Host A is successful\n\nActual result\n=============\nOld instance clean up appears to work but there's a traceback in the log and allocation is not cleaned up.\n\nEnvironment\n===========\n(pike)nova-compute/now 10:16.0.0-201710030907\n\n\nAdditional Info:\n================\nProblem seems to come from this change: https://github.com/openstack/nova/commit/0de806684f5d670dd5f961f7adf212961da3ed87 at:\nrt = self._get_resource_tracker()\nrt.delete_allocation_for_evacuated_instance\nThat is called very early in init_host flow to clean up the allocations. The problem is that at this point in the startup the resource tracker's self.compute_node is still None. That makes delete_allocation_for_evacuated_instance blow up with a key error at:\ncn_uuid = self.compute_nodes[node].uuid\nThe resource tracker's self.compute_node is actually initialized later on in the startup process via the update_available_resources() -> _update_available_resources() -> _init_compute_node(). It isn't initialized when the tracker is first created which appears to be the assumption made by the referenced commit.", 
+    "tags": [
+        "placement", 
+        "resource-tracker"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1721652", 
+    "owner": "https://api.launchpad.net/1.0/~balazs-gibizer", 
+    "id": 1721652, 
+    "index": 2156, 
+    "openned": "2017-10-05 21:58:55.747019+00:00", 
+    "created": "2017-10-05 21:58:55.747019+00:00", 
+    "title": "Evacuate cleanup fails at _delete_allocation_for_moved_instance", 
+    "comments": [
+        {
+            "content": "Description\n===========\nAfter an evacuation, when nova-compute is restarted on the source host, the clean up of the old instance on the source host fails. The traceback in nova-compute.log ends with:\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service   File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 679, in _destroy_evacuated_instances\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service     instance, migration.source_node)\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service   File \"/usr/lib/python2.7/dist-packages/nova/compute/resource_tracker.py\", line 1216, in delete_allocation_for_evacuated_instance\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service     instance, node, 'evacuated', node_type)\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service   File \"/usr/lib/python2.7/dist-packages/nova/compute/resource_tracker.py\", line 1227, in _delete_allocation_for_moved_instance\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service     cn_uuid = self.compute_nodes[node].uuid\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service KeyError: u'<SOURCE_HOST_NAME>'\n2017-10-04 05:32:18.725 5575 ERROR oslo_service.service\n\n\n\nSteps to reproduce\n==================\nDeploy instance on Host A.\nShut down Host A.\nEvacuate instance to Host B.\nTurn back on Host A.\nWait for cleanup of old instance allocation to occur\n\nExpected result\n===============\nClean up of old instance from Host A is successful\n\nActual result\n=============\nOld instance clean up appears to work but there's a traceback in the log and allocation is not cleaned up.\n\nEnvironment\n===========\n(pike)nova-compute/now 10:16.0.0-201710030907\n\n\nAdditional Info:\n================\nProblem seems to come from this change: https://github.com/openstack/nova/commit/0de806684f5d670dd5f961f7adf212961da3ed87 at:\nrt = self._get_resource_tracker()\nrt.delete_allocation_for_evacuated_instance\nThat is called very early in init_host flow to clean up the allocations. The problem is that at this point in the startup the resource tracker's self.compute_node is still None. That makes delete_allocation_for_evacuated_instance blow up with a key error at:\ncn_uuid = self.compute_nodes[node].uuid\nThe resource tracker's self.compute_node is actually initialized later on in the startup process via the update_available_resources() -> _update_available_resources() -> _init_compute_node(). It isn't initialized when the tracker is first created which appears to be the assumption made by the referenced commit.", 
+            "date_created": "2017-10-05 21:58:55.747019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cjvolzka"
+        }, 
+        {
+            "content": "This seems like a valid bug. Unfortunately the provided functional test did not catch the reported problem.", 
+            "date_created": "2017-10-06 15:38:33.956450+00:00", 
+            "author": "https://api.launchpad.net/1.0/~balazs-gibizer"
+        }, 
+        {
+            "content": "We'll have to backport whatever the fix is to stable/pike:\n\nhttps://review.openstack.org/#/q/I0df401a7c91f012fdb25cb0e6b344ca51de8c309", 
+            "date_created": "2017-10-06 15:49:32.902069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "So the functional test did not catch this because there we just stop and start the compute service but did not destroy it so some state survives. We need to enhance the functional test to reproduce the problem.", 
+            "date_created": "2017-10-06 15:57:33.627777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~balazs-gibizer"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/510176", 
+            "date_created": "2017-10-06 16:26:44.573046+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/510938", 
+            "date_created": "2017-10-10 16:50:16.593295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/510176\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a3c556963eaf408a29b27a1f6fc44bc424e48efc\nSubmitter: Jenkins\nBranch:    master\n\ncommit a3c556963eaf408a29b27a1f6fc44bc424e48efc\nAuthor: Balazs Gibizer <email address hidden>\nDate:   Fri Oct 6 18:25:17 2017 +0200\n\n    Reproduce bug 1721652 in the functional test env\n    \n    When bug 1709902 was fixed in I0df401a7c91f012fdb25cb0e6b344ca51de8c309\n    the fix assumed that when the _destroy_evacuated_instances() is called\n    during the init of the nova-compute service the resource tracker\n    already knows the compute node ids associated to the given compute\n    host. This is not true and therefore _destroy_evacuated_instances fails\n    with an exception and does not clean up the evacuated instance.\n    \n    The solution for the original bug included a functional regression\n    test. However the functional test env is not capable of fully simulate\n    a nova-compute service restart. The service only stopped then started\n    again. This allows some in memory state of the compute service to\n    survive the simulated restart. This caused that the functional test\n    was not able to catch that the above described assumption is not\n    correct.\n    \n    Related-Bug: #1721652\n    Related-Bug: #1709902\n    Change-Id: Icaf1bae8cb040b939f916a19ce026031ddb84af7\n", 
+            "date_created": "2017-10-13 08:02:43.178813+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/pike\nReview: https://review.openstack.org/511759", 
+            "date_created": "2017-10-13 08:13:51.143227+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

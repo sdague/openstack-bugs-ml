@@ -1,0 +1,36 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2013-10-21 21:04:42.961615+00:00", 
+    "description": "We have an instance hit the instance_build_timeout during deploy.\n\nThe instance is put to Error state. However, the task state is still staying in 'initializing'. Shouldn't the task state be reset in this case?\n\n\n2013-10-16 07:38:40.306 5339 WARNING nova.compute.manager [-] [instance: 1f8049da-550a-4174-bed8-0d22f3fb0b0c] NV-81716D6 Instance build timed out. Set to error state.\n\n\n    @periodic_task.periodic_task\n    def _check_instance_build_time(self, context):\n        \"\"\"Ensure that instances are not stuck in build.\"\"\"\n        timeout = CONF.instance_build_timeout\n        if timeout == 0:\n            return\n\n        filters = {'vm_state': vm_states.BUILDING,\n                   'host': self.host}\n        building_insts = self.conductor_api.instance_get_all_by_filters(\n            context, filters, columns_to_join=[])\n\n        for instance in building_insts:\n            if timeutils.is_older_than(instance['created_at'], timeout):\n                self._set_instance_error_state(context, instance['uuid'])\n                LOG.warn(_(\"Instance build timed out. Set to error state.\"),\n                         instance=instance)\n\nhttp://paste.openstack.org/show/48656/\n\nIRC discussion with some history on the code:\n\n(12:36:46 PM) mriedem: mrodden: looks like it's been that way for a long long time\n(12:36:46 PM) mriedem: https://github.com/openstack/nova/blame/master/nova/compute/manager.py#L485\n(12:37:29 PM) SergeyLukjanov left the room (quit: Quit: My MacBook has gone to sleep. ZZZzzz\u2026).\n(12:39:28 PM) mriedem: bnemec: any ideas? ^\n(12:40:50 PM) mriedem: mrodden: looks like expected task state is None when you rebuild from an ERROR state\n(12:40:50 PM) mriedem: https://github.com/openstack/nova/blob/master/nova/compute/api.py#L2033\n(12:40:52 PM) mriedem: so looks like a bug\n(12:40:59 PM) mriedem: 1 line fix at least :)\nMr__T mriedem mrodden \n(12:43:19 PM) mriedem: mrodden: furthermore, looks like the unit tests aren't validating the vm_state/task_state passed to set_instance_error_state, they just take **kwargs\n(12:43:20 PM) mriedem: def fake_set_instance_error_state(_ctxt, instance_uuid, **kwargs):\n(12:43:26 PM) mriedem: easy fix", 
+    "tags": [
+        "compute", 
+        "havana-backport-potential"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1241117", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1241117, 
+    "index": 5473, 
+    "openned": "2013-10-17 17:46:13.991857+00:00", 
+    "created": "2013-10-17 17:46:13.991857+00:00", 
+    "title": "task_state is not reset when instance fails to build", 
+    "comments": [
+        {
+            "content": "We have an instance hit the instance_build_timeout during deploy.\n\nThe instance is put to Error state. However, the task state is still staying in 'initializing'. Shouldn't the task state be reset in this case?\n\n\n2013-10-16 07:38:40.306 5339 WARNING nova.compute.manager [-] [instance: 1f8049da-550a-4174-bed8-0d22f3fb0b0c] NV-81716D6 Instance build timed out. Set to error state.\n\n\n    @periodic_task.periodic_task\n    def _check_instance_build_time(self, context):\n        \"\"\"Ensure that instances are not stuck in build.\"\"\"\n        timeout = CONF.instance_build_timeout\n        if timeout == 0:\n            return\n\n        filters = {'vm_state': vm_states.BUILDING,\n                   'host': self.host}\n        building_insts = self.conductor_api.instance_get_all_by_filters(\n            context, filters, columns_to_join=[])\n\n        for instance in building_insts:\n            if timeutils.is_older_than(instance['created_at'], timeout):\n                self._set_instance_error_state(context, instance['uuid'])\n                LOG.warn(_(\"Instance build timed out. Set to error state.\"),\n                         instance=instance)\n\nhttp://paste.openstack.org/show/48656/\n\nIRC discussion with some history on the code:\n\n(12:36:46 PM) mriedem: mrodden: looks like it's been that way for a long long time\n(12:36:46 PM) mriedem: https://github.com/openstack/nova/blame/master/nova/compute/manager.py#L485\n(12:37:29 PM) SergeyLukjanov left the room (quit: Quit: My MacBook has gone to sleep. ZZZzzz\u2026).\n(12:39:28 PM) mriedem: bnemec: any ideas? ^\n(12:40:50 PM) mriedem: mrodden: looks like expected task state is None when you rebuild from an ERROR state\n(12:40:50 PM) mriedem: https://github.com/openstack/nova/blob/master/nova/compute/api.py#L2033\n(12:40:52 PM) mriedem: so looks like a bug\n(12:40:59 PM) mriedem: 1 line fix at least :)\nMr__T mriedem mrodden \n(12:43:19 PM) mriedem: mrodden: furthermore, looks like the unit tests aren't validating the vm_state/task_state passed to set_instance_error_state, they just take **kwargs\n(12:43:20 PM) mriedem: def fake_set_instance_error_state(_ctxt, instance_uuid, **kwargs):\n(12:43:26 PM) mriedem: easy fix", 
+            "date_created": "2013-10-17 17:46:13.991857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/52519", 
+            "date_created": "2013-10-17 21:40:49.550854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is essentially working as designed based on this change:\n\nhttps://github.com/openstack/nova/commit/99c51e34230394cadf0b82e364ea10c38e193979\n\nYou can only rebuild an instance in error state if it was successfully launched once before.\n\nThe task_state should be left as-is in the case of the failure so that we can tell what action was being performed when it errored, i.e. building/scheduling, migrating, etc.  If we set the task_state to None when the vm_state goes to ERROR, we lose that information and can't recover from it.\n\nThe word is the vm_state/task_state system is going to be re-visted in the Icehouse release, there are several task-related summit sessions proposed and this looks related:\n\nhttps://etherpad.openstack.org/p/IcehouseTaskAPI", 
+            "date_created": "2013-10-21 21:04:42.344095+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ], 
+    "closed": "2013-10-21 20:57:47.126408+00:00"
+}

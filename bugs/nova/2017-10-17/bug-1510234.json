@@ -1,0 +1,75 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-14 04:23:17.445972+00:00", 
+    "description": "Heartbeats stop working when you mess with the system time. If a monotonic clock were used, they would continue to work when the system time was changed.\n\nSteps to reproduce:\n\n1. List the nova services ('nova-manage service list'). Note that the 'State' for each services is a happy face ':-)'.\n\n2. Move the time ahead (for example 2 hours in the future), and then list the nova services again. Note that heartbeats continue to work and use the future time (see 'Updated_At').\n\n3. Revert back to the actual time, and list the nova services again. Note that all heartbeats stop, and have a 'State' of 'XXX'.\n\n4. The heartbeats will start again in 2 hours when the actual time catches up to the future time, or if you restart the services.\n\n5. You'll see a log message like the following when the heartbeats stop:\n\n2015-10-26 17:14:10.538 DEBUG nova.servicegroup.drivers.db [req-c41a2ad7-e5a5-4914-bdc8-6c1ca8b224c6 None None] Seems service is down. Last heartbeat was 2015-10-26 17:20:20. Elapsed time is -369.461679 from (pid=13994) is_up /opt/stack/nova/nova/servicegroup/drivers/db.py:80\n\nHere's example output demonstrating the issue:\n\n\u00a0\u00a0\u00a0\u00a0http://paste.openstack.org/show/477404/\n\nSee bug #1450438 for more context:\n\n\u00a0\u00a0\u00a0\u00a0https://bugs.launchpad.net/oslo.service/+bug/1450438\n\nLong story short: looping call is using the built-in time rather than a  monotonic clock for sleeps.\n\n\u00a0\u00a0\u00a0\u00a0https://github.com/openstack/oslo.service/blob/3d79348dae4d36bcaf4e525153abf74ad4bd182a/oslo_service/loopingcall.py#L122\n\nOslo Service: version 0.11\nNova: master (commit 2c3f9c339cae24576fefb66a91995d6612bb4ab2)", 
+    "tags": [
+        "oslo"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1510234", 
+    "owner": "https://api.launchpad.net/1.0/~stephenfinucane", 
+    "id": 1510234, 
+    "index": 7084, 
+    "openned": "2017-02-22 16:42:14.977791+00:00", 
+    "created": "2015-10-26 19:03:06.865866+00:00", 
+    "title": "Heartbeats stop when time is changed", 
+    "comments": [
+        {
+            "content": "Heartbeats stop working when you mess with the system time. If a monotonic clock were used, they would continue to work when the system time was changed.\n\nSteps to reproduce:\n\n* List the nova services ('nova-manage service list'). Note that the 'State' for each services is a happy face ':-)'.\n* Move the time ahead (for example 2 hours in the future), and then list the nova services again. Note that heartbeats continue to work and use the future time (see 'Updated_At').\n* Revert back to the actual time, and list the nova services again. Note that all heartbeats stop, and have a 'State' of 'XXX'.\n* The heartbeats will start again in 2 hours when the actual time catches up to the future time, or if you restart the services.\n\nHere's example output demonstrating the issue:\n\n    http://paste.openstack.org/show/477404/\n\nSee bug #1450438 for more context:\n\n    https://bugs.launchpad.net/oslo.service/+bug/1450438\n\nLong story short: looping call is using the built-in time rather than a  monotonic clock for sleeps. \n\n    https://github.com/openstack/oslo.service/blob/3d79348dae4d36bcaf4e525153abf74ad4bd182a/oslo_service/loopingcall.py#L122\n\nOslo Service: version 0.11\nNova: Master (commit 2c3f9c339cae24576fefb66a91995d6612bb4ab2)", 
+            "date_created": "2015-10-26 19:03:06.865866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~diana-clarke"
+        }, 
+        {
+            "content": "Someone suggested that I try the following approach.\n\ndiff --git a/nova/service.py b/nova/service.py\nindex a09187d..396bf30 100644\n--- a/nova/service.py\n+++ b/nova/service.py\n@@ -21,6 +21,9 @@ import os\n import random\n import sys\n \n+import eventlet\n+import monotonic\n+\n from oslo_concurrency import processutils\n from oslo_config import cfg\n from oslo_log import log as logging\n@@ -139,6 +142,10 @@ class Service(service.Service):\n                  periodic_interval_max=None, db_allowed=True,\n                  *args, **kwargs):\n         super(Service, self).__init__()\n+\n+        hub = eventlet.hubs.get_hub()\n+        hub.clock = monotonic.monotonic\n+\n         self.host = host\n         self.binary = binary\n         self.topic = topic\n\nAfter applying the above patch, all services except nova-conductor use monotonic for the clock in loopingcall. The nova-conductor service isn't working because it continues to use the bulit-in time, and sleeps in loopingcall until the actual time catches up to the future time. I'm not sure why the nova-conductor service continues to use the built-in time after the patch. Does anyone else know?\n\n    http://paste.openstack.org/show/477406/\n\nThoughts on this approach or other approaches?\n\nThanks!", 
+            "date_created": "2015-11-03 18:23:45.537002+00:00", 
+            "author": "https://api.launchpad.net/1.0/~diana-clarke"
+        }, 
+        {
+            "content": "I'm not sure why nova got added back in. This seems pretty isolated to oslo.service bug. ", 
+            "date_created": "2016-03-01 17:25:57.747088+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Looks like Diana maintained lots of notes here:\nhttps://github.com/dianaclarke/openstack-notes/wiki/time-warp-bug", 
+            "date_created": "2016-03-01 21:02:50.977595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Please don't look too hard at my OpenStack notes on GitHub -- I'm new to OpenStack & there are probably embarrassing bits there :)\n\nI did re-summarize the relevant parts and include them in the above bug description though.\n\nPS. I'd love to work with someone on this if you have any new ideas. I got stuck & moved on after creating this bug to capture what I already tried.\n\nCheers!", 
+            "date_created": "2016-03-01 21:24:26.525063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~diana-clarke"
+        }, 
+        {
+            "content": "No worries Diana, it had a lot of clues. Here's my effort:\nhttps://review.openstack.org/#/c/286838/\n\nPlease see if this works for you", 
+            "date_created": "2016-03-01 22:18:59.985383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This change was merged, so I'm marking this as released. Thanks!\n\n    https://review.openstack.org/#/c/286838/", 
+            "date_created": "2016-04-13 17:31:26.855680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~diana-clarke"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/oslo.service 1.9.0 release.", 
+            "date_created": "2016-05-09 15:33:19.861898+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Change to Nova: https://review.openstack.org/#/c/434327/", 
+            "date_created": "2017-02-22 16:43:10.390841+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/434327\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a7505ee648b22f5827117bcc1192b5654c29cf9c\nSubmitter: Jenkins\nBranch:    master\n\ncommit a7505ee648b22f5827117bcc1192b5654c29cf9c\nAuthor: Roman Podoliaka <email address hidden>\nDate:   Wed Feb 15 16:47:42 2017 +0200\n\n    Make eventlet hub use a monotonic clock\n    \n    If system time is adjusted first forward and then backward while a\n    nova service is running (e.g. nova-compute), then there is a high\n    probability, that periodic tasks will stop for the duration of time\n    the system clock was adjusted backward.\n    \n    This was supposed to be fixed by the following patch to oslo.service\n    https://review.openstack.org/#/c/286838/ , but the order of imports\n    in unit tests and production code is different, so nova services\n    end up starting with the default eventlet hub, that does not use a\n    monotonic clock and, thus, is affected by changes of system time.\n    \n    Testing this is problematic, as it's a subject of imports order and\n    is not reproduced in functional or unit tests (oslo_service is always\n    imported earlier than eventlet hub is initialized, so it just does\n    \"the right thing\"). The alternative is to make an assertion when\n    services start.\n    \n    Closes-Bug: #1510234\n    \n    Change-Id: I110cf31ad2a0c74a0cf30ec08bd94d3a56727b39\n", 
+            "date_created": "2017-09-07 21:01:09.297781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/503939", 
+            "date_created": "2017-09-14 04:23:16.817568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-09-07 21:01:04.635728+00:00"
+}

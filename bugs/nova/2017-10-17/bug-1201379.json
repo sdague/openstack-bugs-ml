@@ -1,0 +1,61 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:38:04.411705+00:00", 
+    "description": "I see that for Grizzly update_capabilities method for host manager  doesn't reset self.num_instances_by_project if the last VM for some project is deleted on the host.\nIs reproduced when working from several tenants simultaneously. For some reason in some cases update messages miss 0 counter for one of tenant;\n\nIf it is really the bug, fix can be like\n--- a/nova/scheduler/host_manager.py\n+++ b/nova/scheduler/host_manager.py\n@@ -171,9 +171,12 @@ class HostState(object):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# Track number of instances by project_id\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0project_id_keys = [k for k in statmap.keys() if\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0k.startswith(\"num_proj_\")]\n-        for key in project_id_keys:\n-            project_id = key[9:]\n-            self.num_instances_by_project[project_id] = int(statmap[key])\n+        project2instance_count = dict([(key[9:], int(statmap[key]))\n+                                        for key in project_id_keys])\n+        for key in self.num_instances_by_project:\n+            if key not in project2instance_count:\n+                self.num_instances_by_project[key] = 0\n+        self.num_instances_by_project.update(project2instance_count)\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# Track number of instances in certain vm_states\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0vm_state_keys = [k for k in statmap.keys() if k.startswith(\"num_vm_\")]", 
+    "tags": [
+        "filter-scheduler", 
+        "grizzly"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1201379", 
+    "owner": "https://api.launchpad.net/1.0/~christopher-lefelhoc", 
+    "id": 1201379, 
+    "index": 3490, 
+    "openned": "2013-07-15 10:40:30.594398+00:00", 
+    "created": "2013-07-15 10:40:30.594398+00:00", 
+    "title": "self.num_instances_by_project is not returned to 0", 
+    "comments": [
+        {
+            "content": "I see that for Grizzly update_capabilities method for host manager  doesn't reset self.num_instances_by_project if the last VM for some project is deleted on the host.\n\nIf it is really the bug, fix can be like\n--- a/nova/scheduler/host_manager.py\n+++ b/nova/scheduler/host_manager.py\n@@ -171,9 +171,12 @@ class HostState(object):\n         # Track number of instances by project_id\n         project_id_keys = [k for k in statmap.keys() if\n                 k.startswith(\"num_proj_\")]\n-        for key in project_id_keys:\n-            project_id = key[9:]\n-            self.num_instances_by_project[project_id] = int(statmap[key])\n+        project2instance_count = dict([(key[9:0], int(statmap[key]))\n+                                       for key in project_id_keys])\n+        for key in self.num_instances_by_project:\n+            if key not in project2instance_count:\n+                self.num_instances_by_project[key] = 0\n+        self.num_instances_by_project.update(project2instance_count)\n\n         # Track number of instances in certain vm_states\n         vm_state_keys = [k for k in statmap.keys() if k.startswith(\"num_vm_\")]", 
+            "date_created": "2013-07-15 10:40:30.594398+00:00", 
+            "author": "https://api.launchpad.net/1.0/~skashaba"
+        }, 
+        {
+            "content": "Indentation becomes broken...\n--- a/nova/scheduler/host_manager.py\n+++ b/nova/scheduler/host_manager.py\n@@ -171,9 +171,12 @@ class HostState(object):\n         # Track number of instances by project_id\n         project_id_keys = [k for k in statmap.keys() if\n                 k.startswith(\"num_proj_\")]\n-        for key in project_id_keys:\n-            project_id = key[9:]\n-            self.num_instances_by_project[project_id] = int(statmap[key])\n+        project2instance_count = dict([(key[9:0], int(statmap[key]))\n+                                       for key in project_id_keys])\n+        for key in self.num_instances_by_project:\n+            if key not in project2instance_count:\n+                self.num_instances_by_project[key] = 0\n+        self.num_instances_by_project.update(project2instance_count)\n\n         # Track number of instances in certain vm_states\n         vm_state_keys = [k for k in statmap.keys() if k.startswith(\"num_vm_\")]\n", 
+            "date_created": "2013-07-15 10:47:57.450141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~skashaba"
+        }, 
+        {
+            "content": "Sumanth Nagadavalli are you still working on this?", 
+            "date_created": "2013-10-04 23:23:33.163211+00:00", 
+            "author": "https://api.launchpad.net/1.0/~locke105"
+        }, 
+        {
+            "content": ">>Sumanth Nagadavalli are you still working on this?\nWe have this fix locally and it works. The deal is that we use custom filtering and our customization rely on this counter.", 
+            "date_created": "2013-10-05 05:46:25.713769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~framin-ksn"
+        }, 
+        {
+            "content": "I will take a crack at this one.  Though I may not address the bug quite like the author intends.  From what I can tell this is unused code.  The calculation num_instances_by_project is never used.  As such I'm more inclined to remove the code than add the proposed fix.  Strong pushback from core will tell me whether this is appropriate in this case.\n", 
+            "date_created": "2014-07-09 20:06:29.451125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~christopher-lefelhoc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/105871", 
+            "date_created": "2014-07-09 20:42:16.364440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I have a preference for removing code that is not used by any other in-tree code.  If you have some filtering that relies on this it would be good to have that, or something closely resembling it, upstream to justify its existence.", 
+            "date_created": "2014-07-09 20:59:47.211518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/105871\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d3891b48e75d69a0f618db7c4d0e1b2ce638b980\nSubmitter: Jenkins\nBranch:    master\n\ncommit d3891b48e75d69a0f618db7c4d0e1b2ce638b980\nAuthor: Christopher Lefelhocz <email address hidden>\nDate:   Wed Jul 9 15:35:40 2014 -0500\n\n    Remove unused instance variables from HostState\n    \n    The request was to fix num_instances_by_project in HostState to\n    correctly report state even when last VM was deleted.\n    \n    However in investigation I discovered this instance variable isn't\n    used in openstack code.  Following policy, we should be removing this\n    code.  Also removed vm_states, task_states and\n    num_instances_by_os_type.\n    \n    Change-Id: I4ba30a9c0639803d19d5e8355f5bc8dd3f543671\n    Closes-Bug: 1201379\n", 
+            "date_created": "2014-07-15 14:08:20.777492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-07-23 14:54:45.281513+00:00"
+}

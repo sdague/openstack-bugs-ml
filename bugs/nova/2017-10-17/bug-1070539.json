@@ -1,0 +1,265 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-06-07 15:26:39.918619+00:00", 
+    "description": "libvirt's create_lvm_image function will create LVM images on new logical volumes.\n\nLogical volumes are simply linear mappings on a physical volume (PV).\n\nPreviously deleted logical volumes leave their dirty blocks (containing user and image data) on the PV. They are not zero'ed.\n\nNew LVs will make basic linear mappings to these blocks, leading information disclosure as these LVs are passed to guest virtual machines. LVM's lvcreate does not zero these blocks, nor does the device-mapper configuration used by LVM create any snapshots by default.\n\nOne solution may be to use dm-zero as a base image, apply dm-snapshot to a newly-created LV, and pass the snapshot's block device to the guest.", 
+    "tags": [
+        "verification-needed"
+    ], 
+    "importance": "Medium", 
+    "heat": 266, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1070539", 
+    "owner": "https://api.launchpad.net/1.0/~ttx", 
+    "id": 1070539, 
+    "index": 3113, 
+    "openned": "2012-10-23 20:46:19.966068+00:00", 
+    "created": "2012-10-23 20:46:19.966068+00:00", 
+    "title": "[OSSA 2012-020] create_lvm_image allocates dirty blocks (CVE-2012-5625)", 
+    "comments": [
+        {
+            "content": "libvirt's create_lvm_image function will create LVM images on new logical volumes.\n\nLogical volumes are simply linear mappings on a physical volume (PV).\n\nPreviously deleted logical volumes leave their dirty blocks (containing user and image data) on the PV. They are not zero'ed.\n\nNew LVs will make basic linear mappings to these blocks, leading information disclosure as these LVs are passed to guest virtual machines. LVM's lvcreate does not zero these blocks, nor does the device-mapper configuration used by LVM create any snapshots by default.\n\nOne solution may be to use dm-zero as a base image, apply dm-snapshot to a newly-created LV, and pass the snapshot's block device to the guest.", 
+            "date_created": "2012-10-23 20:46:19.966068+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Hmm, thought we had that covered. Pulling in Vish to discuss.\n\nEric: I suspect that would affect Folsom as well, how about Essex or Diablo ?", 
+            "date_created": "2012-10-24 13:40:37.881192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Yes, this affects Folsom. I believe this was a new feature for Folsom, so it would not affect Essex or Diablo. The code was added on 2012-05-16 (May).\n\nThere are similar concerns in nova-volumes / cinder, but this is slightly better handled there. They wipe the device on deletion, but there are edge-cases where that is insufficient. (That warrants another bug report, actually)", 
+            "date_created": "2012-10-24 14:03:19.203830+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Looking at the code, there definitely seems to be room for leakage.\n\n@Vish: do you confirm that there is a case where those bits are not fully overwritten before being communicated back to another user ?", 
+            "date_created": "2012-10-26 14:38:11.102781+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Yup.", 
+            "date_created": "2012-10-27 18:19:32.194009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Adding nova-core to reach more potential patch writers\nAnyone up for proposing patches ? Please attach them to this bug, do not push them to public Gerrit.", 
+            "date_created": "2012-10-31 15:00:39.319492+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "There are two create_lvm_image methods in nova -- virt/libvirt/utils.py and virt/libvirt/imagebackend.py. I assume we're talking about the version in utils.py here because the other one dd's over the lvm.\n\nIsn't an issue here that zeroing will be very slow for large LVMs and therefore delay instance start? Regardless, I've attached a first cut at a patch for comments.", 
+            "date_created": "2012-10-31 15:45:17.619256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Michael: imagebackend.py only overwrites up to the size of the base image. Nothing outside of imagebackend.py currently seems to use utils.py's create_lvm_image function.\n\nWe could enforce this at utils.py's function, protective of future code, but then the dd will take unnecessary long. Or, we can just do this from imagebackend.py, where it is used, somewhat better optimized.\n\n", 
+            "date_created": "2012-10-31 16:24:46.539325+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Eric your patch seems closest to correct.\nYou'll probably want to keep the resize2fs() call after the zeroing?\nAlso there is the caveat that if size is not a multiple of 4MiB the\nskip value may be too small and overwrite FS structures.\nSo you may need another dd invocation to deal with the slop at the start.", 
+            "date_created": "2012-10-31 17:00:11.319624+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Padraig: I think that can be addressed by adding the remainder of bytes to zero_skip. I'll clarify that.\n\nYou're right, the resize2fs() would still be needed. I'll bring it back.", 
+            "date_created": "2012-10-31 17:09:28.989707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Try #2 - also, I haven't /tested/ this code yet.", 
+            "date_created": "2012-10-31 17:13:10.689292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "we switched to zero on delete for cinder because it is a better ux. I think i would prefer the same here.", 
+            "date_created": "2012-10-31 18:52:00.574123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "True. I can make a version of this patch that wipes on delete.  However, I would like to better understand how delete is triggered, because it isn't clear to me where this happens outside of being an intentional administrative action. Ideally, on startup, a greenthread could spawn to wipe all LVs. Is that happening now? (I haven't found the code that does this, but perhaps I'm not looking hard enough)\n\nI'm still concerned about edge-cases around zero on delete. Perhaps we don't need to care about all these edge cases, but it isn't well documented currently, so users are prone to follow practices that are not secure with wipe-on-delete. I don't think these edge-cases are obvious to deployers.\n\nSpecific problems:\n * Admins manually creating and deleting LVs\n * Admins using pvmove will find that the old physical volume has extents that have NOT been zero'ed.\n * Data on the disk existing at time of installation / configuration. (Disks that have been recycled/repurposed, etc)\n\nUltimately, I'd like to see this code support dm-zero and dm-crypt, but neither are necessarily appropriate for stable-backports.", 
+            "date_created": "2012-10-31 19:56:59.938814+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Zero-on-delete patch. Still will need some testing. \n\nRequires a new rootwrap entry...", 
+            "date_created": "2012-11-05 01:11:24.941424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Can you clarify if you are going to work on testing this?", 
+            "date_created": "2012-11-05 14:46:17.829454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "@Vish: In Cinder if zeroing on delete gets interrupted for some reason, would that be a problem? Or put it in another way, how to make sure the zeroing job is finished?", 
+            "date_created": "2012-11-05 15:05:12.797749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunmao"
+        }, 
+        {
+            "content": "@Russell: yes, I will... but first, are we happy with the direction of the wipe-on-delete patch?  (keeping in mind things such as we'll need a new rootwrap filter to land into the stable branch, etc...)", 
+            "date_created": "2012-11-05 15:28:54.798136+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "@Yun: Ideally, the actual removal of the LV only happens on successful execution of the zero-wipe. This is why, at least in my patch, I calculate the size of the volume so that DD won't error at the end of the device (this will need to be tested yet, once we have quorum this is the correct approach)", 
+            "date_created": "2012-11-05 15:32:34.453787+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "zero-on-delete sounds preferable to me... though I'd really prefer if we didn't add a new rootwrapped command in a security bugfix. Any other way we could fill this with junk without needing to add blockdev ?", 
+            "date_created": "2012-11-08 15:15:58.441071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "...like using lvs instead to get information on the LV size ?", 
+            "date_created": "2012-11-08 15:21:28.389192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thierry, uglier and LVM-only, but yes. I'd personally prefer blockdev moving forward, if only because it could work against other future options such as ZFS or Btrfs volumes. I agree there could be some value in lvs for the backport.\n\nAs a not-so-clean example on the shell:\n    $ sudo lvs --noheadings --separator , --units b stack-volumes/volume | cut -d, -f4 | sed 's/B$//'\nversus:\n    $ sudo blockdev --getsize64 stack-volumes/volume\n\nI've confirmed that the byte sizes reported are identical.", 
+            "date_created": "2012-11-08 15:53:49.951538+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "Sure, blockdev is perfectly ok in grizzly. I would use lvs in the backport just so that we don't touch the rootwrap config file on a security fix.", 
+            "date_created": "2012-11-08 16:53:19.167231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "More reviews and opinions wanted from nova-core here.", 
+            "date_created": "2012-11-14 13:30:43.592955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I can update this, but I'm out of pocket until at least Monday.", 
+            "date_created": "2012-11-14 15:16:35.281584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "I agree that zeroing on delete is the way to go. The patch looks good to me.", 
+            "date_created": "2012-11-14 22:16:03.115376+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "My recommendation would be to address the security bug with lvs, then replace lvs with blockdev in grizzly.\n\n@Eric: if you provide the lvs-based patch for Grizzly, I can backport it for Folsom. Next week is ok.", 
+            "date_created": "2012-11-16 13:04:42.326064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "tl;dr...\n\nI suggest adding iflag=direct oflag=direct to the first dd, and\nchanging the second dd to: shred -n0 -z -s$zero_remainder $path\n\n\nDetails...\n\nI still don't think the second dd invocation is correct,\nas the skip= parameter is a block count, whereas you intend it\nto be a byte count. Also you want a seek= anyway, not a skip.\n\nYou could replace the second dd invocation with something like:\n\n sh -c \"(dd seek=$zero_remainder_start bs=1 count=0 &&\n         dd bs=$zero_remainder count=1) </dev/zero >$path\"\n\nNote newer versions of dd support iflag=count_bytes,\nso this could all be done in a single invocation like\nthe following, but we can't rely on this being available:\n\n dd iflag=count_bytes if=/dev/zero count=vol_size bs=4MiB of=$path\n\nNow the sh -c \"dd ...\" above is quite awkward, so since this\nis only for the slop at the end of the volume, it's probably\nbetter just to do this (though it might need a new rootwrap :()\n\n  \"shred -n0 -z -s$zero_remainder\"\n\n\nPerformance notes...\n\nI suppose these can be looked at later, I'm just noting\nthem now when it's a bit fresh in my mind.\n\n1. Since we're usually dd'in on an image after LV creation,\nit's probably sufficient to only zero the difference between\nimage size and the volume size.\n\n2. Related to the previous, that only applies for non\ngenerated images, but the point holds that we may be\nbetter able to optimize (avoid some) zeroing, if done\nin the create path, rather than the delete path?\n\n3. TBH I don't understand the sparse option to create_lvm_image()\nbut the underlying lvcreate --virtualsize might be leveraged\nto automatically provide zeros for unwritten parts?\n\n4. I would add iflag=direct oflag=direct to the initial\ndd invocation, to minimize kernel processing and at least\nbe consistent with what's done in cinder for volume clearing.\n\n5. In many situations you wouldn't want the overhead involved\n(i.e. you dn't need the security), and so would also like to\nconfigure this away along the lines of:\nhttps://review.openstack.org/#/c/12521/\n", 
+            "date_created": "2012-11-16 15:50:31.426518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "@Eric: back on track to work on the patch ? Or would you prefer if we asked someone else to have a shot at it ?", 
+            "date_created": "2012-11-21 15:28:44.668974+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Thierry: I'm on paternity leave until Friday. I thought I would find time this week, but haven't. I'd have no problems with someone else working on this.  I'll be back on the 26th.", 
+            "date_created": "2012-11-21 19:25:54.380496+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-11-23 15:18:32.796375+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-11-23 15:19:04.792809+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "On consideration I've decided to be more conservative with the Folsom patch\nand not use O_DIRECT.  John Griffith has seen that writing to the end of\nsnapshot volumes (the last 6MiB) can give EIO when O_DIRECT is in effect.\nThere were no issues seen when writing to standard volumes, as is the case here.\nBut since this is only a performance consideration, I'm thinking it's better\nto be a bit conservative here, lest we trigger an issue on some kernels.", 
+            "date_created": "2012-11-28 13:21:25.175112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "@nova-core: new review round", 
+            "date_created": "2012-11-30 10:25:19.258433+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+2 on latest", 
+            "date_created": "2012-12-01 17:38:21.805140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Nicely done P\u00e1draig, looks good to me", 
+            "date_created": "2012-12-03 17:19:45.175945+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "+2 as well.", 
+            "date_created": "2012-12-04 09:43:30.430655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Please validate the impact description:\n\nTitle: Information leak in libvirt LVM-backed instances\nReporter: Eric Windisch (Cloudscaling)\nProducts: Nova\nAffects: Folsom, Grizzly\n\nDescription:\nEric Windisch from Cloudscaling reported a vulnerability in libvirt LVM-backed instances. The physical volume content was not wiped out before being reallocated and passed to an instance, which may result in the disclosure of information from previously-allocated logical volumes. Only setups using libvirt and LVM-backed instances (libvirt_images_type=lvm) are affected.\n", 
+            "date_created": "2012-12-05 13:46:06.601687+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This is great. Thank you. \n\nRegards,\nEric Windisch\n\n\nOn Wednesday, December 5, 2012 at 08:46 AM, Thierry Carrez wrote:\n\n> Please validate the impact description:\n> \n> Title: Information leak in libvirt LVM-backed instances\n> Reporter: Eric Windisch (Cloudscaling)\n> Products: Nova\n> Affects: Folsom, Grizzly\n> \n> Description:\n> Eric Windisch from Cloudscaling reported a vulnerability in libvirt LVM-backed instances. The physical volume content was not wiped out before being reallocated and passed to an instance, which may result in the disclosure of information from previously-allocated logical volumes. Only setups using libvirt and LVM-backed instances (libvirt_images_type=lvm) are affected.\n> \n> -- \n> You received this bug notification because you are subscribed to the bug\n> report.\n> https://bugs.launchpad.net/bugs/1070539\n> \n> Title:\n> create_lvm_image allocates dirty blocks\n> \n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1070539/+subscriptions\n> \n> \n\n\n", 
+            "date_created": "2012-12-05 14:26:13+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "+1 to impact description. \n\nthanks Thierry.", 
+            "date_created": "2012-12-05 15:08:59.118919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Paraig - thank you and +1 for pulling this through while I was out-of-pocket.", 
+            "date_created": "2012-12-05 15:17:23.631595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewindisch"
+        }, 
+        {
+            "content": "description sounds good to me", 
+            "date_created": "2012-12-05 16:27:47.535245+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Sent to downstream stakeholders - Proposed public disclosure date/time: Tuesday December 11th, 1500UTC", 
+            "date_created": "2012-12-05 16:34:37.084983+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "CVE-2012-5625", 
+            "date_created": "2012-12-06 08:30:11.921509+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/17856", 
+            "date_created": "2012-12-11 15:02:07.919354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/17857", 
+            "date_created": "2012-12-11 15:03:09.503728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/17856\nCommitted: http://github.com/openstack/nova/commit/9d2ea970422591f8cdc394001be9a2deca499a5f\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9d2ea970422591f8cdc394001be9a2deca499a5f\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Fri Nov 23 14:59:13 2012 +0000\n\n    Don't leak info from libvirt LVM backed instances\n    \n    * nova/virt/libvirt/utils.py (remove_logical_volumes):\n    Overwrite each logical volume with zero\n    (clear_logical_volume): LV obfuscation implementation.\n    (logical_volume_size): A utility function used by\n    clear_logical_volume()\n    \n    Fixes bug: 1070539\n    Change-Id: I4e1024de8dfe9b0be3b0d6437c836d2042862f85\n", 
+            "date_created": "2012-12-11 15:48:45.939185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/17857\nCommitted: http://github.com/openstack/nova/commit/a99a802e008eed18e39fc1d98170edc495cbd354\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit a99a802e008eed18e39fc1d98170edc495cbd354\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Fri Nov 23 14:59:13 2012 +0000\n\n    Don't leak info from libvirt LVM backed instances\n    \n    * nova/virt/libvirt/utils.py (remove_logical_volumes):\n    Overwrite each logical volume with zero\n    (clear_logical_volume): LV obfuscation implementation.\n    (logical_volume_size): A utility function used by\n    clear_logical_volume()\n    \n    Fixes bug: 1070539\n    Change-Id: I4e1024de8dfe9b0be3b0d6437c836d2042862f85\n", 
+            "date_created": "2012-12-11 17:31:52.287949+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "[OSSA 2012-020] ", 
+            "date_created": "2012-12-11 18:52:49.278035+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hello Eric, or anyone else affected,\n\nAccepted nova into quantal-proposed. The package will build now and be available at http://launchpad.net/ubuntu/+source/nova/2012.2.1+stable-20121212-a99a802e-0ubuntu1 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2012-12-28 16:35:39.251428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }
+    ], 
+    "closed": "2013-01-09 10:21:15.168152+00:00"
+}

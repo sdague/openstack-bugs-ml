@@ -1,0 +1,70 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-03-24 10:18:48.039133+00:00", 
+    "description": "When a compute manager is offline, or if it cannot pick up messages for some reason, a race condition exists in attaching/detaching volumes.\n\nTry attach and detach a volume and then bring the compute manager online. Then the reserve_block_device_name message gets delivered and a block_device_mapping is created for this instance/volume regardless of the state of the volume. This will result in the following issues.\n\n1. The mountpoint is no longer be usable.\n2. os-volume_attachments API will list the volume as attached to the instance.\n\n\nSteps to reproduce (This was recreated in Devstack with nova trunk 75af47a.)\n\n1. Spawn an instance (Mine is a multinode devstack setup, so I spawn it to a different machine than the api, but the race condition should be reproducible in a single-node setup too)\n2. Create a volume\n3. Stop the compute manager (n-cpu)\n4. Try to attach the volume to the instance, it should fail after a while\n5. Try to detach the volume\n6. List the volumes. The volume should be in 'available' state. Optionally you can delete it at this point\n7. Check db for block_device_mapping. It shouldn't have any reference to this volume\n8. Start compute manager on the node that the instance is running\n9. Check db for block_device_mapping and it should now have a new entry associating this volume and instance regardless of the state of the volume", 
+    "tags": [
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1180040", 
+    "owner": "https://api.launchpad.net/1.0/~ndipanov", 
+    "id": 1180040, 
+    "index": 3393, 
+    "openned": "2013-05-14 17:59:43.717520+00:00", 
+    "created": "2013-05-14 17:59:43.717520+00:00", 
+    "title": "Race condition in attaching/detaching volumes when compute manager is unreachable", 
+    "comments": [
+        {
+            "content": "When a compute manager is offline, or if it cannot pick up messages for some reason, a race condition exists in attaching/detaching volumes.\n\nTry attach and detach a volume and then bring the compute manager online. Then the reserve_block_device_name message gets delivered and a block_device_mapping is created for this instance/volume regardless of the state of the volume. This will result in the following issues.\n\n1. The mountpoint is no longer be usable.\n2. os-volume_attachments API will list the volume as attached to the instance.\n\n\nSteps to reproduce (This was recreated in Devstack with nova trunk 75af47a.)\n\n1. Spawn an instance (Mine is a multinode devstack setup, so I spawn it to a different machine than the api, but the race condition should be reproducible in a single-node setup too)\n2. Create a volume\n3. Stop the compute manager (n-cpu)\n4. Try to attach the volume to the instance, it should fail after a while\n5. Try to detach the volume\n6. List the volumes. The volume should be in 'available' state. Optionally you can delete it at this point\n7. Check db for block_device_mapping. It shouldn't have any reference to this volume\n8. Start compute manager on the node that the instance is running\n9. Check db for block_device_mapping and it should now have a new entry associating this volume and instance regardless of the state of the volume", 
+            "date_created": "2013-05-14 17:59:43.717520+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "That's for the detailed bug report!", 
+            "date_created": "2013-05-22 05:25:23.001784+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/33527", 
+            "date_created": "2013-06-18 21:39:58.843679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "After looking at this a bit more closely - I immediately thought that we need to keep track of the volume attach requests and make sure that it is not possible that a detach on a volume that is still not attached should not really succeede. I realized that we already keep track of volume states in cinder so why not use cinder to make sure that we are handling this as expected.\n\nWhat the previous attempt proposed was IMHO  not ideal as the device name decision really should be up to the virt driver ultimately, while the proposed solution moved it (back) into the database layer.\n\nI propose that we add two things to the volume attach code that will remove this race.\n\n1) Fail the attach if the compute node is not available.\n2) Fail the detach if there is a pending attach call that is not completed (we can use cinder API for this by reserving the volume before we do the reserve_block_device rpc call). \n\n", 
+            "date_created": "2014-03-17 15:23:11.040462+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "When you say 'Fail the attach' in (1) do you mean we fail-fast the API request itself?", 
+            "date_created": "2014-03-18 09:31:39.277629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Hi, yes - exactly that.\n\nI posted a patch, and again I have no idea why it didn't get picked up by LP.\n\nhttps://review.openstack.org/#/c/81256/", 
+            "date_created": "2014-03-18 13:15:32.439982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Not sure this blocks RC1, seems like a good fix, but its not a regression.", 
+            "date_created": "2014-03-18 17:01:04.556968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Also after looking some more into this - this bug may be invalid after switching to oslo.messaging (actually this commit that fixes it  might have got synced over before the switch https://github.com/openstack/oslo-incubator/commit/30a50c8a6c534f01d518eb3ce4cf0d35877d9a7f) as each message TTL is now equal to the call timeout, so as long as we timeout - we should be OK and the message won't be delivered after that.\n\nWe can still make this a bit less racy by reserving the volumes before making any RPC calls, but in most cases everything should clean up correctly now.", 
+            "date_created": "2014-03-19 12:35:10.460716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "I saw this issue almost 10 months ago. :) Haven't tried reproducing it recently.", 
+            "date_created": "2014-03-19 12:59:27.136384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "based on comments - removing from rc1", 
+            "date_created": "2014-03-19 17:29:20.600615+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }
+    ], 
+    "closed": "2014-03-24 10:18:45.854612+00:00"
+}

@@ -1,0 +1,29 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-07-28 01:11:16.054398+00:00", 
+    "description": "When ironic service is shortly down (e.g. ironic conductor down), removing an instance will immediately make this instance into error state without status polling.\n\nAfter investigation, it points to the code segment: https://github.com/openstack/nova/blob/master/nova/virt/ironic/driver.py#L977-L984\n\nWhen conductor is down, the exception is raised, so ironic will not apply the configuration CONF.ironic.api_max_retries and CONF.ironic.api_retry_interval.\n\nReproduce:\n1. nova boot a baremetal instance.\n2. reboot the ironic conductor node (or stop conductor service).\n3. remove instance in spawn.\n4. instance go into error state, not after 2 minutes (default value).\n\nAs a comparison, simply comments L983-984 to reproduce. It seems that, if we comment out L983-984, then if ironic conductor is up before nova mark instance into error state, then nova delete again will also delete ironic instance info. If not, instance on ironic node will not be removed when remove instance from nova.\n\nStill needs investigate.", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1685590", 
+    "owner": "None", 
+    "id": 1685590, 
+    "index": 4807, 
+    "openned": "2017-04-23 07:33:39.147759+00:00", 
+    "created": "2017-04-23 07:33:39.147759+00:00", 
+    "title": "No retry for removing instance in case of ironic service down", 
+    "comments": [
+        {
+            "content": "When ironic service is shortly down (e.g. ironic conductor down), removing an instance will immediately make this instance into error state without retry.\n\nAfter investigation, it points to the code segment: https://github.com/openstack/nova/blob/master/nova/virt/ironic/driver.py#L977-L984\n\nWhen conductor is down, we will not receive the InstanceDeployFailure exception. The exception is raised, so ironic will not apply the configuration CONF.ironic.api_max_retries and CONF.ironic.api_retry_interval.\n\nReproduce:\n1. nova boot a baremetal instance.\n2. reboot the ironic conductor node (or stop conductor service).\n3. remove instance in spawn.\n4. instance go into error state, not after 2 minutes (default value).\n\nAs a comparison, simply comments L983-984 to reproduce.\n\nProposed fix:\nImprove the exception handling to be more robust.", 
+            "date_created": "2017-04-23 07:33:39.147759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kaifeng"
+        }, 
+        {
+            "content": "Thanks for confirming this bug. Since I have not deep insight with nova, following statements may not accurate or true, but these is what I found and put here for reference.\n\nI think the case is when virt driver raises exception during instance destroy, nova will mark this instance to error state, and when user deletes this instance, nova will never call virt driver, so ironic has no chance to get cleaned up.\n\nThe pooling provision state does not cause a major problem, it's the outcome of first issue. If the driver can't successfully send request to ironic api, waiting for 2 minutes is meaningless.\n\nPossibly there are two ways to address this bug:\n\n1. nova do not remove instance in error state, when user deletes the instance, virt driver has a chance to get called, so the provisioning request can be sent to ironic api again. nova never delete an instance without the success acknowledgement from virt driver.\n2. add retry mechanism to provisioning request in ironic driver.\n\nI don't know if method 1 is reasonable, but it seems logical to me based on my current knowledge.\nMethod 2 is definitely a workaround, but it's easy to adopt, and works when service unavailable time is short, this is the way I do in the downstream.\n", 
+            "date_created": "2017-07-28 01:11:14.963465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kaifeng"
+        }
+    ]
+}

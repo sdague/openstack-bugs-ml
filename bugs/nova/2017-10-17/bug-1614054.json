@@ -1,0 +1,146 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-08-31 08:21:33.583875+00:00", 
+    "description": "[Impact]\n\nThis bug affects users of Openstack Nova who want to create instances that will leverage the realtime functionality that libvirt/qemu offers by, amongst other things, pinning guest vcpus and qemu emulator threads to specific pcpus. Nova provides the means for the user to control, via the flavor hw:cpu_realtime_mask or image property hw_cpu_realtime_mask, which physical cpus these resources will pinned to. This mask allows you to mask the set of N pins that Nova selects such that 1 or more of your vcpus can be declared \"real-time\" by ensuring that they do not have emulator threads also pinned to them. The remaining \"non-realtime\" vcpus will have vcpu and emulator threads colocated. The bug fixes the case where e.g. you have a guest that has 2 vcpus (logically 0 and 1) and Nova selects pcpus 14 and 22 and you have mask ^0 to indicate that you want all but the first vcpu to be realtime. This should result in the following being present in your libvirt xml for the guest:\n\n\u00a0\u00a0<cputune>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='0' cpuset='14'/>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='1' cpuset='22'/>\n\u00a0\u00a0\u00a0\u00a0<emulatorpin cpuset='14'/>\n\u00a0\u00a0\u00a0\u00a0<vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n\u00a0\u00a0</cputune>\n\nBut (current only Mitaka since it does not have this patch) you will get this:\n\n\u00a0\u00a0<cputune>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='0' cpuset='14'/>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='1' cpuset='22'/>\n\u00a0\u00a0\u00a0\u00a0<emulatorpin cpuset='0'/>\n\u00a0\u00a0\u00a0\u00a0<vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n\u00a0\u00a0</cputune>\n\ni.e. Nova will always set the emulator pin to be id of the vcpu instead of the corresponding pcpu that it is pinned to.\n\nIn terms of actual impact this could result in vcpus that are supposed to be isolated not being so and therefore not behaving as expected.\n\n[Test Case]\n\n\u00a0* deploy openstack mitaka and configure nova.conf with vcpu-pin-set=0,1,2,3\n\n\u00a0\u00a0\u00a0https://pastebin.ubuntu.com/25133260/\n\n\u00a0* configure compute host kernel opts with \"isolcpus=0,1,2,3\" + reboot\n\n\u00a0* create flavor with:\n\n\u00a0\u00a0\u00a0openstack flavor create --public --ram 2048 --disk 10 --vcpus 2 --swap 0 test_flavor\n\u00a0\u00a0\u00a0openstack flavor set --property hw:cpu_realtime_mask='^0' test_flavor\n\u00a0\u00a0\u00a0openstack flavor set --property hw:cpu_policy=dedicated test_flavor\n\u00a0\u00a0\u00a0openstack flavor set --property hw:cpu_thread_policy=prefer test_flavor\n\u00a0\u00a0\u00a0openstack flavor set --property hw:cpu_realtime=yes test_flavor\n\n\u00a0* boot instance with ^^ flavor\n\n\u00a0* check that libvirt xml for vm has correct emulator pin cpuset #\n\n[Regression Potential]\n\nSince the patch being backported only touches the specific aread of code that was causing the original problem  and that code only serves to select cpusets based on flavor filters, i can't think of any regressions that it would introduce. However, one potential side effect/change to be aware of is that once nova-compute is upgraded to this newer version, any new instances created will have the correct/expected cpuset assignments whereas instances created prior to upgrade will remain unchanged i.e. they will all likely still have their emulation threads pinned to the wrong pcpu. In terms of side effects this will mean less load on the pcpu that was previously incorrectly chosen for existing guests but it will mean that older instances will need to be recreated in order to benefit from the fix.\n\n====\n\nDescription of problem:\nWhen using the cpu_realtime and cpu_realtim_mask flag to create new instance, the 'cpuset' of 'emulatorpin' option is using the id of vcpu which is incorrect. The id of host cpu should be used here.\n\ne.g.\n\u00a0\u00a0<cputune>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='0' cpuset='2'/>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='1' cpuset='3'/>\n\u00a0\u00a0\u00a0\u00a0<emulatorpin cpuset='0'/>          ### the cpuset should be '2' here, when cpu_realtime_mask=^0.\n\u00a0\u00a0\u00a0\u00a0<vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n\u00a0\u00a0</cputune>\n\nHow reproducible:\nBoot new instance with cpu_realtime_mask flavor.\n\nSteps to Reproduce:\n1. Create RT flavor\nnova flavor-create m1.small.performance 6 2048 20 2\nnova flavor-key m1.small.performance set hw:cpu_realtime=yes\nnova flavor-key m1.small.performance set hw:cpu_realtime_mask=^0\nnova flavor-key m1.small.performance set hw:cpu_policy=dedicated\n2. Boot a instance with this flavor\n3. Check the xml of the new instance\n\nActual results:\n\u00a0\u00a0<cputune>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='0' cpuset='2'/>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='1' cpuset='3'/>\n\u00a0\u00a0\u00a0\u00a0<emulatorpin cpuset='0'/>\n\u00a0\u00a0\u00a0\u00a0<vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n\u00a0\u00a0</cputune>\n\nExpected results:\n\u00a0\u00a0<cputune>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='0' cpuset='2'/>\n\u00a0\u00a0\u00a0\u00a0<vcpupin vcpu='1' cpuset='3'/>\n\u00a0\u00a0\u00a0\u00a0<emulatorpin cpuset='2'/>\n\u00a0\u00a0\u00a0\u00a0<vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n\u00a0\u00a0</cputune>", 
+    "tags": [
+        "libvirt", 
+        "newton-backport-potential", 
+        "sts", 
+        "sts-sru-done", 
+        "verification-done", 
+        "verification-done-xenial", 
+        "verification-mitaka-done"
+    ], 
+    "importance": "Medium", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1614054", 
+    "owner": "https://api.launchpad.net/1.0/~sahid-ferdjaoui", 
+    "id": 1614054, 
+    "index": 4601, 
+    "openned": "2016-08-17 10:50:42.744703+00:00", 
+    "created": "2016-08-17 10:50:42.744703+00:00", 
+    "title": "[SRU] Incorrect host cpu is given to emulator threads when cpu_realtime_mask flag is set", 
+    "comments": [
+        {
+            "content": "Description of problem:\nWhen using the cpu_realtime and cpu_realtim_mask flag to create new instance, the 'cpuset' of 'emulatorpin' option is using the id of vcpu which is incorrect. The id of host cpu should be used here.\n\ne.g.\n  <cputune>\n    <vcpupin vcpu='0' cpuset='2'/>\n    <vcpupin vcpu='1' cpuset='3'/>\n    <emulatorpin cpuset='0'/>          ### the cpuset should be '2' here, when cpu_realtime_mask=^0.  \n    <vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n  </cputune>\n\nHow reproducible:\nBoot new instance with cpu_realtime_mask flavor.\n\nSteps to Reproduce:\n1. Create RT flavor\nnova flavor-create m1.small.performance 6 2048 20 2\nnova flavor-key m1.small.performance set hw:cpu_realtime=yes\nnova flavor-key m1.small.performance set hw:cpu_realtime_mask=^0\nnova flavor-key m1.small.performance set hw:cpu_policy=dedicated\n2. Boot a instance with this flavor\n3. Check the xml of the new instance\n\nActual results:\n  <cputune>\n    <vcpupin vcpu='0' cpuset='2'/>\n    <vcpupin vcpu='1' cpuset='3'/>\n    <emulatorpin cpuset='0'/>          \n    <vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n  </cputune>\n\nExpected results:\n  <cputune>\n    <vcpupin vcpu='0' cpuset='2'/>\n    <vcpupin vcpu='1' cpuset='3'/>\n    <emulatorpin cpuset='2'/>          \n    <vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n  </cputune>", 
+            "date_created": "2016-08-17 10:50:42.744703+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/356383", 
+            "date_created": "2016-08-17 10:56:17.433673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/356383\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6683bf9b7dc575ef9516f0cdc395b8da1b81c233\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6683bf9b7dc575ef9516f0cdc395b8da1b81c233\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Wed Aug 17 06:51:25 2016 -0400\n\n    libvirt: fix incorrect host cpus giving to emulator threads when RT\n    \n    Realtime guarantees in certain operating systems require that the\n    thread that is running the QEMU emulator is pinned to a physical CPU\n    that is *not* the same as any physical CPU that the vCPUs for a\n    realtime guest are pinned to. This patch ensures that the value of the\n    hw:cpu_realtime_mask flavor extraspec property is respected when\n    creating the libvirt configuration XML and sets emulatorpin values to\n    a physical CPU matching the hw:cpu_realtime_mask value.\n    \n    Change-Id: I7f50dde0753b059a690dc50172fee645c94b8e5b\n    Closes-Bug: #1614054\n", 
+            "date_created": "2016-11-03 17:18:44.386470+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/393487", 
+            "date_created": "2016-11-03 20:53:27.284231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:12:00.441163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/393487\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=046b640e2fbc243c6e9c55708d521e53f1485ddf\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 046b640e2fbc243c6e9c55708d521e53f1485ddf\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Wed Aug 17 06:51:25 2016 -0400\n\n    libvirt: fix incorrect host cpus giving to emulator threads when RT\n    \n    Realtime guarantees in certain operating systems require that the\n    thread that is running the QEMU emulator is pinned to a physical CPU\n    that is *not* the same as any physical CPU that the vCPUs for a\n    realtime guest are pinned to. This patch ensures that the value of the\n    hw:cpu_realtime_mask flavor extraspec property is respected when\n    creating the libvirt configuration XML and sets emulatorpin values to\n    a physical CPU matching the hw:cpu_realtime_mask value.\n    \n    Change-Id: I7f50dde0753b059a690dc50172fee645c94b8e5b\n    Closes-Bug: #1614054\n    (cherry picked from commit 6683bf9b7dc575ef9516f0cdc395b8da1b81c233)\n", 
+            "date_created": "2017-02-11 01:12:13.312085+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.4 release.", 
+            "date_created": "2017-02-27 20:29:48.848395+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2017-07-20 14:57:00.464994+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hopem"
+        }, 
+        {
+            "content": "Resolved since newton; targeting to Xenial + the Mitaka UCA", 
+            "date_created": "2017-07-21 08:42:19.058058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2017-07-21 17:31:36.105617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hopem"
+        }, 
+        {
+            "content": "debdiff re-uploaded due to formatting error in previous version", 
+            "date_created": "2017-07-21 17:32:08.519585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hopem"
+        }, 
+        {
+            "content": "Thank you for submitting the bug and uploading the fix!\n\nCould we please make sure that the [Impact] field of a bug is used to nicely outline the impact the bug has on users? Without specific knowledge of the package itself it's hard for an SRU reviewer to see the actual impact of the bug and how important the fix is - and these we use to determine if a fix/change is worth the risk of including it in a stable release.\n\nFor instance here the [Impact] field is completely meaningless (the title doesn't give too much info for me) - I get some overview when seeing the patch description in the proposed upload, but this should be present here. If I would accept it the way it is, another SRU member that would like to release this change into -updates would have issues getting an overview of the impact.\n\nPlease update the bug description appropriately. The SRU template is there for something. I know it might sometimes look like that but it's not just useless paperwork that needs to be copy-pasted blindly.", 
+            "date_created": "2017-07-28 15:09:39.292794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sil2100"
+        }, 
+        {
+            "content": "Hi @sil2100, apologies for not providing an intuitive Impact field. I have updated it and hope it will be more helpful. Please let me know if you need more info.", 
+            "date_created": "2017-08-01 16:38:34.088951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hopem"
+        }, 
+        {
+            "content": "Hello sahid, or anyone else affected,\n\nAccepted nova into xenial-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/nova/2:13.1.4-0ubuntu2 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation on how to enable and use -proposed.Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested and change the tag from verification-needed-xenial to verification-done-xenial. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed-xenial. In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2017-08-02 10:08:54.164715+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sil2100"
+        }, 
+        {
+            "content": "Verified for xenial-proposed:\n\nroot@orgen:~# dpkg -l| grep nova-compute\nii  nova-compute                       2:13.1.4-0ubuntu2                          all          OpenStack Compute - compute node base\nii  nova-compute-kvm                   2:13.1.4-0ubuntu2                          all          OpenStack Compute - compute node (KVM)\nii  nova-compute-libvirt               2:13.1.4-0ubuntu2                          all          OpenStack Compute - compute node libvirt support\nroot@orgen:~# virsh dumpxml instance-00000001| grep cpuset\n    <vcpupin vcpu='0' cpuset='17'/>\n    <vcpupin vcpu='1' cpuset='5'/>\n    <emulatorpin cpuset='17'/>\n", 
+            "date_created": "2017-08-03 09:27:56.206697+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hopem"
+        }, 
+        {
+            "content": "Hello sahid, or anyone else affected,\n\nAccepted nova into mitaka-proposed. The package will build now and be available in the Ubuntu Cloud Archive in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package. To enable the -proposed repository:\n\n  sudo add-apt-repository cloud-archive:mitaka-proposed\n  sudo apt-get update\n\nYour feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-mitaka-needed to verification-mitaka-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-mitaka-failed. In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification . Thank you in advance!", 
+            "date_created": "2017-08-03 10:08:14.300315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Tested trusty-mitaka/proposed and lgtm:\n\n  <cputune>\n    <shares>2048</shares>\n    <vcpupin vcpu='0' cpuset='17'/>\n    <vcpupin vcpu='1' cpuset='5'/>\n    <emulatorpin cpuset='17'/>\n    <vcpusched vcpus='1' scheduler='fifo' priority='1'/>\n  </cputune>\n", 
+            "date_created": "2017-08-04 10:26:49.422348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hopem"
+        }, 
+        {
+            "content": "> [Regression Potential]\n> \n> None expected.\n\nSee https://wiki.ubuntu.com/StableReleaseUpdates#Procedure\n\nIf nobody can be bothered to think about what this update might regress, and then look for that during Ubuntu's SRU verification process, then I'm not prepared to risk user stability by releasing this update to Ubuntu.\n\nIf you object to this, then please seek a policy change in Ubuntu removing the requirement that this be checked.", 
+            "date_created": "2017-08-09 13:03:33.725391+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racb"
+        }, 
+        {
+            "content": "Hi @racb I will provide a more informative regression potential.", 
+            "date_created": "2017-08-11 10:48:40.151509+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hopem"
+        }, 
+        {
+            "content": "Will there be any messaging done about the need to recreate instances to benefit from this fix?", 
+            "date_created": "2017-08-16 15:51:13.268072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2:13.1.4-0ubuntu2\n\n---------------\nnova (2:13.1.4-0ubuntu2) xenial; urgency=medium\n\n  * d/p/libvirt-fix-incorrect-host-cpus-giving-to-emulator-t.patch:\n    Backport fix for cpu pinning libvirt config incorrect emulator\n    pin cpuset (LP: #1614054).\n\n -- Edward Hope-Morley <email address hidden>  Wed, 26 Jul 2017 06:46:18 +0100", 
+            "date_created": "2017-08-16 15:52:29.207568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2017-08-16 15:52:37.087219+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates. In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2017-08-22 19:03:28.388836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~1chb1n"
+        }, 
+        {
+            "content": "\nThis bug was fixed in the package nova - 2:13.1.4-0ubuntu2~cloud0\n---------------\n\n nova (2:13.1.4-0ubuntu2~cloud0) trusty-mitaka; urgency=medium\n .\n   * New update for the Ubuntu Cloud Archive.\n .\n nova (2:13.1.4-0ubuntu2) xenial; urgency=medium\n .\n   * d/p/libvirt-fix-incorrect-host-cpus-giving-to-emulator-t.patch:\n     Backport fix for cpu pinning libvirt config incorrect emulator\n     pin cpuset (LP: #1614054).\n", 
+            "date_created": "2017-08-22 19:03:31.120328+00:00", 
+            "author": "https://api.launchpad.net/1.0/~1chb1n"
+        }
+    ], 
+    "closed": "2016-11-03 17:18:39.448909+00:00"
+}

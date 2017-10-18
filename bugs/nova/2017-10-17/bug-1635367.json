@@ -1,0 +1,80 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-12 21:07:56.165486+00:00", 
+    "description": "This patch that was backported to Mitaka made the assumption that free_ram_mb can never be less than 0.\nhttps://github.com/openstack/nova/commit/016b810f675b20e8ce78f4c82dc9c679c0162b7a\n\nfree_ram_mb can be negative when the ram_allocation_ratio is set higher than one. This is also supported by the following comment in the code for the resource tracker.\n> # free ram and disk may be negative, depending on policy:\n\nThis breaks any Scheduler filter that supports oversubcribe (e.g. memory or disk), as an example see this unit-test for the ram filter.\nhttps://github.com/openstack/nova/blob/master/nova/tests/unit/scheduler/filters/test_ram_filters.py#L43", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "High", 
+    "heat": 28, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1635367", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1635367, 
+    "index": 2000, 
+    "openned": "2016-10-20 18:20:38.038918+00:00", 
+    "created": "2016-10-20 18:20:38.038918+00:00", 
+    "title": "Ram filter is broken since Mitaka", 
+    "comments": [
+        {
+            "content": "This patch that was backported to Mitaka made the assumption that free_ram_mb can never be less than 0.\nhttps://github.com/openstack/nova/commit/016b810f675b20e8ce78f4c82dc9c679c0162b7a\n\nfree_ram_mb can be negative when the ram_allocation_ratio is set higher than one. This is also supported by the following comment in the code for the resource tracker.\n> # free ram and disk may be negative, depending on policy:\n\nThis breaks any Scheduler filter that supports oversubcribe (e.g. memory or disk), as an example see this unit-test for the ram filter.\nhttps://github.com/openstack/nova/blob/master/nova/tests/unit/scheduler/filters/test_ram_filters.py#L43", 
+            "date_created": "2016-10-20 18:20:38.038918+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eandersson"
+        }, 
+        {
+            "content": "This is going to be rough to fix without leaving this broken or breaking the ironic virt driver. Adding Jesse Cook to the bug as he wrote the initial patch.\n\nSorry for the breakage :(", 
+            "date_created": "2016-10-20 22:05:38.008711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jason-oldos"
+        }, 
+        {
+            "content": "I put it on my weekly commitments to dig in and have a looksee.", 
+            "date_created": "2016-10-20 23:59:17.381725+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-j-cook"
+        }, 
+        {
+            "content": "PiN == provisioned in Nova, PiI == provisioned in Ironic.\n\nHow it used to work:\nBroke  PiN  PiI  UsedMem  AvailMem  Reported\n    Y    Y    Y      100       100         0\n    Y    Y    N      100         0      -100\n    Y    N    Y        0       100       100\n    Y    N    N        0         0         0\n    N    Y    Y      100       100         0\n    N    Y    N      100       100         0\n    N    N    Y        0       100       100\n    N    N    N        0       100       100\n\nThese changes were made:\nhttps://review.openstack.org/#/c/306670/2\nhttps://review.openstack.org/#/c/321907/1\n\nHow it works now:\nBroke  PiN  PiI  UsedMem  AvailMem  Reported\n    Y    Y    Y      100         0      -100 -> 0\n    Y    Y    N      100         0      -100 -> 0\n    Y    N    Y        0         0         0\n    Y    N    N        0         0         0\n    N    Y    Y      100         0      -100 -> 0\n    N    Y    N      100       100         0\n    N    N    Y        0         0         0\n    N    N    N        0       100       100\n\nBasically, only schedule to an Ironic node if it's not broken and neither Nova\nor Ironic have it marked as provisioned.\n\nIf negative values are allowed, these cases would be considered\nover-subscriptions, but they are not. Allowing negative RAM causes confusion,\nand misrepresents available memory (controlled by the hypervisor / node). This\ncan lead to subtle bugs when the memory is not available and oversubscribing is\nallowed. One example is the possibility of scheduling to a node that has no\navailable memory. Another example, negative memory is subtracted from\navailable memory in cells reporting causing builds to fail even though capacity\nis available.\n\nAt the time of this writing, I'm not certain to what level over-subscriptions\nare broken since the available memory limit is stored at a higher value using\nthe ram allocation factor. It will take a bit more digging before I fully grok\nthe impact of disallowing negative values here.\n\nOne potential way to solve for both cases is to rework the filters to use the\nram_allocation_factor to reduce the allocation instead of increasing the\navailable memory limit (https://github.com/openstack/nova/blob/master/nova/scheduler/filters/ram_filter.py#L51).\nI believe this would eliminate the need for negative values and still allow for\nover subscriptions. I can go down this path if it makes sense, but probably good\nto have a conversation first.\n", 
+            "date_created": "2016-10-21 16:47:07.906826+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-j-cook"
+        }, 
+        {
+            "content": "Reposting comment because it's formatted horribly (if this doesn't work, sorry):\n\nPiN == provisioned in Nova, PiI == provisioned in Ironic.\n\nHow it used to work:\nBroke  PiN  PiI  UsedMem  AvailMem  Reported\n    Y    Y    Y      100       100         0\n    Y    Y    N      100         0      -100\n    Y    N    Y        0       100       100\n    Y    N    N        0         0         0\n    N    Y    Y      100       100         0\n    N    Y    N      100       100         0\n    N    N    Y        0       100       100\n    N    N    N        0       100       100\n\nThese changes were made:\nhttps://review.openstack.org/#/c/306670/2\nhttps://review.openstack.org/#/c/321907/1\n\nHow it works now:\nBroke  PiN  PiI  UsedMem  AvailMem  Reported\n    Y    Y    Y      100         0      -100 -> 0\n    Y    Y    N      100         0      -100 -> 0\n    Y    N    Y        0         0         0\n    Y    N    N        0         0         0\n    N    Y    Y      100         0      -100 -> 0\n    N    Y    N      100       100         0\n    N    N    Y        0         0         0\n    N    N    N        0       100       100\n\nBasically, only schedule to an Ironic node if it's not broken and\nneither Nova or Ironic have it marked as provisioned.\n\nIf negative values are allowed, these cases would be considered\noversubscriptions, but they are not. Allowing negative RAM causes\nconfusion, and misrepresents available memory (controlled by the\nhypervisor / node). This can lead to subtle bugs when the memory\nis not available and oversubscribing is allowed. One example is\nthe possiblity of scheduling to a node that has no available\nmemory. Another example, negative memory is substractred from\navailable memory in cells reporting causing builds to fail even\nthough capacity is available.\n\nAt the time of this writing, I'm not certain to what level\noversubscriptions are broken since the available memory limit is\nstored at a higher value using the ram allocation factor. It will\ntake a bit more digging before I fully grok the impact of\ndisallowing negative values here.\n\nOne potential way to solve for both cases is to rework the filters\nto use the ram_allocation_factor to reduce the allocation instead\nof increasing the available memory limit\n(https://github.com/openstack/nova/blob/master/nova/scheduler/filters/ram_filter.py#L51).\nI believe this would eliminate the need for negative values and\nstill allow for oversubscriptions. I can go down this path if it\nmakes sense, but probably good to have a conversation first.\n", 
+            "date_created": "2016-10-21 16:48:54.742874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-j-cook"
+        }, 
+        {
+            "content": "Some IRC discussion here (~1731 - 1744): http://eavesdrop.openstack.org/irclogs/%23openstack-nova/%23openstack-nova.2016-10-21.log.html\n\nI think there's some consensus that we can solve both cases without using negative values by leveraging used instead of free and making the appropriate checks in the filters.", 
+            "date_created": "2016-10-21 17:50:08.661010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jesse-j-cook"
+        }, 
+        {
+            "content": "This also affects Ram Weights\nhttps://github.com/openstack/nova/blob/master/nova/tests/unit/scheduler/weights/test_weights_ram.py#L90", 
+            "date_created": "2016-10-21 20:56:55.063775+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eandersson"
+        }, 
+        {
+            "content": "Live Migration is likely to be affected by the same code. I haven't had time to dig into that one deeper though.\nhttps://github.com/openstack/nova/blob/master/nova/conductor/tasks/live_migrate.py#L112", 
+            "date_created": "2016-10-21 21:17:50.369116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eandersson"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/390984", 
+            "date_created": "2016-10-26 22:36:48.417698+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fixed here: https://review.openstack.org/#/c/474994/", 
+            "date_created": "2017-06-16 17:30:13.763882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Please see https://bugs.launchpad.net/nova/+bug/1698383 for details.", 
+            "date_created": "2017-06-16 17:32:47.951031+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Change abandoned by Erik Olof Gunnar Andersson (<email address hidden>) on branch: master\nReview: https://review.openstack.org/390984\nReason: Abandoning as this was fixed in a different manner. \nhttps://review.openstack.org/#/c/474994/", 
+            "date_created": "2017-06-16 19:29:45.457102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-06-16 17:32:48.784057+00:00"
+}

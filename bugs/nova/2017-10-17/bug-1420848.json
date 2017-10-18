@@ -1,0 +1,80 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:52:10.733724+00:00", 
+    "description": "I think our usage of the \"updated_at\" field to determine whether a service is \"up\" or not is buggy.  Consider this scenario:\n\n1) nova-compute is happily running and is up/enabled on compute-0\n2) something causes nova-compute to stop (process crash, hardware fault, power failure, network isolation, etc.)\n3) a minute later, the nova-compute service is reported as \"down\"\n4) I run \"nova service-disable compute-0 nova-compute\", then \"nova service-enable compute-0 nova-compute\"\n5) nova-compute is now reported as \"up\" for the next minute, and the scheduler might try to assign stuff to it.  Since it's not actually available, these requests could be delayed by the RPC timeout period.\n\nI wonder if it would make sense to have a separate \"last status timestamp\" database field that would only get updated when we get a service status update and not when we change any other fields.", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1420848", 
+    "owner": "https://api.launchpad.net/1.0/~cbf123", 
+    "id": 1420848, 
+    "index": 1530, 
+    "openned": "2015-02-11 15:42:07.755290+00:00", 
+    "created": "2015-02-11 15:42:07.755290+00:00", 
+    "title": "'down' nova-compute service spuriously marked as 'up' when disabled/enabled", 
+    "comments": [
+        {
+            "content": "I think our usage of the \"updated_at\" field to determine whether a service is \"up\" or not is buggy.  Consider this scenario:\n\n1) nova-compute is happily running and is up/enabled on compute-0\n2) something causes nova-compute to stop (process crash, hardware fault, power failure, network isolation, etc.)\n3) a minute later, the nova-compute service is reported as \"down\"\n4) I run \"nova service-disable compute-0 nova-compute\"\n5) nova-compute is now reported as \"up\" for the next minute\n\nI wonder if it would make sense to have a separate \"last status timestamp\" database field that would only get updated when we get a service status update and not when we change any other fields.", 
+            "date_created": "2015-02-11 15:42:07.755290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Just curious, what is \"incomplete\" about this?  Is there more information that I can provide?", 
+            "date_created": "2015-02-12 18:43:16.025372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Hi Chris, the \"incomplete\" is for me. I already checked in icehouse release. And need to check the other branches.", 
+            "date_created": "2015-02-12 22:56:05.675593+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-xiett"
+        }, 
+        {
+            "content": "Eric, the Incomplete bug status means that more information is needed from the reporter before we can triage.", 
+            "date_created": "2015-02-13 00:20:26.745298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Sorry. This is my first time for bug fix.", 
+            "date_created": "2015-02-13 03:10:12.471167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-xiett"
+        }, 
+        {
+            "content": "Hi Eric, no worries. You can assign the bug to yourself if you're looking into it. Just be sure to unassign if you decide you don't wish to work on it anymore.\n\nPlease see this doc about bug triage to learn how it works: https://wiki.openstack.org/wiki/BugTriage", 
+            "date_created": "2015-02-13 18:34:12.060517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Add a new field to service table indicate the heart beat time might be a solution but it might introduce complex\nsuch as migrations of existing db \nexcept that ,we might have no good method on checking this guess staled for 1 min is acceptable?\n", 
+            "date_created": "2015-03-09 10:27:47.953403+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "I don't think it's acceptable, no.  Any operation involving the scheduler could end up trying to place an instance on the \"down\" compute node for that minute.\n\nAnd if we were enabling the service rather than disabling it (or doing any other operation on the service) then we could end up in a state where the scheduler thinks it's available.  That could result in operations taking a long time as they block waiting for the RPC timeout since of course the compute node would never respond.\n\nI think it's clearly a flawed design to rely on automatic database row timestamps for status, when both system and user-triggered operations cause those timestamps to be updated.", 
+            "date_created": "2015-03-09 14:47:41.204144+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Not sure why it didn't auto-link, but there's a fix proposed at \n\nhttps://review.openstack.org/163060", 
+            "date_created": "2015-03-11 14:44:07.212226+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/168418", 
+            "date_created": "2015-03-27 16:58:07.610226+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/163060\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b9bae02af2168ad64d3b3d28c97c3853cee73272\nSubmitter: Jenkins\nBranch:    master\n\ncommit b9bae02af2168ad64d3b3d28c97c3853cee73272\nAuthor: Chris Friesen <email address hidden>\nDate:   Fri Mar 27 09:23:48 2015 -0600\n\n    fix \"down\" nova-compute service spuriously marked as \"up\"\n    \n    Currently we use the auto-updated \"updated_at\" field to determine\n    whether a service is \"up\".  An end-user can cause the \"updated_at\"\n    field to be updated by disabling or enabling the service, thus\n    potentially causing a service that is unavailable to be detected\n    as \"up\".  This could result in the scheduler trying to assign\n    instances to an unavailable compute node, or in the system\n    mistakenly preventing evacuation of an instance.\n    \n    The fix is to add a new field to explicitly track the timestamp of\n    the last time the service sent in a status report and use that if\n    available when testing whether the service is up.\n    \n    DocImpact\n    This commit will cause a behaviour change for the DB servicegroup\n    driver.  It will mean that enabling/disabling the service will\n    cause the \"updated_at\" field to change (as before) but that will\n    no longer be tied to the \"up/down\" status of the service. So\n    \"nova service-list\" could show the service as \"down\" even if it\n    shows a recent \"updated_at\".  (But this could happen for the other\n    servicegroup drivers already.)\n    \n    Closes-Bug: #1420848\n    Change-Id: Ied7d47363d0489bca3cf2c711217e1a3b7d24a03\n", 
+            "date_created": "2015-06-11 08:04:10.037821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Chris Friesen (<email address hidden>) on branch: master\nReview: https://review.openstack.org/168418\nReason: No support for the change, abandoning.", 
+            "date_created": "2015-08-19 21:22:00.227677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-06-24 12:20:04.372629+00:00"
+}

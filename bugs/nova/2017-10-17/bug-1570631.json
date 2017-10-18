@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-11-28 02:17:42.994838+00:00", 
+    "description": "Nova version: 2:12.0.0-ubuntu2~cloud0\nRelease: Liberty\nCompute node kernel: 3.19.0-47-generic\nHypervisor: Libvirt+KVM\nlibvirtd version: 1.2.16\nNeutron network (Linuxbridge Agent)\n\n\nWhen attempting to instantiate an VM based on an image with the metadata hw:vif_multiqueue_enabled=true, creation will fail if the flavor has >8 cores assigned.  If the flavor specifies 8 or fewer vCPUs, creation is successful.  \n\nFrom /var/log/libvirt/libvirtd.log:\n\n2016-04-14 21:19:08.161+0000: 3651: error : virNetDevTapCreate:290 : Unable to create tap device tap11db5bd0-3a: Argument list too long\n\nThis is the error throw when attempting to create the VM.\n\nI believe the reason is that in kernels prior to 4.0, the number of queues on a tap interface was limited to 8.\n\nBased on http://lxr.free-electrons.com/source/drivers/net/tun.c?v=3.19#L129, MAX_TAP_QUEUES resolves to 8 prior to kernel 4.0.\n\nIn the libvirt vif driver (nova/virt/libvirt/vif.py), in __get_virtio_mq_settings, this limit is not respected when setting vhost_queues = flavor.cpus.  So when the domain XML is written for the guest, vhost_queues is used in the 'queues' argument in the driver.  When this value is >8, it fails when attempting to create the tap interface.", 
+    "tags": [
+        "libvirt", 
+        "low-hanging-fruit"
+    ], 
+    "importance": "Low", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1570631", 
+    "owner": "None", 
+    "id": 1570631, 
+    "index": 1995, 
+    "openned": "2016-04-14 22:40:30.926802+00:00", 
+    "created": "2016-04-14 22:40:30.926802+00:00", 
+    "title": "With hw:vif_multiqueue_enabled, libvirt driver fails with VM larger than 8 vCPU", 
+    "comments": [
+        {
+            "content": "Nova version: 2:12.0.0-ubuntu2~cloud0\nRelease: Liberty\nCompute node kernel: 3.19.0-47-generic\nHypervisor: Libvirt+KVM\nlibvirtd version: 1.2.16\nNeutron network (Linuxbridge Agent)\n\n\nWhen attempting to instantiate an VM based on an image with the metadata hw:vif_multiqueue_enabled=true, creation will fail if the flavor has >8 cores assigned.  If the flavor specifies 8 or fewer vCPUs, creation is successful.  \n\nFrom /var/log/libvirt/libvirtd.log:\n\n2016-04-14 21:19:08.161+0000: 3651: error : virNetDevTapCreate:290 : Unable to create tap device tap11db5bd0-3a: Argument list too long\n\nThis is the error throw when attempting to create the VM.\n\nI believe the reason is that in kernels prior to 4.0, the number of queues on a tap interface was limited to 8.\n\nBased on http://lxr.free-electrons.com/source/drivers/net/tun.c?v=3.19#L129, MAX_TAP_QUEUES resolves to 8 prior to kernel 4.0.\n\nIn the libvirt vif driver (nova/virt/libvirt/vif.py), in __get_virtio_mq_settings, this limit is not respected when setting vhost_queues = flavor.cpus.  So when the domain XML is written for the guest, vhost_queues is used in the 'queues' argument in the driver.  When this value is >8, it fails when attempting to create the tap interface.", 
+            "date_created": "2016-04-14 22:40:30.926802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kent-nickell"
+        }, 
+        {
+            "content": "The bug is also present in master.", 
+            "date_created": "2016-04-15 10:33:21.153831+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Is there anyone who knows how to retrieve MAX_TAP_QUEUES from the running system? I looked at drivers/net/tun.c but couldn't find how to do it.\nMAX_TAP_QUEUES is 8 in kernel 3.x[1] and it is 256 in kernel 4.x[2]. I want to find MAX_TAP_QUEUES programmatically without hardcoding its value for each kernel version.\n\n[1]https://git.kernel.org/cgit/linux/kernel/git/stable/linux-stable.git/tree/drivers/net/tun.c?id=refs/tags/v3.18.35#n118\n[2]https://git.kernel.org/cgit/linux/kernel/git/stable/linux-stable.git/tree/drivers/net/tun.c?id=refs/tags/v4.1.26#n128", 
+            "date_created": "2016-06-14 05:28:52.474319+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kengo-sakai"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/332660", 
+            "date_created": "2016-06-22 07:12:10.110190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/332660\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b9303e67640ac2052c0a79189b29f60bde6b8fdc\nSubmitter: Jenkins\nBranch:    master\n\ncommit b9303e67640ac2052c0a79189b29f60bde6b8fdc\nAuthor: Kengo Sakai <email address hidden>\nDate:   Wed Jun 22 16:04:06 2016 +0900\n\n    Check if flavor.vcpus is more than MAX_TAP_QUEUES\n    \n    When attempting to instantiate an instance based on an image with\n    the metadata hw:vif_multiqueue_enabled=true, the code uses\n    flavor.vcpus as the number of queues on a tap interface.\n    \n    In kernels prior to 3.0, multiple queues on a tap interface\n    is not supported[1]. In kernels 3.x, the number of queues\n    on a tap interface is limited to 8 as MAX_TAP_QUEUES in tun\n    driver[2]. From 4.0, the number is 256[3]. If flavor.vcpus\n    is more than MAX_TAP_QUEUES, creating the tap interface\n    fails.\n    \n    This commit adds logic to check if flavor.vcpus is more\n    than MAX_TAP_QUEUES and use MAX_TAP_QUEUES as the number\n    of queues if so.\n    \n    [1]https://git.kernel.org/cgit/linux/kernel/git/stable/linux-stable.git/tree/drivers/net/tun.c?id=refs/tags/v2.6.32.71#n101\n    [2]https://git.kernel.org/cgit/linux/kernel/git/stable/linux-stable.git/tree/drivers/net/tun.c?id=refs/tags/v3.18.35#n118\n    [3]https://git.kernel.org/cgit/linux/kernel/git/stable/linux-stable.git/tree/drivers/net/tun.c?id=refs/tags/v4.1.26#n128\n    \n    Change-Id: I2aa24e3cf550ff69909a2b4bc8be90641dbe3d69\n    Closes-Bug: #1570631\n", 
+            "date_created": "2016-06-27 11:44:41.176287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b2 development milestone.", 
+            "date_created": "2016-07-14 13:00:58.599509+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "The patch does not solve the problem for me.\n\nnova has to check the qemu version in addition to the kernel version and set its limit accordingly\n\nIn the version I am using of qemu (Ubuntu Liberty UCA) I have:\n\nVIRTIO_PCI_QUEUE_MAX == 64\n\nThis leads to 31 max queues: (VIRTIO_PCI_QUEUE_MAX - 1) / 2\n\nIt is not just the Kernel version\n\nPlease read also bug #1644839\n\n", 
+            "date_created": "2016-11-25 15:34:19.981366+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zioproto"
+        }
+    ], 
+    "closed": "2016-06-27 11:44:38.860108+00:00"
+}

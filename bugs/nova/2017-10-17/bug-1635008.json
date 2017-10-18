@@ -1,0 +1,80 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-04-26 17:40:17.532286+00:00", 
+    "description": "Description\n===========\nWhen rbd_user and rbd_secret_uuid are set in nova.conf, they overwrite\nthe values returned from Cinder in the connection_info object.\nTherefore both ephemeral storage in Ceph, and multiple Cinder volume\nCeph backends can't be used at the same time.\n\nSteps to reproduce\n==================\n* In nova.conf, set rbd_user, rbd_secret_uuid, images_rbd_pool, etc.\n* Booting a VMs. SUCCESS\n* Try attaching a volume from a pool with different credentials than\nthe ephemeral one. FAILS\n* Unset rbd_user, rbd_secret_uuid\n* Try attaching a volume from a pool with different credentials than\nthe ephemeral one. SUCCESS\n* Try booting a VM. FAILS\n\nExpected result\n===============\nBoth ephemeral and multiple ceph backends should work at the same time.\n\nActual result\n=============\nEither ephemeral or multiple ceph backends works at the same time. \n\nhttps://github.com/openstack/nova/blob/4f91ed3a547965ed96a22520edcfb783e7936e95/nova/virt/libvirt/volume/net.py#L89-L95\n\nEnvironment\n===========\n1. Exact version of OpenStack you are running. \n\nLiberty\n\nName        : openstack-nova\nArch        : noarch\nEpoch       : 1\nVersion     : 12.0.4\nRelease     : 8.el7ost\nSize        : 14 k\nRepo        : rhel-7-server-openstack-8-rpms-local\n\n\n2. Which hypervisor did you use?\n   \nCompiled against library: libvirt 1.2.17\nUsing library: libvirt 1.2.17\nUsing API: QEMU 1.2.17\nRunning hypervisor: QEMU 2.3.0\n\n\n2. Which storage type did you use?\n\nCeph, not sure on version.\n\n3. Which networking type did you use?\n\nNeutron with OpenVSwitch\n\nLogs & Configs\n==============\n--", 
+    "tags": [
+        "ceph"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1635008", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1635008, 
+    "index": 2106, 
+    "openned": "2016-10-19 18:56:03.233801+00:00", 
+    "created": "2016-10-19 18:56:03.233801+00:00", 
+    "title": "rbd credentials in nova.conf overwrite connection_info from cinder", 
+    "comments": [
+        {
+            "content": "Description\n===========\nWhen rbd_user and rbd_secret_uuid are set in nova.conf, they overwrite\nthe values returned from Cinder in the connection_info object.\nTherefore both ephemeral storage in Ceph, and multiple Cinder volume\nCeph backends can't be used at the same time.\n\nSteps to reproduce\n==================\n* In nova.conf, set rbd_user, rbd_secret_uuid, images_rbd_pool, etc.\n* Booting a VMs. SUCCESS\n* Try attaching a volume from a pool with different credentials than\nthe ephemeral one. FAILS\n* Unset rbd_user, rbd_secret_uuid\n* Try attaching a volume from a pool with different credentials than\nthe ephemeral one. SUCCESS\n* Try booting a VM. FAILS\n\nExpected result\n===============\nBoth ephemeral and multiple ceph backends should work at the same time.\n\nActual result\n=============\nEither ephemeral or multiple ceph backends works at the same time. \n\nhttps://github.com/openstack/nova/blob/4f91ed3a547965ed96a22520edcfb783e7936e95/nova/virt/libvirt/volume/net.py#L89-L95\n\nEnvironment\n===========\n1. Exact version of OpenStack you are running. \n\nLiberty\n\nName        : openstack-nova\nArch        : noarch\nEpoch       : 1\nVersion     : 12.0.4\nRelease     : 8.el7ost\nSize        : 14 k\nRepo        : rhel-7-server-openstack-8-rpms-local\n\n\n2. Which hypervisor did you use?\n   \nCompiled against library: libvirt 1.2.17\nUsing library: libvirt 1.2.17\nUsing API: QEMU 1.2.17\nRunning hypervisor: QEMU 2.3.0\n\n\n2. Which storage type did you use?\n\nCeph, not sure on version.\n\n3. Which networking type did you use?\n\nNeutron with OpenVSwitch\n\nLogs & Configs\n==============\n--", 
+            "date_created": "2016-10-19 18:56:03.233801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~knikolla"
+        }, 
+        {
+            "content": "It looks like the problem with the volumes stuff is that the libvirt volume driver that handles rbd connections isn't checking the connection_info for the rbd credentials, it's just using the nova config:\n\nhttps://github.com/openstack/nova/blob/14.0.0.0rc2/nova/virt/libvirt/volume/net.py#L70\n\nSo that should check the connection_info first, and if nothing there use the nova config values.", 
+            "date_created": "2016-10-20 22:12:25.746670+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Here is an example of the connection_info we get back from cinder for rbd volume connections:\n\nhttp://logs.openstack.org/21/386221/1/check/gate-tempest-dsvm-full-devstack-plugin-ceph-ubuntu-xenial/54c38f9/logs/screen-n-cpu.txt.gz#_2016-10-13_21_08_12_361\n\n{\n   \"connection_info\":{\n      \"driver_volume_type\":\"rbd\",\n      \"data\":{\n         \"secret_type\":\"ceph\",\n         \"name\":\"volumes/volume-ebf06f1b-df7f-47c7-8d7b-1473a8b04db1\",\n         \"encrypted\":false,\n         \"cluster_name\":\"ceph\",\n         \"secret_uuid\":null,\n         \"qos_specs\":null,\n         \"hosts\":[\n            \"127.0.0.1\"\n         ],\n         \"volume_id\":\"ebf06f1b-df7f-47c7-8d7b-1473a8b04db1\",\n         \"auth_enabled\":true,\n         \"access_mode\":\"rw\",\n         \"auth_username\":\"cinder\",\n         \"ports\":[\n            \"6789\"\n         ]\n      }\n   }\n}", 
+            "date_created": "2016-10-20 22:15:19.337799+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is the cinder rbd initialize_connection method:\n\nhttps://github.com/openstack/cinder/blob/9.0.0/cinder/volume/drivers/rbd.py#L823\n\nSo on the cinder side, rbd_user in this case is 'cinder'.\n\nI guess in this test, rbd_user in nova is also 'cinder':\n\nhttp://logs.openstack.org/21/386221/1/check/gate-tempest-dsvm-full-devstack-plugin-ceph-ubuntu-xenial/54c38f9/logs/etc/nova/nova.conf.txt.gz\n\nIn this case, the secret uuid is set in nova.conf:\n\nrbd_secret_uuid = d032268a-4382-480d-b505-528b8af5d96e\nrbd_user = cinder\n\nbut not cinder.conf:\n\n[ceph]\nrbd_max_clone_depth = 5\nrbd_flatten_volume_from_snapshot = False\nrbd_uuid = d032268a-4382-480d-b505-528b8af5d96e\nrbd_user = cinder\nrbd_pool = volumes\nrbd_ceph_conf =\nvolume_driver = cinder.volume.drivers.rbd.RBDDriver\nvolume_backend_name = ceph\n\n\nStill, seems better to use what's in the connection_info if auth is enabled.", 
+            "date_created": "2016-10-20 22:22:58.219740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/389389", 
+            "date_created": "2016-10-20 23:11:17.038006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/389399", 
+            "date_created": "2016-10-21 00:39:59.925488+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/389389\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5595b4613a81908433776fae6fb4b34a4b3ab666\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5595b4613a81908433776fae6fb4b34a4b3ab666\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Oct 20 19:05:53 2016 -0400\n\n    libvirt: cleanup network volume driver auth config\n    \n    The LibvirtNetVolumeDriver is handling both rbd and\n    sheepdog (iscsi) connections. The auth config logic\n    is mingling both backends which is really confusing.\n    \n    For example, the iscsi protocol only defines auth_method,\n    auth_username and auth_password. It does not set an\n    auth_enabled value in the connection_info['data'] dict.\n    \n    This change simplifies the logic involved for setting\n    the auth config by decoupling the rbd/iscsi handlers.\n    \n    A follow-up change will build on this to fix the\n    rbd auth config to prefer the cinder volume connection_info\n    auth data over the local config for nova in the case\n    that different cinder backends are used for ephemeral\n    and block storage.\n    \n    Change-Id: I8a55d87f75ecad757ce81b1f5f77c3a551154a17\n    Partial-Bug: #1635008\n", 
+            "date_created": "2016-11-30 22:46:51.929652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/389399\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b89efa3ef611a1932df0c2d6e6f30315b5111a57\nSubmitter: Jenkins\nBranch:    master\n\ncommit b89efa3ef611a1932df0c2d6e6f30315b5111a57\nAuthor: Matt Riedemann <email address hidden>\nDate:   Fri Nov 4 10:39:57 2016 -0400\n\n    libvirt: prefer cinder rbd auth values over nova.conf\n    \n    In the case that the ceph storage backing volumes is different\n    from the one backing ephemeral storage in nova, the auth values\n    in the rbd connection_info could be different and not work if\n    we are using the nova.conf values for ephemeral storage.\n    \n    This change makes the volume connection config code for rbd\n    prefer the cinder connection_info values if they exist, and\n    only falls back to nova config values if cinder doesn't have\n    anything set.\n    \n    Depends-On: I4655cae3212d589177d2570403b563a83aad529a\n    \n    Change-Id: Idcbada705c1d38ac5fd7c600141c2de7020eae25\n    Closes-Bug: #1635008\n", 
+            "date_created": "2016-11-30 22:58:39.735833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I've already posted this comment on Github, so I hope it's okay to double-post it here, as in retrospect this might be the better forum.\n\nThe upgrade note in the patch states that the setting in cinder.conf will be \"pulled\" and take precedence over the rbd_user etc. from nova.conf. I'm not sure that this is strictly true. Am I right in thinking that the credentials are (and always have been) pulled from the cinder.conf at volume creation time, and that this metadata is stored in the block_device_mapping table in the nova database?\n\nIf I'm right then a user that has pre-existing volumes, who previously omitted ceph credentials from their cinder.conf will not have any credentials stored in block_device_mapping (presumably the source of connection_info).\n\nI myself have ended up with incomplete credentials stored in block_device_mapping. This is due to my use of Ubuntu's cinder-ceph juju charms, so this is not an isolated case. The juju charms write the rbd user, but not the secret_uuid to the cinder.conf on the cinder-api nodes.\n\nWhen I initially investigated the issue that this patch addresses, on an unpatched Liberty, I tried adding the ceph credentials to the cinder.conf on my compute hosts, and removed the credentials in nova.conf. The result was that a \"null\" secret uuid was pulled from the database, and the volume did not work. The secret uuid in my cinder.conf was ignored at this point.\n\nTo retrospectively fix this problem for myself, I ran the following SQL update:\nupdate block_device_mapping set connection_info = REPLACE(connection_info,'\"secret_uuid\": null','\"secret_uuid\": \"62003c88-92c4-4986-92a2-7f9245ed3bb7\"') WHERE connection_info LIKE '%\"secret_uuid\": null%cinder-ceph%';\n(cinder-ceph was the name of my pool)\n\nCan anyone confirm that changes (not obvious in this patch) have been made that will pull the credentials from cinder.conf when they are absent in the block_device_mapping table (connection_info)?\n\nIf those credentials are not pulled from cinder.conf at run-time, then lots of rbd volumes might fail when the legacy nova.conf settings are pulled in the 'P' release.\n\nThanks,\nJohn", 
+            "date_created": "2016-12-03 14:16:57.573643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~launchpa6"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b2 development milestone.", 
+            "date_created": "2016-12-15 17:34:56.581303+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "cross referencing with bug 1671422", 
+            "date_created": "2017-03-09 10:51:55.884798+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "I can confirm that connection_info is not refreshed from Cinder, generally. I have found that you can initiate a connection_info refresh (as a side effect) by shelving and then unshelving an instance ('nova shelve' 'nova unshelve').\n\nThere are some other related bugs around connection_info not being refreshed from Cinder, like:\n\nhttps://bugs.launchpad.net/nova/+bug/1581367\nhttps://bugs.launchpad.net/cinder/+bug/1452641\n\nWe are looking at possibly adding a call to refresh connection_info from Cinder and save it inline during instance actions that would cause a read of the BDM from the database for use in the instance domain XML (such as hard reboot, resize, start). That way the connection_info would get transparently updated during affected actions.", 
+            "date_created": "2017-04-26 17:40:16.581149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }
+    ], 
+    "closed": "2016-11-30 22:58:37.759306+00:00"
+}

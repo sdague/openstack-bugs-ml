@@ -1,0 +1,87 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-01-21 23:20:03.478309+00:00", 
+    "description": "Nova does not paginate correctly if the marker is a deleted server.\n\nI am trying to get all of the servers for a given tenant. In total (i.e. active, delete, error, etc.) there are 405 servers.\n\nIf I query the API without a marker and with a limit larger (for example, 500)\nthan the total number of servers I get all of them, i.e. the following query\ncorrectly returns 405 servers:\n\n    curl (...) \"http://cloud.example.org:8774/v1.1/foo/servers?changes-since=2014-01-01&limit=500\"\n\nHowever, if I try to paginate over them, doing:\n\n    curl (...) \"http://cloud.example.org:8774/v1.1/foo/servers?changes-since=2014-01-01&limit=100\"\n\nI get the first 100 with a link to the next page. If I try to follow it:\n\n    curl (...) \"http://cloud.example.org:8774/v1.1/foo/servers?changes-since=2014-01-01&limit=100&marker=foobar\"\n\nI am always getting a \"badRequest\" error saying that the marker is not found. I\nguess this is because of these lines in \"nova/db/sqlalchemy/api.py\"\n\n    2000     # paginate query\n    2001     if marker is not None:\n    2002         try:\n    2003             marker = _instance_get_by_uuid(context, marker, session=session)\n    2004         except exception.InstanceNotFound:\n    2005             raise exception.MarkerNotFound(marker)\n\nThe function \"_instance_get_by_uuid\" gets the machines that are not deleted, therefore it fails to locate the marker if it is a deleted server.", 
+    "tags": [
+        "api", 
+        "in-stable-kilo", 
+        "low-hanging-fruit"
+    ], 
+    "importance": "Low", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1398086", 
+    "owner": "https://api.launchpad.net/1.0/~liyingjun", 
+    "id": 1398086, 
+    "index": 1447, 
+    "openned": "2014-12-01 16:48:39.794342+00:00", 
+    "created": "2014-12-01 16:48:39.794342+00:00", 
+    "title": "nova servers pagination does not work with deleted marker", 
+    "comments": [
+        {
+            "content": "Nova does not paginate correctly if the marker is a deleted server.\n\nI am trying to get all of the servers for a given tenant. In total (i.e. active, delete, error, etc.) there are 405 servers.\n\nIf I query the API without a marker and with a limit larger (for example, 500)\nthan the total number of servers I get all of them, i.e. the following query\ncorrectly returns 405 servers:\n\n    curl (...) \"http://cloud.example.org:8774/v1.1/foo/servers?changes-since=2014-01-01&limit=500\"\n\nHowever, if I try to paginate over them, doing:\n\n    curl (...) \"http://cloud.example.org:8774/v1.1/foo/servers?changes-since=2014-01-01&limit=100\"\n\nI get the first 100 with a link to the next page. If I try to follow it:\n\n    curl (...) \"http://cloud.example.org:8774/v1.1/foo/servers?changes-since=2014-01-01&limit=100&marker=foobar\"\n\nI am always getting a \"badRequest\" error saying that the marker is not found. I\nguess this is because of these lines in \"nova/db/sqlalchemy/api.py\"\n\n    2000     # paginate query\n    2001     if marker is not None:\n    2002         try:\n    2003             marker = _instance_get_by_uuid(context, marker, session=session)\n    2004         except exception.InstanceNotFound:\n    2005             raise exception.MarkerNotFound(marker)\n\nThe function \"_instance_get_by_uuid\" gets the machines that are not deleted, therefore it fails to locate the marker if it is a deleted server.", 
+            "date_created": "2014-12-01 16:48:39.794342+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aloga"
+        }, 
+        {
+            "content": "In my opinion, it's not a bug because the deleted vm should not be queried.  ", 
+            "date_created": "2014-12-02 03:35:05.252159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vanderliang"
+        }, 
+        {
+            "content": "Sorry, but no, this is not invalid.\n\nThe API explicitly allows querying for machines in a given status (active, deleted, etc.): http://developer.openstack.org/api-ref-compute-v2.html#compute_servers\n\nLastly, in the case that it would not be possible, then the marker returned by nova is wrong, so the bug is still valid.", 
+            "date_created": "2014-12-02 09:03:34.761907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aloga"
+        }, 
+        {
+            "content": "Confirmed, if you have two deleted servers (test-server-1, test-server-2) they should appear in \"nova  list --status=deleted\" and using pagination without a maker works, so \"http://10.0.0.17:8774/v2/UUID/servers?status=deleted&limit=1\" works. But\n\nhttp://10.0.0.17:8774/v2/d0a91ae0a2b647acbb06805c677a65c1/servers?status=deleted&limit=1&marker=test-server-2\n\ndoesn't work. It returns : \n\n\"badRequest\" : {\n      \"code\" : 400,\n      \"message\" : \"marker [test-server-2] not found\"\n   }\n\"\n", 
+            "date_created": "2014-12-03 12:59:24.944741+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/139306", 
+            "date_created": "2014-12-05 03:01:24.509453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/139306\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d85bd3e748ea17d523d011387dcf8a5af0318c20\nSubmitter: Jenkins\nBranch:    master\n\ncommit d85bd3e748ea17d523d011387dcf8a5af0318c20\nAuthor: liyingjun <email address hidden>\nDate:   Fri Dec 5 10:34:56 2014 +0800\n\n    Make pagination work with deleted marker\n    \n    Currently, Nova does not paginate correctly if the marker is a\n    deleted server. When trying to get servers with deleted and marker,\n    a \"BadRequest\" error saying that the marker is not found will be\n    raised.\n    \n    Fixes the bug by passing read_deleted to context when getting\n    server to enable to get deleted server as marker.\n    \n    Change-Id: Icde4e7d251d4497ee8eeb0a573eca3b73aa71466\n    Closes-bug: #1398086\n", 
+            "date_created": "2015-02-25 02:41:01.941206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I don't think this bug, as originally reported, was fixed. The fix only addressed the use of `status=deleted`, but the original report is for use of `changes-since`, which is supposed to implicitly include deleted servers. The bug is still occurring. ", 
+            "date_created": "2015-07-16 21:46:37.724044+00:00", 
+            "author": "https://api.launchpad.net/1.0/~radix"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/209554", 
+            "date_created": "2015-08-05 15:16:08.444103+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/212614", 
+            "date_created": "2015-08-13 16:09:17.897697+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Martin Schuppert (<email address hidden>) on branch: master\nReview: https://review.openstack.org/212614\nReason: sorry, mistake in submit the commit", 
+            "date_created": "2015-08-14 06:03:54.274709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/209554\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=901c223f351310b38fa17aa1c3dcd758ce897e5e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 901c223f351310b38fa17aa1c3dcd758ce897e5e\nAuthor: Martin Schuppert <email address hidden>\nDate:   Wed Aug 5 17:10:14 2015 +0200\n\n    Make pagination tolerate a deleted marker\n    \n    Currently, Nova does not paginate correctly if the marker is\n    a deleted server. When trying to get servers with such a\n    marker, a \"BadRequest\" error saying that the marker is\n    not found will be raised.\n    \n    We now always pass read_deleted=yes if a marker is being used.\n    \n    Change-Id: I79a1fb79a38ac4006db622590574308aafdcb5b5\n    Closes-bug: #1481812\n    Related-Bug: #1398086\n", 
+            "date_created": "2015-08-14 20:17:53.028306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/214986", 
+            "date_created": "2015-08-20 07:09:06.721669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/214986\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8fccffda596e7f332f7f4a440bd75c8607a7ef14\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 8fccffda596e7f332f7f4a440bd75c8607a7ef14\nAuthor: Martin Schuppert <email address hidden>\nDate:   Wed Aug 5 17:10:14 2015 +0200\n\n    Make pagination tolerate a deleted marker\n    \n    Currently, Nova does not paginate correctly if the marker is\n    a deleted server. When trying to get servers with such a\n    marker, a \"BadRequest\" error saying that the marker is\n    not found will be raised.\n    \n    We now always pass read_deleted=yes if a marker is being used.\n    \n    Change-Id: I79a1fb79a38ac4006db622590574308aafdcb5b5\n    Closes-bug: #1481812\n    Related-Bug: #1398086\n    (cherry picked from commit 901c223f351310b38fa17aa1c3dcd758ce897e5e)\n", 
+            "date_created": "2015-09-21 19:36:37.615290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-03-20 07:40:03.978735+00:00"
+}

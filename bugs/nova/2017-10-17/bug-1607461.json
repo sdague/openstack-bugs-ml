@@ -1,0 +1,67 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-11-10 02:06:10.947344+00:00", 
+    "description": "While executing a call to librbd nova-compute may hang for a while (looks like at least some calls can take a really long time depending on the health of a Ceph cluster and things like http://docs.ceph.com/docs/master/rbd/librbdpy/#rbd.RBD.list are inherently slow down as the number of entities to be listed grows) and eventually go down in nova service-list output.\n\nstrace'ing shows that a process is stuck on acquiring a mutex:\n\nroot@node-153:~# strace -p 16675\nProcess 16675 attached\nfutex(0x7fff084ce36c, FUTEX_WAIT_PRIVATE, 1, NULL\n\ngdb allows to see the traceback:\n\nhttp://paste.openstack.org/show/542534/\n\n^ which basically means calls to librbd (C library) are not monkey-patched and do not allow to switch the execution context to another green thread in an eventlet-based process.\n\nTo avoid blocking of the whole nova-compute process on calls to librbd we should wrap them with tpool.execute() (http://eventlet.net/doc/threading.html#eventlet.tpool.execute)", 
+    "tags": [
+        "ceph", 
+        "compute", 
+        "in-stable-mitaka"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1607461", 
+    "owner": "https://api.launchpad.net/1.0/~rpodolyaka", 
+    "id": 1607461, 
+    "index": 4591, 
+    "openned": "2016-07-28 17:06:35.112760+00:00", 
+    "created": "2016-07-28 17:06:35.112760+00:00", 
+    "title": "nova-compute hangs while executing a blocking call to librbd", 
+    "comments": [
+        {
+            "content": "While executing a call to librbd nova-compute may hang for a while and eventually go down in nova service-list output.\n\nstrace'ing shows that a process is stuck on acquiring a mutex:\n\nroot@node-153:~# strace -p 16675\nProcess 16675 attached\nfutex(0x7fff084ce36c, FUTEX_WAIT_PRIVATE, 1, NULL\n\ngdb allows to see the traceback:\n\nhttp://paste.openstack.org/show/542534/\n\n^ which basically means calls to librbd (C library) are not monkey-patched and do not allow to switch the execution context to another green thread in an eventlet-based process.\n\nTo avoid blocking of the whole nova-compute process on calls to librbd we should wrap them with tpool.execute() (http://eventlet.net/doc/threading.html#eventlet.tpool.execute)", 
+            "date_created": "2016-07-28 17:06:35.112760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-07-28 17:08:29.923566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/348492", 
+            "date_created": "2016-07-28 17:29:27.341010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/348492\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=3405a28688eacbca23cf5cac0a611d33fb1a1f2c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3405a28688eacbca23cf5cac0a611d33fb1a1f2c\nAuthor: Roman Podoliaka <email address hidden>\nDate:   Thu Jul 28 20:08:44 2016 +0300\n\n    rbd_utils: wrap blocking calls in tpool.Proxy()\n    \n    librbd is a Python binding around a C library, which is not aware of\n    eventlet - all the calls to the functions from this library will block\n    the whole nova-compute process for duration of a call. To make sure\n    nova-compute remains responsive we need to wrap all the calls in\n    tpool.Proxy() eventlet helper, that switches the execution context\n    back to the event loop, while the call is executed in a native OS\n    thread from a pool.\n    \n    Prefer tpool.Proxy() to tpool.execute() here as the former allows for\n    wrapping objects and automatically executes all the method calls in\n    native OS threads, while the latter needs to be applied to each\n    method call in the code repeatedly.\n    \n    Existing calls are modified for the sake of consistency.\n    \n    Closes-Bug: #1607461\n    \n    Change-Id: I743ab372332eb656258a476ae91f5e8fd2cbdc99\n", 
+            "date_created": "2016-08-03 11:12:11.627171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b3 development milestone.", 
+            "date_created": "2016-09-02 01:15:21.913074+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/365051", 
+            "date_created": "2016-09-02 16:15:40.579195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/365051\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=e2b2f6e6249117e5f74bc8088b7f1b9f085e6de2\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit e2b2f6e6249117e5f74bc8088b7f1b9f085e6de2\nAuthor: Roman Podoliaka <email address hidden>\nDate:   Thu Jul 28 20:08:44 2016 +0300\n\n    rbd_utils: wrap blocking calls in tpool.Proxy()\n    \n    librbd is a Python binding around a C library, which is not aware of\n    eventlet - all the calls to the functions from this library will block\n    the whole nova-compute process for duration of a call. To make sure\n    nova-compute remains responsive we need to wrap all the calls in\n    tpool.Proxy() eventlet helper, that switches the execution context\n    back to the event loop, while the call is executed in a native OS\n    thread from a pool.\n    \n    Prefer tpool.Proxy() to tpool.execute() here as the former allows for\n    wrapping objects and automatically executes all the method calls in\n    native OS threads, while the latter needs to be applied to each\n    method call in the code repeatedly.\n    \n    Existing calls are modified for the sake of consistency.\n    \n    Closes-Bug: #1607461\n    \n    Change-Id: I743ab372332eb656258a476ae91f5e8fd2cbdc99\n    (cherry picked from commit 3405a28688eacbca23cf5cac0a611d33fb1a1f2c)\n", 
+            "date_created": "2016-10-05 00:52:45.030439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-10-10 13:19:57.738147+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-11-10 02:06:10.294228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-08-03 11:12:08.805127+00:00"
+}

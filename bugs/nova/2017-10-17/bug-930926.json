@@ -1,0 +1,33 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2012-02-14 08:58:27.613595+00:00", 
+    "description": "When br100 is not manually configured and nova.conf (network related part) is configured as:\n\n--flat_network_bridge=br100 \n--network_manager=nova.network.manager.FlatDHCPManager \n--flat_interface=eth0\n--public_interface=eth0 \n--flat_network_dhcp_start=192.168.99.2\n--network_host=10.10.10.10\n--fixed_range=192.168.99.0/24\n--flat-injected\n\nnova-network fails to set promisc mode for br100:\n\n2012-02-10 07:41:34,398 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Running cmd (subprocess): sudo nova-rootwrap ip addr add 192.168.99.1/24 brd 192.168.99.255 dev br100 from (pid=928) execute /usr/lib/python2.7/dist-packages/nova/utils.py:208\n2012-02-10 07:41:34,431 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Running cmd (subprocess): sudo nova-rootwrap ip addr add 10.10.10.10/16 brd 10.10.255.255 scope global dev br100 from (pid=928) execute /usr/lib/python2.7/dist-packages/nova/utils.py:208\n2012-02-10 07:41:34,464 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Running cmd (subprocess): sudo nova-rootwrap route add default gw 10.10.0.1 from (pid=928) execute /usr/lib/python2.7/dist-packages/nova/utils.py:208\n2012-02-10 07:41:34,574 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Attempting to grab semaphore \"dnsmasq_start\" for method \"restart_dhcp\"... from (pid=928) inner /usr/lib/python2.7/dist-packages/nova/utils.py:813\n\nLooking at the code (nova/network/linux_net.py):\n\n    if(FLAGS.public_interface == dev):\n        _execute('ip', 'link', 'set',\n                     'dev', dev, 'promisc', 'on', run_as_root=True)\n\nit looks like this will never be true, since public_interface is eth0, and 'dev' is br100. On the other hand, this works fine:\n\n    if(FLAGS.public_interface == FLAGS.flat_interface):\n        _execute('ip', 'link', 'set',\n                     'dev', dev, 'promisc', 'on', run_as_root=True)", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/930926", 
+    "owner": "None", 
+    "id": 930926, 
+    "index": 3828, 
+    "openned": "2012-02-12 11:19:18.143565+00:00", 
+    "created": "2012-02-12 11:19:18.143565+00:00", 
+    "title": "nova-network doesn't set promisc mode on bridge interface", 
+    "comments": [
+        {
+            "content": "When br100 is not manually configured and nova.conf (network related part) is configured as:\n\n--flat_network_bridge=br100 \n--network_manager=nova.network.manager.FlatDHCPManager \n--flat_interface=eth0\n--public_interface=eth0 \n--flat_network_dhcp_start=192.168.99.2\n--network_host=10.10.10.10\n--fixed_range=192.168.99.0/24\n--flat-injected\n\nnova-network fails to set promisc mode for br100:\n\n2012-02-10 07:41:34,398 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Running cmd (subprocess): sudo nova-rootwrap ip addr add 192.168.99.1/24 brd 192.168.99.255 dev br100 from (pid=928) execute /usr/lib/python2.7/dist-packages/nova/utils.py:208\n2012-02-10 07:41:34,431 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Running cmd (subprocess): sudo nova-rootwrap ip addr add 10.10.10.10/16 brd 10.10.255.255 scope global dev br100 from (pid=928) execute /usr/lib/python2.7/dist-packages/nova/utils.py:208\n2012-02-10 07:41:34,464 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Running cmd (subprocess): sudo nova-rootwrap route add default gw 10.10.0.1 from (pid=928) execute /usr/lib/python2.7/dist-packages/nova/utils.py:208\n2012-02-10 07:41:34,574 DEBUG nova.utils [req-749b0e68-fe1f-4442-9771-3f0297716b40 None None] Attempting to grab semaphore \"dnsmasq_start\" for method \"restart_dhcp\"... from (pid=928) inner /usr/lib/python2.7/dist-packages/nova/utils.py:813\n\nLooking at the code (nova/network/linux_net.py):\n\n    if(FLAGS.public_interface == dev):\n        _execute('ip', 'link', 'set',\n                     'dev', dev, 'promisc', 'on', run_as_root=True)\n\nit looks like this will never be true, since public_interface is eth0, and 'dev' is br100. On the other hand, this works fine:\n\n    if(FLAGS.public_interface == FLAGS.flat_interface):\n        _execute('ip', 'link', 'set',\n                     'dev', dev, 'promisc', 'on', run_as_root=True)", 
+            "date_created": "2012-02-12 11:19:18.143565+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ivoks"
+        }, 
+        {
+            "content": "I don't think the settings above are correct.\n\n--flat_network_bridge=br100\n--flat_interface=eth0\n--public_interface=eth0\n\nThe problem is that it does not work to add ips to  a bridged interface, so floating ips will not work properly.  I think nova will move the ips onto the bridge at certain points, so it will probably work most of the time, but lead to strange issues. The floating ips should be added to the bridge, so you actually want:\n\n--flat_network_bridge=br100\n--flat_interface=eth0\n--public_interface=br100\n\nIt looks like devstack defaults to the first, so we have proposed a change to default to the second set here:\n\nhttps://review.openstack.org/#change,2428\n\nI think we can go ahead and mark this invalid.  Feel free to reopen if you disagree.", 
+            "date_created": "2012-02-13 20:52:30.893202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I don't disagree, it does make sense and it works that way. But this means that lots of docs need to be fixed too. For example:\n\nhttp://docs.openstack.org/diablo/openstack-compute/install/content/compute-minimum-configuration-settings.html\nhttp://docs.openstack.org/diablo/openstack-compute/starter/content/Nova_conf-d2s367.html\n\nThanks!", 
+            "date_created": "2012-02-14 07:44:42.154249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ivoks"
+        }
+    ], 
+    "closed": "2012-02-13 20:52:39.951697+00:00"
+}

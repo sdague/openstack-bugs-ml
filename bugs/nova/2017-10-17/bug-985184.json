@@ -1,0 +1,309 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:23:08.145466+00:00", 
+    "description": "The high level issue is that if a security group rule is specified with the protocol in uppercase (e.g. TCP instead of tcp) on a system using the IpTablesFirewallDriver then the security group rules may fail to be properly applied, leading to security groups that are more open than specified.\n\nThe detail of the issue is as follows (Described from the OSAPI perspective, but the problem also exists on EC2)\n\n\nWhen a security group rule is specified with the protocol in upper case it is validated (contrig/security_groups.py: _rule_args_to_dict() regardless of case but stored in the database in the supplied case:\n    if ip_protocol.upper() not in ['TCP', 'UDP', 'ICMP']:\n                raise exception.InvalidIpProtocol(protocol=ip_protocol)\n\n  \u2026\n   \n  values['protocol'] = ip_protocol\n\n\nWhen the security group refresh is triggered (virt/firewall.py \u2013 instance_rules() the protocol check is case sensitive:\n\n                if protocol in ['udp', 'tcp']:\n                    args += self._build_tcp_udp_rule(rule, version)\n                elif protocol == 'icmp':\n                    args += self._build_icmp_rule(rule, version)\n                if rule.cidr:\n                    LOG.info('Using cidr %r', rule.cidr)\n                    args += ['-s', rule.cidr]\n                    fw_rules += [' '.join(args)]\n\nBecause the protocol doesn\u2019t match \u2018udp\u2019 or \u2018tcp\u2019 the protocol part of the rule is skipped, leading to an incomplete and invalid  iptables command line.", 
+    "tags": [
+        "api", 
+        "groups", 
+        "nova", 
+        "security", 
+        "verification-done"
+    ], 
+    "importance": "Medium", 
+    "heat": 274, 
+    "link": "https://bugs.launchpad.net/nova/+bug/985184", 
+    "owner": "https://api.launchpad.net/1.0/~russellb", 
+    "id": 985184, 
+    "index": 2871, 
+    "openned": "2012-04-18 20:04:06.164550+00:00", 
+    "created": "2012-04-18 20:04:06.164550+00:00", 
+    "title": "Security groups fail to be set correctly if incorrect case is used for protocol specification", 
+    "comments": [
+        {
+            "content": "The high level issue is that if a security group rule is specified with the protocol in uppercase (e.g. TCP instead of tcp) on a system using the IpTablesFirewallDriver then the security group rules may fail to be properly applied, leading to security groups that are more open than specified.\n\nThe detail of the issue is as follows (Described from the OSAPI perspective, but the problem also exists on EC2)\n\n\nWhen a security group rule is specified with the protocol in upper case it is validated (contrig/security_groups.py: _rule_args_to_dict() regardless of case but stored in the database in the supplied case:\n    if ip_protocol.upper() not in ['TCP', 'UDP', 'ICMP']:\n                raise exception.InvalidIpProtocol(protocol=ip_protocol)\n\n  \u2026\n   \n  values['protocol'] = ip_protocol\n\n\nWhen the security group refresh is triggered (virt/firewall.py \u2013 instance_rules() the protocol check is case sensitive:\n\n                if protocol in ['udp', 'tcp']:\n                    args += self._build_tcp_udp_rule(rule, version)\n                elif protocol == 'icmp':\n                    args += self._build_icmp_rule(rule, version)\n                if rule.cidr:\n                    LOG.info('Using cidr %r', rule.cidr)\n                    args += ['-s', rule.cidr]\n                    fw_rules += [' '.join(args)]\n\nBecause the protocol doesn\u2019t match \u2018udp\u2019 or \u2018tcp\u2019 the protocol part of the rule is skipped, leading to an incomplete and invalid  iptables command line.", 
+            "date_created": "2012-04-18 20:04:06.164550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "@all I suggest that this is a \"Normal\" level security bug as per: http://wiki.openstack.org/VulnerabilityManagement\n\nLooks like it should be an easy fix, thoughts?", 
+            "date_created": "2012-04-18 20:13:26.350632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "yup appears easy. Suggested patch:\n\ndiff --git a/nova/virt/firewall.py b/nova/virt/firewall.py\nindex 3f53334..62de2c2 100644\n--- a/nova/virt/firewall.py\n+++ b/nova/virt/firewall.py\n@@ -300,7 +300,7 @@ class IptablesFirewallDriver(FirewallDriver):\n                 else:\n                     fw_rules = ipv6_rules\n \n-                protocol = rule.protocol\n+                protocol = rule.protocol.lower()\n                 if version == 6 and rule.protocol == 'icmp':\n                     protocol = 'icmpv6'\n ", 
+            "date_created": "2012-04-19 17:10:02.143316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "For our fix we did the tolower() before writing to the db, in case there were any other similar issues in the code (we know that it works everywhere when the DB contents are lower case)\r\n\r\nPhil\r\n\r\n\r\n\r\n-- Sent from my HP Pre\r\n\r\n________________________________\r\nOn 19 Apr 2012 10:15, Vish Ishaya <email address hidden> wrote:\r\n\r\nyup appears easy. Suggested patch:\r\n\r\ndiff --git a/nova/virt/firewall.py b/nova/virt/firewall.py\r\nindex 3f53334..62de2c2 100644\r\n--- a/nova/virt/firewall.py\r\n+++ b/nova/virt/firewall.py\r\n@@ -300,7 +300,7 @@ class IptablesFirewallDriver(FirewallDriver):\r\n                 else:\r\n                     fw_rules = ipv6_rules\r\n\r\n-                protocol = rule.protocol\r\n+                protocol = rule.protocol.lower()\r\n                 if version == 6 and rule.protocol == 'icmp':\r\n                     protocol = 'icmpv6'\r\n\r\n--\r\nYou received this bug notification because you are subscribed to the bug\r\nreport.\r\nhttps://bugs.launchpad.net/bugs/985184\r\n\r\nTitle:\r\n  Security groups fail to be set correctly if incorrect case is used for\r\n  protocol specification\r\n\r\nStatus in OpenStack Compute (Nova):\r\n  New\r\n\r\nBug description:\r\n  The high level issue is that if a security group rule is specified\r\n  with the protocol in uppercase (e.g. TCP instead of tcp) on a system\r\n  using the IpTablesFirewallDriver then the security group rules may\r\n  fail to be properly applied, leading to security groups that are more\r\n  open than specified.\r\n\r\n  The detail of the issue is as follows (Described from the OSAPI\r\n  perspective, but the problem also exists on EC2)\r\n\r\n\r\n  When a security group rule is specified with the protocol in upper case it is validated (contrig/security_groups.py: _rule_args_to_dict() regardless of case but stored in the database in the supplied case:\r\n      if ip_protocol.upper() not in ['TCP', 'UDP', 'ICMP']:\r\n                  raise exception.InvalidIpProtocol(protocol=ip_protocol)\r\n\r\n    \u2026\r\n\r\n    values['protocol'] = ip_protocol\r\n\r\n\r\n  When the security group refresh is triggered (virt/firewall.py \u2013 instance_rules() the protocol check is case sensitive:\r\n\r\n                  if protocol in ['udp', 'tcp']:\r\n                      args += self._build_tcp_udp_rule(rule, version)\r\n                  elif protocol == 'icmp':\r\n                      args += self._build_icmp_rule(rule, version)\r\n                  if rule.cidr:\r\n                      LOG.info('Using cidr %r', rule.cidr)\r\n                      args += ['-s', rule.cidr]\r\n                      fw_rules += [' '.join(args)]\r\n\r\n  Because the protocol doesn\u2019t match \u2018udp\u2019 or \u2018tcp\u2019 the protocol part of\r\n  the rule is skipped, leading to an incomplete and invalid  iptables\r\n  command line.\r\n\r\nTo manage notifications about this bug go to:\r\nhttps://bugs.launchpad.net/nova/+bug/985184/+subscriptions\r\n", 
+            "date_created": "2012-04-19 17:24:10+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "The issue with that solution is it requires a migration to fix any bad data\nthat might already be in the database. I don't have a problem with lowering\nit on both ends though.\n", 
+            "date_created": "2012-04-20 03:08:30+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Fair point, although if you had any bad values in the DB I doubt if they would go un-noticed ;-)\r\n\r\nPhil \r\n\r\n-----Original Message-----\r\nFrom: <email address hidden> [mailto:<email address hidden>] On Behalf Of Vish Ishaya\r\nSent: 20 April 2012 04:09\r\nTo: Day, Phil\r\nSubject: Re: [Bug 985184] Re: Security groups fail to be set correctly if incorrect case is used for protocol specification\r\n\r\nThe issue with that solution is it requires a migration to fix any bad data that might already be in the database. I don't have a problem with lowering it on both ends though.\r\n\r\n--\r\nYou received this bug notification because you are subscribed to the bug report.\r\nhttps://bugs.launchpad.net/bugs/985184\r\n\r\nTitle:\r\n  Security groups fail to be set correctly if incorrect case is used for\r\n  protocol specification\r\n\r\nStatus in OpenStack Compute (Nova):\r\n  New\r\n\r\nBug description:\r\n  The high level issue is that if a security group rule is specified\r\n  with the protocol in uppercase (e.g. TCP instead of tcp) on a system\r\n  using the IpTablesFirewallDriver then the security group rules may\r\n  fail to be properly applied, leading to security groups that are more\r\n  open than specified.\r\n\r\n  The detail of the issue is as follows (Described from the OSAPI\r\n  perspective, but the problem also exists on EC2)\r\n\r\n  \r\n  When a security group rule is specified with the protocol in upper case it is validated (contrig/security_groups.py: _rule_args_to_dict() regardless of case but stored in the database in the supplied case:\r\n      if ip_protocol.upper() not in ['TCP', 'UDP', 'ICMP']:\r\n                  raise exception.InvalidIpProtocol(protocol=ip_protocol)\r\n\r\n    \u2026\r\n     \r\n    values['protocol'] = ip_protocol\r\n\r\n  \r\n  When the security group refresh is triggered (virt/firewall.py \u2013 instance_rules() the protocol check is case sensitive:\r\n\r\n                  if protocol in ['udp', 'tcp']:\r\n                      args += self._build_tcp_udp_rule(rule, version)\r\n                  elif protocol == 'icmp':\r\n                      args += self._build_icmp_rule(rule, version)\r\n                  if rule.cidr:\r\n                      LOG.info('Using cidr %r', rule.cidr)\r\n                      args += ['-s', rule.cidr]\r\n                      fw_rules += [' '.join(args)]\r\n\r\n  Because the protocol doesn\u2019t match \u2018udp\u2019 or \u2018tcp\u2019 the protocol part of\r\n  the rule is skipped, leading to an incomplete and invalid  iptables\r\n  command line.\r\n\r\nTo manage notifications about this bug go to:\r\nhttps://bugs.launchpad.net/nova/+bug/985184/+subscriptions\r\n", 
+            "date_created": "2012-04-20 05:12:44+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Ok, is there agreement on the correct way to patch this?\n\nI'd also like to issue some advice on how to find currently-incorrect DB entries for the protocol type with the release, @thierry would you be happy with that?", 
+            "date_created": "2012-04-20 15:55:20.520702+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "We can definitely add to the security notice some hints (SQL one-liner anyone ?) on sanitizing existing entries. Deployers/distros can then assess if changing existing data should be part of their upgrade process or not.", 
+            "date_created": "2012-04-20 16:14:33.085941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Title: Security groups fail to be set correctly\nImpact: High\nReporter: HP Cloud Services <email address hidden>\nProducts: Nova\nAffects: All versions\n\nDescription:\nHP Cloud Services reported a vulnerability in Nova API handling when a security group is created via the API using a protocol defined in the incorrect case i.e 'TCP' rather than 'tcp' causes a later string comparison to fail. This leads to Security Groups not being set correctly.\n\nOnce the Nova DB has been polluted with the incorrect case any subsequent modifications to the security group will also fail. When the patch is applied the DB entries must be corrected to resume normal operations.", 
+            "date_created": "2012-04-24 07:54:11.680780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Description:\nHP Cloud Services reported a vulnerability in Nova API handling. When a security group is created via the EC2 or OS API's that uses a protocol defined in the incorrect case i.e 'TCP' rather than 'tcp' it causes a later string comparison to fail. This leads to Security Groups not being set correctly.\n\nOnce the Nova DB has been polluted with the incorrect case any subsequent modifications to the security group will also fail. When the patch is applied the DB entries must be corrected to resume normal operations.", 
+            "date_created": "2012-04-24 07:56:17.525187+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "I've knocked together a little SQL that the Nova guys are checking for me now, I'll add that to the disclosure when it's ready.\n\n@Vish - can we get a decision on the patch please?", 
+            "date_created": "2012-04-24 07:59:17.610139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "This SQL appears to work for our deployment:\n\nUPDATE security_group_rules SET protocol = 'tcp' where protocol = 'TCP'\nUPDATE security_group_rules SET protocol = 'udp' where protocol = 'UDP'\nUPDATE security_group_rules SET protocol = 'icmp' where protocol = 'ICMP'\n", 
+            "date_created": "2012-04-24 10:16:30.253863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Presumably there could be entries in the database as 'Tcp', 'tCp', 'tcP', etc., as well.", 
+            "date_created": "2012-04-24 14:20:48.014053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "I also wonder if we should classify this as 'Medium' or 'Low' instead of 'High' since this can't really be exploited.  It doesn't allow any privilege escalation and doesn't interfere with service for other tenants as far as I can tell.", 
+            "date_created": "2012-04-24 14:23:03.200212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Hmm, you're right on both counts of course.\n\nAs Security Groups are the primary network facing security control for Nova tenants I'd suggest that this should be a medium.\n\nAs for the SQL, is there a more elegant solution than the rather obvious ~35 line SQL statement to cover all the possibilities for the protocol casing - I'm no expert on MySQL, I can see there's a LOWER('str') function, perhaps something like this would work...\nUPDATE security_group_rules SET protocol = LOWER(protocol);\n\nI've asked one of the guys on our Nova team to validate.", 
+            "date_created": "2012-04-24 15:01:12.987557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "I think it does interfere with other tennats - Nova applies all IPtables rules in one operation, including those that haven't been changed.  The basic approach is:\r\n\r\n- Save iptables\r\n- Modify the ones that need changing in this saved file\r\n- Reapply the new settings\r\n\r\nIf a bug like this causes the reapply to fail part way though it could leave other VMs in other groups on the same host exposed.\r\n\r\nPhil\r\n\r\n-----Original Message-----\r\nFrom: <email address hidden> [mailto:<email address hidden>] On Behalf Of Russell Bryant\r\nSent: 24 April 2012 15:23\r\nTo: Day, Phil\r\nSubject: [Bug 985184] Re: Security groups fail to be set correctly if incorrect case is used for protocol specification\r\n\r\nI also wonder if we should classify this as 'Medium' or 'Low' instead of 'High' since this can't really be exploited.  It doesn't allow any privilege escalation and doesn't interfere with service for other tenants as far as I can tell.\r\n\r\n--\r\nYou received this bug notification because you are subscribed to the bug report.\r\nhttps://bugs.launchpad.net/bugs/985184\r\n\r\nTitle:\r\n  Security groups fail to be set correctly if incorrect case is used for\r\n  protocol specification\r\n\r\nStatus in OpenStack Compute (Nova):\r\n  Triaged\r\n\r\nBug description:\r\n  The high level issue is that if a security group rule is specified\r\n  with the protocol in uppercase (e.g. TCP instead of tcp) on a system\r\n  using the IpTablesFirewallDriver then the security group rules may\r\n  fail to be properly applied, leading to security groups that are more\r\n  open than specified.\r\n\r\n  The detail of the issue is as follows (Described from the OSAPI\r\n  perspective, but the problem also exists on EC2)\r\n\r\n  \r\n  When a security group rule is specified with the protocol in upper case it is validated (contrig/security_groups.py: _rule_args_to_dict() regardless of case but stored in the database in the supplied case:\r\n      if ip_protocol.upper() not in ['TCP', 'UDP', 'ICMP']:\r\n                  raise exception.InvalidIpProtocol(protocol=ip_protocol)\r\n\r\n    \u2026\r\n     \r\n    values['protocol'] = ip_protocol\r\n\r\n  \r\n  When the security group refresh is triggered (virt/firewall.py \u2013 instance_rules() the protocol check is case sensitive:\r\n\r\n                  if protocol in ['udp', 'tcp']:\r\n                      args += self._build_tcp_udp_rule(rule, version)\r\n                  elif protocol == 'icmp':\r\n                      args += self._build_icmp_rule(rule, version)\r\n                  if rule.cidr:\r\n                      LOG.info('Using cidr %r', rule.cidr)\r\n                      args += ['-s', rule.cidr]\r\n                      fw_rules += [' '.join(args)]\r\n\r\n  Because the protocol doesn\u2019t match \u2018udp\u2019 or \u2018tcp\u2019 the protocol part of\r\n  the rule is skipped, leading to an incomplete and invalid  iptables\r\n  command line.\r\n\r\nTo manage notifications about this bug go to:\r\nhttps://bugs.launchpad.net/nova/+bug/985184/+subscriptions\r\n", 
+            "date_created": "2012-04-24 15:59:52+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Ok, so I missed Vish's patch, Phil just pointed out that with his fix, changes to the DB aren't required.\n\nThis would still leave flaky values in the DB. I guess I'd like to see a fix where:\n\nA) Data enters the DB in the correct state (this makes late queries and as-yet unwritten code - simpler).\nB) Security Group code is robust to bad data currently in the DB\nC) Advice for people who wish to clean the DB\n\nThoughts?\n", 
+            "date_created": "2012-04-24 16:06:25.765426+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Sounds good to me\r\n\r\n-----Original Message-----\r\nFrom: <email address hidden> [mailto:<email address hidden>] On Behalf Of Robert Clark\r\nSent: 24 April 2012 17:06\r\nTo: Day, Phil\r\nSubject: [Bug 985184] Re: Security groups fail to be set correctly if incorrect case is used for protocol specification\r\n\r\nOk, so I missed Vish's patch, Phil just pointed out that with his fix, changes to the DB aren't required.\r\n\r\nThis would still leave flaky values in the DB. I guess I'd like to see a fix where:\r\n\r\nA) Data enters the DB in the correct state (this makes late queries and as-yet unwritten code - simpler).\r\nB) Security Group code is robust to bad data currently in the DB\r\nC) Advice for people who wish to clean the DB\r\n\r\nThoughts?\r\n\r\n--\r\nYou received this bug notification because you are subscribed to the bug report.\r\nhttps://bugs.launchpad.net/bugs/985184\r\n\r\nTitle:\r\n  Security groups fail to be set correctly if incorrect case is used for\r\n  protocol specification\r\n\r\nStatus in OpenStack Compute (Nova):\r\n  Triaged\r\n\r\nBug description:\r\n  The high level issue is that if a security group rule is specified\r\n  with the protocol in uppercase (e.g. TCP instead of tcp) on a system\r\n  using the IpTablesFirewallDriver then the security group rules may\r\n  fail to be properly applied, leading to security groups that are more\r\n  open than specified.\r\n\r\n  The detail of the issue is as follows (Described from the OSAPI\r\n  perspective, but the problem also exists on EC2)\r\n\r\n  \r\n  When a security group rule is specified with the protocol in upper case it is validated (contrig/security_groups.py: _rule_args_to_dict() regardless of case but stored in the database in the supplied case:\r\n      if ip_protocol.upper() not in ['TCP', 'UDP', 'ICMP']:\r\n                  raise exception.InvalidIpProtocol(protocol=ip_protocol)\r\n\r\n    \u2026\r\n     \r\n    values['protocol'] = ip_protocol\r\n\r\n  \r\n  When the security group refresh is triggered (virt/firewall.py \u2013 instance_rules() the protocol check is case sensitive:\r\n\r\n                  if protocol in ['udp', 'tcp']:\r\n                      args += self._build_tcp_udp_rule(rule, version)\r\n                  elif protocol == 'icmp':\r\n                      args += self._build_icmp_rule(rule, version)\r\n                  if rule.cidr:\r\n                      LOG.info('Using cidr %r', rule.cidr)\r\n                      args += ['-s', rule.cidr]\r\n                      fw_rules += [' '.join(args)]\r\n\r\n  Because the protocol doesn\u2019t match \u2018udp\u2019 or \u2018tcp\u2019 the protocol part of\r\n  the rule is skipped, leading to an incomplete and invalid  iptables\r\n  command line.\r\n\r\nTo manage notifications about this bug go to:\r\nhttps://bugs.launchpad.net/nova/+bug/985184/+subscriptions\r\n", 
+            "date_created": "2012-04-24 16:34:06+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "attached diff lowercasing the rule on entering the db and on creating of iptables rules.  This should be sufficient, but we can also include instructions on cleaning potentially bad rules out of the db as well.", 
+            "date_created": "2012-04-25 07:15:13.023744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Agreed, the advisory should mention how to sanitize existing values in the DB using SQL.", 
+            "date_created": "2012-04-25 12:26:19.007552+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Rob: are you handling the process on this one ? If yes, you should:\n- seek pre-approval of Vish's patch by asking subscribing select nova-core reviewers and ask them to +1 the attached patch\n- define CRD\n- once that's done, send the advance notification to downstream stakeholders (Russell should have the up-to-date list)\n\nSee whole process at: http://wiki.openstack.org/VulnerabilityManagement", 
+            "date_created": "2012-05-03 15:45:03.046250+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx - I want to drive this forward, I'll talk to some Nova guys today.", 
+            "date_created": "2012-05-04 15:00:04.145369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "@soren, @tr3buchet\n\nCan you take a look at this patch and approve if you're happy please?", 
+            "date_created": "2012-05-05 18:33:22.311009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "@markmc @dprince\n\n\nCan you take a look at this patch and approve if you're happy please?\n", 
+            "date_created": "2012-05-08 17:40:46.118911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Patch looks good to me, +2", 
+            "date_created": "2012-05-10 18:22:32.236540+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Vish's patch looks good to me.\n\nI wouldn't bother with instructions on how to fix DB entries in the advisory. It will give the impression it is needed, but Vish's patch means it isn't needed (i.e. we handle DB entries in any case just fine)\n\nAs follow ups on master, it might be nice to add a migration and a unit test for this, but neither or required IMHO. The migration wouldn't be backported to essex/diablo anyway.", 
+            "date_created": "2012-05-10 19:55:57.480982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "@Rob: You have enough preapproval for the patch. You can now define a CRD and push the description to downstream stakeholders. You can ask Russell for up-to-date list.", 
+            "date_created": "2012-05-16 12:16:27.507298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Latest stakeholders list should be in your inbox.", 
+            "date_created": "2012-05-16 13:26:49.244631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Thanks Russell.\n\nSo I still think that we should encourage downstream to correct their databases, otherwise this could be something that comes back to bite people later on when there's another code change or something else gets added.\n\nOpinions?", 
+            "date_created": "2012-05-16 13:45:01.838657+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "As long as the advisory is incredibly clear that this is an optional step for the paranoid and not actually required, I'm ok with it.  :-)", 
+            "date_created": "2012-05-16 13:56:40.663349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "+1, the devil is in the wording though.", 
+            "date_created": "2012-05-16 16:20:13.135321+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Title: Security groups fail to be set correctly\n\u2028Impact: Medium\n\u2028Reporter: HP Cloud Services <email address hidden>\u2028\nProducts: Nova\u2028\nAffects: All versions\n\nDescription:\nHP Cloud Services reported a vulnerability in Nova API handling. When a security group is created via the EC2 or OS API's that uses a protocol defined in the incorrect case i.e 'TCP' rather than 'tcp' it causes a later string comparison to fail. This leads to Security Groups not being set correctly. Once the Nova DB has been polluted with the incorrect case any subsequent modifications to the security group will also fail.\n\nProposed patch:\nSee attached diff. This proposed patch will be merged to Nova master and stable/diablo/essex branches on public disclosure date.\n\nDatabase considerations:\nThe attached diff will make Nova resilient to any protocol case inconsistencies that may be in the Nova DB. Downstream stakeholders may want to consider sanitising their database by forcing all protocol entries to lower case, hardening their DB against any failures of future code that may expect the data to be lower case.\n\nProposed public disclosure date/time:\nSuggestions ? \nPlease do not make the issue public (or release public patches) before this coordinated embargo date.\n\nRegards,\n\n-- \n$VMT_COORDINATOR_NAME\nOpenStack Vulnerability Management Team", 
+            "date_created": "2012-05-18 18:39:21.569234+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Looks good to me. If pushed down before wednesday, I'd set the coordinated disclosure date to Tuesday next week, 1500 UTC.", 
+            "date_created": "2012-05-21 06:54:07.223456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Rob: was this pushed down ? Let us know if you want us to take it from there.", 
+            "date_created": "2012-05-24 07:07:31.810827+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Had major connectivity issues the last few days.\n\nWill email downstream with this tomorrow.\n\nWhat should the release date be ?", 
+            "date_created": "2012-05-27 18:50:57.489730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Hmm, Thursday is a bit short (especially with Monday being a holiday in some parts of the world), Friday is usually a bad idea... Monday is always an issue... I'd say next Tuesday, 1500 UTC.", 
+            "date_created": "2012-05-28 14:05:06.671365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Tuesday is also a public holiday in the UK, perhaps Wednesday?", 
+            "date_created": "2012-05-28 14:25:47.543825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Sure! The rule is a minimum of 4 business days, and avoid Mondays and Fridays, as well as obvious holidays.", 
+            "date_created": "2012-05-28 14:39:42.760707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Sent downstream with proposed public disclosure date/time:\nWednesday 6th June 1000 UTC", 
+            "date_created": "2012-06-04 12:59:03.842049+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "We've had no requests to delay the public disclosure.\n\nThe next step is to get the fix pushed to gerrit, how do I arrange that?", 
+            "date_created": "2012-06-06 10:51:03.574693+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "You can follow http://wiki.openstack.org/GerritJenkinsGithub -- alternatively I can push the change to Gerrit for you.", 
+            "date_created": "2012-06-06 11:26:29.772431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Rob, I can push it too.  Please let me know if you'd like me to do so.  A security advisory will need to be sent out after the patches are in, too.", 
+            "date_created": "2012-06-06 13:59:19.798802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Patches for master, stable/essex, and stable/diablo.\n\nThe stable/essex backport required no changes.  I had to make additional changes to the stable/diablo patch, so that one could use some review.", 
+            "date_created": "2012-06-06 17:50:29.695516+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-06-06 17:50:49.014667+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-06-06 17:51:08.049269+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "diablo patch looks good to me.", 
+            "date_created": "2012-06-06 18:05:13.649913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Thanks!  I'll proceed with trying to get these all merged.", 
+            "date_created": "2012-06-06 18:11:58.391566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "The patches are on gerrit now, so this bug should be made public.  I don't seem to have permission to change that anymore though ...", 
+            "date_created": "2012-06-06 18:27:38.752908+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8238\nCommitted: http://github.com/openstack/nova/commit/9f9e9da777161426a6f8cb4314b78e09beac2978\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit 9f9e9da777161426a6f8cb4314b78e09beac2978\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Wed Jun 6 13:25:04 2012 -0400\n\n    Fix up protocol case handling for security groups.\n    \n    Fix bug 985184.\n    \n    When creating security group rules, any case for the protocol was\n    accepted as input, such as TCP, Tcp, tcp, etc., and was stored in the\n    database as specified.  However, unless specified as all lowercase, the\n    code to apply the rules would break and result in some rules not being\n    applied.\n    \n    (cherry picked from commit ff06c7c885dc94ed7c828e8cdbb8b5d850a7e654)\n    \n    Change-Id: If737104f492aacd3688f04d78eb9bc993ffa33fc\n", 
+            "date_created": "2012-06-06 19:30:54.533062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Advisory sent to the list.", 
+            "date_created": "2012-06-06 19:47:35.555839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "It looks like this patch caused a regression:  https://bugs.launchpad.net/nova/+bug/1010514", 
+            "date_created": "2012-06-08 18:14:46.722091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "stable/diablo under review @ https://review.openstack.org/#/c/8239/", 
+            "date_created": "2012-06-28 10:19:18.702231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/8239\nCommitted: http://github.com/openstack/nova/commit/2ecbf5cc0042f5a9378678811fde007603b1ee45\nSubmitter: Jenkins\nBranch:    stable/diablo\n\ncommit 2ecbf5cc0042f5a9378678811fde007603b1ee45\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Wed Jun 6 13:25:04 2012 -0400\n\n    Fix up protocol case handling for security groups.\n    \n    Fix bug 985184.\n    \n    When creating security group rules, any case for the protocol was\n    accepted as input, such as TCP, Tcp, tcp, etc., and was stored in the\n    database as specified.  However, unless specified as all lowercase, the\n    code to apply the rules would break and result in some rules not being\n    applied.\n    \n    (cherry picked from commit ff06c7c885dc94ed7c828e8cdbb8b5d850a7e654)\n    \n    Also includes backport of thix fix:\n        https://review.openstack.org/#/c/8392\n    \n    Change-Id: I36af1db29c2bd97627d614df21b5da07db29a8ab\n", 
+            "date_created": "2012-08-08 16:56:59.378693+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Dave, this was fixed for Ubuntu precise in http://www.ubuntu.com/usn/usn-1466-1/ (2012.1-0ubuntu2.2). Thanks.", 
+            "date_created": "2012-08-24 23:36:23.435264+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sbeattie"
+        }, 
+        {
+            "content": "Please find the attached test log from the Ubuntu Server Team's CI infrastructure.  As part of the verification process for this bug, Nova has been deployed and configured across multiple nodes using precise-proposed as an installation source.  After successful bring-up and configuration of the cluster, a number of exercises and smoke tests have be invoked to ensure the updated package did not introduce any regressions. A number of test iterations were carried out to catch any possible transient errors.\n\nPlease Note the list of installed packages at the top and bottom of the report.\n\nFor records of upstream test coverage of this update, please see the Jenkins links in the comments of the relevant  upstream code-review(s):\n\nStable review: https://review.openstack.org/8238\n\nAs per the provisional Micro Release Exception granted to this package by the Technical Board, we hope this contributes toward verification of this update.", 
+            "date_created": "2012-08-30 07:46:31.237097+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "Test coverage log.", 
+            "date_created": "2012-08-30 07:46:34.232927+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "The verification of this Stable Release Update has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regresssions.", 
+            "date_created": "2012-09-03 15:23:09.914484+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }
+    ], 
+    "closed": "2012-07-04 08:27:42.500297+00:00"
+}

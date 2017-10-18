@@ -1,0 +1,72 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-09-22 22:20:44.054871+00:00", 
+    "description": "When you create a new flavor with a deleted flavorid, the result in mysql will show the new record. That's OK.\n\nBut if you operate these commands under psql, you'll find the result will always be the old deleted one.\n\nThat means, the flavorid will always be occupied by the first record who use this flavorid under psql,\neven if this flavor has already been deleted. \n\nMore info can be found at here: http://paste.openstack.org/show/72752/", 
+    "tags": [
+        "flavor", 
+        "in-stable-havana", 
+        "postgresql"
+    ], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1288636", 
+    "owner": "https://api.launchpad.net/1.0/~wingwj", 
+    "id": 1288636, 
+    "index": 1189, 
+    "openned": "2014-03-06 09:47:57.385217+00:00", 
+    "created": "2014-03-06 09:47:57.385217+00:00", 
+    "title": "Deleted flavor influences new flavor with same id in 'flavor-show' under psql", 
+    "comments": [
+        {
+            "content": "When you create a new flavor with a deleted flavorid, the result in mysql will show the new record. That's OK.\n\nBut if you operate these commands under psql, you'll find the result will always be the old deleted one.\n\nThat means, the flavorid will always be occupied by the first record who use this flavorid under psql,\neven if this flavor has already been deleted. \n\nMore info can be found at here: http://paste.openstack.org/show/72752/", 
+            "date_created": "2014-03-06 09:47:57.385217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "I checked the sql used in 'flavor-show', through the sqlalchemy framework, the sql for mysql and psql is almost the same.\nThe core sql is like this:\n--------------\n\n'SELECT instance_types.created_at AS instance_types_created_at, instance_types.updated_at AS instance_types_updated_at, instance_types.deleted_at AS instance_types_deleted_at, instance_types.deleted AS instance_types_deleted, instance_types.id AS instance_types_id, instance_types.name AS instance_types_name, instance_types.memory_mb AS instance_types_memory_mb, instance_types.vcpus AS instance_types_vcpus, instance_types.root_gb AS instance_types_root_gb, instance_types.ephemeral_gb AS instance_types_ephemeral_gb, instance_types.flavorid AS instance_types_flavorid, instance_types.swap AS instance_types_swap, instance_types.rxtx_factor AS instance_types_rxtx_factor, instance_types.vcpu_weight AS instance_types_vcpu_weight, instance_types.disabled AS instance_types_disabled, instance_types.is_public AS instance_types_is_public\n        FROM instance_types\n        WHERE instance_types.flavorid = E'666'\n         LIMIT 1',\n\n--------------\n\nI inputted \"select * from instance_types where flavorid='xxx'; \" in mysql and psql respectively,\nthe result is difference: http://paste.openstack.org/show/72763/\n\nThe response of \"select * from where\" is the same with \"select * from\" under psql.\nThe new non-deleted record locates at the bottom.\n\nBut the new deleted one under mysql is on the top.\n\n--------------\n\nTherefore, plus 'LIMIT 1' in sql, 'flavor-show' under psql will always show the oldest one. \nAnd the mysql will always give the non-deleted one correctly.\n", 
+            "date_created": "2014-03-06 11:41:08.955852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Maybe we need to add \"order by\" in order to maintain consistent behavior in mysql and postgresql.\n", 
+            "date_created": "2014-03-06 11:50:29.828133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiwik-chenrui"
+        }, 
+        {
+            "content": "After some tests and comparison, I found the issue is caused by the different procession to index between mysql and psql.\n\nThe 'instance_types' has two main indexes, \"uniq_instance_types0flavorid0deleted\" and \"uniq_instance_types0name0deleted\".\n\n-------------\n\nAdd 'explain' to 'select * from instance_types;' and 'select * from instance_types where flavorid=xxx;',\nand execute them under mysql and psql separately.\n\nYou'll find mysql use index for specified querying, but psql don't.\n\nThe info is registered here in detail: http://paste.openstack.org/show/72991/. Plz check it.\n\n#### Psql ####:\n\nnova=# explain select * from instance_types where flavorid='666';\n                           QUERY PLAN                            \n-----------------------------------------------------------------\n Seq Scan on instance_types  (cost=0.00..1.06 rows=1 width=1098)\n   Filter: ((flavorid)::text = '666'::text)\n(2 rows)\n\n#### MySQL ####:\n\nmysql> explain select * from instance_types where flavorid=\"666\"; \n+----+-------------+----------------+------+--------------------------------------+--------------------------------------+---------+-------+------+-------------+\n| id | select_type | table          | type | possible_keys                        | key                                  | key_len | ref   | rows | Extra       |\n+----+-------------+----------------+------+--------------------------------------+--------------------------------------+---------+-------+------+-------------+\n|  1 | SIMPLE      | instance_types | ref  | uniq_instance_types0flavorid0deleted | uniq_instance_types0flavorid0deleted | 768     | const |    4 | Using where |\n+----+-------------+----------------+------+--------------------------------------+--------------------------------------+---------+-------+------+-------------+\n1 row in set (0.02 sec)\n\n###########\n\nSo, we need to add 'order by' into the sql, to ensure the sequence returned from psql and mysql is the same. \n ", 
+            "date_created": "2014-03-10 02:32:14.710505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Recording in the manual of mysql & psql, if you don't specify the sort-type through 'order by', you will get an unpredictable subset of the query's rows.", 
+            "date_created": "2014-03-10 02:34:40.358320+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "After some tests and comparison, I found the issue is caused by the different procession to index between mysql and psql.\n\nThe 'instance_types' has two main indexes, \"uniq_instance_types0flavorid0deleted\" and \"uniq_instance_types0name0deleted\".\n\n-------------\n\nAdd 'explain' to 'select * from instance_types;' and 'select * from instance_types where flavorid=xxx;',\nand execute them under mysql and psql separately.\n\nYou'll find mysql use index for specified querying, but psql don't.\n\nThe info is registered here in detail: http://paste.openstack.org/show/72993/. Plz check it.\n\n#### Psql ####:\n\nnova=# explain select * from instance_types where flavorid='666';\n                           QUERY PLAN\n-----------------------------------------------------------------\n Seq Scan on instance_types (cost=0.00..1.06 rows=1 width=1098)\n   Filter: ((flavorid)::text = '666'::text)\n(2 rows)\n\n#### MySQL ####:\n\nmysql> explain select * from instance_types where flavorid=\"666\";\n+----+-------------+----------------+------+--------------------------------------+--------------------------------------+---------+-------+------+-------------+\n| id | select_type | table | type | possible_keys | key | key_len | ref | rows | Extra |\n+----+-------------+----------------+------+--------------------------------------+--------------------------------------+---------+-------+------+-------------+\n| 1 | SIMPLE | instance_types | ref | uniq_instance_types0flavorid0deleted | uniq_instance_types0flavorid0deleted | 768 | const | 4 | Using where |\n+----+-------------+----------------+------+--------------------------------------+--------------------------------------+---------+-------+------+-------------+\n1 row in set (0.02 sec)\n\n###########\n\nSo, we need to add 'order by' into the sql, to ensure the sequence returned from psql and mysql is the same.", 
+            "date_created": "2014-03-10 03:42:26.582836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wingwj"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/79252", 
+            "date_created": "2014-03-10 06:44:34.088036+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/79252\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4bbb4d88595cfd5f75528d8789be94d0ec9fbe62\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4bbb4d88595cfd5f75528d8789be94d0ec9fbe62\nAuthor: wingwj <email address hidden>\nDate:   Mon Mar 10 14:35:13 2014 +0800\n\n    Fix difference between mysql & psql of flavor-show\n    \n    If you create a new flavor using a deleted flavorid,\n    the result of flavor-show is different between mysql and psql.\n    \n    This issue is caused by the different processing for index in each db.\n    \n    We need to specify the sort-type to avoid the issue.\n    \n    Change-Id: Ib1029e80c1b981e1ec86d954b63f83650c9b1cc1\n    Closes-Bug: #1288636\n", 
+            "date_created": "2014-03-19 01:00:44.908795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/81420", 
+            "date_created": "2014-03-19 02:17:40.454863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/81420\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9f89c30742abc18eb856022d18976e2685257e1a\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 9f89c30742abc18eb856022d18976e2685257e1a\nAuthor: wingwj <email address hidden>\nDate:   Mon Mar 10 14:35:13 2014 +0800\n\n    Fix difference between mysql & psql of flavor-show\n    \n    If you create a new flavor using a deleted flavorid,\n    the result of flavor-show is different between mysql and psql.\n    \n    This issue is caused by the different processing for index in each db.\n    \n    We need to specify the sort-type to avoid the issue.\n    \n    Change-Id: Ib1029e80c1b981e1ec86d954b63f83650c9b1cc1\n    Closes-Bug: #1288636\n    (cherry picked from commit 4bbb4d88595cfd5f75528d8789be94d0ec9fbe62)\n", 
+            "date_created": "2014-09-20 07:31:19.413379+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-03-31 19:10:56.136230+00:00"
+}

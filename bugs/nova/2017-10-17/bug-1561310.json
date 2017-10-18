@@ -1,0 +1,98 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-08-25 15:02:34.476068+00:00", 
+    "description": "1. User try to  boot a new vm by click the button \"+ Launch Instance\"  in dashboard web->project->compute->instances.\n2. But the button \"+ Launch Instance\"  is disabled and shows \"quota exceeded\".\n3. Then user go to dashboard web->project->compute->overview perspective, but find Instances,VCPU and RAM haven't exceed \nthe quotas. In this case, it's shows like below:\nInstances\nUsed 8 of 10\nVCPUs\nUsed 18 of 20\nRAM\nUsed 512MB of 50.0GB \nThis will confuse the user, is there anything incorrect?\n\nroot cause: \nI think one of the root cause is that the current project have another work, such as rebuilding vm, which obtail some quotas and mark\nthe 'reserved' fields(nova->quota_usages table) to a none zero value .\nSo I select *  from nova.quota_usages where project_id = 'current project id', and find thati in  the row 'cores' , the 'reserved' = 2. Because of this,  the VCPU is actually Used 10 of 10. \nExcepted result:\nThe 'reserved' quota should also be taken as an used quota ,and so in dashboard web->project->compute->overview perspectiv, it should shows as below:\nVCPUs\nUsed 20 of 20.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1561310", 
+    "owner": "None", 
+    "id": 1561310, 
+    "index": 7385, 
+    "openned": "2016-03-24 03:13:26.789564+00:00", 
+    "created": "2016-03-24 03:13:26.789564+00:00", 
+    "title": "dashboard displays wrong quotas", 
+    "comments": [
+        {
+            "content": "1. User try to  boot a new vm by click the button \"+ Launch Instance\"  in dashboard web->project->compute->instances.\n2. But the button \"+ Launch Instance\"  is disabled and shows \"quota exceeded\".\n3. Then user go to dashboard web->project->compute->overview perspective, but find Instances,VCPU and RAM haven't exceed \nthe quotas. In this case, it's shows like below:\nInstances\nUsed 8 of 10\nVCPUs\nUsed 18 of 20\nRAM\nUsed 512MB of 50.0GB \nThis will confuse the user, is there anything incorrect?\n\nroot cause: \nI think one of the root cause is that the current project have another work, such as rebuilding vm, which obtail some quotas and mark\nthe 'reserved' fields(nova->quota_usages table) to a none zero value .\nSo I select *  from nova.quota_usages where project_id = 'current project id', and find thati in  the row 'cores' , the 'reserved' = 2. Because of this,  the VCPU is actually Used 10 of 10. \nExcepted result:\nThe 'reserved' quota should also be taken as an used quota ,and so in dashboard web->project->compute->overview perspectiv, it should shows as below:\nVCPUs\nUsed 20 of 20.", 
+            "date_created": "2016-03-24 03:13:26.789564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kinderyj"
+        }, 
+        {
+            "content": "Thanks for taking the time to file a bug! I'm currently working to reproduce your issue, but I need more information:\n\n1) Can you provide more detail as to how you got to your current state? It sounds like you have 8 instances, is that correct? Have you recently deleted any instances or launched any instances that failed?\n\n2) What version of Nova are you running? (Kilo, Liberty, Mitaka, current master, etc)\n\n3) What happens when you launch an instance using the command line client? Do you also get the quota error in that case?\n", 
+            "date_created": "2016-03-25 18:11:41.724914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "Thanks for taking a time to view this notes.The answers for your comments:\n1) yes, I already have 8 instances, and the total quotas is 10.  Not sure whether any instances have been deleted that failed, because there are too many users belongs to this project. But I saw a \"rebuild\" task is running in the dashboard, maybe the\none instance is being rebuild, so the 'reserved' column is set to a none zero value.\n2)The environment is installed by others people, I check some code in this release, it seems the icehouse release.(2014.1) \nOr do you have any method/command to ensure the version?\n3)I launch the instance using command and got following logs:\nOverLimit: Quota exceeded for instances: Requested 1, but already used 10 of 10 instances (HTTP 413) (Request-ID: req-c2e1f366-ed73-4050-8523-5d524733b3c9)\nERROR: Quota exceeded for instances: Requested 1, but already used 10 of 10 instances (HTTP 413) (Request-ID: req-c2e1f366-ed73-4050-8523-5d524733b3c9)\n\nNot sure whether the info above will help, but I have a workaround to re-produce this bug:\nFor example, if your total quotas of instances is 10, and 8/10 used, you can do this:\nmysql;\nuse nova;\nUPDATE `quota_usages` SET `reserved`=2 WHERE  `project_id`='827fb1414de740569efd53580bafc2f0' and `resource`='instances' LIMIT 1;\nThen, refresh your dashboard in the web browser, you will get this bug.", 
+            "date_created": "2016-03-28 05:52:38.431093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kinderyj"
+        }, 
+        {
+            "content": "Next steps before we can mark as Confirmed:\n1) Reproduce this on the current master and see if it's still an issue\n2) Research what is causing the reserved entries and why, is this functioning as expected?\n3) If \"reserved\" is not functioning as expected, this is a legit bug, otherwise it should be marked as Invalid.", 
+            "date_created": "2016-03-29 19:11:38.668372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "Right now, I'd say reproducing on master (mitaka at least) is top priority. If it's not an issue, then it's fixed. Icehouse is pretty old at this point.\n\nThe reason for (2) was explained, there is some other operation going on for the project that has taken a reservation on quotas, which then goes into calculating the overall usage, see:\n\nhttps://github.com/openstack/nova/blob/master/nova/api/openstack/compute/used_limits.py#L57\n\nWhen you recreate this, what does this show you?\n\nnova limits --tenant <project id> --reserved?\n\nThat should show you the quota limits plus total usage (included used quota and reserved quota).  If that adds up to 10 when you recreate, then I think the bug is in Horizon for not using the --reserved option when displaying quota usage.", 
+            "date_created": "2016-03-31 15:10:17.139812+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": " nova absolute-limits --reserved\n...\n| totalCoresUsed          | 10    |\n| maxTotalCores           | 10    |\n\nYou can see the totalCoresUsed is up to 10.   So the bug is in Horizon for not using the --reserved option when displaying quota usage.", 
+            "date_created": "2016-04-01 01:17:00.287481+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kinderyj"
+        }, 
+        {
+            "content": "I compared the code between icehouse and mitaka, found that both of them use the flavor's cores  as the used cores. So it seems that the code is not changed. \nBut I'm not sure whether  the following code is the value used in dashboard, please double check, thanks.\nhttps://github.com/openstack/horizon/blob/stable/mitaka/openstack_dashboard/usage/quotas.py#L290", 
+            "date_created": "2016-04-01 03:13:24.285524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kinderyj"
+        }, 
+        {
+            "content": "Looks like is indeed an issue, but I cannot see where in the nova api you can ask for the limits with the reserve flag:\n\nhttp://developer.openstack.org/api-ref-compute-v2.1.html#showlimits\n\n\nLooking at the code it seems that call accepts a reserved argument but its not documented anywhere.\n\nhttps://github.com/openstack/python-novaclient/blob/a7bffe8a71bb051b8c4df873fb8cb187c0f83643/novaclient/v2/limits.py#L87", 
+            "date_created": "2016-04-21 10:06:12.243713+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itxaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/308910", 
+            "date_created": "2016-04-21 11:11:32.981663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I can reproduce this bug on mitaka by following the above instructions:\n\nFor example, if your total quotas of instances is 10, and 8/10 used, you can do this:\nmysql;\nuse nova;\nUPDATE `quota_usages` SET `reserved`=2 WHERE `project_id`='827fb1414de740569efd53580bafc2f0' and `resource`='instances' LIMIT 1;\nThen, refresh your dashboard in the web browser, you will get this bug.\n\n\nMy conclusion( same as Eugene Wang reported): \n\n1. This bug has nothing to do with Nova.\n2. and dashboard(web->project->compute->overview perspectivedoes) shows the WRONG limits of resources which should include the count of the reserved resources.\n\n\n\n\n\n\n", 
+            "date_created": "2016-05-11 23:27:57.725959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~qijing-lee"
+        }, 
+        {
+            "content": "Marking this as invalid for Nova per last comment.", 
+            "date_created": "2016-06-15 21:25:26.133693+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/332041", 
+            "date_created": "2016-06-21 09:54:50.848327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/308910\nCommitted: https://git.openstack.org/cgit/openstack/horizon/commit/?id=35eb25a955f116cbd42e9952ba47cee61c0759aa\nSubmitter: Jenkins\nBranch:    master\n\ncommit 35eb25a955f116cbd42e9952ba47cee61c0759aa\nAuthor: Itxaka <email address hidden>\nDate:   Thu Apr 21 12:18:30 2016 +0200\n\n    Make sure we always get all limits\n    \n    When checking with nova for the absolute limits\n    we were not taking into account the reserved\n    quotas (i.e. instance in rebuilding will take\n    cpu and ram) so this could lead to wrongly\n    thinking that the user could launch more instances\n    that its quota allowed. It also made the overview\n    page display wrong quotas as it didnt took into\n    account those reserved resources.\n    \n    Change-Id: If51470d185ddc122acbdf4cf0d0fd952f3f791a0\n    Closes-bug: 1561310\n", 
+            "date_created": "2016-06-24 02:42:46.022454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/horizon 10.0.0.0b2 development milestone.", 
+            "date_created": "2016-07-13 14:52:03.501099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/332041\nCommitted: https://git.openstack.org/cgit/openstack/horizon/commit/?id=5c5f35afc24fcdeb54ec408128fb9a8c4027f352\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5c5f35afc24fcdeb54ec408128fb9a8c4027f352\nAuthor: Itxaka <email address hidden>\nDate:   Tue Jun 21 11:54:06 2016 +0200\n\n    Angular LI:Make sure we always get all limits\n    \n    When checking with nova for the absolute limits\n    we were not taking into account the reserved\n    quotas (i.e. instance in rebuilding will take\n    cpu and ram) so this could lead to wrongly\n    thinking that the user could launch more instances\n    that its quota allowed. It also made the overview\n    page display wrong quotas as it didnt took into\n    account those reserved resources.\n    \n    Change-Id: I42d0bc1521a9da26ee2d23a5900c67badeb2d04b\n    Closes-bug: 1561310\n", 
+            "date_created": "2016-07-26 23:02:06.773690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/horizon 10.0.0.0b3 development milestone.", 
+            "date_created": "2016-08-25 15:02:33.754268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ], 
+    "closed": "2016-06-15 21:25:38.610993+00:00"
+}

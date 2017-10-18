@@ -1,0 +1,65 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-12-03 21:34:31.433933+00:00", 
+    "description": "QEMU loads -kernel and -inird arguments as binary blobs, without processing them through its block layer - that is only done for disk images (i.e., -drive file=...). I.e., from QEMU's perspective, all kernels and all initrds are raw format. QEMU's modular block drivers allow to add format support, e.g., for gzip'ed images.\n\nWhen a different format is reported in place of \"raw\", Nova will unnecessarily try to convert the initramfs to raw format, which will still report the same format as before, leading to an exception being raised.\n\nTherefore please do not run `qemu-img info` on files that are not disk images.\n\nThe source of the problem seems to be that the same libvirt_utils.fetch_image function is used for disk_images['kernel_id'] and disk_images['ramdisk_id'] as for disk_images['image_id']:\n\nhttps://git.openstack.org/cgit/openstack/nova/tree/nova/virt/images.py?h=stable/kilo#n131\n\nhttps://git.openstack.org/cgit/openstack/nova/tree/nova/virt/libvirt/utils.py?h=stable/kilo#n504\n\nhttps://git.openstack.org/cgit/openstack/nova/tree/nova/virt/libvirt/driver.py?h=stable/kilo#n2741", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1497293", 
+    "owner": "https://api.launchpad.net/1.0/~mjdoffma", 
+    "id": 1497293, 
+    "index": 4354, 
+    "openned": "2015-09-18 13:46:28.638442+00:00", 
+    "created": "2015-09-18 13:46:28.638442+00:00", 
+    "title": "Nova misuses qemu-img for kernel and initrd", 
+    "comments": [
+        {
+            "content": "QEMU loads -kernel and -inird arguments as binary blobs, without processing them through its block layer - that is only done for disk images (i.e., -drive file=...). I.e., from QEMU's perspective, all kernels and all initrds are raw format. QEMU's modular block drivers allow to add format support, e.g., for gzip'ed images.\n\nWhen a different format is reported in place of \"raw\", Nova will unnecessarily try to convert the initramfs to raw format, which will still report the same format as before, leading to an exception being raised.\n\nTherefore please do not run `qemu-img info` on files that are not disk images.\n\nThe source of the problem seems to be that the same libvirt_utils.fetch_image function is used for disk_images['kernel_id'] and disk_images['ramdisk_id'] as for disk_images['image_id']:\n\nhttps://git.openstack.org/cgit/openstack/nova/tree/nova/virt/images.py?h=stable/kilo#n131\n\nhttps://git.openstack.org/cgit/openstack/nova/tree/nova/virt/libvirt/utils.py?h=stable/kilo#n504\n\nhttps://git.openstack.org/cgit/openstack/nova/tree/nova/virt/libvirt/driver.py?h=stable/kilo#n2741", 
+            "date_created": "2015-09-18 13:46:28.638442+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afaerber"
+        }, 
+        {
+            "content": "s/-inird/-initrd/ obviously.\n\nAnother comment from the block maintainer, Kevin Wolf, was that raw images are expected to be block-aligned, which kernels and initrds are not necessarily. This may affect using `qemu-img convert` on such files.", 
+            "date_created": "2015-09-18 17:04:18.842600+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afaerber"
+        }, 
+        {
+            "content": "The root cause comes from the nova/virt/libvirt/driver.py in the _create_image() method, where we make calls\n\n            raw('kernel').cache(fetch_func=libvirt_utils.fetch_image,\n            raw('ramdisk').cache(fetch_func=libvirt_utils.fetch_image,\n\n\nThese ultimately go down into the images.fetch_to_raw() method which runs qemu-img to probe & convert files.\n\nSince we know the kernel+ramdisk files must *always* be provided in raw format, we should make sure we have a way to explicitly skip any use of qemu-img when fetching them from glance. We must use the data from glance as-is and unprocessed.", 
+            "date_created": "2015-09-18 17:26:54.855972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Could you give more information on what you are trying to do here? Are there any steps to repeat the failure you are seeing?\n\nA look over the code in https://git.openstack.org/cgit/openstack/nova/tree/nova/virt/images.py?h=stable/kilo#n131 seems to indicate that the kernel and initrd images will have qemu-img called on them before trying to covert them to raw. If the images are already in raw format then 'qemu-img info' should report this and no conversion should be applied.", 
+            "date_created": "2015-09-18 17:33:34.342227+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjdoffma"
+        }, 
+        {
+            "content": "Please re-read: Nova is doing something incredibly stupid, probably just lazily because no one else ran into this corner case.\n\nYou can for instance replace qemu-img with a shell script calling the real one to assure that qemu-img is not getting called for the wrong files.\n\nA more complicated reproducer is to patch qemu-img, e.g. github.com/openSUSE/qemu.git opensuse-2.3 branch with the following on top, and using a gzipped initrd.\n\ndiff --git a/block/Makefile.objs b/block/Makefile.objs\nindex c7e2178..4c4cd63 100644\n--- a/block/Makefile.objs\n+++ b/block/Makefile.objs\n@@ -25,8 +25,8 @@ block-obj-y += write-threshold.o\n common-obj-y += stream.o\n common-obj-y += commit.o\n common-obj-y += backup.o\n-common-obj-y += dictzip.o\n-common-obj-y += tar.o\n+block-obj-y += dictzip.o\n+block-obj-y += tar.o\n \n iscsi.o-cflags     := $(LIBISCSI_CFLAGS)\n iscsi.o-libs       := $(LIBISCSI_LIBS)\n", 
+            "date_created": "2015-09-18 17:51:45.727377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~afaerber"
+        }, 
+        {
+            "content": "Ok, Ignore previous comments have given an indication of why 'qemu-img' info may have been failing.", 
+            "date_created": "2015-09-18 17:54:02.191056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjdoffma"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/225289", 
+            "date_created": "2015-09-18 19:32:18.901984+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/225289\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=15f3e2661e53c7eef034347c9fd15c4d621c36a7\nSubmitter: Jenkins\nBranch:    master\n\ncommit 15f3e2661e53c7eef034347c9fd15c4d621c36a7\nAuthor: Mark Doffman <email address hidden>\nDate:   Fri Sep 18 14:03:15 2015 -0500\n\n    libvirt: Don't attempt to convert initrd images.\n    \n    Fetching kernel or initrd images used the same code\n    path as main images. This should not be the case as\n    these should never be resized, and should always be\n    in 'raw' format.\n    \n    Kernel and inird images are now fetched directly\n    without any checks for types and bypassing any\n    attempted resizes or conversions.\n    \n    Closes-Bug: #1497293\n    Change-Id: I9ab0391bb681185e8fe236698f5721d6cf25689b\n", 
+            "date_created": "2015-11-16 16:29:03.198401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b1 development milestone.", 
+            "date_created": "2015-12-02 16:17:42.017087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }
+    ], 
+    "closed": "2015-12-03 21:34:29.567775+00:00"
+}

@@ -1,0 +1,36 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2012-09-05 12:37:18.523749+00:00", 
+    "description": "Hi,\n\nThe following is what I need to do to quick-fix this:\n\nroot@cesar1:~# iptables -L FORWARD -vn\nChain FORWARD (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination         \n 520M  424G nova-filter-top  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n 520M  424G nova-network-FORWARD  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n1080K  401M FORWARD-security  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \nroot@cesar1:~# iptables -D FORWARD -j FORWARD-security\nroot@cesar1:~# iptables -I FORWARD -j FORWARD-security\nroot@cesar1:~# iptables -L FORWARD -vn\nChain FORWARD (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination         \n1237K  828M FORWARD-security  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n 520M  424G nova-filter-top  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n 520M  424G nova-network-FORWARD  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n\nThe latter is how it MUST look like, that is, having my own rules ALWAYS being infront of the nova rules, so that I can do restrictions like what tenant may talk to another.\n\nSince there is no way to configure that in nova.conf I assumed that to be a bug, considering the fact, that this behaviour is fatal in production environments where one tenant may NOT talk to another (for example).\n\nFYI: this at least happens on nova-network starts and restarts. I'd say that *sometimes* I feel like it also happens even if I did not restart anything, but still, it should not just put its own rules at the very top (of filter.FORWARD chain).\n\nIs there a way for you to fix this?\n\nMany thanks in advance,\nChristian.", 
+    "tags": [
+        "iptables", 
+        "security"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1035249", 
+    "owner": "None", 
+    "id": 1035249, 
+    "index": 4295, 
+    "openned": "2012-08-10 10:01:23.782229+00:00", 
+    "created": "2012-08-10 10:01:23.782229+00:00", 
+    "title": "nova-network is always --insert'ing its rules into FORWARD instead of append", 
+    "comments": [
+        {
+            "content": "Hi,\n\nThe following is what I need to do to quick-fix this:\n\nroot@cesar1:~# iptables -L FORWARD -vn\nChain FORWARD (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination         \n 520M  424G nova-filter-top  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n 520M  424G nova-network-FORWARD  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n1080K  401M FORWARD-security  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \nroot@cesar1:~# iptables -D FORWARD -j FORWARD-security\nroot@cesar1:~# iptables -I FORWARD -j FORWARD-security\nroot@cesar1:~# iptables -L FORWARD -vn\nChain FORWARD (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination         \n1237K  828M FORWARD-security  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n 520M  424G nova-filter-top  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n 520M  424G nova-network-FORWARD  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n\nThe latter is how it MUST look like, that is, having my own rules ALWAYS being infront of the nova rules, so that I can do restrictions like what tenant may talk to another.\n\nSince there is no way to configure that in nova.conf I assumed that to be a bug, considering the fact, that this behaviour is fatal in production environments where one tenant may NOT talk to another (for example).\n\nFYI: this at least happens on nova-network starts and restarts. I'd say that *sometimes* I feel like it also happens even if I did not restart anything, but still, it should not just put its own rules at the very top (of filter.FORWARD chain).\n\nIs there a way for you to fix this?\n\nMany thanks in advance,\nChristian.", 
+            "date_created": "2012-08-10 10:01:23.782229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trapni"
+        }, 
+        {
+            "content": "The reason we INSERT rather than APPEND is that on distros like Fedora, there is a default REJECT rule:\n\n [markmc@f16 devstack]$ sudo iptables -L FORWARD -vn\n Chain FORWARD (policy ACCEPT 0 packets, 0 bytes)\n  pkts bytes target     prot opt in     out     source               destination         \n    40 12088 nova-filter-top  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n     0     0 nova-compute-FORWARD  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n     0     0 nova-network-FORWARD  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n     0     0 nova-api-FORWARD  all  --  *      *       0.0.0.0/0            0.0.0.0/0           \n     0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited\n\nSupporting provider-defined firewall rules would be a feature request ...\n\nHowever, there is some lingering \"provider firewall rules\" code in Nova which may do this for you. It's undocumented and in danger of being deleted at any time because it's not exposed by any API.\n\nYou'll need to figure out how the feature works from the code:\n\n  https://github.com/openstack/nova/blob/4adbb96b55/nova/virt/firewall.py#L474\n\nand see if that's sufficient for you.\n\nI'm going to close this bug as Invalid, since we clearly do need to INSERT. But please feel free to file a new bug/feature request which explains what kind of provider-defined firewall rules you'd like to be able to add.", 
+            "date_created": "2012-08-30 12:29:15.822847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "If that's so clear, why do you close this bug as INVALID instead of changing its type to FEATURE-REQUEST then? :)", 
+            "date_created": "2012-09-05 12:37:17.094360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~trapni"
+        }
+    ], 
+    "closed": "2012-08-30 12:29:24.847079+00:00"
+}

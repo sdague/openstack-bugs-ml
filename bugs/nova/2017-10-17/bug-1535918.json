@@ -1,0 +1,226 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-05 06:23:26.613531+00:00", 
+    "description": "[Impact]\n\nI created several VM instances and checked they are all ACTIVE state after creating vm.\nRight after checking them, shutdown nova-compute on their host(to test in this case).\nThen, I tried to evacuate them to the other host. But it is failed with ERROR state.\nI did some test and analysis.\nI found two commits below are related.(Please refer to [Others] section)\nIn this context, migration_context is DB field to pass information when migration or evacuation.\n\nfor [1], This gets host info from migration_context. if migration_context is abnormal or empty, migration would be fail. actually, with only this patch, migration_context is empty. so [2] is needed. I touched self.client.prepare part in rpcapi.py from original patch which is replaced on newer version. because it is related newer functionality, I remained mitaka's function call for this issue.\n\nfor [2], This moves recreation check code to former if condition. and it calls rebuild_claim to create migration_context when recreate state not only scheduled. I adjusted test code which are pop up from backport process and seems to be needed. Someone want to backport or cherrypick code related to this, they could find it is already exist.\nOnly one patch of them didn\u2019t fix this issue as test said.\n\n[Test case]\n\nIn below env,\n\nhttp://pastebin.ubuntu.com/25337153/\n\nNetwork configuration is important in this case, because I tested different configuration. but couldn't reproduce it.\nreproduction test script ( based on juju )\n\nhttp://pastebin.ubuntu.com/25360805/\n\n[Regression Potential]\n\nExisting ACTIVE instances or newly creating instances are not affected by this code because these commits are only called when doing migration or evacuation. If there are ACTIVE instances and instances with ERROR state caused by this issue in one host, upgrading to have this fix will not affect any existing instances. After upgrading to have this fix and trying to evacuate problematic instance again, ERROR state should be fixed to ACTIVE. I tested this scenario on simple env, but still need to be considered possibility in complex, crowded environment.\n\n[Others]\n\nIn test, I should patch two commits, one from\nhttps://bugs.launchpad.net/nova/+bug/1686041\n\nRelated Patches.\n[1] https://github.com/openstack/nova/commit/a5b920a197c70d2ae08a1e1335d979857f923b4f\n[2] https://github.com/openstack/nova/commit/0f2d87416eff1e96c0fbf0f4b08bf6b6b22246d5 ( backported to newton from below original)\n- https://github.com/openstack/nova/commit/a2b0824aca5cb4a2ae579f625327c51ed0414d35 (\noriginal)\n\n[Original description]\n\nI'm working on the nova-powervm driver for Mitaka and trying to add support for evacuation.\n\nThe problem I'm hitting is that instance.host is not updated when the compute driver is called to spawn the instance on the destination host.  It is still set to the source host.  It's not until after the spawn completes that the compute manager updates instance.host to reflect the destination host.\n\nThe nova-powervm driver uses instance events callback mechanism during plug VIF to determine when Neutron has finished provisioning the network.  The instance events code sends the event to instance.host and hence is sending the event to the source host (which is down).  This causes the spawn to fail and also causes weirdness when the source host gets the events when it's powered back up.\n\nTo temporarily work around the problem, I hacked in setting instance.host = CONF.host; instance.save() in the compute driver but that's not a good solution.", 
+    "tags": [
+        "compute", 
+        "in-stable-newton", 
+        "libvirt", 
+        "sts-sru-needed", 
+        "verification-done-xenial", 
+        "verification-mitaka-done", 
+        "verification-needed"
+    ], 
+    "importance": "Undecided", 
+    "heat": 48, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1535918", 
+    "owner": "https://api.launchpad.net/1.0/~notartom", 
+    "id": 1535918, 
+    "index": 7238, 
+    "openned": "2016-05-16 03:18:07.451589+00:00", 
+    "created": "2016-01-19 21:49:23.399268+00:00", 
+    "title": "instance.host not updated on evacuation", 
+    "comments": [
+        {
+            "content": "I'm working on the nova-powervm driver for Mitaka and trying to add support for evacuation.  \n\nThe problem I'm hitting is that instance.host is not updated when the compute driver is called to spawn the instance on the destination host.  It is still set to the source host.  It's not until after the spawn completes that the compute manager updates instance.host to reflect the destination host.   \n\nThe nova-powervm driver uses instance events callback mechanism during plug VIF to determine when Neutron has finished provisioning the network.  The instance events code sends the event to instance.host and hence is sending the event to the source host (which is down).  This causes the spawn to fail and also causes weirdness when the source host gets the events when it's powered back up.\n\nTo temporarily work around the problem, I hacked in setting instance.host = CONF.host; instance.save() in the compute driver but that's not a good solution.", 
+            "date_created": "2016-01-19 21:49:23.399268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kyleh"
+        }, 
+        {
+            "content": "To point out the issue a little more.\n\nThe compute manager's virtapi allows the compute driver to wait for external events via wait_for_instance_event() method.  The common use case is for a compute driver to wait for the vifs to be plugged by neutron before proceeding through the spawn.  The pattern is also present in the libvirt driver.  See libvirt driver.py -> _create_domain_and_network().  In there you'll see the use of the wait_for_instance_event context manager.\n\nThe flow for the events to come into Nova is through nova/api/openstack/compute/server_external_events.py. which eventually calls compute_api.external_instance_event() to dispatch the events.  In external_instance_event() you'll see it's using instance.host to call compute_rpcapi.external_instance_event().  So the RPC message will go to whatever host is currently set.  In the case of evacuate, at that point in time (while the new host is spawning the recreated VM) it's set to the original host.  Which is down.  So the compute driver that initiated the action and is waiting for the event will never get it.\n\nThe question was raised why libvirt doesn't suffer the same fate.  I can't answer that authoritatively, but libvirt has a lot of conditions that have to be met before it'll wait for the event.  Here's what it's currently checking before waiting for a plug vif event:\n\n        timeout = CONF.vif_plugging_timeout\n        if (self._conn_supports_start_paused and\n            utils.is_neutron() and not\n            vifs_already_plugged and power_on and timeout):\n            events = self._get_neutron_events(network_info)\n        else:\n            events = []\n\nBut it does seem (from reading the code) that if all those conditions are met and the operation is an evacuate, it too would fail.  Though I have not tried it.\n\n", 
+            "date_created": "2016-01-22 17:05:40.990557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kyleh"
+        }, 
+        {
+            "content": "We discussed this issue at the mid cycle.  They asked the PowerVM team to re-evaluate because this works in libvirt.  What is different in PowerVM's implementation.\n\nI believe both drivers have the same semantic for rebuild/evacuate.  The instance is destroyed on the source system and then the spawn is run on the target host.  This is the compute manager's default implementation.\n\nThe next question was what was different about our criteria to determine if the vif plug time out should be adhered to.\n\nPowerVM's implementation is pretty simple:\n\n        if (utils.is_neutron() and CONF.vif_plugging_timeout):\n            return [('network-vif-plugged', vif['id'])\n                    for vif in self.network_info\n                    if vif.get('active', True) is False]\n        else:\n            return []\n\n\n\nLibvirt's is:\n        timeout = CONF.vif_plugging_timeout\n        if (self._conn_supports_start_paused and\n            utils.is_neutron() and not\n            vifs_already_plugged and power_on and timeout):\n            events = self._get_neutron_events(network_info)\n        else:\n            events = []\n\n\nIn a rebuild scenario, the libvirt should hit this.\n - self._conn_supports_start_paused: True if KVM or QEMU\n - utils.is_neutron(): assumed to be true.\n - vifs_already_plugged: False (in that this is a rebuild)\n - power_on: True (in that this is a rebuild)\n - timeout: Assumed to be set to some number.\n\n\nI guess I'm wondering if libvirt could be affected by this bug?  It could be hitting this, but then passing a rebuild test case if the CONF.vif_plugging_is_fatal is set to False.\n\nAnother reason that libvirt may not be impacted is perhaps they are doing an instance.save elsewhere in the flow.  Thus inadvertantly updating to the right host.  But I don't believe this to be the case...it looks like the only places instance.save is called is in cleanup and in the _live_migration_monitor.  Also, nothing in the driver is updating the host, that is done solely in the manager (as one would expect).\n\nKyle - did I mis-interpret the issue?", 
+            "date_created": "2016-01-27 12:19:36.517718+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thorst"
+        }, 
+        {
+            "content": "You documented the issue correct Drew. \n\nOne correction on the evacuate semantics:  The instance is not destroyed on the source system (since it's down and confirmed to be down by the compute api) until the source host is available again (if ever).  This would happen after the rebuild (recreate=True) is completed on on the destination host.\n\n", 
+            "date_created": "2016-01-27 13:43:03.309929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kyleh"
+        }, 
+        {
+            "content": "The issue with the PowerVM driver is actually in neutron.  I set up a libvirt environment, and the difference is that the PowerVM VIF is for some reason in a BUILD state, where as it is ACTIVE in libvirt.\n\nIf the PowerVM VIF was in an ACTIVE state, this wouldn't occur, and no neutron events would need to be waited for.\n\nI'll investigate what's going on with the port state for networking-powervm.  The state up is being sent...so this requires some verification.\n\n\nIt is true that the nova instance.host isn't updated until after the spawn in nova.  That could be investigated...but this is the root reason why PowerVM is seeing different behavior than Libvirt.", 
+            "date_created": "2016-01-28 09:59:31.440056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thorst"
+        }, 
+        {
+            "content": "I see the issue.  The agent does periodic 'get_device_details' calls.  It turns out that nexted within Neutron, if you 'get the device details', it reverts the port state to BUILD.  It expects an immediate 'UP' request back.  The agent doesn't do this.\n\nWill need to add some logic.", 
+            "date_created": "2016-01-28 15:10:56.261177+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thorst"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/273728", 
+            "date_created": "2016-01-28 20:03:11.924972+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/273728\nCommitted: https://git.openstack.org/cgit/openstack/networking-powervm/commit/?id=65f53ab2412f1865f50d8dba701420350a7f68ec\nSubmitter: Jenkins\nBranch:    master\n\ncommit 65f53ab2412f1865f50d8dba701420350a7f68ec\nAuthor: Drew Thorstensen <email address hidden>\nDate:   Thu Jan 28 19:59:45 2016 +0000\n\n    Update heal code to ensure device up\n    \n    The heal code within the networking-powervm project would ensure that\n    the VLAN and client device was routed out to the network.  However, due\n    to it calling 'get_device_details', the neutron code was changing the\n    state back to BUILD.\n    \n    Given this behavior, it became apparent that the best path forward was\n    to have the heal code call a full provision request for the client\n    device.  This actually will no-op very quickly if the VLAN is already on\n    the client device, but tells Neutron that it is not in fact in a build\n    state...but rather is now ACTIVE.\n    \n    This allows for a more robust provisioning scheme and allows the neutron\n    state to reflect reality.  It also updates any existing ports in the\n    field that may be affected by this with the next 'heal' cycle.\n    \n    Change-Id: I02f2c4cd1d63b7a712e50c273e043e6a7ea5a5e1\n    Closes-Bug: 1535918\n", 
+            "date_created": "2016-02-02 21:13:28.070552+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I pulled the latest code on my systems with devstack.  Removed the work around for the issue from the nova-powervm code base (which was to force the update of the instance.host to the target host) and ran an evacuation.  I hit the same problem as seen before.  While recreating the instance on the target host, the instance.host is pointing to the old source host and the event that is expected to be received by the target host's compute manager is sent to the source host (which is down.)", 
+            "date_created": "2016-02-17 14:47:23.117589+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kyleh"
+        }, 
+        {
+            "content": "I looked at Kyle's box.  The port is going back to a build state for some reason.  Need to figure out why...", 
+            "date_created": "2016-02-17 15:09:20.099916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~thorst"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/281469", 
+            "date_created": "2016-02-17 19:16:46.935991+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/281469\nCommitted: https://git.openstack.org/cgit/openstack/networking-powervm/commit/?id=9f29aa1ef982a1dd421f55bbb5784c5c36b257e0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9f29aa1ef982a1dd421f55bbb5784c5c36b257e0\nAuthor: Drew Thorstensen <email address hidden>\nDate:   Wed Feb 17 14:15:51 2016 -0500\n\n    Fix the heal code to invoke with the rpc_device\n    \n    This resolves a bug in the heal code to correctly pass in the right\n    parameter to the _get_nb_and_vlan method.\n    \n    Change-Id: Ibda1d3581b56a7a4a1fd163b406d28d32f9dd82c\n    Closes-Bug: 1535918\n", 
+            "date_created": "2016-02-18 14:04:18.607171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I am able to reproduce this same issue on a multinode devstack running libvirt. \n\nOn the source host, the last call to nova/network/base_api.py::update_instance_cache_with_nw_info for a specific instance before the source host crashes has the nw_info passed in as a VIF object with the \"active\" attribute set to False. This is because the VM has just been deployed and the network was just created. In other words, the last time the instance's InstanceInfoCache's network_info attribute was updated before the source host went down, the VIF was considered not active. In some environments, especially when doing concurrent deploys, it may take a while for the InstanceInfoCache to update the network_info to show as active.\n\nWhat this boils down to is that Nova's InstanceInfoCache can potentially have a stale network_info active state. This causes the rebuild flow (which is the same as the spawn flow) to potentially end up waiting for the network-vif-plugged event, which will never come because it was sent to the source host instead of the destination. This results in the rebuild to fail because the VIF plugging times out.\n\nSteps:\n\n1) Deploy VM(s) to host A\n2) Take host A down (e.g., kill it's nova api and nova compute processes) once VM(s) from (1) are finished deploying\n3) Try to evacuate VM(s) from host A to host B\n4) Evacuation will potentially time out based on explanation above. It is much easier to reproduce if you do step (2) as soon as possible after the VM(s) finish deploying\n\nstack@controller:~$ glance image-list\n+--------------------------------------+---------------------------------+\n| ID                                   | Name                            |\n+--------------------------------------+---------------------------------+\n| f91197db-16b5-44b2-beb4-72a9e57041c2 | cirros-0.3.4-x86_64-uec         |\n| 1348de9b-501d-426c-8cb5-e65381208085 | cirros-0.3.4-x86_64-uec-kernel  |\n| 790ebadb-bc5b-48be-b1f0-95a9214a11ae | cirros-0.3.4-x86_64-uec-ramdisk |\n+--------------------------------------+---------------------------------+\nstack@controller:~$\nstack@controller:~$ neutron net-list\n+--------------------------------------+---------+----------------------------------------------------------+\n| id                                   | name    | subnets                                                  |\n+--------------------------------------+---------+----------------------------------------------------------+\n| 4ba74a3e-e7a8-4ca4-9de5-8a1d9e1042b8 | public  | c9210289-4895-481b-946a-b406ba5889b4 2001:db8::/64       |\n|                                      |         | 9a044095-ab4d-4767-817e-02d81cbe90ef 172.24.4.0/24       |\n| d7faf346-1a26-41a0-bb62-b08808f6ba13 | private | f45ab890-a0d6-48c1-906e-9c8f81659d65 fdfd:f0f5:a83a::/64 |\n|                                      |         | 0e85f797-0270-49e9-9600-6f21b9cf47d0 10.254.1.0/24       |\n+--------------------------------------+---------+----------------------------------------------------------+\nstack@controller:~$\nstack@controller:~$ nova boot tdp-test-vm --flavor 1 --availability-zone nova:hostA --block-device id=f91197db-16b5-44b2-beb4-72a9e57041c2,source=image,dest=volume,size=1,bootindex=0 --nic net-id=4ba74a3e-e7a8-4ca4-9de5-8a1d9e1042b8 --min-count 5 --poll\n+--------------------------------------+-------------------------------------------------+\n| Property                             | Value                                           |\n+--------------------------------------+-------------------------------------------------+\n| OS-DCF:diskConfig                    | MANUAL                                          |\n| OS-EXT-AZ:availability_zone          | nova                                            |\n| OS-EXT-SRV-ATTR:host                 | -                                               |\n| OS-EXT-SRV-ATTR:hostname             | tdp-test-vm-1                                   |\n| OS-EXT-SRV-ATTR:hypervisor_hostname  | -                                               |\n| OS-EXT-SRV-ATTR:instance_name        | instance-00000021                               |\n| OS-EXT-SRV-ATTR:kernel_id            | 1348de9b-501d-426c-8cb5-e65381208085            |\n| OS-EXT-SRV-ATTR:launch_index         | 0                                               |\n| OS-EXT-SRV-ATTR:ramdisk_id           | 790ebadb-bc5b-48be-b1f0-95a9214a11ae            |\n| OS-EXT-SRV-ATTR:reservation_id       | r-erf2jgt0                                      |\n| OS-EXT-SRV-ATTR:root_device_name     | -                                               |\n| OS-EXT-SRV-ATTR:user_data            | -                                               |\n| OS-EXT-STS:power_state               | 0                                               |\n| OS-EXT-STS:task_state                | scheduling                                      |\n| OS-EXT-STS:vm_state                  | building                                        |\n| OS-SRV-USG:launched_at               | -                                               |\n| OS-SRV-USG:terminated_at             | -                                               |\n| accessIPv4                           |                                                 |\n| accessIPv6                           |                                                 |\n| adminPass                            | YvcgM3bNF7TH                                    |\n| config_drive                         |                                                 |\n| created                              | 2016-05-16T01:55:53Z                            |\n| description                          | -                                               |\n| flavor                               | m1.tiny (1)                                     |\n| hostId                               |                                                 |\n| host_status                          |                                                 |\n| id                                   | 2a99f5b4-f060-4e3e-8799-f021bca2b056            |\n| image                                | Attempt to boot from volume - no image supplied |\n| key_name                             | -                                               |\n| locked                               | False                                           |\n| metadata                             | {}                                              |\n| name                                 | tdp-test-vm-1                                   |\n| os-extended-volumes:volumes_attached | []                                              |\n| progress                             | 0                                               |\n| security_groups                      | default                                         |\n| status                               | BUILD                                           |\n| tenant_id                            | 2794951c7a194b7d8a5047dc69882a14                |\n| updated                              | 2016-05-16T01:55:56Z                            |\n| user_id                              | aae1397168124897b2065d7bed9da4e2                |\n+--------------------------------------+-------------------------------------------------+\n\nServer building... 100% complete\nFinished\nstack@controller:~$\nstack@controller:~$ nova list\n+--------------------------------------+---------------+--------+------------+-------------+----------------------------------+\n| ID                                   | Name          | Status | Task State | Power State | Networks                         |\n+--------------------------------------+---------------+--------+------------+-------------+----------------------------------+\n| 2a99f5b4-f060-4e3e-8799-f021bca2b056 | tdp-test-vm-1 | ACTIVE | -          | Running     | public=2001:db8::21, 172.24.4.33 |\n| 8ecbe8ad-1e2f-4017-b8ad-db7e2b98e785 | tdp-test-vm-2 | ACTIVE | -          | Running     | public=172.24.4.34, 2001:db8::22 |\n| 9b149ed3-7dd6-46ba-9465-11aae7293fed | tdp-test-vm-3 | ACTIVE | -          | Running     | public=2001:db8::23, 172.24.4.35 |\n| 5d989262-d8b0-4b26-8121-976856d43524 | tdp-test-vm-4 | ACTIVE | -          | Running     | public=172.24.4.37, 2001:db8::25 |\n| eae08f65-ac33-4599-ba61-3868cba847d9 | tdp-test-vm-5 | ACTIVE | -          | Running     | public=172.24.4.36, 2001:db8::24 |\n+--------------------------------------+---------------+--------+------------+-------------+----------------------------------+\nstack@controller:~$\nstack@controller:~$ nova hypervisor-list\n+----+---------------------+-------+---------+\n| ID | Hypervisor hostname | State | Status  |\n+----+---------------------+-------+---------+\n| 1  | hostA       | down  | enabled |\n| 2  | hostB       | up    | enabled |\n+----+---------------------+-------+---------+\nstack@controller:~$\nstack@controller:~$ nova evacuate 2a99f5b4-f060-4e3e-8799-f021bca2b056 hostB\nstack@controller:~$\n\nstack@hostB:~$ grep -A17 \"ERROR nova.compute.manager.*Setting instance vm_state to ERROR\" ~/logs/n-cpu.log\n2016-05-15 22:27:21.006 ERROR nova.compute.manager [req-f56f252f-ed1d-4e47-9401-25cd5bce74aa admin admin] [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056] Setting instance vm_state to ERROR\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056] Traceback (most recent call last):\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]   File \"/opt/stack/nova/nova/compute/manager.py\", line 6434, in _error_out_instance_on_exception\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]     yield\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]   File \"/opt/stack/nova/nova/compute/manager.py\", line 2633, in rebuild_instance\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]     bdms, recreate, on_shared_storage, preserve_ephemeral)\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]   File \"/opt/stack/nova/nova/compute/manager.py\", line 2677, in _do_rebuild_instance_with_claim\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]     self._do_rebuild_instance(*args, **kwargs)\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]   File \"/opt/stack/nova/nova/compute/manager.py\", line 2793, in _do_rebuild_instance\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]     self._rebuild_default_impl(**kwargs)\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]   File \"/opt/stack/nova/nova/compute/manager.py\", line 2558, in _rebuild_default_impl\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]     block_device_info=new_block_device_info)\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]   File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 2569, in spawn\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]     block_device_info=block_device_info)\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]   File \"/opt/stack/nova/nova/virt/libvirt/driver.py\", line 4738, in _create_domain_and_network\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]     raise exception.VirtualInterfaceCreateException()\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056] VirtualInterfaceCreateException: Virtual Interface creation failed\n2016-05-15 22:27:21.006 TRACE nova.compute.manager [instance: 2a99f5b4-f060-4e3e-8799-f021bca2b056]\nstack@hostB:~$\n", 
+            "date_created": "2016-05-16 03:11:57.157133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpeoples"
+        }, 
+        {
+            "content": "Change abandoned by Drew Thorstensen (<email address hidden>) on branch: master\nReview: https://review.openstack.org/315874\nReason: Superseded by https://review.openstack.org/#/c/316417/", 
+            "date_created": "2016-05-16 13:06:42.279046+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Problem is reproducible when more than one evacuate is attempted simultaneously (4 in my devstack environment). If evacuate is attempted one at a time, this problem is not exhibited.", 
+            "date_created": "2016-06-18 03:48:09.225966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~svenkat"
+        }, 
+        {
+            "content": "My previous statement needs correction. The problem is reproducible event with one VM. To reproduce, deploy a VM on source Host and shutdown source host before corresponding VIF is activated. Examine nova compute log and searching for \"vif_type=\" should reveal active state of VIF. If it is 'false', evacuation of such a VM results in the error reported in this bug.\n\nIf you can wait till VIF is activated and then shutdown source host, such a VM can be successfully evacuated.", 
+            "date_created": "2016-06-20 14:09:58.457546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~svenkat"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/331707", 
+            "date_created": "2016-06-20 14:40:56.226092+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Since the bot doesn't seem to have picked it up:\nFix proposed to nova (master):\nhttps://review.openstack.org/#/c/371048/", 
+            "date_created": "2016-10-08 15:44:52.224599+00:00", 
+            "author": "https://api.launchpad.net/1.0/~notartom"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/385086", 
+            "date_created": "2016-10-11 16:51:25.421442+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/371048\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a5b920a197c70d2ae08a1e1335d979857f923b4f\nSubmitter: Jenkins\nBranch:    master\n\ncommit a5b920a197c70d2ae08a1e1335d979857f923b4f\nAuthor: Artom Lifshitz <email address hidden>\nDate:   Wed Oct 5 14:37:03 2016 -0400\n\n    Send events to all relevant hosts if migrating\n    \n    Previously, external events were sent to the instance object's host\n    field. This patch fixes the external event dispatching to check for\n    migration. If an instance is being migrated, the source and\n    destination compute are added to the set of hosts to which the event\n    is sent.\n    \n    Change-Id: If00736ab36df4a5a3be4f02b0a550e4bcae77b1b\n    Closes-bug: 1535918\n    Closes-bug: 1624052\n", 
+            "date_created": "2016-11-01 10:31:53.924639+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/392219", 
+            "date_created": "2016-11-01 16:09:11.240651+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/392219\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5de902a3163c9c079fab22754388bd4e02981298\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 5de902a3163c9c079fab22754388bd4e02981298\nAuthor: Artom Lifshitz <email address hidden>\nDate:   Wed Oct 5 14:37:03 2016 -0400\n\n    Send events to all relevant hosts if migrating\n    \n    Previously, external events were sent to the instance object's host\n    field. This patch fixes the external event dispatching to check for\n    migration. If an instance is being migrated, the source and\n    destination compute are added to the set of hosts to which the event\n    is sent.\n    \n    Change-Id: If00736ab36df4a5a3be4f02b0a550e4bcae77b1b\n    Closes-bug: 1535918\n    Closes-bug: 1624052\n    (cherry picked from commit a5b920a197c70d2ae08a1e1335d979857f923b4f)\n", 
+            "date_created": "2016-11-09 03:30:26.305380+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:12:20.836852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/331707\nReason: This review is > 6 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2016-12-09 21:03:28.129970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.3 release.", 
+            "date_created": "2016-12-19 12:02:31.620368+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Artom Lifshitz (<email address hidden>) on branch: master\nReview: https://review.openstack.org/385086\nReason: Nothing is technically broken anymore, since the patch that actually fixes the bug has merged. The race is still present I believe, but it doesn't actually affect anything now that event dispatching is fixed.", 
+            "date_created": "2017-01-23 15:52:49.659224+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "i am hitting this issue.\n\n1) After nova evacuate on two compute setup, instance's host parameter is updated to it's new host.\n\n2) while adding storage to instance, its failing. As rpc call to compute(old host) is getting timeout exception.  \n ", 
+            "date_created": "2017-04-25 07:07:39.844148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~narendrapal"
+        }, 
+        {
+            "content": "minor correction to comment #26 \n1) After nova evacuate on two compute setup, instance's host parameter is *not* updated to it's new host.", 
+            "date_created": "2017-04-25 07:10:27.390078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~narendrapal"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/461678", 
+            "date_created": "2017-05-02 08:41:07.700518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/461678\nReason: mitaka is basically end of life", 
+            "date_created": "2017-06-21 20:38:44.867807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2017-08-21 05:39:08.361075+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtrusia"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2017-08-21 05:39:31.739213+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtrusia"
+        }, 
+        {
+            "content": "Uploaded in Xenial upload queue.", 
+            "date_created": "2017-08-23 20:01:09.103055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~slashd"
+        }, 
+        {
+            "content": "Hello Kyle, or anyone else affected,\n\nAccepted nova into xenial-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/nova/2:13.1.4-0ubuntu3 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation on how to enable and use -proposed.Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested and change the tag from verification-needed-xenial to verification-done-xenial. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed-xenial. In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2017-08-24 19:15:31.301901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "Hello\n\nI tested -proposed is working fine.\n\nrc  nova-api                         2:13.1.4-0ubuntu3                          all          OpenStack Compute - API frontend\nii  nova-api-os-compute              2:13.1.4-0ubuntu3                          all          OpenStack Compute - OpenStack Compute API frontend\nii  nova-cert                        2:13.1.4-0ubuntu3                          all          OpenStack Compute - certificate management\nii  nova-common                      2:13.1.4-0ubuntu3                          all          OpenStack Compute - common files\nii  nova-conductor                   2:13.1.4-0ubuntu3                          all          OpenStack Compute - conductor service\nii  nova-consoleauth                 2:13.1.4-0ubuntu3                          all          OpenStack Compute - Console Authenticator\nii  nova-novncproxy                  2:13.1.4-0ubuntu3                          all          OpenStack Compute - NoVNC proxy\nii  nova-scheduler                   2:13.1.4-0ubuntu3                          all          OpenStack Compute - virtual machine scheduler\nii  python-nova                      2:13.1.4-0ubuntu3                          all          OpenStack Compute Python libraries\n", 
+            "date_created": "2017-08-28 10:09:46.068397+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtrusia"
+        }, 
+        {
+            "content": "I deployed openstack env with my script on description [test case]. and got error as reproduction. \n\nupgraded nova-cloud-controller, nova-compute\n\nthen evacuate those error state vm again, got ACTIVE.", 
+            "date_created": "2017-08-28 10:57:31.909476+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtrusia"
+        }, 
+        {
+            "content": "Hello Kyle, or anyone else affected,\n\nAccepted nova into mitaka-proposed. The package will build now and be available in the Ubuntu Cloud Archive in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package. To enable the -proposed repository:\n\n  sudo add-apt-repository cloud-archive:mitaka-proposed\n  sudo apt-get update\n\nYour feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-mitaka-needed to verification-mitaka-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-mitaka-failed. In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification . Thank you in advance!", 
+            "date_created": "2017-09-04 14:34:58.543852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2017-09-04 15:43:22.244313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sil2100"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2:13.1.4-0ubuntu3\n\n---------------\nnova (2:13.1.4-0ubuntu3) xenial; urgency=medium\n\n  * Fix evacuation error when nova-compute is down just\n    after VM is started.\n\n    - d/p/make-sure-to-rebuild-claim-on-recreate.patch\n      (backported from newton 0f2d874, upstream a2b0824)\n\n    - d/p/Send-events-to-all-relevant-hosts-if-migrating.patch (LP: #1535918)\n      (backported from a5b920)\n\n -- Seyeong Kim <email address hidden>  Fri, 04 Aug 2017 04:46:40 +0900", 
+            "date_created": "2017-09-04 15:53:22.211880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "had same test as xenial, ( this is for mitaka uca )\n\nand verification done\n\nii  nova-api-os-compute              2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute - OpenStack Compute API frontend\nii  nova-cert                        2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute - certificate management\nii  nova-common                      2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute - common files\nii  nova-conductor                   2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute - conductor service\nii  nova-consoleauth                 2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute - Console Authenticator\nii  nova-novncproxy                  2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute - NoVNC proxy\nii  nova-scheduler                   2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute - virtual machine scheduler\nii  python-nova                      2:13.1.4-0ubuntu3~cloud0                   all          OpenStack Compute Python libraries\n", 
+            "date_created": "2017-09-05 06:23:00.910102+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtrusia"
+        }
+    ], 
+    "closed": "2016-11-01 10:31:51.148523+00:00"
+}

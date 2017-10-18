@@ -1,0 +1,91 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 17:42:42.372303+00:00", 
+    "description": "Doing an initialize_connection() results in the following partial code stack:\n\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]   File \"/usr/lib/python2.7/dist-packages/nova/volume/cinder.py\", line 232, in wrapper\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]     res = method(self, ctx, *args, **kwargs)\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]   File \"/usr/lib/python2.7/dist-packages/nova/volume/cinder.py\", line 259, in wrapper\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]     res = method(self, ctx, volume_id, *args, **kwargs)\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]   File \"/usr/lib/python2.7/dist-packages/nova/volume/cinder.py\", line 437, in initialize_connection\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]     'code': exc.code})\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49] AttributeError: 'exceptions.TypeError' object has no attribute 'code'\n\n\nHere is the method:\n\n    @translate_volume_exception\n    def initialize_connection(self, context, volume_id, connector):\n        try:\n            connection_info = cinderclient(\n                context).volumes.initialize_connection(volume_id, connector)\n            connection_info['connector'] = connector\n            return connection_info\n        except cinder_exception.ClientException as ex:\n            with excutils.save_and_reraise_exception():\n                LOG.error(_LE('Initialize connection failed for volume '\n                              '%(vol)s on host %(host)s. Error: %(msg)s '\n                              'Code: %(code)s. Attempting to terminate '\n                              'connection.'),\n                          {'vol': volume_id,\n                           'host': connector.get('host'),\n                           'msg': six.text_type(ex),\n                           'code': ex.code})\n                try:\n                    self.terminate_connection(context, volume_id, connector)\n                except Exception as exc:\n                    LOG.error(_LE('Connection between volume %(vol)s and host '\n                                  '%(host)s might have succeeded, but attempt '\n                                  'to terminate connection has failed. '\n                                  'Validate the connection and determine if '\n                                  'manual cleanup is needed. Error: %(msg)s '\n                                  'Code: %(code)s.'),\n                              {'vol': volume_id,\n                               'host': connector.get('host'),\n                               'msg': six.text_type(exc),\n                               'code': exc.code})               <---------- blows up\n\n    @translate_volume_exception\n    def terminate_connection(self, context, volume_id, connector):\n        return cinderclient(context).volumes.terminate_connection(volume_id,\n                                                                  connector)\n\nPresumably the issue has to do with the @translate_volume_exception decorator on terminate_connection()....so when that fails, the exception that is re-raised is not constructed with a 'code' value (?)", 
+    "tags": [
+        "low-hanging-fruit", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1564551", 
+    "owner": "https://api.launchpad.net/1.0/~yuywz", 
+    "id": 1564551, 
+    "index": 4499, 
+    "openned": "2016-03-31 18:18:18.857011+00:00", 
+    "created": "2016-03-31 18:18:18.857011+00:00", 
+    "title": "initialize_connection failure can result in 'exceptions.TypeError' object has no attribute 'code'", 
+    "comments": [
+        {
+            "content": "Doing an initialize_connection() results in the following partial code stack:\n\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]   File \"/usr/lib/python2.7/dist-packages/nova/volume/cinder.py\", line 232, in wrapper\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]     res = method(self, ctx, *args, **kwargs)\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]   File \"/usr/lib/python2.7/dist-packages/nova/volume/cinder.py\", line 259, in wrapper\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]     res = method(self, ctx, volume_id, *args, **kwargs)\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]   File \"/usr/lib/python2.7/dist-packages/nova/volume/cinder.py\", line 437, in initialize_connection\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49]     'code': exc.code})\n2016-03-29 06:51:06.882 25713 ERROR nova.compute.manager [instance: 4c8d25b3-b136-4c72-a381-4b80dcca5c49] AttributeError: 'exceptions.TypeError' object has no attribute 'code'\n\n\nHere is the method:\n\n    @translate_volume_exception\n    def initialize_connection(self, context, volume_id, connector):\n        try:\n            connection_info = cinderclient(\n                context).volumes.initialize_connection(volume_id, connector)\n            connection_info['connector'] = connector\n            return connection_info\n        except cinder_exception.ClientException as ex:\n            with excutils.save_and_reraise_exception():\n                LOG.error(_LE('Initialize connection failed for volume '\n                              '%(vol)s on host %(host)s. Error: %(msg)s '\n                              'Code: %(code)s. Attempting to terminate '\n                              'connection.'),\n                          {'vol': volume_id,\n                           'host': connector.get('host'),\n                           'msg': six.text_type(ex),\n                           'code': ex.code})\n                try:\n                    self.terminate_connection(context, volume_id, connector)\n                except Exception as exc:\n                    LOG.error(_LE('Connection between volume %(vol)s and host '\n                                  '%(host)s might have succeeded, but attempt '\n                                  'to terminate connection has failed. '\n                                  'Validate the connection and determine if '\n                                  'manual cleanup is needed. Error: %(msg)s '\n                                  'Code: %(code)s.'),\n                              {'vol': volume_id,\n                               'host': connector.get('host'),\n                               'msg': six.text_type(exc),\n                               'code': exc.code})               <---------- blows up\n\n    @translate_volume_exception\n    def terminate_connection(self, context, volume_id, connector):\n        return cinderclient(context).volumes.terminate_connection(volume_id,\n                                                                  connector)\n\nPresumably the issue has to do with the @translate_volume_exception decorator on terminate_connection()....so when that fails, the exception that is re-raised is not constructed with a 'code' value (?)", 
+            "date_created": "2016-03-31 18:18:18.857011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~csky"
+        }, 
+        {
+            "content": "What version of nova is this? Mitaka? It probably doesn't really matter, the issue is here as you pointed out:\n\nexcept Exception as exc:\n                    LOG.error(_LE('Connection between volume %(vol)s and host '\n                                  '%(host)s might have succeeded, but attempt '\n                                  'to terminate connection has failed. '\n                                  'Validate the connection and determine if '\n                                  'manual cleanup is needed. Error: %(msg)s '\n                                  'Code: %(code)s.'),\n                              {'vol': volume_id,\n                               'host': connector.get('host'),\n                               'msg': six.text_type(exc),\n                               'code': exc.code}) <---------- blows up\n\nexc in this case is a TypeError, which doesn't have a code on it. That code is probably expecting a CinderClientException or NovaException, but something else breaks and we get a TypeError instead.", 
+            "date_created": "2016-04-01 21:32:40.814398+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Yes, Mitaka.", 
+            "date_created": "2016-04-01 22:06:46.364333+00:00", 
+            "author": "https://api.launchpad.net/1.0/~csky"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/300751", 
+            "date_created": "2016-04-02 15:33:23.390537+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@Diana, per the bug history, it seems you already assigned this bug to you before I did... sorry for that but when I took the bug, it shows 'nobody' in the 'assigned to' filed, it must be some network delay...", 
+            "date_created": "2016-04-02 15:40:00.989955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yuywz"
+        }, 
+        {
+            "content": "@Wenzhi No worries :) I figured that's what happened. Cheers, --diana", 
+            "date_created": "2016-04-03 03:30:11.736468+00:00", 
+            "author": "https://api.launchpad.net/1.0/~diana-clarke"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/300751\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=2135a3f55ff2222ec9c0fe7064aa339a430af4ee\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2135a3f55ff2222ec9c0fe7064aa339a430af4ee\nAuthor: Wenzhi Yu <wenzhi_yu@163.com>\nDate:   Sat Apr 2 23:34:22 2016 +0800\n\n    Check if a exception has a code on it before read the code\n    \n    In 'nova.volume.cinder.API.initialize_connection' method, all exceptions\n    threw by 'terminate_connection' will be caught and logged. When log the\n    exceptions, the code try to record the 'code' attribute of the exception\n    since the code is expecting a CinderClientException or NovaException[1].\n    But if the some else exception(like TypeError) which doesn't have a code\n    on it was threw up, we will got a AttributeError.\n    \n    This commit add logic to check if the exception has a code on it before\n    try to read it.\n    \n    [1]https://github.com/openstack/nova/blob/13.0.0.0rc3/nova/volume/cinder.py#L437\n    \n    Change-Id: I42fd2f2b77c41a60dfaf0cc882a344596d50daf5\n    Closes-Bug: #1564551\n", 
+            "date_created": "2016-04-09 07:29:14.182193+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/303757", 
+            "date_created": "2016-04-09 18:24:49.221991+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/303880", 
+            "date_created": "2016-04-11 02:40:34.405802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/303757\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9ecf79970d000ad48772bd3f618d9454b57b5985\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 9ecf79970d000ad48772bd3f618d9454b57b5985\nAuthor: Wenzhi Yu <wenzhi_yu@163.com>\nDate:   Sat Apr 2 23:34:22 2016 +0800\n\n    Check if a exception has a code on it before read the code\n    \n    In 'nova.volume.cinder.API.initialize_connection' method, all exceptions\n    threw by 'terminate_connection' will be caught and logged. When log the\n    exceptions, the code try to record the 'code' attribute of the exception\n    since the code is expecting a CinderClientException or NovaException[1].\n    But if the some else exception(like TypeError) which doesn't have a code\n    on it was threw up, we will got a AttributeError.\n    \n    This commit add logic to check if the exception has a code on it before\n    try to read it.\n    \n    [1]https://github.com/openstack/nova/blob/13.0.0.0rc3/nova/volume/cinder.py#L437\n    \n    Change-Id: I42fd2f2b77c41a60dfaf0cc882a344596d50daf5\n    Closes-Bug: #1564551\n    (cherry picked from commit 2135a3f55ff2222ec9c0fe7064aa339a430af4ee)\n", 
+            "date_created": "2016-04-19 18:13:30.849827+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/303880\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5e12cd8756e3b2871bd9ba5321528cb4fc5854f9\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 5e12cd8756e3b2871bd9ba5321528cb4fc5854f9\nAuthor: Wenzhi Yu <wenzhi_yu@163.com>\nDate:   Sat Apr 2 23:34:22 2016 +0800\n\n    Check if a exception has a code on it before read the code\n    \n    In 'nova.volume.cinder.API.initialize_connection' method, all exceptions\n    threw by 'terminate_connection' will be caught and logged. When log the\n    exceptions, the code try to record the 'code' attribute of the exception\n    since the code is expecting a CinderClientException or NovaException[1].\n    But if the some else exception(like TypeError) which doesn't have a code\n    on it was threw up, we will got a AttributeError.\n    \n    This commit add logic to check if the exception has a code on it before\n    try to read it.\n    \n    [1]https://github.com/openstack/nova/blob/13.0.0.0rc3/nova/volume/cinder.py#L437\n    \n    Change-Id: I42fd2f2b77c41a60dfaf0cc882a344596d50daf5\n    Closes-Bug: #1564551\n    (cherry picked from commit 2135a3f55ff2222ec9c0fe7064aa339a430af4ee)\n", 
+            "date_created": "2016-04-22 04:50:55.417933+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:34:02.407420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.4 release.", 
+            "date_created": "2016-06-08 21:35:43.591658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.0 release.", 
+            "date_created": "2016-06-14 15:42:17.862221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ], 
+    "closed": "2016-04-09 07:29:12.307864+00:00"
+}

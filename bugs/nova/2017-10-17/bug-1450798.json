@@ -1,0 +1,95 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-03-25 15:03:35.349015+00:00", 
+    "description": "These lines in the latest Nova (as of May 1, 2015) are vulnerable to command injection\n\nhttps://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L86\nhttps://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L103\nhttps://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L117\n\n\nIn this case (https://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L86 ), if a malicious filename such as \"; rm -rf /etc\" is provided, the /etc directory will be removed with the privileges of the user running this script.\n\nIn this case (https://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L103), if either a malicious name or filename are provided, the command will be executed with the privileges of the running user.\n\nIn this case(https://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L117), if either a malicious name or filename are provided, the command will be executed with the privileges of the running user.\n\n\nI'm not familiar enough with the usage of this module to know all of the places these inputs can come from, but presumably it can be used in automation, potentially with elevated privileges.  I'm sure the idea of this script is to allow certain functionality, not unrestricted commands.  The way this has been developed allows unrestricted command execution by tampering with any of the above mentioned inputs.", 
+    "tags": [
+        "security"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1450798", 
+    "owner": "https://api.launchpad.net/1.0/~gstepanov", 
+    "id": 1450798, 
+    "index": 2960, 
+    "openned": "2015-05-01 13:50:51.781307+00:00", 
+    "created": "2015-05-01 13:50:51.781307+00:00", 
+    "title": "Multiple command injection vulns in schema_diff tool", 
+    "comments": [
+        {
+            "content": "These lines in the latest Nova (as of May 1, 2015) are vulnerable to command injection\n\nhttps://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L86\nhttps://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L103\nhttps://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L117\n\n\nIn this case (https://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L86 ), if a malicious filename such as \"; rm -rf /etc\" is provided, the /etc directory will be removed with the privileges of the user running this script.\n\nIn this case (https://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L103), if either a malicious name or filename are provided, the command will be executed with the privileges of the running user.\n\nIn this case(https://github.com/openstack/nova/blob/master/tools/db/schema_diff.py#L117), if either a malicious name or filename are provided, the command will be executed with the privileges of the running user.\n\n\nI'm not familiar enough with the usage of this module to know all of the places these inputs can come from, but presumably it can be used in automation, potentially with elevated privileges.  I'm sure the idea of this script is to allow certain functionality, not unrestricted commands.  The way this has been developed allows unrestricted command execution by tampering with any of the above mentioned inputs.", 
+            "date_created": "2015-05-01 13:50:51.781307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.", 
+            "date_created": "2015-05-01 14:09:35.929772+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "This sounds like a strengthement opportunity. While I agree there is a bug (which should be solved), since this is an admin tool I can't picture any way to reasonably exploit it.\n\nI suggest we open this bug and get it fixed ASAP.", 
+            "date_created": "2015-05-04 14:39:47.979884+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Yeah, it really depends on how this is used.  If it is only used by admins on trusted data, I'd treat it as a strengthening opportunity.  If it is used in automation and any of the data is fed in from an untrusted or less trusted source, there could be a vulnerability.  \n\nIn absence of more concrete information about its use, the best thing is probably to open it up and fix it ASAP as Thierry suggests.", 
+            "date_created": "2015-05-04 14:52:41.984916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "I'm not sure I agree here. None of these methods take filenames constructed from user input. The filenames they are passed are based on a timestamp. Do we really think there's a defence in depth option here? If so, then I'd assert that you could say the same thing of https://github.com/openstack/oslo.concurrency/blob/master/oslo_concurrency/processutils.py#L99", 
+            "date_created": "2015-05-05 09:35:05.729373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Michael - the code you mention in processutils is a wrapper around Popen, and one of its parameters is \"shell\".  Setting shell to True will cause the command to run in a shell with shell capabilities, including the ability to \"escape\" one command and start another with the semicolon character.\n\nWhen the following is provided as input to to a shell=True call, it executes two commands (ls and rm)\n\n\"ls /my/dir; rm /etc/passwd\".  The issue is that if an input is constructed taking the second part of this \"/my/dir; rm /etc/passwd\" it will execute a new command.  The safe way to use this is to call without shell and parameterize the call.  So you call:\n\nPOpen(mycommand, my_argument, my_argument2) without running on a shell.  \n\nIf we're 100% sure that none of the inputs come from an untrusted or less trusted user, then I agree with you - there is no risk.  However I'd still claim that we should fix this as:\n\n1) it isn't best secure development practice\n2) you never know when the assumption of clean user input might change and a new threat vector is created\n3) shelling this command doesn't appear to be required", 
+            "date_created": "2015-05-05 12:20:40.786932+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "Unless someone find a usecase where these inputs could be user controlled, then we better remove the OSSA task and open this for proper bug triage (e.g. code hardening).\n\nAccording to the module documentation, this is unlikely, can a nova-coresec please confirm that ?\n\n", 
+            "date_created": "2015-05-05 15:22:20.951484+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@Travis -- I still don't see the problem here. We have a method in oslo whose purpose is to execute commands. It takes a command line, and if you ask for a shell uses a shell to execute it. So if the caller passes in something with semicolons, they get what it says on the box.\n\n@Tristan -- as a nova-coresec, my reading of the schema diff code is that it is not currently vulnerable. Note as well that there is no reason for the schema diff tool to run as anything other than a normal user. So, I think we should remove the private label from this and make it a wishlist item.\n\nI'm not opposed to someone having a go at making these things safer, but I do think this is not a security emergency.", 
+            "date_created": "2015-05-06 03:12:09.356611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Michael - ok, given that it's designed to run as a normal user with no untrusted input, I'd agree: there is no security emergency.  ", 
+            "date_created": "2015-05-06 11:56:13.314973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "Based on the above discussion, I'm reclassifying this as \"E: not a vulnerability\" http://security.openstack.org/vmt-process.html#incident-report-taxonomy but have tagged it \"security\" since it might present a strengthening opportunity (albeit a very minimal one).", 
+            "date_created": "2015-05-06 12:14:57.713626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I see in progress here, can you please link the review to this bug?", 
+            "date_created": "2015-09-03 10:49:56.669237+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/276751", 
+            "date_created": "2016-02-05 14:20:42.357438+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "really? \n\nPlease actually look at the code a little bit before filing security bugs. This is a very specific tool used to compare the state of migrations. It's not installed as part of normal nova process.", 
+            "date_created": "2016-02-09 14:15:15.593876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Hmm, ok.  It's still being called with shell=True needlessly, as there are documented safe ways of doing what you're trying to do here: https://security.openstack.org/guidelines/dg_avoid-shell-true.html .\n\nIs it possible that it will be used as part of an automated process that takes input from somewhere that might be user controlled?  If so this can lead to code being run on that box.\n\nIf nothing else when poor examples like this begin to make their way out of the code at least new developers won't copy these patterns to places that are more mission critical.\n\nThat being said, if the idea is that \"it isn't run in production so we don't care\", I'll certainly file with that in mind in the future.\n", 
+            "date_created": "2016-02-09 14:51:47.792051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "Change abandoned by Gleb Stepanov (<email address hidden>) on branch: master\nReview: https://review.openstack.org/276751", 
+            "date_created": "2016-03-25 15:03:34.367237+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-02-09 14:14:19.108878+00:00"
+}

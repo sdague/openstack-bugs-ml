@@ -1,0 +1,70 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-04-11 12:33:21.625217+00:00", 
+    "description": "After successfully updating the name of an instance (from a libvirt/KVM host), I proceeded to delete the instance.\nThe instance was successfully deleted. However, upon using \"virsh list --all\", it can be seen that the domain has not been undefined.\n\nSteps to Reproduce:\n1. Setup instance with a libvirt/KVM host and SVC storage\n2. Spawn a VM called \"test-vm\"\nAPI --> POST https://<ip>:8774/v2.1/da0be0d560f541d7acccb66104ebe094/servers\n3. Update the VM with a new name \"new-name-vm\"\nAPI --> PUT https://<ip>:8774/v2.1/da0be0d560f541d7acccb66104ebe094/servers/5334ead7-4bd7-4f81-8b41-d833ebf52a9b\nbody: {{'name': 'new-name-vm'}}\n4. Delete the VM\nAPI --> DELETE https://<ip>:8774/v2.1/da0be0d560f541d7acccb66104ebe094/servers/5334ead7-4bd7-4f81-8b41-d833ebf52a9b\n\nExpected Results:\nThe VM to be deleted and the libvirt domain to be destroyed and undefined.\n\"virsh list --all\" should return:\n\nvirsh list --all\n Id    Name                           State\n----------------------------------------------------\n\nActual Results:\nThe VM is deleted but the domain was not undefined and still appears on the KVM using \"virsh list --all\".\n\"virsh list --all\" returned:\n\nvirsh list --all\n Id    Name                                                    State\n-----------------------------------------------------------------------\n22    test-vm-5334ead7-00000016      running\n\n\n\nVersion of libvirt: libvirtd (libvirt) 1.2.16\nVersion of Nova: 13.0.0", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1567024", 
+    "owner": "None", 
+    "id": 1567024, 
+    "index": 4504, 
+    "openned": "2016-04-06 18:34:31.984104+00:00", 
+    "created": "2016-04-06 18:34:31.984104+00:00", 
+    "title": "updated VM name leaves libvirt domain behind after deletion", 
+    "comments": [
+        {
+            "content": "After successfully updating the name of an instance (from a libvirt/KVM host), I proceeded to delete the instance.\nThe instance was successfully deleted. However, upon using \"virsh list --all\", it can be seen that the domain has not been undefined.\n\nSteps to Reproduce:\n1. Setup instance with a libvirt/KVM host and SVC storage\n2. Spawn a VM called \"test-vm\"\nAPI --> POST https://<ip>:8774/v2.1/da0be0d560f541d7acccb66104ebe094/servers\n3. Update the VM with a new name \"new-name-vm\"\nAPI --> PUT https://<ip>:8774/v2.1/da0be0d560f541d7acccb66104ebe094/servers/5334ead7-4bd7-4f81-8b41-d833ebf52a9b\nbody: {{'name': 'new-name-vm'}}\n4. Delete the VM\nAPI --> DELETE https://<ip>:8774/v2.1/da0be0d560f541d7acccb66104ebe094/servers/5334ead7-4bd7-4f81-8b41-d833ebf52a9b\n\nExpected Results:\nThe VM to be deleted and the libvirt domain to be destroyed and undefined.\n\"virsh list --all\" should return:\n\nvirsh list --all\n Id    Name                           State\n----------------------------------------------------\n\nActual Results:\nThe VM is deleted but the domain was not undefined and still appears on the KVM using \"virsh list --all\".\n\"virsh list --all\" returned:\n\nvirsh list --all\n Id    Name                                                    State\n-----------------------------------------------------------------------\n22    test-vm-5334ead7-00000016      running\n\n\n\nVersion of libvirt: libvirtd (libvirt) 1.2.16\nVersion of Nova: 13.0.0", 
+            "date_created": "2016-04-06 18:34:31.984104+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lmtaylor"
+        }, 
+        {
+            "content": "Looks like for the libvirt driver, it is attempting to undefine the domain by name.  However since the instance name has change, it's returning an InstanceNotFound error\n\nIn nova/virt/libvirt/host.py:\n\n    def get_domain(self, instance):\n        \"\"\"Retrieve libvirt domain object for an instance.\n        :param instance: an nova.objects.Instance object\n        Attempt to lookup the libvirt domain objects\n        corresponding to the Nova instance, based on\n        its name. If not found it will raise an\n        exception.InstanceNotFound exception. On other\n        errors, it will raise an exception.NovaException\n        exception.\n        :returns: a libvirt.Domain object\n        \"\"\"\n        return self._get_domain_by_name(instance.name)\n\n", 
+            "date_created": "2016-04-06 18:39:45.046780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lmtaylor"
+        }, 
+        {
+            "content": "Weird, it the libvirt driver code can't find the domain by name it should fall back to using the uuid.  Seems like an easy fix.", 
+            "date_created": "2016-04-07 01:50:48.854111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hmm, actually, instance.name shouldn't have changed, that's the generated name from the instance_name_template config option.  When you rename the instance it's actually changing instance.display_name. So there must be something else going on here.", 
+            "date_created": "2016-04-07 01:54:53.329998+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Can you dump the instance record from the database before and after the rename, and also the virsh domain information for that instance before and after you rename and delete it?", 
+            "date_created": "2016-04-07 01:58:31.584794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Did you change the CONF.instance_name_template between the time that you created the server and deleted it?  That would mess this up.", 
+            "date_created": "2016-04-07 02:03:59.084932+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I wasn't able to recreate this on a master branch devstack I created this week (so newton code).\n\nI created a server with name 'test', verified virsh list showed that instance by it's same 'instance_name' attribute from nova show test.\n\nThen renamed the server via \"nova update --name new_name test\" which renamed the server's display_name, it didn't change the instance_name attribute in the nova show new_name output, nor did virsh list change.\n\nI deleted the server using nova delete new_name, and it was deleted along with it being gone from virsh list.", 
+            "date_created": "2016-04-07 02:11:14.052230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Created a custom CONF.instance_name_template = %(display_name).13s-%(uuid).8s-%(id)08x\nwhich explains the issue.\n\nShouldn't the libvirt driver still fall back to using the uuid in case of some custom CONF.instance_name_template?", 
+            "date_created": "2016-04-07 14:44:55.542541+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lmtaylor"
+        }, 
+        {
+            "content": "I was not able to recreate this bug on master branch on Devstack. I created an VM, updated it's name and deleted it on Horizon,\nrun virsh list --all, that instance was also gone.", 
+            "date_created": "2016-04-08 20:45:54.320734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~qijing-lee"
+        }, 
+        {
+            "content": "When created vm, the libvirt driver created vm on compute node.  \nWhen updated vm name,  the vm name updated in the database, the vm name didn't update on the compute node by libvirt.xml, this means that instance.name would not changed.\nWhen deleted vm, the function call 'self._get_domain_by_name(instance.name) ' would get the right domain by name, so it is correct to delete vm.\n\nBy the way, I tested it in liberty version.", 
+            "date_created": "2016-04-11 12:32:56.638158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhaolh"
+        }
+    ], 
+    "closed": "2016-04-11 12:33:11.231044+00:00"
+}

@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-07-28 07:42:06.482708+00:00", 
+    "description": "We observed race condition with novnc test. Failed rate is about 1/10.\n\n\nhttp://dd6b71949550285df7dc-dda4e480e005aaa13ec303551d2d8155.r49.cf1.rackcdn.com/72/463672/3/check/dsvm-tempest-neutron-network/849c338/run_tests.log\n\n==============================\nFailed 1 tests - output below:\n==============================\n\ntempest.api.compute.servers.test_novnc.NoVNCConsoleTestJSON.test_novnc[id-c640fdff-8ab4-45a4-a5d8-7e6146cbd0dc]\n---------------------------------------------------------------------------------------------------------------\n\nCaptured traceback:\n~~~~~~~~~~~~~~~~~~~\n    Traceback (most recent call last):\n      File \"tempest/api/compute/servers/test_novnc.py\", line 172, in test_novnc\n        self._validate_rfb_negotiation()\n      File \"tempest/api/compute/servers/test_novnc.py\", line 84, in _validate_rfb_negotiation\n        data = self._websocket.receive_frame()\n      File \"tempest/common/compute.py\", line 282, in receive_frame\n        header = self._recv(2)\n      File \"tempest/common/compute.py\", line 273, in _recv\n        data_from_socket = self._socket.recv(recv_size)\n      File \"/opt/stack/new/tempest/.tox/tempest/local/lib/python2.7/site-packages/fixtures/_fixtures/timeout.py\", line 52, in signal_handler\n        raise TimeoutException()\n    fixtures._fixtures.timeout.TimeoutException", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1695844", 
+    "owner": "https://api.launchpad.net/1.0/~wjh-fresh", 
+    "id": 1695844, 
+    "index": 8151, 
+    "openned": "2017-06-05 08:10:48.061418+00:00", 
+    "created": "2017-06-05 08:10:48.061418+00:00", 
+    "title": "test_novnc failed with socket recv time", 
+    "comments": [
+        {
+            "content": "We observed race condition with novnc test. Failed rate is about 1/10.\n\n\nhttp://dd6b71949550285df7dc-dda4e480e005aaa13ec303551d2d8155.r49.cf1.rackcdn.com/72/463672/3/check/dsvm-tempest-neutron-network/849c338/run_tests.log\n\n==============================\nFailed 1 tests - output below:\n==============================\n\ntempest.api.compute.servers.test_novnc.NoVNCConsoleTestJSON.test_novnc[id-c640fdff-8ab4-45a4-a5d8-7e6146cbd0dc]\n---------------------------------------------------------------------------------------------------------------\n\nCaptured traceback:\n~~~~~~~~~~~~~~~~~~~\n    Traceback (most recent call last):\n      File \"tempest/api/compute/servers/test_novnc.py\", line 172, in test_novnc\n        self._validate_rfb_negotiation()\n      File \"tempest/api/compute/servers/test_novnc.py\", line 84, in _validate_rfb_negotiation\n        data = self._websocket.receive_frame()\n      File \"tempest/common/compute.py\", line 282, in receive_frame\n        header = self._recv(2)\n      File \"tempest/common/compute.py\", line 273, in _recv\n        data_from_socket = self._socket.recv(recv_size)\n      File \"/opt/stack/new/tempest/.tox/tempest/local/lib/python2.7/site-packages/fixtures/_fixtures/timeout.py\", line 52, in signal_handler\n        raise TimeoutException()\n    fixtures._fixtures.timeout.TimeoutException", 
+            "date_created": "2017-06-05 08:10:48.061418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wjh-fresh"
+        }, 
+        {
+            "content": "This issue was observed with XenServer test. But potentially it will impact other hypervisors.\n\nI think the problem caused the code at here: https://github.com/openstack/nova/blob/master/nova/console/websocketproxy.py#L155\n\nIt tries to get the http response from the socket. But potentially the first negotiation message has arrived earlier then the negotiation message will be swallowed by the above recv(). Then the client will get stuck on waiting for the negotiation message.\n", 
+            "date_created": "2017-06-05 08:15:08.185442+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wjh-fresh"
+        }, 
+        {
+            "content": "@Jianghua Wang: Do you think this is related to bug 1669468 ?", 
+            "date_created": "2017-06-06 08:56:26.299123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Almost certainly, this is the same issue, yes.\n\nThe tempest code is reading from the websocket and finding no data because the websocket has already consumed + discarded it as it arrived \"early\".", 
+            "date_created": "2017-06-06 12:13:40.390881+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bob-ball"
+        }, 
+        {
+            "content": "@Markus It seems libvirt doesn't have internal_access_path, so it won't run into this branch in which websocketproxy swallows the RFP message.\nhttps://github.com/openstack/nova/blob/master/nova/console/websocketproxy.py#L147\n\nBut as Bob said maybe it's relative to the tempest problem which is to be fixed with this patchset: https://review.openstack.org/#/c/463259/\n\nBut it's also possible to be a different problem as there is a ResourceWarning complaining unclosed socket just as you posted in bug 1669468.\n\nAnyway, it looks worthy to test by adding a sleep before this line,\nhttps://github.com/openstack/tempest/blob/master/tempest/common/compute.py#L319\nso that it will always contain the first RFP frame in the upgrade response. You can verify if that will trigger the error reported in 1669468.\n\n\n", 
+            "date_created": "2017-06-06 15:07:21.840354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wjh-fresh"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/470798\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a7c054c55153c44891b8d1b14f93f0e03777fa6c\nSubmitter: Jenkins\nBranch:    master\n\ncommit a7c054c55153c44891b8d1b14f93f0e03777fa6c\nAuthor: jianghua wang <email address hidden>\nDate:   Mon Jun 5 03:02:09 2017 +0100\n\n    Fix the race condition with novnc\n    \n    The first RFP negotiation message potentially arrived\n    earlier, in which case the message will be swallowed\n    by the recv() which receive response for the http\n    request. This commit is to ensure only the response\n    is removed from the socket buffer, so it won't impact\n    the following RFP negotiation.\n    \n    Change-Id: I100e140acbc2d981f7b98e12b3e9ae02844f41fd\n    Closes-Bug: #1695844\n", 
+            "date_created": "2017-06-13 16:44:17.849453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b3 development milestone.", 
+            "date_created": "2017-07-28 07:42:05.190539+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-06-13 16:44:15.085072+00:00"
+}

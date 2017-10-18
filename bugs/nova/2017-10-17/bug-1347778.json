@@ -1,0 +1,70 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:48:37.681805+00:00", 
+    "description": "When neutron API in nova calls create_port(), it looks for exceptions. Any 409 is turned into 'Maximum number of ports exceeded'. This is a horrible assumption. Neutron can return 409s for more than just this reason.\n\nAnother case where neutron returns a 409 is this:\n\n2014-07-22 18:10:27.583 26577 INFO neutron.api.v2.resource [req-b7267ae5-bafa-4c34-8e25-9c0fca96ad2d None] create failed (client error):\n                     Unable to complete operation for network 00000000-0000-0000-0000-000000000000. The mac address XX:XX:XX:XX:XX:XX is in use.\n\nThis can occur when the request to create a port includes the mac address to use (as happens w/ baremetal/ironic in nova) and neutron for some reason still has things assigned with that mac.\n\nThis is the offending code:\n\n 174         except neutron_client_exc.NeutronClientException as e:\n 175             # NOTE(mriedem): OverQuota in neutron is a 409\n 176             if e.status_code == 409:\n 177                 LOG.warning(_('Neutron error: quota exceeded'))\n 178                 raise exception.PortLimitExceeded()", 
+    "tags": [
+        "neutron"
+    ], 
+    "importance": "Medium", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1347778", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1347778, 
+    "index": 3966, 
+    "openned": "2014-07-23 15:58:57.024716+00:00", 
+    "created": "2014-07-23 15:58:57.024716+00:00", 
+    "title": "raising Maximum number of ports exceeded is wrong", 
+    "comments": [
+        {
+            "content": "When neutron API in nova calls create_port(), it looks for exceptions. Any 409 is turned into 'Maximum number of ports exceeded'. This is a horrible assumption. Neutron can return 409s for more than just this reason.\n\nAnother case where neutron returns a 409 is this:\n\n2014-07-22 18:10:27.583 26577 INFO neutron.api.v2.resource [req-b7267ae5-bafa-4c34-8e25-9c0fca96ad2d None] create failed (client error):\n                     Unable to complete operation for network 00000000-0000-0000-0000-000000000000. The mac address XX:XX:XX:XX:XX:XX is in use.\n\nThis can occur when the request to create a port includes the mac address to use (as happens w/ baremetal/ironic in nova) and neutron for some reason still has things assigned with that mac.\n\nThis is the offending code:\n\n 174         except neutron_client_exc.NeutronClientException as e:\n 175             # NOTE(mriedem): OverQuota in neutron is a 409\n 176             if e.status_code == 409:\n 177                 LOG.warning(_('Neutron error: quota exceeded'))\n 178                 raise exception.PortLimitExceeded()", 
+            "date_created": "2014-07-23 15:58:57.024716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "See related bug 1331353.\n\nIn the long long ago python-neutronclient sucked at raising specific exceptions so we were basically left with NeutronClientException and the status code, unless you also wanted to parse the error message, which isn't good either.\n\nThings are a bit better now but we have to get specific exceptions in the client to handle them in nova, we have a few patches in nova already for similar issues.", 
+            "date_created": "2014-07-23 16:06:11.566258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "You need a MacAddressInUseClient exception in python-neutronclient before nova can handle that specifically, based on this neutron server exception:\n\nhttp://git.openstack.org/cgit/openstack/neutron/tree/neutron/common/exceptions.py#n131", 
+            "date_created": "2014-07-23 16:17:49.742625+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "So, MacAddressInUse needs added to neutronclient first it appears... so we don't have to do fun string checking in nova, I guess.", 
+            "date_created": "2014-07-23 16:18:21.132982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "So, the new code is going to look like this because of the other bug fixes:\n\n            port_id = port_client.create_port(port_req_body)['port']['id']\n            LOG.debug('Successfully created port: %s', port_id,\n                      instance=instance)\n            return port_id\n        except neutron_client_exc.OverQuotaClient:\n            LOG.warning(_LW(\n                'Neutron error: Port quota exceeded in tenant: %s'),\n                port_req_body['port']['tenant_id'], instance=instance)\n            raise exception.PortLimitExceeded()\n        except neutron_client_exc.IpAddressGenerationFailureClient:\n            LOG.warning(_LW('Neutron error: No more fixed IPs in network: %s'),\n                        network_id, instance=instance)\n            raise exception.NoMoreFixedIps()\n        except neutron_client_exc.NeutronClientException:\n            with excutils.save_and_reraise_exception():\n                LOG.exception(_('Neutron error creating port on network %s'),\n                              network_id, instance=instance)\n\nWe'll want to add the new neutron_client_exc.MacAddrInUse to this.\n", 
+            "date_created": "2014-07-23 16:20:08.687613+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/109052", 
+            "date_created": "2014-07-23 17:36:56.583329+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/109052\nCommitted: https://git.openstack.org/cgit/openstack/python-neutronclient/commit/?id=5eeba0ca19a683ef546cacd280a0dd1dfdb4995e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5eeba0ca19a683ef546cacd280a0dd1dfdb4995e\nAuthor: Matt Riedemann <email address hidden>\nDate:   Wed Jul 23 09:27:46 2014 -0700\n\n    Add MacAddressInUseClient exception handling\n    \n    Nova needs a specific client exception defined for the server's\n    MacAddressInUse exception when allocating ports so it can handle the\n    exception properly, otherwise the NeutronClientException with a 409 can\n    be confused with other errors.\n    \n    Partial-Bug: #1347778\n    \n    Change-Id: Ia02dbc8fe32a43adeb229e3b640b9b33ec0dd6c7\n", 
+            "date_created": "2014-07-28 23:29:36.248289+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The new exception is in python-neutronclient 2.3.6, global-reqs update is here: https://review.openstack.org/#/c/110382/", 
+            "date_created": "2014-07-29 17:27:33.834311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/111830", 
+            "date_created": "2014-08-04 21:12:21.860153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/111830\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c13b33254a367782d1b778c8523b420d425a44e9\nSubmitter: Jenkins\nBranch:    master\n\ncommit c13b33254a367782d1b778c8523b420d425a44e9\nAuthor: Matt Riedemann <email address hidden>\nDate:   Mon Aug 4 14:10:18 2014 -0700\n\n    Handle MacAddressInUseClient exception from Neutron when creating port\n    \n    This adds exception handling for the new MacAddressInUseClient exception\n    from python-neutronclient-2.3.6 when trying to create a port with a\n    specific MAC address.\n    \n    The PortInUse exception is used so that the build will be rescheduled if\n    this error is encountered.\n    \n    Also, the servers API already handles PortInUse and translates it to an\n    HTTPConflict response.\n    \n    Closes-Bug: #1347778\n    \n    Change-Id: I929b5f9d79bcb7e60e8b3482e5ee1ca2fababed1\n", 
+            "date_created": "2014-08-05 04:14:31.275993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-09-05 09:57:10.794841+00:00"
+}

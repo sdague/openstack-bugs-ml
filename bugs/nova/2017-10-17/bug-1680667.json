@@ -1,0 +1,68 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-04-14 09:22:01.769389+00:00", 
+    "description": "Seen in a functional test here:\n\nhttp://logs.openstack.org/68/454368/1/check/gate-nova-tox-functional-py35-ubuntu-xenial/b715738/console.html#_2017-04-06_22_16_13_208386\n\n2017-04-06 22:16:13.208386 |     b'  File \"/home/jenkins/workspace/gate-nova-tox-functional-py35-ubuntu-xenial/nova/utils.py\", line 1174, in get_system_metadata_from_image'\n2017-04-06 22:16:13.208413 |     b\"    value = max(value or 0, flavor['root_gb'])\"\n2017-04-06 22:16:13.226674 |     b'TypeError: unorderable types: int() > str()'\n\nhttp://logstash.openstack.org/#dashboard/file/logstash.json?query=message%3A%5C%22value%20%3D%20max(value%20or%200%2C%20flavor%5B'root_gb'%5D)%5C%22&from=7d", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1680667", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1680667, 
+    "index": 4793, 
+    "openned": "2017-04-07 02:20:14.636264+00:00", 
+    "created": "2017-04-07 02:20:14.636264+00:00", 
+    "title": "TypeError: unorderable types: int() > str() in get_system_metadata_from_image", 
+    "comments": [
+        {
+            "content": "Seen in a functional test here:\n\nhttp://logs.openstack.org/68/454368/1/check/gate-nova-tox-functional-py35-ubuntu-xenial/b715738/console.html#_2017-04-06_22_16_13_208386\n\n2017-04-06 22:16:13.208386 |     b'  File \"/home/jenkins/workspace/gate-nova-tox-functional-py35-ubuntu-xenial/nova/utils.py\", line 1174, in get_system_metadata_from_image'\n2017-04-06 22:16:13.208413 |     b\"    value = max(value or 0, flavor['root_gb'])\"\n2017-04-06 22:16:13.226674 |     b'TypeError: unorderable types: int() > str()'\n\nhttp://logstash.openstack.org/#dashboard/file/logstash.json?query=message%3A%5C%22value%20%3D%20max(value%20or%200%2C%20flavor%5B'root_gb'%5D)%5C%22&from=7d", 
+            "date_created": "2017-04-07 02:20:14.636264+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm not really sure how this happens outside of a functional test because in the REST API we get the flavor by id first and then pass that Flavor object to the compute API create() method, so it shouldn't be a dict or have a string root_gb value.", 
+            "date_created": "2017-04-07 02:26:32.077032+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It looks like these tests are passing in a URL for the flavorRef...", 
+            "date_created": "2017-04-07 02:29:07.199208+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I guess a URL is supported...weird. So that's probably the string that's getting in there and blowing things up.", 
+            "date_created": "2017-04-07 02:31:39.754167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I don't really see how this would work because the server create API looks up the flavor by id, and if given a URL that's not going to work. Unless there is some API extension code that's translating the flavorRef from a URL to an id.", 
+            "date_created": "2017-04-07 02:34:51.952345+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This should be fine:\n\nuser@ubuntu:~/git/project-config$ python3\nPython 3.5.2 (default, Nov 17 2016, 17:05:23) \n[GCC 5.4.0 20160609] on linux\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> import six.moves.urllib.parse as urlparse\n>>> href = 'http://fake.server/1'\n>>> urlparse.urlsplit(\"%s\" % href).path.split('/')[-1]\n'1'\n>>> \n\nMaybe there is another test running at the same time which stubs out the flavor get by flavorid code to return a dict with string keys.", 
+            "date_created": "2017-04-07 02:40:57.058369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The issue might be that we're dealing with an image that has the min_disk property set and it's a string value.", 
+            "date_created": "2017-04-07 02:46:10.511149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/454442", 
+            "date_created": "2017-04-07 03:14:26.533850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/454442\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6ac1d039da07498afbf01c8ff4a8a96f408db275\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6ac1d039da07498afbf01c8ff4a8a96f408db275\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Apr 6 23:12:46 2017 -0400\n\n    Image meta min_disk should be int in fake_request_spec\n    \n    This might be blowing up some concurrently running tests\n    by raising a TypeError comparing an int to a str in py35\n    jobs. It's hard to reproduce, but we know min_disk should\n    be an int so let's just change it.\n    \n    Change-Id: I153544d2aeefbd2d12543481e3bda75ed0316798\n    Closes-Bug: #1680667\n", 
+            "date_created": "2017-04-12 08:40:08.886333+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b1 development milestone.", 
+            "date_created": "2017-04-14 09:22:01.304178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-04-12 08:40:06.175089+00:00"
+}

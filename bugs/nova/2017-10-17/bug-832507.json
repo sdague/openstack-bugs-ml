@@ -1,0 +1,326 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-15 17:34:38.067580+00:00", 
+    "description": "KVM takes everything from stdout and prints it to console.log. This does not appear to have a size limit, so if a user (mistakenly or otherwise) sends a lot of data to stdout, the console.log file can fill the entire disk of the compute node quite quickly.", 
+    "tags": [
+        "apparmor", 
+        "cts", 
+        "openstack", 
+        "ops", 
+        "rls-mgr-o-tracking", 
+        "security", 
+        "server-o-rs"
+    ], 
+    "importance": "High", 
+    "heat": 114, 
+    "link": "https://bugs.launchpad.net/nova/+bug/832507", 
+    "owner": "https://api.launchpad.net/1.0/~mzoeller", 
+    "id": 832507, 
+    "index": 460, 
+    "openned": "2011-08-24 04:27:42.350893+00:00", 
+    "created": "2011-08-24 04:27:42.350893+00:00", 
+    "title": "console.log grows indefinitely", 
+    "comments": [
+        {
+            "content": "KVM takes everything from stdout and prints it to console.log. This does not appear to have a size limit, so if a user (mistakenly or otherwise) sends a lot of data to stdout, the console.log file can fill the entire disk of the compute node quite quickly.", 
+            "date_created": "2011-08-24 04:27:42.350893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~michael-chapman-anu"
+        }, 
+        {
+            "content": "It seems to me we need to use a ring buffer for the log rather than a standard file.  I don't think the hypervisors support this natively, meaning it probably needs to be an opt-in option.", 
+            "date_created": "2011-08-29 19:30:32.900212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~davewalker"
+        }, 
+        {
+            "content": "* Using named pipes / fifo would seem to re-introduce the same issue differently.\n* Logging to unix socket would mean there needs to be a listener within nova to suck in the log to file, but means it's handled in userspace (good).\n* Using a non-standard kernel module called emlog is interesting, but would need to be opt-in due to it's non-mainline nature.", 
+            "date_created": "2011-08-29 20:09:56.410729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~davewalker"
+        }, 
+        {
+            "content": "It turns out that kvm gracefully handles it a listener on a named pipe close()s its connection and opens it again (and buffers whatever output would have been read in the mean time). This should make this a much simpler fix.", 
+            "date_created": "2011-09-05 10:49:30.156423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "The plan is:\n\n1) Create a FIFO, open it persistently and use this as the console log destination\n2) Write a handler that will write to a ring buffer on disk\n3) Periodically read data out of the FIFO and give it to the handler\n4) Also do step 3 before processing get_console_output\n5) get_console_output now needs to read through the ring buffer implementation\n6) Reopen the FIFO when Nova is restarted", 
+            "date_created": "2011-09-08 09:33:41.315422+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racb"
+        }, 
+        {
+            "content": "What I have so far: everything except point 6 in the plan above.\n\nProblems:\n\n1) libvirt creates an AppArmor profile for console.fifo and not console.fifo.{in,out}.\n\nOther things to check:\n\n1) Console logging gets resumed correctly on restart.\n2) Correct management of live migration.\n3) Correct management of rescue mode.\n\nPatch-in-progress attached, along with AppArmor details to get the dynamic profile fixed. I can't see how to attach multiple files so I hope a tarball is OK.", 
+            "date_created": "2011-09-23 15:18:14.451069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racb"
+        }, 
+        {
+            "content": "I now have an upstreamable patch that I will be uploading to Ubuntu shortly. It adds tests to the build suite and passes QRT (with the newly ..._console_pipe() test):\nDescription: fix AppArmor driver for pipe character devices\n The AppArmor security driver adds only the path specified in the domain XML\n for character devices of type 'pipe'. It should be using <path>.in and\n <path>.out. We do this by creating a new vah_add_file_chardev() and use\n it for char devices instead of vah_add_file(). Also adjust valid_path() to\n accept S_FIFO (since qemu chardevs of type 'pipe' use fifos).", 
+            "date_created": "2011-09-27 18:09:29.903071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "This bug was fixed in the package libvirt - 0.9.2-4ubuntu14\n\n---------------\nlibvirt (0.9.2-4ubuntu14) oneiric; urgency=low\n\n  * debian/patches/lp832507.patch: update virt-aa-helper to use the correct\n    paths for character devices that are pipes. This can be removed in\n    0.9.7. (LP: #832507)\n -- Jamie Strandboge <email address hidden>   Tue, 27 Sep 2011 13:18:28 -0500", 
+            "date_created": "2011-09-27 19:22:10.954839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2011.3-0ubuntu4\n\n---------------\nnova (2011.3-0ubuntu4) oneiric; urgency=low\n\n  [James Page]\n  * debian/nova-common.postinst:\n    - Exclude mounted LXC rootfs filesystems within /var/lib/nova from\n      user/group ownership changes (LP: #861260).\n    - Ensure that primary group for 'nova' user is 'nova' so that files\n      created by this user have the correct group ownership.\n\n  [Adam Gandelman]\n  * debian/nova-common.postinst: Restrict permissions of /var/log/nova\n    (LP: #862816)\n\n  [Ante Karamatic]\n  * Add /usr/sbin/ietadm to sudoers (LP: #861547)\n  * debian/control: Fix typo in Vcs-Bzr\n\n  [Chuck Short]\n  * debian/patches/backport-libvirt-console-pipe.patch:\n    Move console.log to a ringbuffer so that the console.log\n    keeps filling up. (LP: #832507)\n  * debian/patches/backport-lxc-container-console-fix.patch:\n    Make euca-get-console-output usable for LXC containers.\n    (LP: #832159)\n  * debian/patches/backport-snapshot-cleanup.patch:\n    Enforce snapshot cleanup. (LP: #861582).\n  * debian/patches/fix-lp863305-images-permission.patch:\n    Fix image access control. (LP: #863305)\n -- Chuck Short <email address hidden>   Fri, 30 Sep 2011 15:21:56 -0400", 
+            "date_created": "2011-09-30 21:38:37.656867+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Proposed to essex: https://review.openstack.org/706", 
+            "date_created": "2011-11-25 13:59:06.763346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The review has gone stale... What's the status on this ? You have the fix in Ubuntu but it was refused upstream ? Or is that a different fix that you have in Ubuntu ?", 
+            "date_created": "2012-01-19 10:43:44.348785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fixed in Ubuntu, refused upstream.", 
+            "date_created": "2012-01-19 11:09:42.325028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racb"
+        }, 
+        {
+            "content": "review was here:\n\nhttps://review.openstack.org/#change,706\n\nLast request was if the ringbuffer handling could be done by a separate helper binary so nova-compute could go down for a bit without locking up instances.", 
+            "date_created": "2012-01-19 18:28:02.932793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4932", 
+            "date_created": "2012-03-05 18:38:24.407611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5873", 
+            "date_created": "2012-03-27 19:05:00.962291+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5964", 
+            "date_created": "2012-03-29 17:11:29.455854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Marking invalid in qemu-kvm assuming there is nothing to do there.  Please switch back and rebuke me if I misunderstood.", 
+            "date_created": "2012-04-11 12:38:09.264280+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "Serge,\r\n  The reason for the qemu-kvm task is that we think qemu-kvm is really the ultimate right place to add a '-serial ringbuffer:640k,file=/path/to/file' flag.\r\n  All the other attempts are more hacky, but if upstream kvm had this , libvirt could expose it, and openstack could use it.\r\n  I do not know whether or not it would be accepted upstream.", 
+            "date_created": "2012-04-11 14:26:26.578337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "> Serge,\n>   The reason for the qemu-kvm task is that we think qemu-kvm is really the ultimate right place to add a '-serial ringbuffer:640k,file=/path/to/file' flag.\n>   All the other attempts are more hacky, but if upstream kvm had this , libvirt could expose it, and openstack could use it.\n>   I do not know whether or not it would be accepted upstream.\n\nThanks, Scott.\n\nIt seems a reasonable thing for upstream to accept.  We have workarounds for\nprecise, right?  (If not, then I should be giving this a shot right now)\nIf so I'll taking a stab at this after release.\n", 
+            "date_created": "2012-04-11 15:47:28+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "I think this would need a libringbuffer as nova would need to read the same file in get_console_output. When I first looked at this in September, I could not find such a thing, or any accepted on-disk format. The python code in my patch could be a good starting point, but there a couple of things I think needed to be added. First, a magic to identify the file; and second, some kind of mutex or locking mechanism to cover the head and tail pointers and prevent slow readers from reading past the join.", 
+            "date_created": "2012-04-11 16:00:15.484276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racb"
+        }, 
+        {
+            "content": "On Wed, 11 Apr 2012, Serge Hallyn wrote:\n\n> > Serge,\n> >   The reason for the qemu-kvm task is that we think qemu-kvm is really the ultimate right place to add a '-serial ringbuffer:640k,file=/path/to/file' flag.\n> >   All the other attempts are more hacky, but if upstream kvm had this , libvirt could expose it, and openstack could use it.\n> >   I do not know whether or not it would be accepted upstream.\n>\n> Thanks, Scott.\n>\n> It seems a reasonable thing for upstream to accept.  We have workarounds for\n> precise, right?  (If not, then I should be giving this a shot right now)\n> If so I'll taking a stab at this after release.\n\nWe don't have a reasonable work around really.\nin 11.10 we had one that seemed to work.\nin 12.04 that solution ate 100% cpu (i think) so we backed it out, i\nthink.\n\nA \"real\" solution would be nice.\n\nScott\n", 
+            "date_created": "2012-04-11 18:15:31+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "I would really like us to find a \"real\" (and upstreamable) solution for this, but I lack the KVM/libvirt expertise to make it happen.\nSubscribing Daniel Berrange to see if he has another idea.", 
+            "date_created": "2012-06-15 09:46:19.937001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "> > The reason for the qemu-kvm task is that we think qemu-kvm is really the ultimate right place to add a '-serial ringbuffer:640k,file=/path/to/file' flag.\n> > All the other attempts are more hacky, but if upstream kvm had this , libvirt could expose it, and openstack could use it.\n> > I do not know whether or not it would be accepted upstream.\n\nThis is an interesting idea & worth proposing to QEMU upstream to see what their feelings are on this - with this kind of concept, their reaction can be quite unpredictable, so I can't say more than a 50/50 chance they'll go for it. The reason I think they might not go for it, is that it implements just one out of many potential different policies. eg, a viable alternative would be to rotate log files periodically instead of using a ring buffer.\n\nIf KVM doesn't care todo this, from a libvirt POV, I have long imagined the need for a \"libvirt_vmlogd\" daemon which would run independently of libvirtd or QEMU. The QEMU guests would be configured with either  a PTY or more likely a UNIX socket (eg  '-serial unix:/var/lib/libvirt/qemu/serial0.socket').  The libvirt_vmlogd would automatically connect to the sockets as each guest was launched, and log the data according to some policy it is configured with, and handle log rotation / expiration etc.\n\nFor the sake of the Nova security issue, I think it'd be wise to implement a fix in Nova regardless, since both the upstream approaches could take some time.", 
+            "date_created": "2012-06-15 09:54:44.713510+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I don't understand what the file argument would mean.  Once you write() to a file, QEMU no longer can implement a ring buffer (it cannot discard written data).  You would need to do something like the following:\n\nqemu -chardev memchr,max-capacity=640k,id=foo -serial chardev:foo\n\nAnd then introduce QMP commands like:\n\n{ 'command': 'memchr-read', 'arguments': { 'chardev': 'str', 'size': 'int' }, 'returns': 'str' }\n\nWe already have a memory character device that we don't expose externally yet.  It's just a matter of implementing a ring queue behavior and plumbing things up.  I think it's entirely reasonable and perhaps would even be something that libvirt would prefer to use in the long term over ptys.\n\nWould also be good for unit testing.", 
+            "date_created": "2012-06-15 12:46:55.479729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anthony-codemonkey"
+        }, 
+        {
+            "content": "Anthony,\n\nThe file would be a disk-based ringbuffer. There would need to be a well-known disk-based ringbuffer format, which currently doesn't exist. Perhaps a \"libringbuffer\" to encapsulate it. The format would need head and tail indexes and then the data, together with some thought for concurrent access (eg. a mutex which would require mmapping to use).\n\nI imagine a libringbuffer which would expose methods to open a disk-based ringbuffer file, add data to the end of the buffer and read data out of it.", 
+            "date_created": "2012-06-15 13:01:19.016056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racb"
+        }, 
+        {
+            "content": "Having examined the idea of the libvirt_consoled a bit more, I think it is not actually required. It is possible to get good support for console logging, max bounded size, rollover,  & secure remote access, simply by dropping in the standard 'conserver' daemon with a suitable configuration file. There'd be no need for any new features in either libvirt or QEMU for this to work.  All nova would need todo would be update the conserver.cf file whenever a VM is started or stopped.  Reusing existing mature projects like conserver is perferrable to reinventing the wheel with our own half-baked solutions.", 
+            "date_created": "2012-06-15 13:02:51.957232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "conserver is in Debian non-free, and thus unsuitable.\n\nconserver would still needed to receive the log output from qemu via a FIFO or similar, and this introduces the problem of what qemu should do when it is blocked on writing to conserver, which is where I think my previous patch failed (and I did warn about this in advance!). And conserver only supports log rotation, rather than a ringbuffer. This would make get_console_output useless if it was requested just after the log rotated, without extra complex glue. The code to work around these issues would be more complex than just not using conserver, IMHO.\n\nIn any case, conserver is massive overkill for the need here, which is to have a simple ringbuffered console log.", 
+            "date_created": "2012-06-15 13:20:20.821851+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racb"
+        }, 
+        {
+            "content": "IMHO having fixed size rotated logs per VM with max number of files, is a better solution that a ringbuffer.  It really doesn't complicate the code that much to have to potentially just read a few lines from a second rotated logfile.\n\nWhile I agree that conserver is overkill if satisfying the requirements of the get_console_output() API contract is all that's required, I am thinking of the bigger picture, improving the console functionality available for the libvirt Nova driver in general.", 
+            "date_created": "2012-06-15 13:31:56.679550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "We recently had a console log grow to 5.5GB\n\nWhen a user tries to get the console via the API it in turn packs this into a message and sends it off to rabbitmq. \nFor us this completely killed our rabbitmq cluster. The user kept trying to get the console knocking out a rabbitmq server each time (each rabbit has 4GB of ram)\n\nTo me this seems like nova could do something here like not try and send a 5.5GB message through rabbit?\n", 
+            "date_created": "2012-11-21 04:50:13.717063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sorrison"
+        }, 
+        {
+            "content": "It certainly seems like we should only send the last N lines of the console to the user (although that might be computationally expensive to generate on such a large file). That's a separate bug though I suspect. I've filed bug 1081436 for that.", 
+            "date_created": "2012-11-21 05:29:40.945323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "A more permanent solution needs to be discussed for this. Mikal wants to have a session about it at the next Summit.", 
+            "date_created": "2013-01-08 09:01:56.418684+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Can we please move this to wish list? ", 
+            "date_created": "2013-03-18 18:13:41.165662+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Just to brainstorm:\n\nAre any of the following possible??\n\n1. Correctly have libvirtd configure and manage the console log file size. Some new XML configuration for the domain.xml format could be provided to alter the behavior? How much of the libvirt code would have to change for this?\n2. If #1 isn't possible, then I presume we could use libvirt's 'named pipe' console capability and attach our own daemon to do the same as #1 (where we would use said daemon to read on said pipe and restrict the output files size). Of course how does this handle restarts or daemon failures. Basically this daemon would be the ring buffer 'maintainer' while libvirt would just feed it info.\n3. Use a pseudo-tty to do something similar to #2?\n\n@Michael, be interested to hear what u think. Personally I think the libvirtd project is where this belongs (via #1) since it already has a daemon (libvirtd) and knowledge about which instances are active, console config, and such. I assume this hasn't been fixed in libvirt (or as a feature request). I'm not an expert on that code-base but if I had pointers perhaps that is the correct way to go about this (or its a dual-approach). ", 
+            "date_created": "2013-04-02 01:04:00.323436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "should we first fix it in nova before  kvm and libvirt have better fix on this ?", 
+            "date_created": "2013-07-29 09:55:02.166955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heut2008"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/39048", 
+            "date_created": "2013-07-29 10:33:40.986597+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/47634", 
+            "date_created": "2013-09-20 21:07:24.761126+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": " affects nova\n milestone icehouse-2\n\n", 
+            "date_created": "2013-12-03 15:23:39+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Putting back in OSSA scope so that we discuss what to do with this", 
+            "date_created": "2014-04-09 12:18:57.891545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I've just read through this thread with a view to wether we should release a related OSSN.\n\nFrom what I can tell, no fix was ever agreed on, is this likely to change?", 
+            "date_created": "2014-05-14 20:07:39.730258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "@robert-clark, the fixes to date have been band-aids.  This is currently targeted to be fixed properly in Juno with https://blueprints.launchpad.net/nova/+spec/fix-libvirt-console-logging", 
+            "date_created": "2014-05-16 11:21:07.669565+00:00", 
+            "author": "https://api.launchpad.net/1.0/~davewalker"
+        }, 
+        {
+            "content": "@Rob: if we can document relatively-efficient workarounds, yes, that would make a good OSSN. The \"fix\" has been delayed for quite some releases now, so I'd not hold my breath for juno :)", 
+            "date_created": "2014-05-19 14:52:00.755945+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "See the following blueprint, the associated code has passed the gate for Juno:\nhttps://blueprints.launchpad.net/nova/+spec/serial-ports\n\nThis only addresses KVM hosts, which support access console access via SPICE, which is the solution adopted in above blueprint.", 
+            "date_created": "2014-09-03 23:43:22.972320+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-haller"
+        }, 
+        {
+            "content": "@John Haller: Great news!\n\nDo you think the associated code could be proposed as backport for Havana and Icehouse too ?", 
+            "date_created": "2014-09-08 15:53:00.750440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I think the blueprint https://blueprints.launchpad.net/nova/+spec/serial-ports  is just a workaround for this bug,  and currently we have no way to disable console.log .\n", 
+            "date_created": "2014-10-08 07:23:44.961501+00:00", 
+            "author": "https://api.launchpad.net/1.0/~heut2008"
+        }, 
+        {
+            "content": "I think it's legitimate to consider that the flaw is in qemu or libvirt, for copying console data from guest to host without much possibilities of controlling it. My recommendation would be to fix it there so that all cases of hostile VMs are covered, rather than just the Nova use case. If we agree that is the right way to go, I would close the OSSA  as wontfix.", 
+            "date_created": "2014-12-08 15:45:06.294692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposing class C2\nhttps://wiki.openstack.org/wiki/Vulnerability_Management#Incident_report_taxonomy", 
+            "date_created": "2015-01-05 15:41:00.683782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Agreed, this is class C2 (a vulnerability in some dependency, not in OpenStack code, and so nothing we're going to fix with a patch to OpenStack security supported projects nor anything for which we should issue a security advisory). If there are no disagreements, I'll switch this to a regular public bug and mark the security advisory task \"won't fix\" on Thursday.", 
+            "date_created": "2015-01-12 17:56:17.526304+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "It's now (UTC) Thursday.", 
+            "date_created": "2015-01-15 00:08:00.856514+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Re comment #44:\n\nThere has been a ring buffer char device named ringbuf available upstream in QEMU as Anthony suggested in comment #23 like following:\n\nqemu -chardev ringbuf,size=640k,id=foo -serial chardev:foo\n\nAnd the QMP commands have already been exposed by QEMU like:\n\n{ 'command': 'ringbuf-read', 'arguments': \"arguments\": { \"device\": \"foo\", \"size\": 1000, \"format\": \"utf8\" } }\n\n\nActually it was just the implementation of this request: \n\nhttp://comments.gmane.org/gmane.comp.emulators.qemu/190843\n", 
+            "date_created": "2015-01-19 14:15:17.255248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matrixs-zero"
+        }, 
+        {
+            "content": "Long time bug, it's confirmed, not triaged, as the path forward remains unclear.", 
+            "date_created": "2015-03-30 14:51:50.362650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "this has been around a really long time now\n\nis the aproch suggested here a suitable solution.\nhttps://bugs.launchpad.net/charms/+source/nova-compute/+bug/1460197\n\nreally it is the installation tool change but prehaps we can do someting from the nova side also.\nperhaps just document how to configure log rotate rotate the logs in the install guide?", 
+            "date_created": "2016-03-02 14:42:37.954347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-k-mooney"
+        }, 
+        {
+            "content": "Patches are ready to solve this entirely in the libvirt layer one & for all. It'll be fixed with libvirt 1.3.3\n\nhttps://www.redhat.com/archives/libvir-list/2016-February/msg01449.html", 
+            "date_created": "2016-03-02 14:53:32.378692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "ah that is good to hear.\ni assume this will be fixed then  before the newton release.\n\nwhat is the time frame of libvirt 1.3.3 and qemu 2.6?", 
+            "date_created": "2016-03-09 18:48:30.834762+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-k-mooney"
+        }, 
+        {
+            "content": "Libvirt releases once a month, and QEMU is in feature freeze for its next release. So this will easily be ready before Newton", 
+            "date_created": "2016-03-10 15:32:38.706891+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Blueprint \"libvirt-virtlogd\" [1] intents to make use of the libvirt feature Daniel mentioned in comment #51.\n\n[1] https://blueprints.launchpad.net/nova/+spec/libvirt-virtlogd", 
+            "date_created": "2016-03-22 19:08:56.227788+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "CONFIRMED FOR: MITAKA", 
+            "date_created": "2016-05-23 11:30:44.848627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/407450", 
+            "date_created": "2016-12-06 10:41:43.860986+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Markus Zoeller (markus_z) (<email address hidden>) on branch: master\nReview: https://review.openstack.org/323765\nReason: Got superseded by https://review.openstack.org/#/c/407450/", 
+            "date_created": "2016-12-06 15:11:45.558190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/407450\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1f659251c7509cab045024044a6b8d642ad85aef\nSubmitter: Jenkins\nBranch:    master\n\ncommit 1f659251c7509cab045024044a6b8d642ad85aef\nAuthor: Markus Zoeller <email address hidden>\nDate:   Tue Dec 6 11:40:25 2016 +0100\n\n    libvirt: virtlogd: use virtlogd for char devices\n    \n    This change makes actual usage of the \"logd\" sub-element for char devices.\n    The two REST APIs ``os-getConsoleOutput`` and ``os-getSerialConsole`` can\n    now be satisfied at the same time. This is valid for any combination of:\n    * char device element: \"console\", \"serial\"\n    * char device type: \"tcp\", \"pty\"\n    There is also no need to create multiple different device types anymore.\n    If we have a tcp device, we don't need the pty device anymore. The logging\n    will be done in the tcp device.\n    \n    Implements blueprint libvirt-virtlogd\n    Closes-Bug: 832507\n    Change-Id: Ia412f55bd988f6e11cd78c4c5a50a86389e648b0\n", 
+            "date_created": "2016-12-06 21:38:15.684962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b2 development milestone.", 
+            "date_created": "2016-12-15 17:34:36.374626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-12-06 21:38:12.175159+00:00"
+}

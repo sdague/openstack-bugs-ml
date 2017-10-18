@@ -1,0 +1,63 @@
+{
+    "status": "Expired", 
+    "last_updated": "2015-11-21 04:19:15.388836+00:00", 
+    "description": "* Description\n\nUnder FC-SAN multipath configuration, VM instances sometimes fail to grab volumes using multipath as expected.\n\nBecause of this issue:\n - A single haredware failure in the FC Fabric can be exposed to VM instances regardless of physical multipath configuration\n - Performane can be also affected if it's configured active-active balancing policy\n\n\n* Version\n\nI found this issue while working on a stable/juno based OpenStack distribution, but I think master still has the same problem .\n\n\n* How to reproduce\n\n  Anyway, setup a Nova/Cinder deployment using Linux/KVM  with a multipath FC fabric.\n\n  As I describe below, this problem happens when:\n\n   1) multipathd is down when nova-compute tried to find multipath device\n or\n   2) It took long time for multipathd to configure multipath devices.\n      For example, a couple of minutes.\n      I think this happens by various reasons.\n      \n* Expected results\n\n   On the compute node hosting the VM in question, by using 'virsh dumpxml DOMAIN_ID', you can get source path device name(s) of virtual disk(s)  attached to the VM instance and  check if the disk are multipath devices or not.\n\n   Under FC-SAN multipath environment, they are expected to be '/dev/mapper/XXXXX'. For example:\n\n| root@overcloud-ce-novacompute0-novacompute0-ueruxqghm5vm:~# virsh dumpxml 2 | grep dev\n|    <boot dev='hd'/>\n|  <devices>\n|    <disk type='block' device='disk'>\n|      <source dev='/dev/mapper/360002ac000000000000000250000ba10'/>\n|      <target dev='vda' bus='virtio'/>\n|  </devices>\n\n\n* Actual results\n\n   Among the result of 'virsh dumpxml DOMAIN_ID', you sometimes (in case of me, often) see non-multipath device path name(s) like the following.\n\n|    <disk type='block' device='disk'>\n|      <driver name='qemu' type='raw' cache='none'/>\n|      <source dev='/dev/disk/by-path/pci-0000:05:00.0-fc-0x21210002ac00ba10-lun-0'/>\n|      <backingStore/>\n|      <target dev='vda' bus='virtio'/>\n|      <serial>d4d64f3c-bd43-4bc6-8a58-230d677c188b</serial>\n|      <alias name='virtio-disk0'/>\n|      <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>\n|    </disk>\n\n\n* Analysis\n\n  I think this comes from Nova volume connection handling code of Fiber Channel, \u2018connect_volume\u2019 method.\n\n  In case of master,\n     https://github.com/openstack/nova/blob/master/nova/virt/libvirt/volume.py#L1301\n  in case of upstream stable/juno\n      https://github.com/openstack/nova/blob/stable/juno/nova/virt/libvirt/volume.py#L1012\n\n\n 'connect_volume'  method above is in charge of connecting a LUN to host Linux side,\n and here is the problem.\n\n  After an FC storage box exported LUNs to a compute node, it takes time until:\n    (1)  SCSI devices are discovered by the host Linux of the compute node\n   and then\n    (2) 'multipathd' detects and configures multipath devices using device mapper\n\n \u2018connect_volume' retries and waits for above (1), but there is no retry logic in the above (2).\n\n  Thus, nova-compute service sometimes fails to recognize multipath FC devices and attaches single path devices to VM instances when it takes time.\n\n\n* Resolution / Discussion\n\n  I think we need to add retry logic for detecting and waiting for multipath  device files in 'connect_volume' method of LibvirtFibreChannelDriver class of nova.\n\n\n  In case of failure (timeout to detect multipath devices), there could be several options, I think.\n\n  choice 1) Make the attach_volume request fail.\n      If so, which HTTP status code?\n\n  choice 2) Go forward with single path.\n      But, from a viewpoint of SLA of a service provider, this is a degradation.\n      I'm wondering if it's better to return a HTTP status code other than  HTTP 202 or not. \n\n  Maybe it's better to allow administrators to choose the expected behavior  by nova.conf options.", 
+    "tags": [
+        "fibre-channel", 
+        "libvirt", 
+        "multipath", 
+        "volumes"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1461827", 
+    "owner": "None", 
+    "id": 1461827, 
+    "index": 6852, 
+    "openned": "2015-06-04 08:05:00.556195+00:00", 
+    "created": "2015-06-04 08:05:00.556195+00:00", 
+    "title": "Fail to attach volumes using FC multipath", 
+    "comments": [
+        {
+            "content": "* Description\n\nUnder FC-SAN multipath configuration, VM instances sometimes fail to grab volumes using multipath as expected.\n\nBecause of this issue:\n - A single haredware failure in the FC Fabric can be exposed to VM instances regardless of physical multipath configuration\n - Performane can be also affected if it's configured active-active balancing policy\n\n\n* Version\n\nI found this issue while working on a stable/juno based OpenStack distribution, but I think master still has the same problem .\n\n\n* How to reproduce\n\n  Anyway, setup a Nova/Cinder deployment using Linux/KVM  with a multipath FC fabric.\n\n  As I describe below, this problem happens when:\n\n   1) multipathd is down when nova-compute tried to find multipath device\n or\n   2) It took long time for multipathd to configure multipath devices.\n      For example, a couple of minutes.\n      I think this happens by various reasons.\n      \n* Expected results\n\n   On the compute node hosting the VM in question, by using 'virsh dumpxml DOMAIN_ID', you can get source path device name(s) of virtual disk(s)  attached to the VM instance and  check if the disk are multipath devices or not.\n\n   Under FC-SAN multipath environment, they are expected to be '/dev/mapper/XXXXX'. For example:\n\n| root@overcloud-ce-novacompute0-novacompute0-ueruxqghm5vm:~# virsh dumpxml 2 | grep dev\n|    <boot dev='hd'/>\n|  <devices>\n|    <disk type='block' device='disk'>\n|      <source dev='/dev/mapper/360002ac000000000000000250000ba10'/>\n|      <target dev='vda' bus='virtio'/>\n|  </devices>\n\n\n* Actual results\n\n   Among the result of 'virsh dumpxml DOMAIN_ID', you sometimes (in case of me, often) see non-multipath device path name(s) like the following.\n\n|    <disk type='block' device='disk'>\n|      <driver name='qemu' type='raw' cache='none'/>\n|      <source dev='/dev/disk/by-path/pci-0000:05:00.0-fc-0x21210002ac00ba10-lun-0'/>\n|      <backingStore/>\n|      <target dev='vda' bus='virtio'/>\n|      <serial>d4d64f3c-bd43-4bc6-8a58-230d677c188b</serial>\n|      <alias name='virtio-disk0'/>\n|      <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>\n|    </disk>\n\n\n* Analysis\n\n  I think this comes from Nova volume connection handling code of Fiber Channel, \u2018connect_volume\u2019 method.\n\n  In case of master,\n     https://github.com/openstack/nova/blob/master/nova/virt/libvirt/volume.py#L1301\n  in case of upstream stable/juno\n      https://github.com/openstack/nova/blob/stable/juno/nova/virt/libvirt/volume.py#L1012\n\n\n 'connect_volume'  method above is in charge of connecting a LUN to host Linux side,\n and here is the problem.\n\n  After an FC storage box exported LUNs to a compute node, it takes time until:\n    (1)  SCSI devices are discovered by the host Linux of the compute node\n   and then\n    (2) 'multipathd' detects and configures multipath devices using device mapper\n\n \u2018connect_volume' retries and waits for above (1), but there is no retry logic in the above (2).\n\n  Thus, nova-compute service sometimes fails to recognize multipath FC devices and attaches single path devices to VM instances when it takes time.\n\n\n* Resolution / Discussion\n\n  I think we need to add retry logic for detecting and waiting for multipath  device files in 'connect_volume' method of LibvirtFibreChannelDriver class of nova.\n\n\n  In case of failure (timeout to detect multipath devices), there could be several options, I think.\n\n  choice 1) Make the attach_volume request fail.\n      If so, which HTTP status code?\n\n  choice 2) Go forward with single path.\n      But, from a viewpoint of SLA of a service provider, this is a degradation.\n      I'm wondering if it's better to return a HTTP status code other than  HTTP 202 or not. \n\n  Maybe it's better to allow administrators to choose the expected behavior  by nova.conf options.", 
+            "date_created": "2015-06-04 08:05:00.556195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itohm"
+        }, 
+        {
+            "content": "It seems a problem. But does it happens in practice? \n\nSince I have two cluster use FC-SAN, and I don't see the this condition happens.\n\nBut still, I think adding retry logic is good!", 
+            "date_created": "2015-06-06 11:19:16.216127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~luogangyi"
+        }, 
+        {
+            "content": "Indeed happens.\n\nBut, in case of me, I had a bit complex FC fabric when I detected this issue.\nThere were 10 servers with a 4 ports FC-HBA, 2 FC swithes and a 2 controllers FC-RAID box.\nUsing the facility, our team did zoning so that each server can see 4 FC paths to a LUN. \nMy guess is that it took unexceptionally longer time for multipathd than simple (at most 2 paths) configuration case.\n\nI began to write a fix to this issue and get back here when I got a test facility (soon).\n", 
+            "date_created": "2015-06-18 07:35:30.617303+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itohm"
+        }, 
+        {
+            "content": "Is this still a problem in the latest liberty code?  I have a feeling that hemna (Walter Boring) pushed some fixes to the os-brick library for FC multipath attach in liberty so this should be re-tested.", 
+            "date_created": "2015-09-18 21:52:11.912595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Maybe this is related?\n\nhttps://github.com/openstack/os-brick/commit/3ea86f7d605d7109f4e13c1566ba1a14dc856443", 
+            "date_created": "2015-09-18 21:53:32.569851+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This should be re-tested with latest liberty code and latest os-brick library version (at least 0.4.0).", 
+            "date_created": "2015-09-18 21:54:19.591601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "As Matt mentioned, the way FC detects multipath devices has completely changed in Liberty with os-brick.\n\nPlease retest this.  We go through 3 separate attempts for different paths looking for the multipath device showing up.\n\n\nThe patch talks about the detection mechanism here:\n\nhttps://github.com/openstack/os-brick/commit/3ea86f7d605d7109f4e13c1566ba1a14dc856443", 
+            "date_created": "2015-09-21 15:26:33.702875+00:00", 
+            "author": "https://api.launchpad.net/1.0/~walter-boring"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2015-11-21 04:19:11.518882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2015-11-21 04:19:12.195762+00:00"
+}

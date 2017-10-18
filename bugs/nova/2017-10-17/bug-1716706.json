@@ -1,0 +1,49 @@
+{
+    "status": "Triaged", 
+    "last_updated": "2017-09-13 19:07:57.424524+00:00", 
+    "description": "In https://blueprints.launchpad.net/nova/+spec/cells-count-resources-to-check-quota-in-api we\nchanged to use new quota check workflows which counts all consumed resources across cells and\ncomparing with the limits.\n\nBut the resources in build_requests was not counted and this might\nlead to creating 20 instances in concurrent requests, i'll probably get 10 in ERROR state rather\nthan 10 plus 10 failed requests with 409s. Which might be a big change to users.\n\nWe should also count instance records from build requests as consumed resources in order to\navoid allowing creation requests pass API layer checks and stopped in conductor layer check,\nwhich lead instances to ERROR state.", 
+    "tags": [
+        "quotas"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1716706", 
+    "owner": "https://api.launchpad.net/1.0/~zhengzhenyu", 
+    "id": 1716706, 
+    "index": 4, 
+    "openned": "2017-09-12 15:58:00.068742+00:00", 
+    "created": "2017-09-12 15:58:00.068742+00:00", 
+    "title": "Should count instances in build requests when check quotas", 
+    "comments": [
+        {
+            "content": "In https://blueprints.launchpad.net/nova/+spec/cells-count-resources-to-check-quota-in-api we\nchanged to use new quota check workflows which counts all consumed resources across cells and\ncomparing with the limits.\n\nBut the resources in build_requests was not counted and this might\nlead to creating 20 instances in concurrent requests, i'll probably get 10 in ERROR state rather\nthan 10 plus 10 failed requests with 409s. Which might be a big change to users.\n\nWe should also count instance records from build requests as consumed resources in order to\navoid allowing creation requests pass API layer checks and stopped in conductor layer check,\nwhich lead instances to ERROR state.", 
+            "date_created": "2017-09-12 15:58:00.068742+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhengzhenyu"
+        }, 
+        {
+            "content": "We should be able to easily count build_requests in the API DB and include those in the count for instances, but the API also checks cores/ram when counting instances and we don't have that information in the build_request (well, we do, but it's in the serialized build_requests.instance field, which can't be queried via SQL).\n\nAnd we can't use Placement to count VCPU/MEMORY_MB during the API check since the allocations aren't created in Placement yet (those get created when the scheduler picks a host).\n\nSo we might need to add vcpus/memory_mb fields on the build_requests table to mimic the instances table for counting those resources before the API casts to conductor.", 
+            "date_created": "2017-09-12 16:08:19.262688+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The other thing we have to handle here is if we count build_requests, we have to avoid double counting where the build_request and instance exist at the same time, which we know is the case when we recheck quota in conductor (after the instances are created in the cells but before the build requests are deleted). So only the API service can count build_requests *and* instances in cells, but conductor can only count instances in cells.", 
+            "date_created": "2017-09-12 16:20:07.123106+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "melwitt made a good point that we'd still have to deal with avoiding a duplicate count of build_requests and instances regardless of the call from the API or conductor:\n\n(10:21:33 AM) melwitt: mriedem: no, in the API where it is now. some other instances might be at the conductor stage and have both a build_request and an instance, right?\n(10:21:46 AM) mriedem: oh yeah, good point\n(10:21:51 AM) mriedem: separate concurrent request\n(10:21:55 AM) mriedem: getting double counted\n(10:21:55 AM) melwitt: yeah\n\nWhat we could do is count the build_requests first and store a list of UUIDs, and when we count the instances, we exclude any that have a UUID in that list.", 
+            "date_created": "2017-09-12 16:22:52.041782+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is a script that can be used to recreate this. Pass in the number of instances you want, I used 30 and had one instance go over the quota limit and fail the recheck in conductor.\n\n#!/bin/bash\n\nset -x\n\nNUM=$1\nIMAGE=$2\n\nfor i in `seq 1 $NUM`; do\n   nova boot --flavor 1 --image $IMAGE test-over-quota-$i &\ndone\n\nAs a result of this, I found that the instance didn't actually go into ERROR state because of another bug:\n\nSep 13 17:58:26 devstack-queens nova-conductor[3129]: WARNING nova.scheduler.utils [None req-90a115b2-5838-4be2-afe2-a3b755015e19 demo demo] [instance: 888925b0-164a-4d4a-bb6c-c0426f904e95] Setting instance to ERROR state.: TooManyInstances: Quota exceeded for instances: Requested 1, but already used 10 of 10 instances\nSep 13 17:58:26 devstack-queens nova-conductor[3129]: ERROR root [None req-90a115b2-5838-4be2-afe2-a3b755015e19 demo demo] Original exception being dropped: ['Traceback (most recent call last):\\n', '  File \"/opt/stack/nova/nova/conductor/manager.py\", line 1003, in schedule_and_build_instances\\n    orig_num_req=len(build_requests))\\n', '  File \"/opt/stack/nova/nova/compute/utils.py\", line 764, in check_num_instances_quota\\n    allowed=total_alloweds)\\n', 'TooManyInstances: Quota exceeded for instances: Requested 1, but already used 10 of 10 instances\\n']: InstanceNotFound: Instance 888925b0-164a-4d4a-bb6c-c0426f904e95 could not be found.\nSep 13 17:58:26 devstack-queens nova-conductor[3129]: ERROR oslo_messaging.rpc.server [None req-90a115b2-5838-4be2-afe2-a3b755015e19 demo demo] Exception during message handling: InstanceNotFound: Instance 888925b0-164a-4d4a-bb6c-c0426f904e95 could not be found.\nSep 13 17:58:26 devstack-queens nova-conductor[3129]: ERROR oslo_messaging.rpc.server InstanceNotFound: Instance 888925b0-164a-4d4a-bb6c-c0426f904e95 could not be found.\n\n\nBecause we don't target the cell when updating the instance.\n\nhttps://github.com/openstack/nova/blob/cfdec41eeec5fab220702efefdaafc45559aeb14/nova/conductor/manager.py#L1168", 
+            "date_created": "2017-09-13 18:28:09.613847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Bug 1717000 is the issue putting the instance into ERROR state mentioned in comment #4.", 
+            "date_created": "2017-09-13 19:07:56.095814+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

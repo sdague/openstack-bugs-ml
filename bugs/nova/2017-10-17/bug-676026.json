@@ -1,0 +1,85 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2011-06-27 16:27:30.019725+00:00", 
+    "description": "When log rotation is setup for /var/log/nova the Nova services will not log to the new file after log rotation occurs. \n\nFor instance, you have Nova-Compute running and it is logging to /var/log/nova/nova-compute.log, log rotation occurs and moves the file to nova-compute.log.1 and creates a new file named nova-compute.log. Nova-Compute continues to log in the nova-compute.log.1 file (I have seen this as deep as 4 rotations, so nova-compute.log.4) leaving the nova-compute.log file empty. Stopping and starting the service makes it start logging to the proper file again.\n\nThis occurs with all of the Nova services.", 
+    "tags": [
+        "ubuntu"
+    ], 
+    "importance": "Medium", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/676026", 
+    "owner": "https://api.launchpad.net/1.0/~soren", 
+    "id": 676026, 
+    "index": 2213, 
+    "openned": "2010-11-16 13:46:02.006847+00:00", 
+    "created": "2010-11-16 13:46:02.006847+00:00", 
+    "title": "Nova services do not log to new log file after log rotation", 
+    "comments": [
+        {
+            "content": "When log rotation is setup for /var/log/nova the Nova services will not log to the new file after log rotation occurs. \n\nFor instance, you have Nova-Compute running and it is logging to /var/log/nova/nova-compute.log, log rotation occurs and moves the file to nova-compute.log.1 and creates a new file named nova-compute.log. Nova-Compute continues to log in the nova-compute.log.1 file (I have seen this as deep as 4 rotations, so nova-compute.log.4) leaving the nova-compute.log file empty. Stopping and starting the service makes it start logging to the proper file again.\n\nThis occurs with all of the Nova services.", 
+            "date_created": "2010-11-16 13:46:02.006847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jordanrinke"
+        }, 
+        {
+            "content": "Can you paste your logrotate config somewhere public?", 
+            "date_created": "2010-11-16 16:02:17.570843+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtoddx"
+        }, 
+        {
+            "content": "It is the default log rotation config in Ubuntu 10.x with a Nova specific addition (I assume added by the PPA since I did not add it)\r\n\r\nhttp://paste.openstack.org/show/124/ \r\n\r\n", 
+            "date_created": "2010-11-16 16:38:10.650995+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jordanrinke"
+        }, 
+        {
+            "content": "I actually just finally looked into this issue myself because another symptom of this bug is that you end up with a bazillion log files after a few weeks.  Here's my understanding of the issue:\n\n- Nova's logging does not support log rotation, because it currently opens the logfile at launch and holds that one filehandle for the duration of the daemon's existence.  When logrotate runs, the file descriptor changes but nova never finds out.  One way to deal with this would be to allow nova daemons to reopen the logfile file handle when it receives a SIGHUP.  See nova/server.py for the logging setup.\n\n- The logrotate script is included with Soren's ppa-lucid branch and is not part of trunk.  I assume it was an afterthought, because the configuration simply tells logrotate to rotate *every* file in the /var/log/nova directory.  So even the rotated logs get rotated.\n\n- There is one possible workaround: If you don't include the --logfile flag but set --use_syslog=1 then the nova daemon will log to syslog, so logrotate should work OK.  \n\n", 
+            "date_created": "2010-11-16 18:34:00.817914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rlucio"
+        }, 
+        {
+            "content": "I'm reassigning this to Soren for review of the logrotate issues.  It may be as simple as using the \"copytruncate\" configuration to get it working.\n\nIf we want support for HUP to re-open log files, make a blueprint and assign it to me and I'll include it with the logging changes I need to push to trunk (from ~anso/nova/deploy).", 
+            "date_created": "2010-11-16 18:56:49.435290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtoddx"
+        }, 
+        {
+            "content": "Todd: WRT supporting HUP I don't have any particular preference.  If copytruncate works that is fine for me.  In fact I'll test that out right now.\n\nThis is what I will be testing in /etc/logrotate.d/nova-common:\n\n/var/log/nova/*.log { \ndaily\nmissingok\ncopytruncate\npostrotate\n} ", 
+            "date_created": "2010-11-16 19:14:15.047018+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rlucio"
+        }, 
+        {
+            "content": "I am currently testing on Austin release, and finally settled on this:\n\n/var/log/nova/*.log {\n  daily\n  missingok\n  rotate 7\n  compress\n  delaycompress\n  copytruncate\n}\n\nThe rotation works great now.  However, the scheduler and the objectstore logs both log a bunch of junk the first time they write to their logfiles each day.  \"^@^@^@^@^@^@^@^@^@\" repeated many times.  Not sure what's up with that.  Any ideas?", 
+            "date_created": "2010-11-18 20:04:05.291695+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rlucio"
+        }, 
+        {
+            "content": "I've never seen it before, and google isn't particularly helpful with such strange symbols.  You may want to do a postrotate that restarts the service?", 
+            "date_created": "2010-11-18 20:20:16.493381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xtoddx"
+        }, 
+        {
+            "content": "Those symbols are a common symptom of null bytes ('\\0' in C syntax) being in the file.  ^@ means Ctrl-@, which means \\0.\r\n\r\nYou're either writing nulls to the log, or writing at an offset into a blank file (which will give nulls as a side-effect).", 
+            "date_created": "2010-11-18 20:48:47.843380+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ewanmellor"
+        }, 
+        {
+            "content": "This is really a packaging problem, mostly.\n\nWe need to fix up the logrotate config files in the Ubuntu packages.\n\na) It's configured to rotate /var/log/nova/*, rather than /var/log/nova/*.log\nb) We should make sure the daemons start using the new logfile. Some of them may need SIGHUP'ing, some may need nothing at all, some may need patching.\nb) We should probably have a logrotate config file for each nova package, since they need to be restarted individually.\n", 
+            "date_created": "2010-11-22 08:00:14.356359+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "Sorry it took so long.\n\nThis somehow fell off my radar.", 
+            "date_created": "2011-02-14 22:29:37.117616+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "Switched to RotatingFileHandler as of rev92 on the packaging branch.", 
+            "date_created": "2011-02-18 09:39:35.225259+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This is fixed in Ubuntu as well.", 
+            "date_created": "2011-06-27 16:27:27.408485+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }
+    ], 
+    "closed": "2011-04-15 08:36:00.280127+00:00"
+}

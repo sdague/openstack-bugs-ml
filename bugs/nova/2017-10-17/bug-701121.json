@@ -1,0 +1,57 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2011-01-10 21:25:42.380661+00:00", 
+    "description": "In nova/db/sqlalchemy/api.py, the instance_get_by_id() method checks for admin context. If not an admin, it limits queries to non-deleted records. That's correct behavior.\n\nIf it is called with admin rights, it should allow you to see both deleted and non-deleted records if 'can_read_deleted(context)' returns True. However, the code as written filters the results on 'deleted = can_read_deleted(context)'. This means that if you are allowed to access deleted records, all queries will add 'deleted=True' to the filter, which means that you cannot access non-deleted records.", 
+    "tags": [
+        "instances", 
+        "nova", 
+        "sqlalchemy"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/701121", 
+    "owner": "https://api.launchpad.net/1.0/~ed-leafe", 
+    "id": 701121, 
+    "index": 3257, 
+    "openned": "2011-01-10 17:43:14.526786+00:00", 
+    "created": "2011-01-10 17:43:14.526786+00:00", 
+    "title": "Getting instances by ID when admin only returns deleted instances", 
+    "comments": [
+        {
+            "content": "In nova/db/sqlalchemy/api.py, the instance_get_by_id() method checks for admin context. If not an admin, it limits queries to non-deleted records. That's correct behavior.\n\nIf it is called with admin rights, it should allow you to see both deleted and non-deleted records if 'can_read_deleted(context)' returns True. However, the code as written filters the results on 'deleted = can_read_deleted(context)'. This means that if you are allowed to access deleted records, all queries will add 'deleted=True' to the filter, which means that you cannot access non-deleted records.", 
+            "date_created": "2011-01-10 17:43:14.526786+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ed-leafe"
+        }, 
+        {
+            "content": "Upon further investigation, every method in this script that accesses can_read_deleted() does it incorrectly. I will fix all of them, not just the instance_get_by_id().", 
+            "date_created": "2011-01-10 18:17:14.415001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ed-leafe"
+        }, 
+        {
+            "content": "I think perhaps there is a misunderstanding of the way this works.  The current behavior is expected.  You must explicitly set the context to read_deleted=True to access deleted records and you only get deleted records if you do so.  There currently isn't a way to access deleted records and non-deleted records in the same query.  It may be better for read_deleted to allow access to all records, but the current behavior was intentional.", 
+            "date_created": "2011-01-10 18:49:02.729873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "On Jan 10, 2011, at 1:49 PM, Vish Ishaya wrote:\n\n> I think perhaps there is a misunderstanding of the way this works.  The\n> current behavior is expected.  You must explicitly set the context to\n> read_deleted=True to access deleted records and you only get deleted\n> records if you do so.  There currently isn't a way to access deleted\n> records and non-deleted records in the same query.  It may be better for\n> read_deleted to allow access to all records, but the current behavior\n> was intentional.\n\n\n\tI'm creating the context using context.get_admin_context(). The default for read_deleted is True. Is that expected behavior?\n\n\n-- Ed Leafe\n\n\n\n", 
+            "date_created": "2011-01-10 19:24:42+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ed-leafe"
+        }, 
+        {
+            "content": "Correction: the default is actually False. I was confused because it was not returning the Instance even though the ID is present in the instances table. Looking in MySQL, I see:\n\n\nmysql> select id, admin_pass, deleted from instances;\n+----+------------+---------+\n| id | admin_pass | deleted |\n+----+------------+---------+\n|  1 | NULL       |       0 |\n+----+------------+---------+\n1 row in set (0.00 sec)\n\nBut if I set a break in the code, and execute the call directly, I get the following:\n\nIn [1]: result = session.query(models.Instance).filter_by(id=1).filter_by(deleted=False).first()\n\nIn [2]: result\n\nIn [3]: result = session.query(models.Instance).filter_by(id=1).filter_by(deleted=True).first()\n\nIn [4]: result\nOut[4]: <nova.db.sqlalchemy.models.Instance object at 0x4195a90>\n\nIn [5]: result.id, result.deleted\nOut[5]: (1, True)\n\nSo it seems that the original bug I reported is not valid. However, there is a different problem: why is sqlalchemy returning deleted=True for this record?\n", 
+            "date_created": "2011-01-10 20:05:14.453029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ed-leafe"
+        }, 
+        {
+            "content": "that does seem very odd.  Are you sure you aren't hitting two different databases?  There was a recently fixed bug that was causing the workers to access a local db instead of the normal one.\n\nVish\n\nOn Jan 10, 2011, at 12:05 PM, Ed Leafe wrote:\n\n> Correction: the default is actually False. I was confused because it was\n> not returning the Instance even though the ID is present in the\n> instances table. Looking in MySQL, I see:\n> \n> \n> mysql> select id, admin_pass, deleted from instances;\n> +----+------------+---------+\n> | id | admin_pass | deleted |\n> +----+------------+---------+\n> |  1 | NULL       |       0 |\n> +----+------------+---------+\n> 1 row in set (0.00 sec)\n> \n> But if I set a break in the code, and execute the call directly, I get\n> the following:\n> \n> In [1]: result =\n> session.query(models.Instance).filter_by(id=1).filter_by(deleted=False).first()\n> \n> In [2]: result\n> \n> In [3]: result =\n> session.query(models.Instance).filter_by(id=1).filter_by(deleted=True).first()\n> \n> In [4]: result\n> Out[4]: <nova.db.sqlalchemy.models.Instance object at 0x4195a90>\n> \n> In [5]: result.id, result.deleted\n> Out[5]: (1, True)\n> \n> So it seems that the original bug I reported is not valid. However,\n> there is a different problem: why is sqlalchemy returning deleted=True\n> for this record?\n> \n> \n> ** Changed in: nova\n>       Status: New => Invalid\n> \n> -- \n> You received this bug notification because you are a member of Nova Bug\n> Team, which is subscribed to OpenStack Compute (nova).\n> https://bugs.launchpad.net/bugs/701121\n> \n> Title:\n>  Getting instances by ID when admin only returns deleted instances\n> \n> Status in OpenStack Compute (Nova):\n>  Invalid\n> \n> Bug description:\n>  In nova/db/sqlalchemy/api.py, the instance_get_by_id() method checks for admin context. If not an admin, it limits queries to non-deleted records. That's correct behavior.\n> \n> If it is called with admin rights, it should allow you to see both deleted and non-deleted records if 'can_read_deleted(context)' returns True. However, the code as written filters the results on 'deleted = can_read_deleted(context)'. This means that if you are allowed to access deleted records, all queries will add 'deleted=True' to the filter, which means that you cannot access non-deleted records.\n> \n> \n\n", 
+            "date_created": "2011-01-10 20:55:48+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "vish - you nailed it!\n\nI have my nova.conf set for sql_connection=mysql://root:nova@127.0.0.1/nova, but it was somehow getting set to: sqlite:////home/ed/openstack/xs-password-reset/nova/..//nova.sqlite. In that database, those two records are indeed deleted.\n\nThanks for your help!", 
+            "date_created": "2011-01-10 21:25:41.201292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ed-leafe"
+        }
+    ], 
+    "closed": "2011-01-10 20:07:03.729585+00:00"
+}

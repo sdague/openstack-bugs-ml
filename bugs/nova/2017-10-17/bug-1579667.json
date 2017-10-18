@@ -1,0 +1,63 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-09-24 04:17:46.355291+00:00", 
+    "description": "When deleting an shelved_offloaded STATE VM instance with volume attached, nova passes a connector dictionary:\n\n\u00a0\u00a0connector = {'ip': '127.0.0.1', 'initiator': 'iqn.fake'}\n\nto cinder for terminate connnection, this causes KeyError in cinder driver\ncode :\nhttps://github.com/openstack/nova/blame/master/nova/compute/api.py#L1803\n\n\u00a0\u00a0\u00a0\u00a0def _local_cleanup_bdm_volumes(self, bdms, instance, context):\n1804\t        \"\"\"The method deletes the bdm records and, if a bdm is a volume, call\n1805\t        the terminate connection and the detach volume via the Volume API.\n1806\t        Note that at this point we do not have the information about the\n1807\t        correct connector so we pass a fake one.\n1808\t        \"\"\"\n1809\t        elevated = context.elevated()\n1810\t        for bdm in bdms:\n1811\t            if bdm.is_volume:\n1812\t                # NOTE(vish): We don't have access to correct volume\n1813\t                #             connector info, so just pass a fake\n1814\t                #             connector. This can be improved when we\n1815\t                #             expose get_volume_connector to rpc.\n1816\t                connector = {'ip': '127.0.0.1', 'initiator': 'iqn.fake'}\n1817\t                try:\n1818\t                    self.volume_api.terminate_connection(context,\n1819\t                                                         bdm.volume_id,\n1820\t                                                         connector)\n1821\t                    self.volume_api.detach(elevated, bdm.volume_id,\n1822\t                                           instance.uuid)\n1823\t                    if bdm.delete_on_termination:\n1824\t                        self.volume_api.delete(context, bdm.volume_id)\n1825\t                except Exception as exc:\n1826\t                    err_str = _LW(\"Ignoring volume cleanup failure due to %s\")\n1827\t                    LOG.warn(err_str % exc, instance=instance)\n1828\t            bdm.destroy()\n1829\nhttps://github.com/openstack/nova/blame/master/nova/compute/api.py#L1828\n\naccording to my debug, the connector info for terminate_connection is already there( in bdm object):\n\nso Nova should build correct connection info for terminate_connection.\n\n======Steps to reproduce\n\n1. create a server: nova boot ----\n2. shelve the server: nova shelve <server_id>\n3. delete the server: nova delete <server_id>\n\n\n\nThanks\nPeter", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1579667", 
+    "owner": "None", 
+    "id": 1579667, 
+    "index": 7467, 
+    "openned": "2016-05-09 08:49:51.782061+00:00", 
+    "created": "2016-05-09 08:49:51.782061+00:00", 
+    "title": "delete an shelved_offloaded server cause failure in cinder", 
+    "comments": [
+        {
+            "content": "When deleting an shelved_offloaded STATE VM instance with volume attached, nova passes a connector dictionary:\n\n  connector = {'ip': '127.0.0.1', 'initiator': 'iqn.fake'}\n\nto cinder for terminate connnection, this causes KeyError in cinder driver\ncode :\nhttps://github.com/openstack/nova/blame/master/nova/compute/api.py#L1803\n\n    def _local_cleanup_bdm_volumes(self, bdms, instance, context):\n1804\t        \"\"\"The method deletes the bdm records and, if a bdm is a volume, call\n1805\t        the terminate connection and the detach volume via the Volume API.\n1806\t        Note that at this point we do not have the information about the\n1807\t        correct connector so we pass a fake one.\n1808\t        \"\"\"\n1809\t        elevated = context.elevated()\n1810\t        for bdm in bdms:\n1811\t            if bdm.is_volume:\n1812\t                # NOTE(vish): We don't have access to correct volume\n1813\t                #             connector info, so just pass a fake\n1814\t                #             connector. This can be improved when we\n1815\t                #             expose get_volume_connector to rpc.\n1816\t                connector = {'ip': '127.0.0.1', 'initiator': 'iqn.fake'}\n1817\t                try:\n1818\t                    self.volume_api.terminate_connection(context,\n1819\t                                                         bdm.volume_id,\n1820\t                                                         connector)\n1821\t                    self.volume_api.detach(elevated, bdm.volume_id,\n1822\t                                           instance.uuid)\n1823\t                    if bdm.delete_on_termination:\n1824\t                        self.volume_api.delete(context, bdm.volume_id)\n1825\t                except Exception as exc:\n1826\t                    err_str = _LW(\"Ignoring volume cleanup failure due to %s\")\n1827\t                    LOG.warn(err_str % exc, instance=instance)\n1828\t            bdm.destroy()\n1829\t\nhttps://github.com/openstack/nova/blame/master/nova/compute/api.py#L1828\n\naccording to my debug, the connector info for terminate_connection is already there( in bdm object):\n\nso Nova should build correct connection info for terminate_connection.\n\nThanks\nPeter", 
+            "date_created": "2016-05-09 08:49:51.782061+00:00", 
+            "author": "https://api.launchpad.net/1.0/~peter.wang"
+        }, 
+        {
+            "content": "This should affect all cinder drivers", 
+            "date_created": "2016-05-09 08:50:50.739534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~peter.wang"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/314083", 
+            "date_created": "2016-05-09 12:50:44.197544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "We found this issue via VNX cinder CI, see log here:\nhttp://publiclogs.emc.com/vnx_ostack/EMC_VNX_iSCSI/276/logs/screen-c-vol.txt.gz\n\ngrep by req-id \"req-177fbb90-ebdd-411f-8775-d11f4abe005d\"\n\n", 
+            "date_created": "2016-06-02 07:09:07.314507+00:00", 
+            "author": "https://api.launchpad.net/1.0/~peter.wang"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-06-02 07:10:12.255752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~peter.wang"
+        }, 
+        {
+            "content": "Change abandoned by Peter Wang (<email address hidden>) on branch: master\nReview: https://review.openstack.org/314083\nReason: Already fixed in nova now", 
+            "date_created": "2016-08-08 10:21:08.417588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:42:10.103675+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Is this still an actively worked issue? If so please put into the Confirmed state.", 
+            "date_created": "2017-07-25 14:26:25.407350+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-09-24 04:17:43.838218+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2017-09-24 04:17:44.240658+00:00"
+}

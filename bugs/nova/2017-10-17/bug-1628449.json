@@ -1,0 +1,61 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-11-17 13:13:04.380043+00:00", 
+    "description": "When block live migrate an instance with multiple ephemeral an exception FlavorDiskSmallerThanImage is raised.\n\n\nSteps to Reproduce:\n1) Created flavor with two ephemeral support.\n\n~~~\n[root@allinone9 ~(keystone_admin)]# nova flavor-create 2ephemeral-disks 6 512 1 1 --ephemeral 2\n~~~\n\n2) Spawned instance using created flavor.\n\n~~~\n[root@allinone9 ~(keystone_admin)]# nova boot --flavor 2ephemeral-disks --image cirros --ephemeral size=1 --ephemeral size=1 internal1\n~~~\n\n3) Instance spawned successfully.\n\n~~~\n[root@allinone9 ~(keystone_admin)]# nova list --field name,status,host | grep -i internal1\n| 08619d2d-e3a2-4f67-a959-33cfbc08d153 | internal1 | ACTIVE | allinone9 |\n~~~\n\n4) Verifying that two extra ephemeral disks are connected with instance. \n\n~~~\n[root@allinone9 ~(keystone_admin)]# virsh domblklist 4\nTarget     Source\n------------------------------------------------\nvda        /var/lib/nova/instances/08619d2d-e3a2-4f67-a959-33cfbc08d153/disk\nvdb        /var/lib/nova/instances/08619d2d-e3a2-4f67-a959-33cfbc08d153/disk.eph0\nvdc        /var/lib/nova/instances/08619d2d-e3a2-4f67-a959-33cfbc08d153/disk.eph1\n~~~\n\n5) Tried to perform the block migration but it end with same error which you have seen.\n\n[root@allinone9 ~(keystone_admin)]# nova live-migration 08619d2d-e3a2-4f67-a959-33cfbc08d153 compute1-9 --block-migrate\n\n~~~\nFrom : /var/log/nova/nova-compute.log\n\n2016-09-26 08:53:12.033 3958 ERROR nova.compute.manager [req-f24d49f7-4d8e-4683-bcc0-952254764fca b09d7a1af46d42398c79a1dc0da02954 ca23990ed6c846b0b8d588fb5e304aeb - - -] [instance: 08619d2d-e3a2-4f67-a959-33cfbc08d153] Pre live migration failed at compute1-9\n\n2016-09-26 08:53:12.033 3958 ERROR nova.compute.manager [instance: 08619d2d-e3a2-4f67-a959-33cfbc08d153] \n2016-09-26 08:53:12.033 3958 ERROR nova.compute.manager [instance: 08619d2d-e3a2-4f67-a959-33cfbc08d153] FlavorDiskSmallerThanImage: Flavor's disk is too small for requested image. Flavor disk is 1073741824 bytes, image is 2147483648 bytes.\n~~~\n\nThat error is because two mistake:\n\n... LINE ~ 6588 in libvirt.py (method libvirt._create_images_and_backing)\n\n\t\timage = self.image_backend.image(instance,\n\t                                         instance_disk,\n\t                                         CONF.libvirt.images_type)\n                if cache_name.startswith('ephemeral'):\n                    image.cache(fetch_func=self._create_ephemeral,\n\t\t\t\tfs_label=cache_name,\n\t\t\t\tos_type=instance.os_type,\n\t                        filename=cache_name,\n                                size=info['virt_disk_size'],                  (a)\n                                ephemeral_size=instance.flavor.ephemeral_gb)  (b) \n\t        elif cache_name.startswith('swap'):\n\t            inst_type = instance.get_flavor()\n                    swap_mb = inst_type.swap\n\n...\n\n\n(a) That argument 'size' does not exist in _create_ephemeral\n(b) We should report here the actual size of the ephemeral disk (which is what has been asked by user during boot insteado of the total size allowed by the flavor for ephemeral disks)", 
+    "tags": [
+        "libvirt", 
+        "live-migration"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1628449", 
+    "owner": "https://api.launchpad.net/1.0/~sahid-ferdjaoui", 
+    "id": 1628449, 
+    "index": 1994, 
+    "openned": "2016-09-28 10:17:21.873900+00:00", 
+    "created": "2016-09-28 10:17:21.873900+00:00", 
+    "title": "Exception when live block migration multiple ephemerals", 
+    "comments": [
+        {
+            "content": "When block live migrate an instance with multiple ephemeral an exception FlavorDiskSmallerThanImage is raised.\n\n\nSteps to Reproduce:\n1) Created flavor with two ephemeral support.\n\n~~~\n[root@allinone9 ~(keystone_admin)]# nova flavor-create 2ephemeral-disks 6 512 1 1 --ephemeral 2\n~~~\n\n2) Spawned instance using created flavor.\n\n~~~\n[root@allinone9 ~(keystone_admin)]# nova boot --flavor 2ephemeral-disks --image cirros --ephemeral size=1 --ephemeral size=1 internal1\n~~~\n\n3) Instance spawned successfully.\n\n~~~\n[root@allinone9 ~(keystone_admin)]# nova list --field name,status,host | grep -i internal1\n| 08619d2d-e3a2-4f67-a959-33cfbc08d153 | internal1 | ACTIVE | allinone9 |\n~~~\n\n4) Verifying that two extra ephemeral disks are connected with instance. \n\n~~~\n[root@allinone9 ~(keystone_admin)]# virsh domblklist 4\nTarget     Source\n------------------------------------------------\nvda        /var/lib/nova/instances/08619d2d-e3a2-4f67-a959-33cfbc08d153/disk\nvdb        /var/lib/nova/instances/08619d2d-e3a2-4f67-a959-33cfbc08d153/disk.eph0\nvdc        /var/lib/nova/instances/08619d2d-e3a2-4f67-a959-33cfbc08d153/disk.eph1\n~~~\n\n5) Tried to perform the block migration but it end with same error which you have seen.\n\n[root@allinone9 ~(keystone_admin)]# nova live-migration 08619d2d-e3a2-4f67-a959-33cfbc08d153 compute1-9 --block-migrate\n\n~~~\nFrom : /var/log/nova/nova-compute.log\n\n2016-09-26 08:53:12.033 3958 ERROR nova.compute.manager [req-f24d49f7-4d8e-4683-bcc0-952254764fca b09d7a1af46d42398c79a1dc0da02954 ca23990ed6c846b0b8d588fb5e304aeb - - -] [instance: 08619d2d-e3a2-4f67-a959-33cfbc08d153] Pre live migration failed at compute1-9\n\n2016-09-26 08:53:12.033 3958 ERROR nova.compute.manager [instance: 08619d2d-e3a2-4f67-a959-33cfbc08d153] \n2016-09-26 08:53:12.033 3958 ERROR nova.compute.manager [instance: 08619d2d-e3a2-4f67-a959-33cfbc08d153] FlavorDiskSmallerThanImage: Flavor's disk is too small for requested image. Flavor disk is 1073741824 bytes, image is 2147483648 bytes.\n~~~\n\nThat error is because two mistake:\n\n... LINE ~ 6588 in libvirt.py (method libvirt._create_images_and_backing)\n\n\t\timage = self.image_backend.image(instance,\n\t                                         instance_disk,\n\t                                         CONF.libvirt.images_type)\n                if cache_name.startswith('ephemeral'):\n                    image.cache(fetch_func=self._create_ephemeral,\n\t\t\t\tfs_label=cache_name,\n\t\t\t\tos_type=instance.os_type,\n\t                        filename=cache_name,\n                                size=info['virt_disk_size'],                  (a)\n                                ephemeral_size=instance.flavor.ephemeral_gb)  (b) \n\t        elif cache_name.startswith('swap'):\n\t            inst_type = instance.get_flavor()\n                    swap_mb = inst_type.swap\n\n...\n\n\n(a) That argument 'size' does not exist in _create_ephemeral\n(b) We should report here the actual size of the ephemeral disk (which is what has been asked by user during boot insteado of the total size allowed by the flavor for ephemeral disks)", 
+            "date_created": "2016-09-28 10:17:21.873900+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Actually it's little bit more complicated. Because we cache ephemeral disk which seems to be a bad idea. An ephemeral disk can have been create with 2G the first time and an other flavor can request for only 1G... That case is going to fail", 
+            "date_created": "2016-09-28 11:20:38.393896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/378560", 
+            "date_created": "2016-09-28 11:58:44.824550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/382365", 
+            "date_created": "2016-10-05 12:09:01.340418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/378560\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=407e659eb9c228eb1ec06ec49864279aeab0a1a1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 407e659eb9c228eb1ec06ec49864279aeab0a1a1\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Wed Sep 28 07:49:45 2016 -0400\n\n    libvirt: fix DiskSmallerThanImage when block migrate ephemerals\n    \n    When block live migrate an instance with ephemerals an exception\n    FlavorDiskSmallerThanImage can be raised because the size used to\n    create the base ephemeral disk is the total size allowed by flavor\n    which can be greater than the size effectively requested by the\n    instance when spwaned.\n    \n    Closes-Bug: #1628449\n    Change-Id: I264f5beb73d9b8ba441aec8f8a317b553a7e22c0\n", 
+            "date_created": "2016-10-06 15:20:55.290499+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/382365\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=da6cb543df6692dcc0ea66f9fde1c3ff3f7999a1\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit da6cb543df6692dcc0ea66f9fde1c3ff3f7999a1\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Wed Sep 28 07:49:45 2016 -0400\n\n    libvirt: fix DiskSmallerThanImage when block migrate ephemerals\n    \n    When block live migrate an instance with ephemerals an exception\n    FlavorDiskSmallerThanImage can be raised because the size used to\n    create the base ephemeral disk is the total size allowed by flavor\n    which can be greater than the size effectively requested by the\n    instance when spwaned.\n    \n    Closes-Bug: #1628449\n    Change-Id: I264f5beb73d9b8ba441aec8f8a317b553a7e22c0\n    (cherry picked from commit 407e659eb9c228eb1ec06ec49864279aeab0a1a1)\n", 
+            "date_created": "2016-10-10 04:20:51.522114+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.1 release.", 
+            "date_created": "2016-10-12 03:48:21.648967+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:13:02.915983+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-10-06 15:20:50.960116+00:00"
+}

@@ -1,0 +1,85 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:57:03.397563+00:00", 
+    "description": "When lazy translation is enabled _() returns a gettextutils.Message instance.   When formatting (%) is called on the instance rather than apply the replacement values, it gathers them so they can be applied when the message is lazily translated.   This support includes the use of keyword replacement as part of formatting (passing a dictionary).  In order to limit the size of the dictionary, especially in the case where locales is passed, the dictionary of values is limited to only those keywords that are actually referenced in the format string.  \n\nThe code that extracts the replacement keys (and thus dictionary entries to keep) only handles simple formatting.  Currently it does not handle things like '%(key).02f', but instead omits them from the dictionary, which causes a KeyError when the message is translated and the replacements applied. \n\nConfirmed that regex that extracts the keywords does not handle this case: \nhttps://github.com/openstack/oslo-incubator/blob/master/openstack/common/gettextutils.py#L266", 
+    "tags": [
+        "i18n"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1288049", 
+    "owner": "None", 
+    "id": 1288049, 
+    "index": 5884, 
+    "openned": "2014-03-05 06:34:52.779726+00:00", 
+    "created": "2014-03-05 04:40:09.181091+00:00", 
+    "title": "Lazy translation fails for complex formatting", 
+    "comments": [
+        {
+            "content": "When lazy translation is enabled _() returns a gettextutils.Message instance.   When formatting (%) is called on the instance rather than apply the replacement values, it gathers them so they can be applied when the message is lazily translated.   This support includes the use of keyword replacement as part of formatting (passing a dictionary).  In order to limit the size of the dictionary, especially in the case where locales is passed, the dictionary of values is limited to only those keywords that are actually referenced in the format string.  \n\nThe code that extracts the replacement keys (and thus dictionary entries to keep) only handles simple formatting.  Currently it does not handle things like '%(key).02f', but instead omits them from the dictionary, which causes a KeyError when the message is translated and the replacements applied. \n\nConfirmed that regex that extracts the keywords does not handle this case: \nhttps://github.com/openstack/oslo-incubator/blob/master/openstack/common/gettextutils.py#L266", 
+            "date_created": "2014-03-05 04:40:09.181091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "Rather than making this skater, let's just stop trying to limit the names saved and keep everything. ", 
+            "date_created": "2014-03-05 13:41:28.759004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Wow, auto-correct fail.\n\nRather than making this *smarter*, let's just stop trying to limit the names saved and keep everything.\n", 
+            "date_created": "2014-03-05 14:23:19.491736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This seems like a blocker for enabling lazy translation, right?\n\nAlso, +1 to Doug's suggestion.  We can revisit if we find that it causes problems, but I think the main reason for filtering the saved names was overuse of locals(), and it's probably better to just rip those out than to jump through hoops in this already complicated code.", 
+            "date_created": "2014-03-05 19:38:42.925211+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bnemec"
+        }, 
+        {
+            "content": "I think it would be difficult to make sure we get rid of all the used of locals() and they could hold onto a lot of references.\n\nI've prototyped this in my workspace and the fix is a straight forward one to the regexs being used to identify the keywords.\n\nCurrent:  '(?:[^%]|^)?%\\((\\w*)\\)[a-z]'\n\nUpdate:    '(?:[^%]|^)%\\((\\w*)\\)'\n\nIt doesn't need to check for the format information after the closing paren (remove '[a-z]').   I also had to remove the 2nd ? because this made the proceeding group optional, which made it so that it didn't correctly ignore double % cases, such as '%%(keyword)s' which should not have keyword replacement done on it. \n\nWe'd also need to update the  regex for the check when it a dictionary being passed to %s.\n\nCurrent: '(?:[^%]|^)%[a-z]'\n\nUpdate:  '(?:[^%]|^)%[^(\\s]'\n\nAgain, it shouldn't be checking for just '[a-z]' since that doesn't cover all of the cases.  Instead it needs to be changed to ensure it isn't a '(' or a white space character after it.\n", 
+            "date_created": "2014-03-06 17:25:32.847043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "Matt Riedemann pointed out H501 = hacking.core:hacking_no_locals\n\nI worked with Jay Bryant and determined that only Swift and python-swiftclient have it ignored in their tox.ini.   Confirmed with fgrep that locals() is not used.  Removed the ignore and reran pep8 and ensured it passed.   We'll open a bug on these to get the ignore removed.\n\nSo, since there are no uses of locals() in openstack and hacking prevents them.   I agree that the code that prunes the replacement text dictionary should be removed.  I'll get a patch up that removes it right away.", 
+            "date_created": "2014-03-06 21:00:01.155424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "Nice analysis, thanks!", 
+            "date_created": "2014-03-06 21:14:52.603734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "One update on the analysis.   I misunderstood what swift and python-swiftclient's tox.ini files were doing (they ignore all H and then add back in the ones to perform).   So they also are including the H501 check.  ", 
+            "date_created": "2014-03-06 22:55:09.113688+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jecarey"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/78806", 
+            "date_created": "2014-03-06 23:14:38.561498+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Marked this as rc1 for nova since it is a pre-requisite for a feature freeze exception on the i18n-messages blueprint there:\n\nhttps://review.openstack.org/#/q/status:open+project:openstack/nova+branch:master+topic:bp/i18n-messages,n,z", 
+            "date_created": "2014-03-07 04:18:37.096864+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The FFE isn't going to go through for nova in icehouse so removing the rc1 milestone from the nova bug.", 
+            "date_created": "2014-03-07 17:11:03.453399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/78806\nCommitted: https://git.openstack.org/cgit/openstack/oslo-incubator/commit/?id=047b2e4eb10f35f0078071e92a1038fec0592bda\nSubmitter: Jenkins\nBranch:    master\n\ncommit 047b2e4eb10f35f0078071e92a1038fec0592bda\nAuthor: James Carey <email address hidden>\nDate:   Thu Mar 6 22:54:22 2014 +0000\n\n    Change lazy translation to retain complete dict\n    \n    When replacement text was retained for later translation, only\n    the entries that were associated with the keywords in the\n    format string were retained.  There was a bug in how the keywords\n    were parsed.  This reduction was done to support the use of\n    locals() to specify the replacement text.  This is now prevented\n    by H501 (confirmed in all projects).\n    \n    This means that instead of fixing the parsing code to correctly\n    find the keywords, the entire dictionary can now be retained\n    and the code for finding the keywords and stripping out unused\n    entries removed.\n    \n    Change-Id: I7969dc20841d839f68b2ddb29ac47340c6b615e8\n    Closes-Bug: #1288049\n", 
+            "date_created": "2014-03-10 21:38:57.297289+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change in oslo-incubator is both in nova's copy of gettextutils.py and in oslo.i18n. So we should be all set.", 
+            "date_created": "2014-09-06 01:01:41.636203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ], 
+    "closed": "2014-10-01 07:40:58.993051+00:00"
+}

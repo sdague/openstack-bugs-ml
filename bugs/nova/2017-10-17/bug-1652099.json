@@ -1,0 +1,65 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-05-29 18:27:37.924019+00:00", 
+    "description": "While trying to debug some failures in an Ironic job, there are a lot of inventory update warnings in the n-cpu logs for the placement service:\n\nhttp://logs.openstack.org/39/404239/14/check/gate-tempest-dsvm-ironic-ipa-wholedisk-pxe_snmp-tinyipa-ubuntu-xenial-nv/8f98498/logs/screen-n-cpu.txt.gz?level=TRACE#_2016-12-21_13_20_25_579\n\n2016-12-21 13:20:25.579 21735 WARNING nova.scheduler.client.report [req-f2ea7aeb-f9b4-4117-a98a-d03cc02e2f3e - -] Failed to update inventory for resource provider 3edc7808-2d06-4598-98df-7d5b890e19e2: 400 400 Bad Request\n\nThe server could not comply with the request since it is either malformed or otherwise incorrect.\n\n Unable to update inventory for resource provider 3edc7808-2d06-4598-98df-7d5b890e19e2: Invalid inventory for 'VCPU' on resource provider '3edc7808-2d06-4598-98df-7d5b890e19e2'. The reserved value is greater than or equal to total.\n\n--\n\nI wanted to see what the body was for that request so thought I could find the matching request by id in the placement-api logs looking for req-f2ea7aeb-f9b4-4117-a98a-d03cc02e2f3e but it's not there:\n\nhttp://logs.openstack.org/39/404239/14/check/gate-tempest-dsvm-ironic-ipa-wholedisk-pxe_snmp-tinyipa-ubuntu-xenial-nv/8f98498/logs/apache/placement-api.txt.gz\n\nI guess this is because it's a different context, but it seems we should be able to pass the request id from the nova-compute client into the placement API via a header so we can track this same request in both logs to make debugging easier.\n\n--\n\nAs a second part of this bug (probably a separate bug), we should log the placement request body somewhere, either in n-cpu or the placement API debug logs. I know that we log the request and response bodies in n-cpu logs when nova is making requests to cinder, for example. That's useful for debugging and could be useful for debugging placement issues too.", 
+    "tags": [
+        "compute", 
+        "placement"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1652099", 
+    "owner": "None", 
+    "id": 1652099, 
+    "index": 2137, 
+    "openned": "2016-12-22 16:00:46.189944+00:00", 
+    "created": "2016-12-22 16:00:46.189944+00:00", 
+    "title": "placement requests from n-cpu logs not found in placement-api logs", 
+    "comments": [
+        {
+            "content": "While trying to debug some failures in an Ironic job, there are a lot of inventory update warnings in the n-cpu logs for the placement service:\n\nhttp://logs.openstack.org/39/404239/14/check/gate-tempest-dsvm-ironic-ipa-wholedisk-pxe_snmp-tinyipa-ubuntu-xenial-nv/8f98498/logs/screen-n-cpu.txt.gz?level=TRACE#_2016-12-21_13_20_25_579\n\n2016-12-21 13:20:25.579 21735 WARNING nova.scheduler.client.report [req-f2ea7aeb-f9b4-4117-a98a-d03cc02e2f3e - -] Failed to update inventory for resource provider 3edc7808-2d06-4598-98df-7d5b890e19e2: 400 400 Bad Request\n\nThe server could not comply with the request since it is either malformed or otherwise incorrect.\n\n Unable to update inventory for resource provider 3edc7808-2d06-4598-98df-7d5b890e19e2: Invalid inventory for 'VCPU' on resource provider '3edc7808-2d06-4598-98df-7d5b890e19e2'. The reserved value is greater than or equal to total.\n\n--\n\nI wanted to see what the body was for that request so thought I could find the matching request by id in the placement-api logs looking for req-f2ea7aeb-f9b4-4117-a98a-d03cc02e2f3e but it's not there:\n\nhttp://logs.openstack.org/39/404239/14/check/gate-tempest-dsvm-ironic-ipa-wholedisk-pxe_snmp-tinyipa-ubuntu-xenial-nv/8f98498/logs/apache/placement-api.txt.gz\n\nI guess this is because it's a different context, but it seems we should be able to pass the request id from the nova-compute client into the placement API via a header so we can track this same request in both logs to make debugging easier.\n\n--\n\nAs a second part of this bug (probably a separate bug), we should log the placement request body somewhere, either in n-cpu or the placement API debug logs. I know that we log the request and response bodies in n-cpu logs when nova is making requests to cinder, for example. That's useful for debugging and could be useful for debugging placement issues too.", 
+            "date_created": "2016-12-22 16:00:46.189944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/414230", 
+            "date_created": "2016-12-22 16:52:16.023709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "When I first looked at this part of this: \"I guess this is because it's a different context, but it seems we should be able to pass the request id from the nova-compute client into the placement API via a header so we can track this same request in both logs to make debugging easier.\" I had hoped/assumed that there would be a way for the x-openstack-request-id to be passed from one service to another with the help of the oslo RequestId middleware (that is, if it saw one in the incoming headers, it would use it). This is not the case. It simply adds one unless the existing application has not, which means that we'd need/want to add another bit of middleware in the placement stack and then send additional headers on every requests from the scheduler and resource tracker. All of which seems a bit much if we make sure we get the request id of the response into the logs (which is started at https://review.openstack.org/#/c/414230/ and I'll continue on).\n\nIf we were to add request response body logging, that presumably would be best served as a piece of middleware that, in the event of debug being true, effusively logged. There are ways for people to add that sort of thing to their web server, though, so I'm not sure why we need/want/should build that into the app?", 
+            "date_created": "2017-01-27 12:44:18.547134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/426290", 
+            "date_created": "2017-01-27 16:09:16.527260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/426874", 
+            "date_created": "2017-01-30 18:29:38.081216+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/414230\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4deaf5cf33e973c57bd6730d72770d56cb270abc\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4deaf5cf33e973c57bd6730d72770d56cb270abc\nAuthor: Matt Riedemann <email address hidden>\nDate:   Thu Dec 22 11:50:34 2016 -0500\n\n    Add more debug logging on RP inventory update failures\n    \n    While debugging resource tracking/placement issues with resource\n    providers it'd be useful to know the request ID from the\n    placement API for debugging requests in those logs, at least\n    until nova-compute is passing it's request ID header into the\n    placement API. And it'd also be useful to know the generated\n    request body when making the failed inventory update request.\n    \n    Change-Id: Ia8ee36ab0e79dfc2a178f2d354288b13d48bccdb\n    Related-Bug: #1652099\n", 
+            "date_created": "2017-02-05 22:23:43.013672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/426290\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=171d1c1282d1c5ffb8d6e4dd683306e83ff91b82\nSubmitter: Jenkins\nBranch:    master\n\ncommit 171d1c1282d1c5ffb8d6e4dd683306e83ff91b82\nAuthor: Chris Dent <email address hidden>\nDate:   Fri Jan 27 15:14:28 2017 +0000\n\n    Add more debug logging on RP inventory delete failures\n    \n    While debugging resource tracking/placement issues with resource\n    providers it'd be useful to know the request ID from the placement\n    API for debugging requests in those logs.\n    \n    Change-Id: I36db3cf21e5764830c6af4d160698979dbb02fab\n    Related-Bug: #1652099\n", 
+            "date_created": "2017-02-07 00:09:40.283198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/426874\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=dfb8d126e5b2a48c2dfa0de223f7853b3327ad01\nSubmitter: Jenkins\nBranch:    master\n\ncommit dfb8d126e5b2a48c2dfa0de223f7853b3327ad01\nAuthor: Chris Dent <email address hidden>\nDate:   Mon Jan 30 18:24:21 2017 +0000\n\n    Add placement request id to log when GET aggregates\n    \n    While debugging resource tracking/placement issues with resource\n    providers it'd be useful to know the request ID from the placement\n    API for debugging requests in those logs. The changes adds the\n    request id to those log messages that might be created while getting\n    aggregates for a resource provider.\n    \n    Related-Bug: #1652099\n    \n    Change-Id: I0e44c439fd4c9999d6dac5054e24503f925df1ed\n", 
+            "date_created": "2017-02-07 00:10:10.029194+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I spent a very small amount of time investigating what it would take to get the new context.global_id into the headers provided when making a request to placement from scheduler's report client.\n\nIt's non-trivial because we have only one client in a process, not a client per user's request. Nor do we pass context when making requests of the placement API. It appears select_destinations gets a context, but it's not sure if that one eventually tracks back to the request made of the compute API. We have access to info about the user in various places, but that doesn't obviously help us get back to the original context.\n\nSo a fair amount of plumbing will need to be adjusted (unless I'm wrong, which is entirely possible).", 
+            "date_created": "2017-05-29 18:27:37.022292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }
+    ]
+}

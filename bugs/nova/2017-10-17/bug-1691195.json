@@ -1,0 +1,62 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-08-30 15:31:31.693222+00:00", 
+    "description": "Description\n===========\n\nIf an instance has had an attached volume volume-updated twice in a \"round-trip\" - ie, volume-update $vol1 $vol2, then volume-update $vol2 $vol1 - it cannot be live-migrated.\n\nSteps to reproduce\n==================\n\n1. Create two iscsi volumes.\n\u00a0\u00a0\u00a0# cinder create --name test_vol1 --volume-type iscsi 1\n\u00a0\u00a0\u00a0# cinder create --name test_vol2 --volume-type iscsi 1\n\n\u00a0\u00a0\u00a0(--volume-type iscsi isn't mandatory - in my devstack environment there\n\u00a0\u00a0\u00a0is no iscsi volume-type, but that doesn't stop me from reproducing this\n\u00a0\u00a0\u00a0bug)\n\n2. Boot an instance.\n\u00a0\u00a0\u00a0# nova boot --flavor 1 --image $imageid --nic net-id=$netid testvm1\n\n3. Attach one iscsi volume to testvm1.\n\u00a0\u00a0\u00a0# nova volume-attach testvm1 $test_vol1\n\n4. Do volume-update to swap volume to 2nd one. (1st time volume-update)\n\u00a0\u00a0\u00a0# nova volume-update testvm1 $test_vol1 $test_vol2\n\n5. Do volume-update again to swap volume back to the 1st one. (2nd time\n   volume-update)\n\u00a0\u00a0\u00a0# nova volume-update testvm1 $test_vol2 $test_vol1\n\n6. Live migrate instance to other compute node.\n\u00a0\u00a0\u00a0# nova live-migration testvm1\n\nExpected result\n===============\n\nLive migration succeeds.\n\nActual result\n=============\n\nLive migration fails with:\n\nApr 27 10:32:14 multi9h-3 nova-compute: File \"/usr/lib64/python2.7/site-packages/libvirt.py\", line 1939, in migrateToURI3\n\nApr 27 10:32:14 multi9h-3 nova-compute: if ret == -1: raise libvirtError ('virDomainMigrateToURI3() failed', dom=self)\n\nApr 27 10:32:14 multi9h-3 nova-compute: libvirtError: missing source information for device vdb\n\nEnvironment\n===========\n\nThis has been originally reported [1] in Red Hat OSP 9 (Mitaka) and is reproducible on devstack master as well.\n\nAdditional information\n======================\n\nThere are two things going on here.\n\n1. When performing the volume-update, the libvirt driver calls virDomainBlockRebase without the VIR_DOMAIN_BLOCK_REBASE_COPY_DEV flag [2], meaning the device XML changes from <source dev=/dev/isci/lun> to <source file=/dev/iscsi/lun>. This is a problem because /dev/iscsi/lun isn't a regular file, and causes the above error, except you need the \"round-trip\" volume-update to trigger it. Why? Because:\n\n2. The serial number isn't updated when doing volume-update, and there's a bit of live-migration code [3] that checks for serial numbers before updating the XML. If the serial numbers don't match, the XML isn't updated, and libvirt doesn't notice that /dev/iscsi/lun isn't a file.\n\n[1] https://bugzilla.redhat.com/show_bug.cgi?id=1446446\n[2] http://libvirt.org/html/libvirt-libvirt-domain.html#virDomainBlockRebase\n[3] https://github.com/openstack/nova/blob/master/nova/virt/libvirt/migration.py#L158", 
+    "tags": [
+        "libvirt", 
+        "live-migration", 
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1691195", 
+    "owner": "https://api.launchpad.net/1.0/~notartom", 
+    "id": 1691195, 
+    "index": 2076, 
+    "openned": "2017-05-16 17:09:08.471871+00:00", 
+    "created": "2017-05-16 17:09:08.471871+00:00", 
+    "title": "Can't live-migrate after 'round-trip' volume-upate", 
+    "comments": [
+        {
+            "content": "Description\n===========\n\nIf an instance has had an attached volume volume-updated twice in a \"round-trip\" - ie, volume-update $vol1 $vol2, then volume-update $vol2 $vol1 - it cannot be live-migrated.\n\nSteps to reproduce\n==================\n\n1. Create two iscsi volumes.\n   # cinder create --name test_vol1 --volume-type iscsi 1\n   # cinder create --name test_vol2 --volume-type iscsi 1\n   \n   (--volume-type iscsi isn't mandatory - in my devstack environment there is no iscsi\n   volume-type, but that doesn't stop me from reproducing this bug)\n\n2. Boot an instance.\n   # nova boot --flavor 1 --image $imageid --nic net-id=$netid testvm1\n\n3. Attach one iscsi volume to testvm1.\n   # nova volume-attach testvm1 $test_vol1\n\n4. Do volume-update to swap volume to 2nd one. (1st time volume-update)\n   # nova volume-update testvm1 $test_vol1 $test_vol2\n\n5. Do volume-update again to swap volume back to the 1st one. (2nd time volume-update)\n   # nova volume-update testvm1 $test_vol2 $test_vol1\n\n6. Live migrate instance to other compute node.\n   # nova live-migration testvm1\n\nExpected result\n===============\n\nLive migration succeeds.\n\nActual result\n=============\n\nLive migration fails with:\n\nApr 27 10:32:14 multi9h-3 nova-compute: File \"/usr/lib64/python2.7/site-packages/libvirt.py\", line 1939, in migrateToURI3\n\nApr 27 10:32:14 multi9h-3 nova-compute: if ret == -1: raise libvirtError ('virDomainMigrateToURI3() failed', dom=self)\n\nApr 27 10:32:14 multi9h-3 nova-compute: libvirtError: missing source information for device vdb\n\nEnvironment\n===========\n\nThis has been originally reported [1] in Red Hat OSP 9 (Mitaka) and is reproducible on devstack master as well.\n\nAdditional information\n======================\n\nThere are two things going on here.\n\n1. When performing the volume-update, the libvirt driver calls virDomainBlockRebase without the VIR_DOMAIN_BLOCK_REBASE_COPY_DEV flag [2], meaning the device XML changes from <source dev=/dev/isci/lun> to <source file=/dev/iscsi/lun>. This is a problem because /dev/iscsi/lun isn't a regular file, and causes the above error, except you need the \"round-trip\" volume-update to trigger it. Why? Because:\n\n2. The serial number isn't updated when doing volume-update, and there's a bit of live-migration code [3] that checks for serial numbers before updating the XML. If the serial numbers don't match, the XML isn't updated, and libvirt doesn't notice that /dev/iscsi/lun isn't a file.\n\n[1] https://bugzilla.redhat.com/show_bug.cgi?id=1446446\n[2] http://libvirt.org/html/libvirt-libvirt-domain.html#virDomainBlockRebase\n[3] https://github.com/openstack/nova/blob/master/nova/virt/libvirt/migration.py#L158", 
+            "date_created": "2017-05-16 17:09:08.471871+00:00", 
+            "author": "https://api.launchpad.net/1.0/~notartom"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/465205", 
+            "date_created": "2017-05-17 00:34:06.516132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/471353", 
+            "date_created": "2017-06-06 13:44:36.101548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/471356", 
+            "date_created": "2017-06-06 13:47:33.139372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/465205\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a8a4a8ea7b8e6c85273ddb02d34d6af1740b183f\nSubmitter: Jenkins\nBranch:    master\n\ncommit a8a4a8ea7b8e6c85273ddb02d34d6af1740b183f\nAuthor: Artom Lifshitz <email address hidden>\nDate:   Wed May 17 00:22:34 2017 +0000\n\n    Use VIR_DOMAIN_BLOCK_REBASE_COPY_DEV when rebasing\n    \n    Previously, in swap_volume, the VIR_DOMAIN_BLOCK_REBASE_COPY_DEV flag\n    was not passed to virDomainBlockRebase. In the case of iSCSI-backed\n    disks, this caused the XML to change from <source dev=/dev/iscsi/lun>\n    to <source file=/dev/iscsi/lun>. This was a problem because\n    /dev/iscsi/lun is not a regular file. This patch passes the\n    VIR_DOMAIN_BLOCK_REBASE_COPY_DEV flag to virDomainBlockRebase, causing\n    the correct <source dev=/dev/iscsi/lun> to be generated upon\n    volume-update.\n    \n    Change-Id: I868a0dae0baf8cded9c7c5807ea63ffc5eec0c5e\n    Closes-bug: 1691195\n", 
+            "date_created": "2017-06-06 18:55:48.469153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b2 development milestone.", 
+            "date_created": "2017-06-08 21:51:25.822014+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/471353\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ef853e038d9a3e9bfe02287c7c01c80b7a022ed6\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit ef853e038d9a3e9bfe02287c7c01c80b7a022ed6\nAuthor: Artom Lifshitz <email address hidden>\nDate:   Wed May 17 00:22:34 2017 +0000\n\n    Use VIR_DOMAIN_BLOCK_REBASE_COPY_DEV when rebasing\n    \n    Previously, in swap_volume, the VIR_DOMAIN_BLOCK_REBASE_COPY_DEV flag\n    was not passed to virDomainBlockRebase. In the case of iSCSI-backed\n    disks, this caused the XML to change from <source dev=/dev/iscsi/lun>\n    to <source file=/dev/iscsi/lun>. This was a problem because\n    /dev/iscsi/lun is not a regular file. This patch passes the\n    VIR_DOMAIN_BLOCK_REBASE_COPY_DEV flag to virDomainBlockRebase, causing\n    the correct <source dev=/dev/iscsi/lun> to be generated upon\n    volume-update.\n    \n    Conflicts:\n          nova/tests/unit/virt/libvirt/test_driver.py\n          nova/virt/libvirt/driver.py\n    \n    NOTE(mriedem): The conflicts are due to\n    fbcf8d673342570a1518dbf8d88f289c2c39cd30 needing to translate\n    the exception message in driver.py and for passing instance\n    to disconnect_volume in test_driver, which was added in Pike with\n    b66b7d4f9d63e7f45ebfc033696d06c632a33ff1.\n    \n    Change-Id: I868a0dae0baf8cded9c7c5807ea63ffc5eec0c5e\n    Closes-bug: 1691195\n    (cherry picked from commit a8a4a8ea7b8e6c85273ddb02d34d6af1740b183f)\n", 
+            "date_created": "2017-06-10 17:44:54.332277+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.6 release.", 
+            "date_created": "2017-06-19 12:45:42.320839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-06-06 18:55:45.868661+00:00"
+}

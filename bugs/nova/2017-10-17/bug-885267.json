@@ -1,0 +1,65 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 10:00:09.387260+00:00", 
+    "description": "I did a 'nova list' (GET /servers) while server '443c3600-7724-4450-9b21-47ffa8544ad3' was being deleted. For some reason, I got a 404 back as it was removed from the list. This should not happen\n\n\nroot@nova1:~# nova list\n+--------------------------------------+-------+--------+----------+\n|                  ID                  |  Name | Status | Networks |\n+--------------------------------------+-------+--------+----------+\n| 443c3600-7724-4450-9b21-47ffa8544ad3 | pants | ACTIVE |          |\n+--------------------------------------+-------+--------+----------+\nroot@nova1:~# nova list\nThe resource could not be found. (HTTP 404)", 
+    "tags": [
+        "osapi-v1.1"
+    ], 
+    "importance": "Medium", 
+    "heat": 34, 
+    "link": "https://bugs.launchpad.net/nova/+bug/885267", 
+    "owner": "https://api.launchpad.net/1.0/~dtroyer", 
+    "id": 885267, 
+    "index": 2626, 
+    "openned": "2011-11-02 15:00:13.027911+00:00", 
+    "created": "2011-11-02 15:00:13.027911+00:00", 
+    "title": "Deleting a server will cause temporary 404 from GET /servers", 
+    "comments": [
+        {
+            "content": "I did a 'nova list' (GET /servers) while server '443c3600-7724-4450-9b21-47ffa8544ad3' was being deleted. For some reason, I got a 404 back as it was removed from the list. This should not happen\n\n\nroot@nova1:~# nova list\n+--------------------------------------+-------+--------+----------+\n|                  ID                  |  Name | Status | Networks |\n+--------------------------------------+-------+--------+----------+\n| 443c3600-7724-4450-9b21-47ffa8544ad3 | pants | ACTIVE |          |\n+--------------------------------------+-------+--------+----------+\nroot@nova1:~# nova list\nThe resource could not be found. (HTTP 404)", 
+            "date_created": "2011-11-02 15:00:13.027911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "I have run into this as well.  Here is my traceback:\n\n    File \"/opt/python-novaclient/novaclient/v1_1/servers.py\", line 247, in list\n      return self._list(\"/servers%s%s\" % (detail, query_string), \"servers\")\n    File \"/opt/python-novaclient/novaclient/base.py\", line 69, in _list\n      resp, body = self.api.client.get(url)\n    File \"/opt/python-novaclient/novaclient/client.py\", line 131, in get\n      return self._cs_request(url, 'GET', **kwargs)\n    File \"/opt/python-novaclient/novaclient/client.py\", line 119, in _cs_request\n      **kwargs)\n    File \"/opt/python-novaclient/novaclient/client.py\", line 102, in request\n      raise exceptions.from_response(resp, body)\n\nI have a script that creates a VM, waits for it to launch and then deletes it and verifies deletion occurs.  It fails a significant amount of time due to this exception", 
+            "date_created": "2011-12-30 22:18:05.366569+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anotherjesse"
+        }, 
+        {
+            "content": "my script that triggers this.  \n\nIt fails on:\n\n    if not any([s.id == server_id for s in nc.servers.list()]):\n", 
+            "date_created": "2011-12-30 22:20:18.336543+00:00", 
+            "author": "https://api.launchpad.net/1.0/~anotherjesse"
+        }, 
+        {
+            "content": "I see this in the logs a bit before the HTTP 404:\n\n2012-01-04 22:40:00,376 DEBUG nova.api.openstack.common [1ca75227-460c-4cca-93bc-1e9d70a571c7 demo 2] Generated ACTIVE from vm_state=active task_state=deleting. from (pid=22694) status_from_state /opt/stack/nova/nova/api/openstack/common.py:93\n\nIs the ACTIVE status here causing this indirectly?", 
+            "date_created": "2012-01-05 17:13:06.649887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dtroyer"
+        }, 
+        {
+            "content": "Dean - I was thinking the bug was somewhere in the detail server code (perhaps where you cite), which iterates over each of the servers and grabs a whole bunch of extra info about the instance, but couldn't isolate any specific problem area (i was looking for an errant join).  In the meantime, some extra logging could help here: https://github.com/openstack/nova/blob/master/nova/api/openstack/v2/servers.py#L71", 
+            "date_created": "2012-01-05 19:38:39.334084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sleepsonthefloor"
+        }, 
+        {
+            "content": "I finally found the source of the exception: https://github.com/openstack/nova/blob/master/nova/api/openstack/v2/contrib/extended_status.py#L69.  Extensions are still new to me so the flow here isn't obvious, but it appears to explain why every /servers/detail api call appears to be duplicated in the logs.\n\nI'm still not certain about the status=ACTIVE when task_state=deleting, but I don't think that is in play here.", 
+            "date_created": "2012-01-06 02:42:31.950326+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dtroyer"
+        }, 
+        {
+            "content": "The race condition we see here is between the original call to compute.api.get_all() and when extended_status _get_and_extend_all() gets around to looping through the server list to call compute.api.routing_get() for each one.  I think the Right Thing here would be to remove the server from body['servers'], log a warning and continue.  I'm letting the dev cluster test this overnight.", 
+            "date_created": "2012-01-06 07:17:40.365231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dtroyer"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/2874", 
+            "date_created": "2012-01-06 16:38:14.852741+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/2874\nCommitted: http://github.com/openstack/nova/commit/51c0d545253b9f5618d1923aea3f7061da6cd60b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 51c0d545253b9f5618d1923aea3f7061da6cd60b\nAuthor: Dean Troyer <email address hidden>\nDate:   Fri Jan 6 00:22:52 2012 -0600\n\n    Bug 885267: Fix GET /servers during instance delete\n    \n    There is a period during an instance delete when GET /servers\n    will fail occasionally.  The race condition is during GET /servers\n    between the initial get_all() and when the extended_status extension\n    re-retrieves individual servers via compute.api.routing_get().\n    We log a warning and remove the offending server from the list\n    as it no longer exists.\n    \n    Change-Id: Id75723a21c0d6dc20f446560847e5b8522ec3262\n", 
+            "date_created": "2012-01-09 23:45:14.416523+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-01-25 09:54:11.135123+00:00"
+}

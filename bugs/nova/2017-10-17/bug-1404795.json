@@ -1,0 +1,83 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:55:46.591937+00:00", 
+    "description": "   Evacuate provide a way to recover instance from a failed compute node,\n    compute manager changes instance's host and node name with target host\n    before do real action '_rebuild_default_impl', we didn't catch exception\n    from _rebuild_default_impl, any evacuate failure leaves instance's host\n    and node name as target host's.  The worse thing is when restart the original failure node\n   it check instance's host and  destory them in original  node.   We need recover instance's\n   attributes host and node.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1404795", 
+    "owner": "None", 
+    "id": 1404795, 
+    "index": 6607, 
+    "openned": "2014-12-22 06:18:19.829427+00:00", 
+    "created": "2014-12-22 06:18:19.829427+00:00", 
+    "title": "instance's host and node are target host's while evacuate failed", 
+    "comments": [
+        {
+            "content": "   Evacuate provide a way to recover instance from a failed compute node,\n    compute manager changes instance's host and node name with target host\n    before do real action '_rebuild_default_impl', we didn't catch exception\n    from _rebuild_default_impl, any evacuate failure leaves instance's host\n    and node name as target host's.  The worse thing is when restart the original failure node\n   it check instance's host and  destory them in original  node.   We need recover instance's\n   attributes host and node.", 
+            "date_created": "2014-12-22 06:18:19.829427+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "I hit the issue  with ceph backend shared storage.   There is a bug https://bugs.launchpad.net/neutron/+bug/1357476, make the instance failed to create in target host.", 
+            "date_created": "2014-12-22 06:20:03.508770+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/143372", 
+            "date_created": "2014-12-22 06:23:38.283528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I think this bug is critical ,   if we don't fix it , will erase instances completely if failure occur on destination Host.\r\nwe're losing customers' data", 
+            "date_created": "2015-06-29 01:36:51.435821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "There is a patch series that will address this bug:\n\nhttps://review.openstack.org/#/q/status:open+project:openstack/nova+branch:master+topic:bp/robustify-evacuate,n,z\n\nthat are part of a spec [1] for making evacuate use the existing migration data structure to record actions instead of guessing based on host.\n\n[1] https://review.openstack.org/#/c/161444/", 
+            "date_created": "2015-06-29 19:39:48.721116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "I originally thought that my patch series would address this bug. It kinda does, but it sounds like the real bug is that the source node deletes the shared instance disk when it thinks an evacuation has happened. The robustify-evacuate code will probably not change that, as it only really addresses the case when the source host improperly \"guesses\" that an evacuation has occurred.\n\nIf the source instance is, when an evacuation has been started, deletes an instance's shared-storage disk, then that's probably a bug that still exists.", 
+            "date_created": "2015-06-29 20:11:44.173444+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "@ChangBo, Are you saying the instance's shared storage disk was destroyed in this scenario? In _destroy_evacuated_instances in nova/compute/manager.py there's a check _is_instance_storage_shared to determine whether or not to destroy disks. Are you saying that check returned incorrect info? Or did you observe only network etc getting destroyed for the instance?", 
+            "date_created": "2015-06-29 21:40:24.814543+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "@melwitt   I mean  evacuate failed to create dest instance but changed source instance's host and node attribute,  the source instance is inconsistent,  we can't operate it anymore and the worst when restart compute service ,  we'll  delete the instance. \n\n   I didn't  hit the problem:   _destroy_evacuated_instances reuturns wrong info.\n\nI think Dan's  patch series will  address migration record to provide robust method to judge  evacuate status.  there is no conflict with my fix , my fix focuses on  recover instance's host/node info.  Maybe we also need update migration record to\nrollbacked or error state when evacuate fails.", 
+            "date_created": "2015-06-30 06:11:04.511120+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "@ChangBo, Okay, so evacuate will boot the instance on a new host with a new disk (unless you have configured shared storage). If evacuate fails to create on the target host, the instance will go to ERROR state. Its local resources will be destroyed (like network, non-shared disk, etc) but the instance won't be deleted (you can still see it in 'nova list') and you can re-try the evacuate. You will only lose the local resources of the instance but that's already part of the contract with evacuate.\n\nI'm not clear on what data loss you are describing. If you have shared storage and you had data loss, that is a bug. If you have local storage, data loss is expected and part of what evacuate means.\n\nWhy do you think we need to recover the instance's host/node info? It will be in ERROR state and you would need to re-try evacuate.\n\nFor the migration record, I agree it would be good to update its status to 'failed' for example if we can. There is a patch [2] in the series which is about updating the migration record and setting a 'failed' status can be added there.\n\n\n[1] http://docs.openstack.org/admin-guide-cloud/content/nova_cli_evacuate.html\n[2] https://review.openstack.org/#/c/194373/", 
+            "date_created": "2015-06-30 23:58:05.940173+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "@melwitt    we used shared storage backend ,  the key point is   if instance's evacuate failed but set its host/node with new host,  we can't evacuate again, because the new host's compute service is active.   evacuate need the source compute host's nova-compute service is down.   ", 
+            "date_created": "2015-07-01 02:14:28.165883+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "@ChangBo, Got it, thanks for explaining.\r\n\r\nI'm going to reduce the Importance of this bug based on the fact that there isn't any data loss and the primary problem is that if evacuate fails, it can't be retried if the host and node have already been set to the target.", 
+            "date_created": "2015-07-01 23:27:51.415353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/143372\nReason: This patch has been stalled for quite a while, so I am going to abandon it to keep the code review queue sane. Please restore the change when it is ready for review.", 
+            "date_created": "2015-08-18 22:55:39.224886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:55:45.857595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ], 
+    "closed": "2016-07-05 09:55:43.469158+00:00"
+}

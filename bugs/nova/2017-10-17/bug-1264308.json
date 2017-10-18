@@ -1,0 +1,40 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-01 15:38:03.871270+00:00", 
+    "description": "I'm running Havana multinode (Neutron LB plugin). By default Openstack sets hairpin_mode for VM ports connected to bridge:\n\n# cat /sys/class/net/brqd1485e0f-cc/brif/tap6cfe8817-2a/hairpin_mode\n1\n\nWith this flag set broadcast packets are reflected back from bridge to interface, where they came from. That's do not cause any problems until you have bridges inside VM.\n\nNetwork diagram:\nVM1  [SIMICS] -> [tap01] -> [br0] -> [eth0] ->\nHOST -> [tap6cfe8817-2a] -> [brqd1485e0f-cc] -> [tapXXX] ->\nVM2  -> [eth0] -> [dhcpd]\n\nSimics (http://en.wikipedia.org/wiki/Simics) simulates Linux box with internal network interface attached to tap01. Usually we have more than one taps. DHCP client inside Simics requests IP address from DHCP server running on VM2.\n\nDHCP request packet with MAC address XYZ of network adapter that exists within Simics instance is reflected back from [brqd1485e0f-cc] to [tap6cfe8817-2a]. When it reaches br0 again, br0 rewrites own MAC learning table: packet is came from eth0 side, so device with MAC address XYZ is attached to the same port as eth0.\n\nAnyway original DHCP request reaches dhcpd running on VM2. DHCP reply is sent back to MAC XYZ and it comes to br0 on VM1. br0 remembered that device with MAC XYZ is attached to the same port as eth0, so this packet is sent back to eth0, but not to tap01, where it was originated from in fact. So network adapter inside Simics will never get DHCP reply from dhcpd...\n\nWorkaround for this issue:\n1) $ brctl setageing br0 0 # disables MAC learning on br0\n2) Manually disable hairpin_mode for VM ports: echo 0 > /sys/class/net/brqd1485e0f-cc/brif/tap6cfe8817-2a/hairpin_mode\n\nHowever, it's not acceptable for our environment to disable MAC learning on br0, so we commented out strings in openstack sources, that enables hairpin_mode.\n\nAs far as I understand hairpin_mode is only needed to allow VM ping itself with floating ip address. However, we have no floating address assigned to that VM. So I suggest to control hairpin_mode for VM ports in nova.conf:\n\nhairpin_mode = 1 # by default\n\n** tcpdumps\n\n$ tcpdump -ni eth0\n...\n14:35:51.354925 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from XX:YY:ac:19:01:00, length: 359 // original DHCP request\n14:35:51.355083 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from XX:YY:ac:19:01:00, length: 359 // reflected DHCP request\n14:35:52.312025 IP 9.6.24.224.bootps > 9.6.24.150.bootpc: BOOTP/DHCP, Reply, length: 300 // DHCP reply reached eth0\n\n$ tcpdump -ni tap01\ntcpdump: verbose output suppressed, use -v or -vv for full protocol decode\nlistening on tap01, link-type EN10MB (Ethernet), capture size 96 bytes\n14:40:46.533975 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from XX:YY:ac:19:01:00, length: 359 // original DHCP request\n14:40:46.534182 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from XX:YY:ac:19:01:00, length: 359 // reflected DHCP request\n// no DHCP reply captured\n\n** br0 MAC learning table\n\n$ brctl showmacs br0\nport no\tmac addr\t\tis local?\tageing timer\n\u00a0\u00a01\tXX:YY:ac:19:01:00\tno\t\t  93.34 // VM1 simics MAC - should be on port 2, not 1\n\u00a0\u00a02\tc6:a1:84:46:8e:de\tyes\t\t   0.00 // VM1 tap01 MAC\n\u00a0\u00a03\tca:9f:6b:b3:ce:ca\tyes\t\t   0.00 // VM1 tap02 MAC\n\u00a0\u00a01\tfa:16:3e:1b:76:32\tyes\t\t   0.00 // VM1 eth0 MAC\n\u00a0\u00a01\tfa:16:3e:9a:c0:45\tno\t\t  91.34 // VM2 eth0 MAC", 
+    "tags": [
+        "hairpin"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1264308", 
+    "owner": "None", 
+    "id": 1264308, 
+    "index": 2734, 
+    "openned": "2013-12-26 14:41:53.614916+00:00", 
+    "created": "2013-12-26 14:41:53.614916+00:00", 
+    "title": "hairpin_mode should be configurable in config file", 
+    "comments": [
+        {
+            "content": "I'm running Havana multinode (Neutron LB plugin). By default Openstack sets hairpin_mode for VM ports connected to bridge:\n\n# cat /sys/class/net/brqd1485e0f-cc/brif/tap6cfe8817-2a/hairpin_mode \n1\n\nWith this flag set broadcast packets are reflected back from bridge to interface, where they came from. That's do not cause any problems until you have bridges inside VM.\n\nNetwork diagram:\n|========== VM1 ===============|==================== HOST =================|===== VM2 ======|\n[SIMICS] -> [tap01] -> [br0] -> [eth0] -> [tap6cfe8817-2a] -> [brqd1485e0f-cc] -> [tapXXX] -> [eth0] -> [dhcpd]\n\nSimics (http://en.wikipedia.org/wiki/Simics) simulates Linux box with internal network interface attached to tap01. Usually we have more than one taps. DHCP client inside Simics requests IP address from DHCP server running on VM2.\n\nDHCP request packet with MAC address XYZ of network adapter that exists within Simics instance is reflected back from [brqd1485e0f-cc] to [tap6cfe8817-2a]. When it reaches br0 again, br0 rewrites own MAC learning table: packet is came from eth0 side, so device with MAC address XYZ is attached to the same port as eth0.\n\nAnyway original DHCP request reaches dhcpd running on VM2. DHCP reply is sent back to MAC XYZ and it comes to br0 on VM1. br0 remembered that device with MAC XYZ is attached to the same port as eth0, so this packet is sent back to eth0, but not to tap01, where it was originated from in fact. So network adapter inside Simics will never get DHCP reply from dhcpd...\n\nWorkaround for this issue:\n1) $ brctl setageing br0 0 # disables MAC learning on br0\n2) Manually disable hairpin_mode for VM ports: echo 0 > /sys/class/net/brqd1485e0f-cc/brif/tap6cfe8817-2a/hairpin_mode\n\nHowever, it's not acceptable for our environment to disable MAC learning on br0, so we commented out strings in openstack sources, that enables hairpin_mode.\n\nAs far as I understand hairpin_mode is only needed to allow VM ping itself with floating ip address. However, we have no floating address assigned to that VM. So I suggest to control hairpin_mode for VM ports in nova.conf:\n\nhairpin_mode = 1 # by default", 
+            "date_created": "2013-12-26 14:41:53.614916+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scsnow"
+        }, 
+        {
+            "content": "Working on this as part of \n\nhttps://review.openstack.org/#/c/56381/", 
+            "date_created": "2014-01-27 19:25:23.826384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scollins"
+        }, 
+        {
+            "content": "Is this now addressed that sean's patch landed?", 
+            "date_created": "2014-09-15 15:32:55.548626+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Yes, this bug can be closed.", 
+            "date_created": "2014-12-19 13:13:13.571245+00:00", 
+            "author": "https://api.launchpad.net/1.0/~scsnow"
+        }
+    ], 
+    "closed": "2015-04-01 15:38:02.078854+00:00"
+}

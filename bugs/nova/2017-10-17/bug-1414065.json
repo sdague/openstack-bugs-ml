@@ -1,0 +1,92 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-11-20 15:22:32.959480+00:00", 
+    "description": "There is a fairly serious bug in VM state handling during live migration, with a result that if libvirt raises an error *after* the VM has successfully live migrated to the target host, Nova can end up thinking the VM is shutoff everywhere, despite it still being active. The consequences of this are quite dire as the user can then manually start the VM again and corrupt any data in shared volumes and the like.\n\nThe fun starts in the _live_migration method in nova.virt.libvirt.driver, if the 'migrateToURI2' method fails *after* the guest has completed migration.\n\nAt start of migration, we see an event received by Nova for the new QEMU process starting on target host\n\n2015-01-23 15:39:57.743 DEBUG nova.compute.manager [-] [instance: 12bac45e-aca8-40d1-8f39-941bc6bb59f0] Synchronizing instance power state after lifecycle event \"Started\"; current vm_state: active, current task_state: migrating, current DB power_state: 1, VM power_state: 1 from (pid=19494) handle_lifecycle_event /home/berrange/src/cloud/nova/nova/compute/manager.py:1134\n\n\nUpon migration completion we see CPUs start running on the target host\n\n2015-01-23 15:40:02.794 DEBUG nova.compute.manager [-] [instance: 12bac45e-aca8-40d1-8f39-941bc6bb59f0] Synchronizing instance power state after lifecycle event \"Resumed\"; current vm_state: active, current task_state: migrating, current DB power_state: 1, VM power_state: 1 from (pid=19494) handle_lifecycle_event /home/berrange/src/cloud/nova/nova/compute/manager.py:1134\n\nAnd finally an event saying that the QEMU on the source host has stopped\n\n2015-01-23 15:40:03.629 DEBUG nova.compute.manager [-] [instance: 12bac45e-aca8-40d1-8f39-941bc6bb59f0] Synchronizing instance power state after lifecycle event \"Stopped\"; current vm_state: active, current task_state: migrating, current DB power_state: 1, VM power_state: 4 from (pid=23081) handle_lifecycle_event /home/berrange/src/cloud/nova/nova/compute/manager.py:1134\n\n\nIt is the last event that causes the trouble.  It causes Nova to mark the VM as shutoff at this point.\n\nNormally the '_live_migrate' method would succeed and so Nova would then immediately & explicitly mark the guest as running on the target host.   If an exception occurrs though, this explicit update of VM state doesn't happen so Nova considers the guest shutoff, even though it is still running :-(\n\n\nThe lifecycle events from libvirt have an associated \"reason\", so we could see that the shutoff event from libvirt corresponds to a migration being completed, and so not mark the VM as shutoff in Nova.  We would also have to make sure the target host processes the 'resume' event upon migrate completion.\n\nAn safer approach though, might be to just mark the VM as in an ERROR state if any exception occurs during migration.", 
+    "tags": [
+        "in-stable-juno", 
+        "juno-backport-potential", 
+        "libvirt"
+    ], 
+    "importance": "High", 
+    "heat": 40, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1414065", 
+    "owner": "https://api.launchpad.net/1.0/~berrange", 
+    "id": 1414065, 
+    "index": 1672, 
+    "openned": "2015-01-23 16:21:30.922259+00:00", 
+    "created": "2015-01-23 16:21:30.922259+00:00", 
+    "title": "Nova can lose track of running VM if live migration raises an exception", 
+    "comments": [
+        {
+            "content": "There is a fairly serious bug in VM state handling during live migration, with a result that if libvirt raises an error *after* the VM has successfully live migrated to the target host, Nova can end up thinking the VM is shutoff everywhere, despite it still being active. The consequences of this are quite dire as the user can then manually start the VM again and corrupt any data in shared volumes and the like.\n\nThe fun starts in the _live_migration method in nova.virt.libvirt.driver, if the 'migrateToURI2' method fails *after* the guest has completed migration.\n\nAt start of migration, we see an event received by Nova for the new QEMU process starting on target host\n\n2015-01-23 15:39:57.743 DEBUG nova.compute.manager [-] [instance: 12bac45e-aca8-40d1-8f39-941bc6bb59f0] Synchronizing instance power state after lifecycle event \"Started\"; current vm_state: active, current task_state: migrating, current DB power_state: 1, VM power_state: 1 from (pid=19494) handle_lifecycle_event /home/berrange/src/cloud/nova/nova/compute/manager.py:1134\n\n\nUpon migration completion we see CPUs start running on the target host\n\n2015-01-23 15:40:02.794 DEBUG nova.compute.manager [-] [instance: 12bac45e-aca8-40d1-8f39-941bc6bb59f0] Synchronizing instance power state after lifecycle event \"Resumed\"; current vm_state: active, current task_state: migrating, current DB power_state: 1, VM power_state: 1 from (pid=19494) handle_lifecycle_event /home/berrange/src/cloud/nova/nova/compute/manager.py:1134\n\nAnd finally an event saying that the QEMU on the source host has stopped\n\n2015-01-23 15:40:03.629 DEBUG nova.compute.manager [-] [instance: 12bac45e-aca8-40d1-8f39-941bc6bb59f0] Synchronizing instance power state after lifecycle event \"Stopped\"; current vm_state: active, current task_state: migrating, current DB power_state: 1, VM power_state: 4 from (pid=23081) handle_lifecycle_event /home/berrange/src/cloud/nova/nova/compute/manager.py:1134\n\n\nIt is the last event that causes the trouble.  It causes Nova to mark the VM as shutoff at this point.\n\nNormally the '_live_migrate' method would succeed and so Nova would then immediately & explicitly mark the guest as running on the target host.   If an exception occurrs though, this explicit update of VM state doesn't happen so Nova considers the guest shutoff, even though it is still running :-(\n\n\nThe lifecycle events from libvirt have an associated \"reason\", so we could see that the shutoff event from libvirt corresponds to a migration being completed, and so not mark the VM as shutoff in Nova.  We would also have to make sure the target host processes the 'resume' event upon migrate completion.\n\nAn safer approach though, might be to just mark the VM as in an ERROR state if any exception occurs during migration.", 
+            "date_created": "2015-01-23 16:21:30.922259+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "There is actually a callback that the libvirt driver _live_migrate method invokes upon seeing an exception from libvirt. It ends up calling the nova.compute.manager._rollback_live_migration  method. This method blindly assumes the VM will be running on the source, so attempts to re-setup networks & volumes and destroy storage on the target. So we're doubly doomed, because it is tearing down stuff that the VM is using on the target.", 
+            "date_created": "2015-01-23 17:43:18.961907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/151663", 
+            "date_created": "2015-01-30 15:16:26.448268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/151664", 
+            "date_created": "2015-01-30 15:16:42.540011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/151663\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=584a44f0157e84ce0100da6ee4f7b94bbb4088e3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 584a44f0157e84ce0100da6ee4f7b94bbb4088e3\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Wed Jan 28 17:46:55 2015 +0000\n\n    libvirt: remove pointless loop after live migration finishes\n    \n    The libvirt 'migrateToURI' API(s) all block the caller until the\n    live migration operation has completed. As such, the timer call\n    used to check if live migration has completed is entirely pointless.\n    It appears this is code left over from the very first impl of live\n    migration in Nova, when Nova would simply shell out to the 'virsh'\n    command instead of using the libvirt APIs. Even back then though\n    it looks like it was redundant, since the command being spawned\n    would also block until live migration was finished.\n    \n    Related-bug: #1414065\n    Change-Id: Ib3906ef8564a986f7c0e980774e4ed76b3f93a38\n", 
+            "date_created": "2015-02-10 05:47:38.567818+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/151664\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7dd6a4a19311136c02d89cd2afd97236b0f4cc27\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7dd6a4a19311136c02d89cd2afd97236b0f4cc27\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Thu Jan 29 14:33:32 2015 +0000\n\n    libvirt: proper monitoring of live migration progress\n    \n    The current live migration code simply invokes migrateToURI\n    and waits for it to finish, or raise an exception. It considers\n    all exceptions to mean the live migration aborted and the VM is\n    still running on the source host. This is totally bogus, as there\n    are a number of reasons why an error could be raised from the\n    migrateToURI call. There are at least 5 different scenarios for\n    what the VM might be doing on source + dest host upon error.\n    The migration might even still be going on, even if after the\n    error has occurred.\n    \n    A more reliable way to deal with this is to actively query\n    libvirt for the domain job status. This gives an indication\n    of whether the job is completed, failed or cancelled. Even\n    with that though, there is a need for a few heuristics to\n    distinguish some of the possible error scenarios.\n    \n    This change to do active monitoring of the live migration process\n    also opens the door for being able to tune live migration on the\n    fly to adjust max downtime or bandwidth to improve chances of\n    getting convergence, or to automatically abort it after too much\n    time has elapsed instead of letting it carry on until the end of\n    the universe. This change merely records memory transfer progress\n    and leaves tuning improvements to a later date.\n    \n    Closes-bug: #1414065\n    Change-Id: I6fcbfa31a79c7808c861bb3a84b56bd096882004\n", 
+            "date_created": "2015-02-23 04:43:17.309673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/juno\nReview: https://review.openstack.org/162112", 
+            "date_created": "2015-03-06 11:31:42.844070+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/162113", 
+            "date_created": "2015-03-06 11:31:51.360560+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Sahid, Daniel Berrange, without having had debug enabled, is there a way from \"regular\" logging for me to determine I'm running into this in Juno. All of the obvious symptoms are there:\nLive Migration failed. Instances go to SHUTDOWN. (this when live-migrating to evac a node for maintenance.)\n", 
+            "date_created": "2015-04-02 15:41:29.629646+00:00", 
+            "author": "https://api.launchpad.net/1.0/~med"
+        }, 
+        {
+            "content": "The only sure way to know that you hit this bug is if you see the same VM instance running on two hosts at the same time. It is possible you might see any exception in the Nova compute logs mention migrateToURI in the stack trace, but that's not a 100% reliable test.", 
+            "date_created": "2015-04-09 12:30:36.313064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/162112\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6833176b56ecbef9565bccb06a372acba8487691\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 6833176b56ecbef9565bccb06a372acba8487691\nAuthor: Daniel P. Berrange <email address hidden>\nDate:   Wed Jan 28 17:46:55 2015 +0000\n\n    libvirt: remove pointless loop after live migration finishes\n    \n    The libvirt 'migrateToURI' API(s) all block the caller until the\n    live migration operation has completed. As such, the timer call\n    used to check if live migration has completed is entirely pointless.\n    It appears this is code left over from the very first impl of live\n    migration in Nova, when Nova would simply shell out to the 'virsh'\n    command instead of using the libvirt APIs. Even back then though\n    it looks like it was redundant, since the command being spawned\n    would also block until live migration was finished.\n    \n    Conflicts:\n    \tnova/virt/libvirt/driver.py\n    \n    Related-bug: #1414065\n    Change-Id: Ib3906ef8564a986f7c0e980774e4ed76b3f93a38\n    (cherry-pick from commit 584a44f0157e84ce0100da6ee4f7b94bbb4088e3)\n", 
+            "date_created": "2015-04-16 14:53:31.316508+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: stable/juno\nReview: https://review.openstack.org/162113", 
+            "date_created": "2015-08-10 09:02:09.127803+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "so this shows that this is fixed in Juno 2014.2.4 but.... there's no info here documenting that. Is it true? The change was abandoned in August.", 
+            "date_created": "2015-11-19 22:13:23.503753+00:00", 
+            "author": "https://api.launchpad.net/1.0/~med"
+        }, 
+        {
+            "content": "Med that's likely because there are two patch sets which are related to this fix. The first patch set was to remove a pointless loop after live migration finishes (that one was merged into stable/juno) and the second patch set titled 'proper monitoring of live migration process' (this was not included in stable/juno).", 
+            "date_created": "2015-11-20 15:22:32.478980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~billy-olsen"
+        }
+    ], 
+    "closed": "2015-03-20 07:37:26.546376+00:00"
+}

@@ -1,0 +1,70 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-09-26 08:33:50.994863+00:00", 
+    "description": "The Ironic nova driver won't try to delete the instance in Ironic if the node's provision state is DEPLOYING [1] , this is known to fail with the current Ironic code because we just can't abort the installation at the DEPLOYING stage.\n\nBut the Ironic nova driver just keep going and tries to clean up the deployment environment (without telling Ironic to unprovision the instance) and it will fail as well. But the the code that cleans up the instance will keep retrying [3] because there's a transition in progress and it can't update the node. But when the node finishes the deployment, if the retrying didn't timed out, the destroy() method from the Nova driver  will succeed cleaning deployment environment and the Nova instance will be deleted but the Ironic node will continue to marked as ACTIVE in Ironic and now orphan because there's no instance in Nova associated with it [4]\n\nThe good news is that since nova clean up the network stuff the instance won't be accessible.\n\nWORKAROUND:\n\nUnprovision the node using the Ironic API directly\n\n$ ironic node-set-provision-state <node uuid> deleted\n\nPROPOSED FIX:\n\nIMO the ironic nova driver should try to tell Ironic to delete the instance even when the provision state of the node is DEPLOYING. If it fails the nova delete command will fail saying it can not delete the instance, which is fine until this gets resolved in Ironic (there's work going on to be able to abort a deployment at any stage)\n\n\n[1] https://github.com/openstack/nova/blob/6a24bbeecd8a6d6d3135a10f4917b071896d14ee/nova/virt/ironic/driver.py#L865-L868\n\n[2] https://github.com/openstack/nova/blob/6a24bbeecd8a6d6d3135a10f4917b071896d14ee/nova/virt/ironic/driver.py#L871\n\n[3] From the nova-compute logs\n\n{\"error_message\": \"{\\\"debuginfo\\\": null, \\\"faultcode\\\": \\\"Client\\\", \\\"faultstring\\\": \\\"Node d240ae0d-1844-48f0-adcf-b70680a1b6ce can not be updated while a state transition is in progress.\\\"}\"}\n from (pid=6672) log_http_response /usr/local/lib/python2.7/dist-packages/ironicclient/common/http.py:260\n2015-07-23 11:07:40.358 WARNING ironicclient.common.http [req-24b39fe8-435d-4869-970f-53f64b3512a8 demo demo] Request returned failure status.\n2015-07-23 11:07:40.358 WARNING ironicclient.common.http [req-24b39fe8-435d-4869-970f-53f64b3512a8 demo demo] Error contacting Ironic server: Node d240ae0d-1844-48f0-adcf-b70680a1b6ce can not be updated while a state transition is in progress. (HTTP 409). Attempt 3 of 6\n\n[4] http://paste.openstack.org/show/403569/", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Medium", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1477490", 
+    "owner": "None", 
+    "id": 1477490, 
+    "index": 4300, 
+    "openned": "2015-07-23 10:18:23.475126+00:00", 
+    "created": "2015-07-23 10:18:23.475126+00:00", 
+    "title": "Ironic: Deleting while spawning can leave orphan ACTIVE nodes in Ironic", 
+    "comments": [
+        {
+            "content": "The Ironic nova driver won't try to delete the instance in Ironic if the node's provision state is DEPLOYING [1] , this is known to fail with the current Ironic code because we just can't abort the installation at the DEPLOYING stage.\n\nBut the Ironic nova driver just keep going and tries to clean up the deployment environment (without telling Ironic to unprovision the instance) and it will fail as well. But the the code that cleans up the instance will keep retrying [3] because there's a transition in progress and it can't update the node. But when the node finishes the deployment, if the retrying didn't timed out, the destroy() method from the Nova driver  will succeed cleaning deployment environment and the Nova instance will be deleted but the Ironic node will continue to marked as ACTIVE in Ironic and now orphan because there's no instance in Nova associated with it [4]\n\nThe good news is that since nova clean up the network stuff the instance won't be accessible.\n\nWORKAROUND:\n\nUnprovision the node using the Ironic API directly\n\n$ ironic node-set-provision-state <node uuid> deleted\n\nPROPOSED FIX:\n\nIMO the ironic nova driver should try to tell Ironic to delete the instance even when the provision state of the node is DEPLOYING. If it fails the nova delete command will fail saying it can not delete the instance, which is fine until this gets resolved in Ironic (there's work going on to be able to abort a deployment at any stage)\n\n\n[1] https://github.com/openstack/nova/blob/6a24bbeecd8a6d6d3135a10f4917b071896d14ee/nova/virt/ironic/driver.py#L865-L868\n\n[2] https://github.com/openstack/nova/blob/6a24bbeecd8a6d6d3135a10f4917b071896d14ee/nova/virt/ironic/driver.py#L871\n\n[3] From the nova-compute logs\n\n{\"error_message\": \"{\\\"debuginfo\\\": null, \\\"faultcode\\\": \\\"Client\\\", \\\"faultstring\\\": \\\"Node d240ae0d-1844-48f0-adcf-b70680a1b6ce can not be updated while a state transition is in progress.\\\"}\"}\n from (pid=6672) log_http_response /usr/local/lib/python2.7/dist-packages/ironicclient/common/http.py:260\n2015-07-23 11:07:40.358 WARNING ironicclient.common.http [req-24b39fe8-435d-4869-970f-53f64b3512a8 demo demo] Request returned failure status.\n2015-07-23 11:07:40.358 WARNING ironicclient.common.http [req-24b39fe8-435d-4869-970f-53f64b3512a8 demo demo] Error contacting Ironic server: Node d240ae0d-1844-48f0-adcf-b70680a1b6ce can not be updated while a state transition is in progress. (HTTP 409). Attempt 3 of 6\n\n[4] http://paste.openstack.org/show/403569/", 
+            "date_created": "2015-07-23 10:18:23.475126+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lucasagomes"
+        }, 
+        {
+            "content": "@Lucas Alvares Gomes (lucasagomes):\n\nSince you are set as assignee, I switch the status to \"In Progress\".", 
+            "date_created": "2015-07-23 13:23:08.859077+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "@Markus,\n\nOk thanks, I have a spec up in Ironic that will fix this problem[1]\n\n[1] https://review.openstack.org/#/c/204162/", 
+            "date_created": "2015-07-23 13:36:39.018182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lucasagomes"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/206614", 
+            "date_created": "2015-07-28 16:36:57.463449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/209457", 
+            "date_created": "2015-08-05 10:58:14.499802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/209457\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bfe52542f5449391b9dc152a90fd79afebcb3ff2\nSubmitter: Jenkins\nBranch:    master\n\ncommit bfe52542f5449391b9dc152a90fd79afebcb3ff2\nAuthor: Lucas Alvares Gomes <email address hidden>\nDate:   Wed Aug 5 11:51:01 2015 +0100\n\n    Ironic: Call unprovison for nodes in DEPLOYING state\n    \n    This patch is making the Nova ironic driver to try to unprovision the node\n    even if it's in DEPLOYING state. Current Ironic will not accept aborting\n    the deployment when it's in DEPLOYING state but with the retry mechanism\n    it may work once the state is moved to ACTIVE or DEPLOYWAIT. Prior to\n    this patch the logic was to not even try to unprovision the node if it's\n    in DEPLOYING and just go ahead and clean the instance but that behavior\n    is dangerous and could leave orphan active instances in Ironic. With\n    this patch at least if the unprovision fails in Ironic we can make sure\n    that the instance won't be deleted from Nova.\n    \n    The tests for the destroy() method were refactored to extend testing\n    destroy() being called with all provision state methods in Ironic\n    instead of picking certain ones; A helper function was created to avoid\n    code duplication on the tests.\n    \n    Partial-Bug: #1477490\n    Change-Id: I227eac73a9043dc242b7a0908bc27b628b830c3c\n", 
+            "date_created": "2015-09-09 14:56:47.795971+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "In order to allow the instance to be destroyed at any stage of the spawn we need to work in ironic, so unassigned myself until we get things done in the Ironic side.", 
+            "date_created": "2016-02-18 10:26:14.298999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lucasagomes"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/206614\nReason: This patch has been idle for a long time, so I am abandoning it to keep the review clean sane. If you're interested in still working on this patch, then please unabandon it and upload a new patchset.", 
+            "date_created": "2016-05-26 00:20:58.449695+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Assigned to Lucas in Lucas in the hope he'll fix it :)\n  -- John and Michael...", 
+            "date_created": "2016-06-14 22:54:11.659481+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mrda"
+        }, 
+        {
+            "content": "Hi all!\n\nIt seems that the Nova fix has landed, and now we at least make sure that the deletion does not succeed for DEPLOYING nodes. I think it's enough to mark this bug as fixed. I suggest filing a new RFE for the ability to delete nodes in any state, as the previously filed spec is not abandoned. Thanks!", 
+            "date_created": "2016-09-26 08:33:30.558946+00:00", 
+            "author": "https://api.launchpad.net/1.0/~divius"
+        }
+    ], 
+    "closed": "2016-09-26 08:33:40.139066+00:00"
+}

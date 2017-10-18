@@ -1,0 +1,66 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-01-25 05:51:28.799149+00:00", 
+    "description": "When creating and instance and it is being spawned for the first time fails, the instance's volumes' initialize_connection is being rolled-back, but when unshelving an shelved-offloaded instance, there's no rollback in case of failure.\n\nThe reason is that when spawning an instance for the first time, nova-compute calls initialize_connection using the _build_resources() method:\nhttps://github.com/openstack/nova/blob/93e689516da0302b06c2760bb82c5004ae057913/nova/compute/manager.py#L1902\nThat context-aware method will also take care of rollback in case of a failure in spawning, and will terminate_connection of the volumes:\nhttps://github.com/openstack/nova/blob/93e689516da0302b06c2760bb82c5004ae057913/nova/compute/manager.py#L2095\n\nBut, when unshelving an instance, initialize_connection is not called in a context aware method, and no rollback in happening when spawning fails.\nhttps://github.com/openstack/nova/blob/93e689516da0302b06c2760bb82c5004ae057913/nova/compute/manager.py#L4330\n\nThis makes the volumes stay connected to the node even-though the instance is shelved-offloaded.\nIf you want to see this problem, replace the driver.spawn() call with a \"raise Exception\", and see the volumes have connection to the node even though they shouldn't have.\n\nI'm using openstack Liberty, but I can see this problem in current master (pre-Newton)", 
+    "tags": [
+        "compute", 
+        "shelve", 
+        "unshelve"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1627694", 
+    "owner": "https://api.launchpad.net/1.0/~shoham-peller", 
+    "id": 1627694, 
+    "index": 2086, 
+    "openned": "2016-09-26 10:50:42.456463+00:00", 
+    "created": "2016-09-26 10:50:42.456463+00:00", 
+    "title": "unshelving an instance doesn't rollback volumes connections on failure", 
+    "comments": [
+        {
+            "content": "When creating and instance and it is being spawned for the first time fails, the instance's volumes' initialize_connection is being rolled-back, but when unshelving an shelved-offloaded instance, there's no rollback in case of failure.\n\nThe reason is that when spawning an instance for the first time, nova-compute calls initialize_connection using the _build_resources() method:\nhttps://github.com/openstack/nova/blob/93e689516da0302b06c2760bb82c5004ae057913/nova/compute/manager.py#L1902\nThat context-aware method will also take care of rollback in case of a failure in spawning, and will terminate_connection of the volumes:\nhttps://github.com/openstack/nova/blob/93e689516da0302b06c2760bb82c5004ae057913/nova/compute/manager.py#L2095\n\nBut, when unshelving an instance, initialize_connection is not called in a context aware method, and no rollback in happening when spawning fails.\nhttps://github.com/openstack/nova/blob/93e689516da0302b06c2760bb82c5004ae057913/nova/compute/manager.py#L4330\n\nThis makes the volumes stay connected to the node even-though the instance is shelved-offloaded.\nIf you want to see this problem, replace the driver.spawn() call with a \"raise Exception\", and see the volumes have connection to the node even though they shouldn't have.\n\nI'm using openstack Liberty, but I can see this problem in current master (pre-Newton)", 
+            "date_created": "2016-09-26 10:50:42.456463+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shoham-peller"
+        }, 
+        {
+            "content": "Sounds like _unshelve_instance in the compute manager just needs to call _shutdown_instance in case of a failure from the virt driver.spawn() method, like in _build_resources.", 
+            "date_created": "2016-09-26 18:58:50.266453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Actually this is probably more complicated since it has to account for rescheduling or not, so it might require handling teardown like some of the rescheduling code in the _do_build_and_run_instance method in the compute manager.", 
+            "date_created": "2016-09-26 19:18:46.474684+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Ignore comment 2, unshelve never reschedules since the compute manager code would have to handle casting back to conductor to reschedule, like here for build_instances:\n\nhttps://github.com/openstack/nova/blob/93e689516da0302b06c2760bb82c5004ae057913/nova/compute/manager.py#L1822-L1830", 
+            "date_created": "2016-09-26 19:57:34.261366+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "So I'm actually not sure about this bug. When shelve-offloading an instance, the instance is destroyed from the hypervisor but the network and volumes are left intact for the instance in the database. When we unshelve the instance, network and volume information is still available in neutron and cinder, respectively. So if the unshelve fails, we don't actually want to delete the network and volume information, because then you can't try to unshelve them again later (on a different host for example). So I think this is actually working as designed.", 
+            "date_created": "2016-09-26 20:59:36.204121+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "@mriedem Thank you for your response.\nWe don't have to detach the volume from the server, or deleting anything from the DB. The problem is simply that the volumes are stayed connected to the node, because initialize_connection was called, but when spawning failed, and the VM is not on the node, the volumes stay connected to the node.\nIf terminate_connection is called on rollback, the user can safely retry the unshelving, and the volumes won't be connected to more than 1 node. Nothing will be changed in the DB regarding the VM's attached volumes or networks.", 
+            "date_created": "2016-09-27 11:32:20.775888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shoham-peller"
+        }, 
+        {
+            "content": "What if, in case of a spawning failure, instead of calling _shutdown_instance(), that deallocates networks, and detaches volumes, we'll just call _terminate_connection, to simply disconnect the volumes from the node?", 
+            "date_created": "2016-09-27 15:12:28.567042+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shoham-peller"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/378009", 
+            "date_created": "2016-09-27 20:06:39.467681+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/378009\nReason: This patch has been sitting unchanged for more than 12 weeks. I am therefore going to abandon it to keep the review queue sane. Please feel free to restore the change if you're still working on it.", 
+            "date_created": "2017-01-25 05:51:27.711216+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

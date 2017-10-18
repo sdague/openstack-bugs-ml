@@ -1,0 +1,40 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2016-01-22 21:34:34.139764+00:00", 
+    "description": "I created about 25 VMs from bootable volumes, after finishing this,\nI ran a script to deletion all of them in a very short time.\n\nwhile what i saw was: all of the VMs were in 'deleting' status and would never be deleted after waiting for hours\n\nfrom ps cmd:\nstack@ubuntu-server13:/var/log/libvirt$ ps aux | grep multipath\nroot       8205  0.0  0.0 504988  5560 ?        SLl  Apr22   0:01 /sbin/multipathd\nroot     115515  0.0  0.0  64968  2144 pts/3    S+   Apr22   0:00 sudo nova-rootwrap /etc/nova/rootwrap.conf multipath -r\nroot     115516  0.0  0.0  42240  9488 pts/3    S+   Apr22   0:00 /usr/bin/python /usr/local/bin/nova-rootwrap /etc/nova/rootwrap.conf multipath -r\nroot     115525  0.0  0.0  41792  2592 pts/3    S+   Apr22   0:00 /sbin/multipath -r\nstack    151825  0.0  0.0  11744   936 pts/0    S+   02:10   0:00 grep --color=auto multipath\n\nthen i killed the multipath -r commands\n\nall vm ran into ERROR status\n\nafter digging into nova code,\nnova always trying to  get a global file lock :\n@utils.synchronized('connect_volume')\n    def disconnect_volume(self, connection_info, disk_dev):\n        \"\"\"Detach the volume from instance_name.\"\"\"\n        iscsi_properties = connection_info['data']\n\n      ......\n      if self.use_multipath and multipath_device:\n            return self._disconnect_volume_multipath_iscsi(iscsi_properties,\n                                                           multipath_device)\n\nand then rescan iscsi by 'multipath -r'\n\ndef _disconnect_volume_multipath_iscsi(self, iscsi_properties,\n                                           multipath_device):\n        self._rescan_iscsi()\n        self._rescan_multipath()    ---> self._run_multipath('-r', check_exit_code=[0, 1, 21])\n\n\nIn my case, 'multipath -r' hang for a very long time and did not exit for serveral hours\nin addtion, this block all deletion of VM instances in the same Nova Node\n\nIMO, Nova should not wait the \"BLOCK\" command forever, at least, a timeout is needed for command such as'multipath -r' and 'multipath -ll'\n\nor is there any other solution for my case?\n\n\nMY ENVIRONMENT:\nUbuntu Server 14:\nmultipath-tools\nmultipath enabled in Nova node\n\nThanks\nPeter", 
+    "tags": [
+        "multipath", 
+        "volumes"
+    ], 
+    "importance": "Low", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1447490", 
+    "owner": "None", 
+    "id": 1447490, 
+    "index": 1699, 
+    "openned": "2015-04-23 08:32:37.515316+00:00", 
+    "created": "2015-04-23 08:32:37.515316+00:00", 
+    "title": "Deletion of instances will be stuck forever if any of deletion hung in 'multipath -r'", 
+    "comments": [
+        {
+            "content": "I created about 25 VMs from bootable volumes, after finishing this,\nI ran a script to deletion all of them in a very short time.\n\nwhile what i saw was: all of the VMs were in 'deleting' status and would never be deleted after waiting for hours\n\nfrom ps cmd:\nstack@ubuntu-server13:/var/log/libvirt$ ps aux | grep multipath\nroot       8205  0.0  0.0 504988  5560 ?        SLl  Apr22   0:01 /sbin/multipathd\nroot     115515  0.0  0.0  64968  2144 pts/3    S+   Apr22   0:00 sudo nova-rootwrap /etc/nova/rootwrap.conf multipath -r\nroot     115516  0.0  0.0  42240  9488 pts/3    S+   Apr22   0:00 /usr/bin/python /usr/local/bin/nova-rootwrap /etc/nova/rootwrap.conf multipath -r\nroot     115525  0.0  0.0  41792  2592 pts/3    S+   Apr22   0:00 /sbin/multipath -r\nstack    151825  0.0  0.0  11744   936 pts/0    S+   02:10   0:00 grep --color=auto multipath\n\nthen i killed the multipath -r commands\n\nall vm ran into ERROR status\n\nafter digging into nova code,\nnova always trying to  get a global file lock :\n@utils.synchronized('connect_volume')\n    def disconnect_volume(self, connection_info, disk_dev):\n        \"\"\"Detach the volume from instance_name.\"\"\"\n        iscsi_properties = connection_info['data']\n\n      ......\n      if self.use_multipath and multipath_device:\n            return self._disconnect_volume_multipath_iscsi(iscsi_properties,\n                                                           multipath_device)\n\nand then rescan iscsi by 'multipath -r'\n\ndef _disconnect_volume_multipath_iscsi(self, iscsi_properties,\n                                           multipath_device):\n        self._rescan_iscsi()\n        self._rescan_multipath()    ---> self._run_multipath('-r', check_exit_code=[0, 1, 21])\n\n\nIn my case, 'multipath -r' hang for a very long time and did not exit for serveral hours\nin addtion, this block all deletion of VM instances in the same Nova Node\n\nIMO, Nova should not wait the \"BLOCK\" command forever, at least, a timeout is needed for command such as'multipath -r' and 'multipath -ll'\n\nor is there any other solution for my case?\n\n\nMY ENVIRONMENT:\nUbuntu Server 14:\nmultipath-tools\nmultipath enabled in Nova node\n\nThanks\nPeter", 
+            "date_created": "2015-04-23 08:32:37.515316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~peter.wang"
+        }, 
+        {
+            "content": "I am pushing commit into  oslo.concurrency to support timeout ( https://review.openstack.org/#/c/177030/ )\nonce this will be merged and release we can use it to put a timeout on the multipath command", 
+            "date_created": "2015-04-25 08:20:12.577748+00:00", 
+            "author": "https://api.launchpad.net/1.0/~moshele"
+        }, 
+        {
+            "content": "OK, thanks Moshe for the INFO", 
+            "date_created": "2015-04-28 01:54:14.280886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~peter.wang"
+        }, 
+        {
+            "content": "Can this be tried against liberty or mitaka nova when we're using the os-brick library which had other fixes for multipath issues than did nova?", 
+            "date_created": "2016-01-22 21:34:33.401100+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ]
+}

@@ -1,0 +1,50 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 09:04:02.032040+00:00", 
+    "description": "Here is our ResourceTracker._update_usage_from_migration() code:\n\n    def _update_usage_from_migrations(self, context, resources, migrations):\n\n        self.tracked_migrations.clear()\n\n        filtered = {}\n\n        # do some defensive filtering against bad migrations records in the\n        # database:\n        for migration in migrations:\n\n            instance = migration['instance']\n\n            if not instance:\n                # migration referencing deleted instance\n                continue\n\n            uuid = instance['uuid']\n\n            # skip migration if instance isn't in a resize state:\n            if not self._instance_in_resize_state(instance):\n                LOG.warn(_(\"Instance not resizing, skipping migration.\"),\n                         instance_uuid=uuid)\n                continue\n\n            # filter to most recently updated migration for each instance:\n            m = filtered.get(uuid, None)\n            if not m or migration['updated_at'] >= m['updated_at']:\n                filtered[uuid] = migration\n\n        for migration in filtered.values():\n            instance = migration['instance']\n            try:\n                self._update_usage_from_migration(context, instance, None,\n                                                  resources, migration)\n            except exception.FlavorNotFound:\n                LOG.warn(_(\"Flavor could not be found, skipping \"\n                           \"migration.\"), instance_uuid=uuid)\n                continue\n\nUnfortunately, when the migration object's 'instance' attribute is accessed, a call across RPC and DB occurs:\n\nhttps://github.com/openstack/nova/blob/stable/icehouse/nova/objects/migration.py#L77-L80\n\n    @property\n    def instance(self):\n        return instance_obj.Instance.get_by_uuid(self._context,\n                                                 self.instance_uuid)\n\nFor some very strange reason, the code in _update_usage_from_migration() builds a \"filtered\"dictionary with the migration objects that need to be accounted for in the resource usages, and then once it builds that filtered dictionary, it goes through the values and calls _update_usage_from_migration(), passing the migration object's instance object.\n\nThere's no reason to do this at all. The filtered variable can go away and the call to _update_usage_from_migration() can occur in the main for loop, using the same instance variable from the original line:\n\n instance = migration['instance']\n\nThat way, for each migration, we don't need to do two lookup by UUID calls through the conductor to get the migration's instance object...", 
+    "tags": [
+        "low-hanging-fruit"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1385489", 
+    "owner": "https://api.launchpad.net/1.0/~diana-clarke", 
+    "id": 1385489, 
+    "index": 4094, 
+    "openned": "2014-10-24 21:04:29.959854+00:00", 
+    "created": "2014-10-24 21:04:29.959854+00:00", 
+    "title": "ResourceTracker._update_usage_from_migrations() is inefficient due to multiple Instance.get_by_uuid() lookups", 
+    "comments": [
+        {
+            "content": "Here is our ResourceTracker._update_usage_from_migration() code:\n\n    def _update_usage_from_migrations(self, context, resources, migrations):\n\n        self.tracked_migrations.clear()\n\n        filtered = {}\n\n        # do some defensive filtering against bad migrations records in the\n        # database:\n        for migration in migrations:\n\n            instance = migration['instance']\n\n            if not instance:\n                # migration referencing deleted instance\n                continue\n\n            uuid = instance['uuid']\n\n            # skip migration if instance isn't in a resize state:\n            if not self._instance_in_resize_state(instance):\n                LOG.warn(_(\"Instance not resizing, skipping migration.\"),\n                         instance_uuid=uuid)\n                continue\n\n            # filter to most recently updated migration for each instance:\n            m = filtered.get(uuid, None)\n            if not m or migration['updated_at'] >= m['updated_at']:\n                filtered[uuid] = migration\n\n        for migration in filtered.values():\n            instance = migration['instance']\n            try:\n                self._update_usage_from_migration(context, instance, None,\n                                                  resources, migration)\n            except exception.FlavorNotFound:\n                LOG.warn(_(\"Flavor could not be found, skipping \"\n                           \"migration.\"), instance_uuid=uuid)\n                continue\n\nUnfortunately, when the migration object's 'instance' attribute is accessed, a call across RPC and DB occurs:\n\nhttps://github.com/openstack/nova/blob/stable/icehouse/nova/objects/migration.py#L77-L80\n\n    @property\n    def instance(self):\n        return instance_obj.Instance.get_by_uuid(self._context,\n                                                 self.instance_uuid)\n\nFor some very strange reason, the code in _update_usage_from_migration() builds a \"filtered\"dictionary with the migration objects that need to be accounted for in the resource usages, and then once it builds that filtered dictionary, it goes through the values and calls _update_usage_from_migration(), passing the migration object's instance object.\n\nThere's no reason to do this at all. The filtered variable can go away and the call to _update_usage_from_migration() can occur in the main for loop, using the same instance variable from the original line:\n\n instance = migration['instance']\n\nThat way, for each migration, we don't need to do two lookup by UUID calls through the conductor to get the migration's instance object...", 
+            "date_created": "2014-10-24 21:04:29.959854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/131676", 
+            "date_created": "2014-10-29 09:19:49.857817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Chaitanya Challa (<email address hidden>) on branch: master\nReview: https://review.openstack.org/131676", 
+            "date_created": "2015-01-12 10:02:21.780842+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/131676\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-05-13 17:26:32.373720+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/222439", 
+            "date_created": "2015-09-11 02:15:39.045894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/222439\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=e1e47cb5e6093dfe3c17972fd26b4e5de9183961\nSubmitter: Jenkins\nBranch:    master\n\ncommit e1e47cb5e6093dfe3c17972fd26b4e5de9183961\nAuthor: Diana Clarke <email address hidden>\nDate:   Thu Sep 10 22:05:46 2015 -0400\n\n    Reduce the number of Instance.get_by_uuid calls\n    \n    Only call Instance.get_by_uuid once per migration in\n    ResourceTracker._update_usage_from_migrations rather than twice in some\n    cases. Also increased test coverage for\n    ResourceTracker._update_usage_from_migrations to 100%.\n    \n    Closes-Bug: #1385489\n    Change-Id: Ibc7e48340e103f8dcc502f7e91d8ffd939349486\n", 
+            "date_created": "2015-09-14 20:39:13.371331+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-09-24 07:01:58.911706+00:00"
+}

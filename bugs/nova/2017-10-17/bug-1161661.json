@@ -1,0 +1,88 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:22:00.074144+00:00", 
+    "description": "In nova.compute.manager when an instance is rescheduled (for whatever reason) the exception that caused said rescheduling is only logged, and not shown to the user in any fashion. In the extreme case this can cause the user to have no idea what happened when rescheduling finally fails.\n\nFor example:\n\nSay the following happens, on schedule instance 1, on hypervisor A it errors with error X then rescheduled to hypervisor B, which\nerrors with error Y, then next can't reschedule due to no more hypervisors being able to be scheduled to (aka no more compute nodes), then you basically get an error that says no more instances to schedule on (which is not connected to the original error in any fashion).\n\nLikely there needs to be a record of the rescheduling exceptions, or rescheduling needs to be rethought, where a orchestration unit can perform this rescheduling and be more aware of the rescheduling attempts (and there success and failures).", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 94, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1161661", 
+    "owner": "https://api.launchpad.net/1.0/~alaski", 
+    "id": 1161661, 
+    "index": 3332, 
+    "openned": "2013-03-28 23:06:39.724926+00:00", 
+    "created": "2013-03-28 23:06:39.724926+00:00", 
+    "title": "Rescheduling loses reasons", 
+    "comments": [
+        {
+            "content": "In nova.compute.manager when an instance is rescheduled (for whatever reason) the exception that caused said rescheduling is only logged, and not shown to the user in any fashion. In the extreme case this can cause the user to have no idea what happened when rescheduling finally fails.\n\nFor example:\n\nSay the following happens, on schedule instance 1, on hypervisor A it errors with error X then rescheduled to hypervisor B, which\nerrors with error Y, then next can't reschedule due to no more hypervisors being able to be scheduled to (aka no more compute nodes), then you basically get an error that says no more instances to schedule on (which is not connected to the original error in any fashion).\n\nLikely there needs to be a record of the rescheduling exceptions, or rescheduling needs to be rethought, where a orchestration unit can perform this rescheduling and be more aware of the rescheduling attempts (and there success and failures).", 
+            "date_created": "2013-03-28 23:06:39.724926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "The exceptions are stored as instance faults, but that information is not exposed.  There is another place to keep this which is exposed, the instance actions and events tables.  Currently scheduling events are occurring in the scheduler manager which may not catch all exceptions that can occur.  That should probably move up a level or be extended in order to capture all exceptions.", 
+            "date_created": "2013-03-29 19:30:45.220267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "I guess there is a general question of how much info to expose in the first place. With the way rescheduling is done right now its more of an all or nothing process. With a higher level 'entity' doing rescheduling the final message could be delivered more 'smartly' and likely in a better manner than telling users what the whole path of 'exceptions' is that caused the final error. But I guess exposing is at least a start (if that's really info we want to expose in the first place...", 
+            "date_created": "2013-03-30 04:23:21.896960+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Since we have a mechanism for exposing this sort of information to admins I think a good start would be to get the information in there.  I am very much in favor of reworking the whole process to be handled more smartly by a higher level concept, but that probably gets out of the realm of bug report and into design discussions and blueprints.  So while that is happening in a parallel effort we can address this concern in a more immediate manner.", 
+            "date_created": "2013-04-01 13:38:05.377254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Looking at this closer, it appears that NoValidHost exceptions are caught in the scheduler manager and not re-raised, thus not getting captured by the event tracking the scheduling.", 
+            "date_created": "2013-04-02 16:45:39.704631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Someone also report this issue in https://bugs.launchpad.net/nova/+bug/1165034\n\nWhat about use following solution:\nWhen retry filter failed to find a target hypervisor node, then do not put \"NoValidHost\" defects to the table of instance_faults and this can make sure the instance_faults can keep the last error from nova compute, this can make sure customer can know what happened on the last hypervisor. \n\nComments? ", 
+            "date_created": "2013-05-11 08:20:44.497257+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "One a related note, when the retry filter is disabled, nova-compute still attempts a retry.   This breaks the paradigm of making the filters optional.", 
+            "date_created": "2013-05-30 03:36:38.065610+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Joe, the retry behaviour is controlled by CONF.scheduler_max_attempts in scheduler/driver.py.  The retry filter just keeps it from getting rescheduled to the same host.", 
+            "date_created": "2013-05-30 18:17:22.641734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Is scheduling a action like 'start'/'reboot'/'resize', or it just is a internal action, which we don't want to expose it to user.\nMaybe we can make two type of `action`, one is public, the other is private. 'start'/'reboot' belong to the former, and they can expose to user, the latter like 'schedule'/'reschedule' just expose to admin.\n\n\n", 
+            "date_created": "2013-06-09 05:01:46.177836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gtt116"
+        }, 
+        {
+            "content": "@TianTian you make a good point.  Scheduling is an internal part of an action such as boot or resize.  So it does seem like we need different levels of exposure for things.  I agree with your notion of exposing scheduling failures to admins, and boot/resize failures to users.", 
+            "date_created": "2013-06-10 14:57:00.447009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "This blueprint implements part of the fix for this bug: https://blueprints.launchpad.net/nova/+spec/remove-cast-to-schedule-run-instance", 
+            "date_created": "2013-11-18 19:37:25.354958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bpokorny"
+        }, 
+        {
+            "content": "A proposed fix: using nova instance action event table to record the reason causing rescheduling\nhttps://review.openstack.org/#/c/58506/", 
+            "date_created": "2013-11-26 13:55:55.038259+00:00", 
+            "author": "https://api.launchpad.net/1.0/~unicell"
+        }, 
+        {
+            "content": "I see that https://review.openstack.org/#/c/58506/ is lacking one more approver.  I still see this issue every time I try to boot and Ubuntu or Fedora image on m1.tiny. It works on m1.small and above.  The log shows (as it did in bug: https://bugs.launchpad.net/nova/+bug/1245276):\n\n2014-01-07 15:28:09.322 31221 TRACE nova.compute.manager [instance: d05aca27-855d-4ade-968e-b12628644c5f]   File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/imagebackend.py\", line 312, in create_image\n2014-01-07 15:28:09.322 31221 TRACE nova.compute.manager [instance: d05aca27-855d-4ade-968e-b12628644c5f]     raise exception.InstanceTypeDiskTooSmall()\n2014-01-07 15:28:09.322 31221 TRACE nova.compute.manager [instance: d05aca27-855d-4ade-968e-b12628644c5f] InstanceTypeDiskTooSmall: Instance type's disk is too small for requested image.\n\nWe really need to get this resolved. It happens on every deployment we have.  Thanks.", 
+            "date_created": "2014-01-07 22:35:54.077472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shmcfarl"
+        }, 
+        {
+            "content": "We have renamed InstanceTypeDisk to FlavorDiskTooSmall and the reason does get back to the end user.", 
+            "date_created": "2015-03-16 12:21:06.252035+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ], 
+    "closed": "2015-03-20 07:37:52.430494+00:00"
+}

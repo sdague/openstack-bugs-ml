@@ -1,0 +1,77 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-16 08:26:19.394654+00:00", 
+    "description": "nova-compute memory grows to 3gb in a Scaled environment (5000 vm) where continuous VM operations were executed for 72 hours.\n\n  PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND\n22181 nova      20   0 3325m 3.0g 6588 R 34.2 19.0   3984:23 nova-compute\n\n\nTo test the memory leak we created and deleted same number of vms for some iterations. Here is the data .\n\nVM Count\tMemory (KB )\n0\t                 516528\n20\t                 518520\n40\t                 518520\n60\t                 522192\n80\t                 524068\n100\t                 526904\n0\t                 526904\n20\t                 526904\n40\t                 526904\n60\t                 526904\n80\t                 526904\n100\t                 529372\n0\t                 530972\n20\t                 530972\n40\t                 530972\n60\t                 530972\n80\t                 530972\n100\t                 533484\n0\t                 533484\n20\t                 533484\n40\t                 533484\n60\t                 533484\n80\t                 533484\n100\t                 535112\n0\t                 535112\n\n\nWhen analysed with objgraph, it showed that suds library objects occupied most of the memory.", 
+    "tags": [
+        "havana-backport-potential", 
+        "in-stable-icehouse", 
+        "vmware"
+    ], 
+    "importance": "Critical", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1316433", 
+    "owner": "https://api.launchpad.net/1.0/~rgerganov", 
+    "id": 1316433, 
+    "index": 188, 
+    "openned": "2014-05-06 06:54:05.952691+00:00", 
+    "created": "2014-05-06 06:54:05.952691+00:00", 
+    "title": "vmware: nova compute memory grows continuously with creation and deletions on VMs", 
+    "comments": [
+        {
+            "content": "nova-compute memory grows to 3gb in a Scaled environment (5000 vm) where continuous VM operations were executed for 72 hours.\n\n  PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND\n22181 nova      20   0 3325m 3.0g 6588 R 34.2 19.0   3984:23 nova-compute\n\n\nTo test the memory leak we created and deleted same number of vms for some iterations. Here is the data .\n\nVM Count\tMemory (KB )\n0\t                 516528\n20\t                 518520\n40\t                 518520\n60\t                 522192\n80\t                 524068\n100\t                 526904\n0\t                 526904\n20\t                 526904\n40\t                 526904\n60\t                 526904\n80\t                 526904\n100\t                 529372\n0\t                 530972\n20\t                 530972\n40\t                 530972\n60\t                 530972\n80\t                 530972\n100\t                 533484\n0\t                 533484\n20\t                 533484\n40\t                 533484\n60\t                 533484\n80\t                 533484\n100\t                 535112\n0\t                 535112\n\n\nWhen analysed with objgraph, it showed that suds library objects occupied most of the memory.", 
+            "date_created": "2014-05-06 06:54:05.952691+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ishanttyagi"
+        }, 
+        {
+            "content": "The reason for the memory leak is that we use suds objects as keys for the _datastore_browser_mapping cache. Suds objects do not implement __eq__ and __hash__ properly for VIM types such as ManagedObjectReference, we always have cache miss and thus _datastore_browser_mapping grows with every created instance.\n\nThis is how it looks like after two spawn() operations:\n\n(Pdb) self._datastore_browser_mapping    \n{(obj){\n   value = \"datastore-10\"\n   _type = \"Datastore\"\n }: (val){\n   value = \"datastoreBrowser-datastore-10\"\n   _type = \"HostDatastoreBrowser\"\n }, (obj){\n   value = \"datastore-10\"\n   _type = \"Datastore\"\n }: (val){\n   value = \"datastoreBrowser-datastore-10\"\n   _type = \"HostDatastoreBrowser\"\n }}\n\nThe solution is to use the 'value' property of the MoRef as we do for the _datastore_dc_mapping.\nI will submit a patch shortly.", 
+            "date_created": "2014-06-02 06:40:05.750584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rgerganov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/97164", 
+            "date_created": "2014-06-02 07:37:44.484650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Great find!\nProblem only exists in Icehouse.", 
+            "date_created": "2014-06-02 12:30:27.566134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~garyk"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/97164\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bceb3f96b06ff8a048598724494299cf111bcaf8\nSubmitter: Jenkins\nBranch:    master\n\ncommit bceb3f96b06ff8a048598724494299cf111bcaf8\nAuthor: Radoslav Gerganov <email address hidden>\nDate:   Mon Jun 2 10:21:45 2014 +0300\n\n    VMware: Fix memory leaks caused by caches\n    \n    Using suds objects as keys for the DatastoreBrowser cache is incorrect\n    because they don't implement __eq__ and __hash__ for the VIM types.\n    This always results in cache miss and the cache grows with every spawn()\n    operation.\n    \n    This patch fix this by using the 'value' property (which is string) of\n    the MoRef as key.\n    \n    Change-Id: I2bcaf87e733d51055566aee41bb0a7e254027ba9\n    Closes-Bug: 1316433\n", 
+            "date_created": "2014-06-04 07:17:00.929188+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/97707", 
+            "date_created": "2014-06-04 07:54:54.160525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This bug was found in Havana . The cache fixes done does not apply to havana as that code is not there in havana. \nThe fix does not addresses the cache miss in https://github.com/openstack/nova/blob/master/nova/virt/vmwareapi/vmops.py#L1557   . This code exists in havana and might be the cause of leak .", 
+            "date_created": "2014-06-05 07:26:22.835387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ishanttyagi"
+        }, 
+        {
+            "content": "Ishant, thanks for the update. I will prepare another patch and will backport it to havana.", 
+            "date_created": "2014-06-05 07:43:37.239001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rgerganov"
+        }, 
+        {
+            "content": "I am not able to reproduce a memory leak on Havana. What Ishant pointed in comment #6 is not a problem because 'ds_ref' is a string, not a MoRef.\n\nI have been using the default image for DevStack Havana (debian-2.6.32-i686) and the following commands (repeated many times):\n\n  nova boot --flavor m1.nano --image 6be7cf2c-4ff3-4e2b-a6c3-125323724f81 --security-groups default foobar\n  nova delete foobar\n\nI didn't observe any leaks with objgraph.\n\nIshant, could you please tell us which specific suds type you see leaking? What is the output of:\n\n  objgraph.show_growth(limit=20, shortnames=False)\n\nafter every let's say 10 operations?", 
+            "date_created": "2014-06-05 12:06:54.980466+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rgerganov"
+        }, 
+        {
+            "content": "Radoslav , I will run the tests again on havana and will let you know the results.", 
+            "date_created": "2014-06-06 10:52:47.968463+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ishanttyagi"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/97707\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4820dbb4fdb39476a9b4dcd8dc42070f69bdd599\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 4820dbb4fdb39476a9b4dcd8dc42070f69bdd599\nAuthor: Radoslav Gerganov <email address hidden>\nDate:   Mon Jun 2 10:21:45 2014 +0300\n\n    VMware: Fix memory leaks caused by caches\n    \n    Using suds objects as keys for the DatastoreBrowser cache is incorrect\n    because they don't implement __eq__ and __hash__ for the VIM types.\n    This always results in cache miss and the cache grows with every spawn()\n    operation.\n    \n    This patch fix this by using the 'value' property (which is string) of\n    the MoRef as key.\n    \n    Closes-Bug: 1316433\n    (cherry picked from commit bceb3f96b06ff8a048598724494299cf111bcaf8)\n    \n    Conflicts:\n    \n    \tnova/tests/virt/vmwareapi/test_imagecache.py\n    \tnova/tests/virt/vmwareapi/test_vmops.py\n    \n    Change-Id: I2bcaf87e733d51055566aee41bb0a7e254027ba9\n", 
+            "date_created": "2014-07-30 19:13:56.221222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-06-11 13:39:58.079721+00:00"
+}

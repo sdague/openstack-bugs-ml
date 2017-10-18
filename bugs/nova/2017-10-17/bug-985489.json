@@ -1,0 +1,121 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-12-03 15:27:53.357877+00:00", 
+    "description": "\troot@novamanager:~# /usr/sbin/rabbitmqctl list_queues  | awk '$1 ~ /^compute/ && $2 != 0 { print }'\n\tcompute.nodexyzzy\t12\n\nOccasionally on canonistack, we find that a compute node simply stops processing its rabbit queues.  A check of the logs will show no nova-compute.log activity for hours, but a restart of nova-compute will cause it to check all the instances and then process all the requests in rabbit (usually lots of duplicates from frustrated users trying to re-send delete requests and get their quota back for another deployment).\n\nIn fact, while I was typing this (having restarted nova-compute on nodexyzzy before starting), I re-ran the above command to find it now silent.\n\nThis happens often enough (once every couple of days at least) but we're not sure of how to debug this.  Is there any information we can get you about a nova-compute process that is in this unhappy state?\n\nFor the record, here is the last entry in the example node's nova-compute.log when I bounced things around 09:00Z:\n\n\t2012-04-19 06:35:35 DEBUG nova.virt.libvirt.connection [-] Updating host stats from (pid=3428) update_status /usr/lib/python2.7/dist-packages/nova/virt/libvirt/connection.py:2467", 
+    "tags": [
+        "compute", 
+        "messaging"
+    ], 
+    "importance": "Medium", 
+    "heat": 60, 
+    "link": "https://bugs.launchpad.net/nova/+bug/985489", 
+    "owner": "None", 
+    "id": 985489, 
+    "index": 2874, 
+    "openned": "2012-04-19 18:13:48.691278+00:00", 
+    "created": "2012-04-19 09:10:11.294037+00:00", 
+    "title": "nova-compute stops processing compute.$HOSTNAME occasionally on libvirt", 
+    "comments": [
+        {
+            "content": "\troot@novamanager:~# /usr/sbin/rabbitmqctl list_queues  | awk '$1 ~ /^compute/ && $2 != 0 { print }'\n\tcompute.nodexyzzy\t12\n\nOccasionally on canonistack, we find that a compute node simply stops processing its rabbit queues.  A check of the logs will show no nova-compute.log activity for hours, but a restart of nova-compute will cause it to check all the instances and then process all the requests in rabbit (usually lots of duplicates from frustrated users trying to re-send delete requests and get their quota back for another deployment).\n\nIn fact, while I was typing this (having restarted nova-compute on nodexyzzy before starting), I re-ran the above command to find it now silent.\n\nThis happens often enough (once every couple of days at least) but we're not sure of how to debug this.  Is there any information we can get you about a nova-compute process that is in this unhappy state?\n\nFor the record, here is the last entry in the example node's nova-compute.log when I bounced things around 09:00Z:\n\n\t2012-04-19 06:35:35 DEBUG nova.virt.libvirt.connection [-] Updating host stats from (pid=3428) update_status /usr/lib/python2.7/dist-packages/nova/virt/libvirt/connection.py:2467", 
+            "date_created": "2012-04-19 09:10:11.294037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nick-moffitt"
+        }, 
+        {
+            "content": "The symptoms are similar to what we experienced in LP#903212, however I can confirm that libvirtd seems to be responding correctly in Precise.\n\nIs there further information that we can provide?\n\n$ dpkg-query --show nova-*\nnova-api\t2012.1~e4~20120210.12574-0ubuntu1\nnova-common\t2012.1-0ubuntu2\nnova-compute\t2012.1-0ubuntu2\nnova-compute-hypervisor\t\nnova-compute-kvm\t2012.1-0ubuntu2\n\n$ cat /etc/lsb-release \nDISTRIB_ID=Ubuntu\nDISTRIB_RELEASE=12.04\nDISTRIB_CODENAME=precise\nDISTRIB_DESCRIPTION=\"Ubuntu precise (development branch)\"\n", 
+            "date_created": "2012-04-19 09:42:27.322033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "This has happened again.\n\nProcess listing:\n\n$ ps auxwwwf | grep [n]ova-compute\n\nnova     25735  0.0  0.0  48040     4 ?        Ss   Apr16   0:00 su -s /bin/sh -c exec nova-compute --flagfile=/etc/nova/nova.conf --flagfile=/etc/nova/nova-compute.conf nova\nnova     25746  1.2  0.1 1725088 32604 ?       Sl   Apr16  53:22  \\_ /usr/bin/python /usr/bin/nova-compute --flagfile=/etc/nova/nova.conf --flagfile=/etc/nova/nova-compute.conf\n\nStrace'ing the parent process:\n\n$ sudo strace -p 25735\nProcess 25735 attached - interrupt to quit\nwait4(-1, \n^C\n\nStrace'ing the child process\n\n$ sudo strace -p 25746\nProcess 25746 attached - interrupt to quit\nrestart_syscall(<... resuming interrupted call ...>\n^C\n\nChecking libvirtd:\n\n$ time sudo virsh list | wc -l\n33\n\nreal    0m0.170s\nuser    0m0.020s\nsys     0m0.012s\n\nLast few lines from /var/log/nova/nova-compute.log:\n\n2012-04-19 07:04:28 DEBUG nova.manager [-] Running periodic task ComputeManager._poll_bandwidth_usage from (pid=25746) periodic_tasks /usr/lib/python2.7/dist-packages/nova/manager.py:152\n2012-04-19 07:04:28 INFO nova.compute.manager [-] Updating bandwidth usage cache\n2012-04-19 07:04:28 DEBUG nova.manager [-] Running periodic task ComputeManager.update_available_resource from (pid=25746) periodic_tasks /usr/lib/python2.7/dist-packages/nova/manager.py:152\n--- restart happens now ---\n2012-04-19 13:54:25 DEBUG nova.service [-] Full set of FLAGS: from (pid=1012) wait /usr/lib/python2.7/dist-packages/nova/service.py:402\n2012-04-19 13:54:25 DEBUG nova.service [-] default_floating_pool : nova from (pid=1012) wait /usr/lib/python2.7/dist-packages/nova/service.py:411\n\nConclusion: libvirtd is responding, but nova-compute is not.", 
+            "date_created": "2012-04-19 13:59:36.571866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "This is certainly concerning.  It would be nice to figure out where nova-compute is stuck.  Could you try to attach to the process with gdb and get a Python stack trace?\n\nhttp://wiki.python.org/moin/DebuggingWithGdb", 
+            "date_created": "2012-06-07 19:00:14.696178+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Status changed to 'Confirmed' because the bug affects multiple users.", 
+            "date_created": "2012-06-08 06:15:44.014555+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Fortunately (or not) this has just recently occurred. We do not have debug symbols installed.\n\nIt looks to me to be stuck on virDomainGetInfo(). Interestingly, libvirtd seems to be responding when I query it. Perhaps there is a missing timeout somewhere?\n\n\nBacktrace from python:\n\n(gdb) bt\n#0  0x00007f57e2424b03 in poll () from /lib/x86_64-linux-gnu/libc.so.6\n#1  0x00007f57df7e757c in ?? () from /usr/lib/libvirt.so.0\n#2  0x00007f57df7e81d1 in ?? () from /usr/lib/libvirt.so.0\n#3  0x00007f57df7e9400 in ?? () from /usr/lib/libvirt.so.0\n#4  0x00007f57df7e9af7 in ?? () from /usr/lib/libvirt.so.0\n#5  0x00007f57df7cdaf0 in ?? () from /usr/lib/libvirt.so.0\n#6  0x00007f57df7cdc44 in ?? () from /usr/lib/libvirt.so.0\n#7  0x00007f57df7d47f3 in ?? () from /usr/lib/libvirt.so.0\n#8  0x00007f57df7a4b7a in virDomainGetInfo () from /usr/lib/libvirt.so.0\n#9  0x00007f57dfabb355 in ?? () from /usr/lib/python2.7/dist-packages/libvirtmod.so\n#10 0x0000000000566df4 in ?? ()\n#11 0x00007fff7952f7c0 in ?? ()\n#12 0x00007fff7952f6f0 in ?? ()\n#13 0x0000000002daa3c0 in ?? ()\n#14 0x00000000021610a0 in ?? ()\n#15 0x0000000004f342d8 in ?? ()\n#16 0x7f8579e6e212c67e in ?? ()\n#17 0x00007f57e3a29e10 in ?? ()\n#18 0x00000000039c1ab8 in ?? ()\n#19 0x00000000021610a0 in ?? ()\n#20 0x0000000002da89f0 in ?? ()\n#21 0x0000000000000000 in ?? ()\n\n\n", 
+            "date_created": "2012-06-08 13:12:29.612443+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "@Andrew,\n\nI'd like to try to reproduce this on a local cluster.  Can you give me as much information as possible about what may have happened when this was triggered?\n\nIs this on a cluster intalled on precise?  I'll try with two nodes (one separate compute node).", 
+            "date_created": "2012-09-04 18:43:43.438462+00:00", 
+            "author": "https://api.launchpad.net/1.0/~serge-hallyn"
+        }, 
+        {
+            "content": "@Serge,\n\nAs mentioned in #1 the cluster is running Precise + Essex. Unfortunately I cannot consistently reproduce the problem, however the problem has been recurring approximately once per month.\n\nAs mentioned in #5 I think that perhaps nova-compute is attempting to query libvirtd and libvirtd is not responding. Since the query doesn't seem to time out nova-compute \"hangs\" waiting for a response which will never come.\n\nI can only query the system after the problem occurs and I only have current state and log files to try infer the problem.", 
+            "date_created": "2012-09-04 22:34:26.787223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "We ran into this issue as well and as you have correctly stated, it's a result of libvirtd becoming unresponsive.  Thus far we have not been able to resolve the issue at its core but I can offer you a workaround.\n\nIt's a simple script which calls virsh help (which will block indefinitely when the libvirtd process is unresponsive), wait 30 seconds for a response and restart libvirtd after the timeout has elapsed.  Run it out of cron every 5 minutes or whatever you're comfortable doing.\n\nhttps://github.com/metacloud/openstack-tools/blob/master/libvirt/check_fix_libvirtd\n\nBy no means is this a fix but it'll mitigate the issue for you operationally for now.  In every situation we've had the script trigger, nova-compute recovers as you would expect, without needing a restart.\n\nHope that helps.\n", 
+            "date_created": "2012-09-05 00:49:23.060318+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "@Rafi,\n\nThanks for the suggestion. What you describe used to happen to me when we were using Oneiric's libvirtd (LP#903212). Since upgrading to Precise I haven't experienced the exact problem you're having.\n\nMy issue is that libvirtd seems to temporarily stop responding, enough to block nova-compute, but it then responds to external commands later when I probe it.\n\nLooking through my monitoring logs, I can see that libvirtd occasionally stops responding, but not for long enough to generate an alert. I speculate that this is a timing issue, where libvirtd has stopped responding for a very limited period and during that moment nova-compute attempts to poll libvirtd?", 
+            "date_created": "2012-09-05 13:41:18.819970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aglenyoung"
+        }, 
+        {
+            "content": "I find this issue in my stable folsom, but unortunately it occurs randomly, and my libvirt version is 0.9.12-5(debian wheezy).\nlog in the nova-compute.log:\n2013-02-26 02:48:45 DEBUG nova.manager [-] Running periodic task ComputeManager.update_available_resource from (pid=35879) periodic_tasks /usr/local/lib/python2.7/dist-packages/nova/manager.py:200\n2013-02-26 02:48:45 DEBUG nova.utils [-] Got semaphore \"compute_resources\" for method \"update_available_resource\"... from (pid=35879) inner /usr/local/lib/python2.7/dist-packages/nova/utils.py:803\n==============and then the  periodic task stopped until============\n2013-02-26 09:37:48 ERROR nova.manager [-] Error during ComputeManager.update_available_resource: Domain not found: no domain with matching id 1519\n......\n2013-02-26 09:37:48 DEBUG nova.manager [-] Running periodic task ComputeManager._report_driver_status from (pid=35879) periodic_tasks /usr/local/lib/python2.7/dist-packages/nova/manager.py:200\n2013-02-26 09:37:48 INFO nova.compute.manager [-] Updating host status\n2013-02-26 09:37:48 DEBUG nova.virt.libvirt.driver [-] Updating host stats from (pid=35879) update_status /usr/local/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py:3602\n==============and then the  periodic task stopped again until I restart nova-compute service============\n\nAt the second time when this issue occurs, I try to restart libvirtd and don't restart nova-compute, the nova-compute continues to running after I restart libvirtd! so I believe this issue is resulted from libvirtd.\nWe may need to add a timeout when nova-compute call libvirt apis.", 
+            "date_created": "2013-03-01 09:58:43.177818+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "Sorry for Michael H Wilson, I commited a patch relative to this bug, so OpenStack Hudson automatically assign it to me, but the patch can't reslove this bug eventually, and I can't reassign it to you now, you may need to get it again.", 
+            "date_created": "2013-04-11 04:08:27.173426+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "Description of this problem\n\nI have met this problem before. This bug is mainly caused by libvirt & openstack-compute driver for libvirt.\n\nWhen you meet this problem. You may type command.\n\n$ virsh list --all\n\nIf this command get stucked, you may face this problem. Another interesting appearance is that, if you type\n\n$ ps aux | grep libvirtd\n\nYou may find two libvirtd service is running.  Such as,\n\n......     /usr/sbin/libvirtd -d\n......    /usr/sbin/libvirtd -d\n\nYou kill one process, then libvirt will be ok. But sometimes later, the bug will come out again.\n\n\nReasons of this problem\n\nWhy this bug comes out?\n1 This bug mainly caused by libvirt. The older verion of libvirt has multi-process/multi-threads lock bugs. Sometimes, when multi-processes access libvirt/libvirtd services by libvirt-api, this error will happen. Especially, if you access libvirt from differe process or threads,  then this bug will come out. All accesses of libvirt will get stucked.\n\n2 The driver of libvirt in OpenStack, access libvirt/libvirtd service too frequently. Especially, when you have a lot of vms running on libvirt. \n\nSolutions for this bug:\n\n1 You have to update you libvirt/libvirtd services. My advice is your libvirt version should > 0.9.13. \n2 We may have some methods to get  lower frequent of these accesses.\n\nI think I can fix this Bug. ^_^. I have fix it in my env of openstack. \n", 
+            "date_created": "2013-04-20 03:52:24.488690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jiyou09"
+        }, 
+        {
+            "content": "Hi Ji you,\ntwo things:\n1. Can you tell me more info about the multi-process/multi-threads lock bugs of libvirt? such as bug report URL or something like this.\n2. In our env, the 'virsh' command is running OK and there is only one libvirtd process when this bug occurs, this may be a difference with yours.", 
+            "date_created": "2013-04-22 08:27:04.297489+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "@wangpan (hzwangpan) \n\ntwo things.\n\n1 I've forgot the URL of multi-thread/process lock of libvirt (I faced this problem in essex, one year more time.). My solution is compiling libvirt from source code which is 1.XXX version.\n\n2 Seems different with, I'll try my best to submit a patch. I hope it can solve you problem. This patch maybe a little long. I solve it in essex, I have to move it to grizzly.", 
+            "date_created": "2013-04-23 15:53:13.080137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jiyou09"
+        }, 
+        {
+            "content": "Hi all, after we updating our qemu to \"qemu-kvm  1.1.2+dfsg-6\" under debian wheezy 7.0(linux kernel is 3.2.39), this question has disappeared for more than three months, someone else can try this way if you encountered this issue.", 
+            "date_created": "2013-08-05 01:07:53.043744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hzwangpan"
+        }, 
+        {
+            "content": "We just saw this with havana on precise.\n\nii  libvirt0                                             1.1.1-0ubuntu8.5~cloud0                              library for interfacing with different virtualization systems\nii  nova-compute-kvm                                     1:2013.2.2-0ubuntu1~cloud0                           OpenStack Compute - compute node (KVM)\n\nAs you can see we're using the Ubuntu Cloud Archive for these havana packages.", 
+            "date_created": "2014-04-10 13:17:55.940693+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nick-moffitt"
+        }, 
+        {
+            "content": "In addition, this seemed to hit three compute nodes (the full set in a test deployment) in relatively quick succession after a few days of normal operation.", 
+            "date_created": "2014-04-10 13:50:00.235789+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nick-moffitt"
+        }, 
+        {
+            "content": "@wangpan\n\nI'm revisiting this bug, do you have a link to the change that you proposed? Even if you didn't think it was adequate I'd like to see your approach.\n\n-Mike", 
+            "date_created": "2014-06-11 16:31:34.024607+00:00", 
+            "author": "https://api.launchpad.net/1.0/~geekinutah"
+        }, 
+        {
+            "content": "Moving to incomplete, I feel like we're waiting on the patch from @wangpan. And it's not clear this bug is moving forward without it.", 
+            "date_created": "2014-09-18 20:11:15.239585+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2014-12-03 15:27:49.992292+00:00"
+}

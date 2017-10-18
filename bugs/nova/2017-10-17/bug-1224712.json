@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 12:07:53.017917+00:00", 
+    "description": "When there is hypervisor gets removed, the compute_node_get_all() will not return stat for new added hypervisors.\n\nIn the following codes of compute_node_get_all() of nova/db/sqlalchemy, it assume all the record in compute_node_stats should have a matched compute node. However in current implementation of nova conductor API of compute_node_delete(), the records in compute_node_stats is not deleted. Therefore when a hypervisor gets removed, there is no node matching the record of compute_node_stats which belongs to the removed hypervisor in following codes. As a result, all the nodes will be set with 'stats' of [].\n\n\u00a0\u00a0\u00a0\u00a0# Join ComputeNode & ComputeNodeStat manually.\n\u00a0\u00a0\u00a0\u00a0# NOTE(msdubov): ComputeNode and ComputeNodeStat map 1-to-Many.\n\u00a0\u00a0\u00a0\u00a0#                Running time is (asymptotically) optimal due to the use\n\u00a0\u00a0\u00a0\u00a0#                of iterators (itertools.groupby() for ComputeNodeStat and\n\u00a0\u00a0\u00a0\u00a0#                iter() for ComputeNode) - we handle each record only once.\n\u00a0\u00a0\u00a0\u00a0compute_nodes.sort(key=lambda node: node['id'])\n\u00a0\u00a0\u00a0\u00a0compute_nodes_iter = iter(compute_nodes)\n\u00a0\u00a0\u00a0\u00a0for nid, nsts in itertools.groupby(stats, lambda s: s['compute_node_id']):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0for node in compute_nodes_iter:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if node['id'] == nid:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0node['stats'] = list(nsts)\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0break\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0else:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0node['stats'] = []\n\n\u00a0\u00a0\u00a0\u00a0return compute_nodes\n\nWe need enhance either nova conductor API to clean up all the record related with instance.", 
+    "tags": [
+        "db", 
+        "scheduler"
+    ], 
+    "importance": "High", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1224712", 
+    "owner": "https://api.launchpad.net/1.0/~jwcroppe", 
+    "id": 1224712, 
+    "index": 1225, 
+    "openned": "2013-09-12 21:58:26.182673+00:00", 
+    "created": "2013-09-12 21:58:26.182673+00:00", 
+    "title": "Cannot get ComputeNodeStat by DB utility of compute_node_get_all()", 
+    "comments": [
+        {
+            "content": "Only the first compute node has stats and others always have empty stats.\n\nIn the following codes of compute_node_get_all() of nova/db/sqlalchemy, compute_nodes_iter is not reset in the outer loop. As a result, after the first loop there is no node in compute_nodes_iter and the stats of compute_node is not filled.\n\n    # Join ComputeNode & ComputeNodeStat manually.\n    # NOTE(msdubov): ComputeNode and ComputeNodeStat map 1-to-Many.\n    #                Running time is (asymptotically) optimal due to the use\n    #                of iterators (itertools.groupby() for ComputeNodeStat and\n    #                iter() for ComputeNode) - we handle each record only once.\n    compute_nodes.sort(key=lambda node: node['id'])\n    compute_nodes_iter = iter(compute_nodes)\n    for nid, nsts in itertools.groupby(stats, lambda s: s['compute_node_id']):\n        for node in compute_nodes_iter:\n            if node['id'] == nid:\n                node['stats'] = list(nsts)\n                break\n            else:\n                node['stats'] = []\n\n    return compute_nodes\n\nThe following is suggested fix\n\n/usr/lib/python2.6/site-packages/nova/db/sqlalchemy\n\n[root@z3-9-5-127-49 sqlalchemy]# diff -U 4 api.ori.py api.py\n--- api.ori.py  2013-09-12 17:36:25.520253005 -0400\n+++ api.py      2013-09-12 17:38:06.130253005 -0400\n@@ -596,10 +596,10 @@\n     #                Running time is (asymptotically) optimal due to the use\n     #                of iterators (itertools.groupby() for ComputeNodeStat and\n     #                iter() for ComputeNode) - we handle each record only once.\n     compute_nodes.sort(key=lambda node: node['id'])\n-    compute_nodes_iter = iter(compute_nodes)\n     for nid, nsts in itertools.groupby(stats, lambda s: s['compute_node_id']):\n+        compute_nodes_iter = iter(compute_nodes)\n         for node in compute_nodes_iter:\n             if node['id'] == nid:\n                 node['stats'] = list(nsts)\n                 break", 
+            "date_created": "2013-09-12 21:58:26.182673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fengyong-gm"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/46379", 
+            "date_created": "2013-09-12 23:06:19.640425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Will try to take a look at this.", 
+            "date_created": "2013-09-13 22:21:56.824469+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jwcroppe"
+        }, 
+        {
+            "content": "After further investigation, this does seem to behave appropriately.  I've gone ahead and added some test cases to show that deleting either the compute node or service (two new test cases) does indeed cascade the deletes to the compute node stats.", 
+            "date_created": "2013-09-14 07:08:58.614276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jwcroppe"
+        }, 
+        {
+            "content": "Scratch my previous comment, I misunderstood what the compute_node_statistics call returned.  After closer inspection, this does seem to be problematic.  Continuing investigation.", 
+            "date_created": "2013-09-14 09:13:33.302714+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jwcroppe"
+        }, 
+        {
+            "content": "Fix and test case has been submitted.\n\nThanks,\nJoe", 
+            "date_created": "2013-09-14 12:14:30.711705+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jwcroppe"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/46379\nCommitted: http://github.com/openstack/nova/commit/8b9d6f6fedbbd47932cd672f51d4db7031724e84\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8b9d6f6fedbbd47932cd672f51d4db7031724e84\nAuthor: Joe Cropper <email address hidden>\nDate:   Thu Sep 12 17:16:47 2013 -0500\n\n    Prune node stats at compute node delete time\n    \n    This commit addresses the situation in which a compute node is deleted, but\n    its compute node stats still remain in the database as **not** deleted. This\n    causes ill side effects in compute_node_get_all when it's retrieving host stats\n    as it doesn't expect there to be compute node stats for which there is no\n    corresponding compute node (i.e., causing some nodes' stats to be empty).\n    \n    As such, when a compute node is deleted, its stats should also be implicitly\n    deleted.\n    \n    The new test case that's been created fails without the code changes, which\n    illustrates the problem that compute node stats are empty when they should\n    not be.\n    \n    Also included is a simple DB migration script that will update old stats that\n    were not marked soft-deleted as they should have been.\n    \n    Change-Id: Ief0f7cf1a506e71898b5a45a0513d34167432d67\n    Closes-Bug: #1224712\n", 
+            "date_created": "2013-09-19 16:54:11.813546+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-10-03 07:44:32.645748+00:00"
+}

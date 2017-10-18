@@ -1,0 +1,88 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-10-02 07:19:16.753313+00:00", 
+    "description": "Openstack : Havana\nOS : CentOS 6.4\nShared storage with GlusterFS :  /var/lib/nova/instances mounted on glusterfs shared\n\n\nInstance start up fine on node01.  When live migration happen, it moved to node02 but failed with the following error\n\n2013-11-18 16:27:37.813 9837 ERROR nova.openstack.common.periodic_task [-] Error during ComputeManager.update_available_resource: Unexpected error while running command.\nCommand: env LC_ALL=C LANG=C qemu-img info /var/lib/nova/instances/aa1deb40-ae1d-45e4-a37e-7b0607df372f/disk\nExit code: 1\nStdout: ''\nStderr: \"qemu-img: Could not open '/var/lib/nova/instances/aa1deb40-ae1d-45e4-a37e-7b0607df372f/disk'\\n\"\n2013-11-18 16:27:37.813 9837 TRACE nova.openstack.common.periodic_task Traceback (most recent call last):\n2013-11-18 16:27:37.813 9837 TRACE nova.openstack.common.periodic_task   File \"/usr/lib/python2.6/site-packages/nova/openstack/common/periodic_task.py\", line 180, in run_periodic_tasks\n2013-11-18 16:27:37.813 9837 TRACE nova.openstack.common.periodic_task     task(self, context)\n\n\n\nThe problem is with the file ownership of \"console.log\" and \"disk\".  Those file should be owned by user \"qemu\" and group \"qemu\" but after the migration, both files are owned by root\n\n\ndrwxr-xr-x 2 nova nova       53 Nov 18 13:40 .\ndrwxr-xr-x 6 nova nova      110 Nov 18 13:43 ..\n-rw-rw---- 1 root root     1546 Nov 18 13:43 console.log\n-rw-r--r-- 1 root root 12058624 Nov 18 13:42 disk\n-rw-r--r-- 1 nova nova     1569 Nov 18 13:42 libvirt.xml", 
+    "tags": [
+        "compute", 
+        "libvirt", 
+        "live-migrate", 
+        "security"
+    ], 
+    "importance": "Medium", 
+    "heat": 32, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1252519", 
+    "owner": "None", 
+    "id": 1252519, 
+    "index": 3710, 
+    "openned": "2013-11-19 00:31:07.993133+00:00", 
+    "created": "2013-11-19 00:31:07.993133+00:00", 
+    "title": "Live migration failed because of file permission changed", 
+    "comments": [
+        {
+            "content": "Openstack : Havana\nOS : CentOS 6.4\nShared storage with GlusterFS :  /var/lib/nova/instances mounted on glusterfs shared\n\n\nInstance start up fine on node01.  When live migration happen, it moved to node02 but failed with the following error\n\n2013-11-18 16:27:37.813 9837 ERROR nova.openstack.common.periodic_task [-] Error during ComputeManager.update_available_resource: Unexpected error while running command.\nCommand: env LC_ALL=C LANG=C qemu-img info /var/lib/nova/instances/aa1deb40-ae1d-45e4-a37e-7b0607df372f/disk\nExit code: 1\nStdout: ''\nStderr: \"qemu-img: Could not open '/var/lib/nova/instances/aa1deb40-ae1d-45e4-a37e-7b0607df372f/disk'\\n\"\n2013-11-18 16:27:37.813 9837 TRACE nova.openstack.common.periodic_task Traceback (most recent call last):\n2013-11-18 16:27:37.813 9837 TRACE nova.openstack.common.periodic_task   File \"/usr/lib/python2.6/site-packages/nova/openstack/common/periodic_task.py\", line 180, in run_periodic_tasks\n2013-11-18 16:27:37.813 9837 TRACE nova.openstack.common.periodic_task     task(self, context)\n\n\n\nThe problem is with the file ownership of \"console.log\" and \"disk\".  Those file should be owned by user \"qemu\" and group \"qemu\" but after the migration, both files are owned by root\n\n\ndrwxr-xr-x 2 nova nova       53 Nov 18 13:40 .\ndrwxr-xr-x 6 nova nova      110 Nov 18 13:43 ..\n-rw-rw---- 1 root root     1546 Nov 18 13:43 console.log\n-rw-r--r-- 1 root root 12058624 Nov 18 13:42 disk\n-rw-r--r-- 1 nova nova     1569 Nov 18 13:42 libvirt.xml", 
+            "date_created": "2013-11-19 00:31:07.993133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~barrowkwan"
+        }, 
+        {
+            "content": "Cannot reproduce.\r\nOpenstack: fresh devstack installation, 1 controller / 3 compute nodes\r\nShared storage with GlusterFS: 2 nodes/ 2 bricks\r\nOS: Ubuntu server 12.04\r\n\r\nInstances were migrated between compute nodes without problem.\r\nThe files \"console.log\" and \"disk\" are owned by root after the first migration, but that do not \r\nprevent to keep migrating.\r\n\r\nAny other clue to try to reproduce this bug?\r\n\r\n", 
+            "date_created": "2014-02-20 14:16:25.335520+00:00", 
+            "author": "https://api.launchpad.net/1.0/~facundo-n-maldonado"
+        }, 
+        {
+            "content": "Hi Barrow Kwan,\nHow do you think about Maldonado's comment?", 
+            "date_created": "2014-07-15 00:58:11.874019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~h-tanizawa"
+        }, 
+        {
+            "content": "I have the same problem. \nI am currently trying to isolate the cause to it. \n\nThe first live migration of an instance works, but the second one (back to the first node) fails.\nThe ownership changed, but even manually as root I am not allowed to read the disk file.\nOnly when kvm closes the fd's on these files (when I suspend the instance, for example), the files can be read again. The files can still be read when the instance is resumed, even a live migration is possible again, then. The ownership after a resume is qemu again (not root), so I can understand why Barrow points that way.\n\nIt smells like some locking situation on the gluster side, but I am not able to pinpoint it to a configuration option or bug yet\nI will do some more tests to see why (and how)  gluster is spoiling the fun. \nPlease do not put the blame on some gluster bug or behaviour yet. \nThe fact that the ownership of instance files on shared storage changes indicates that there is still a resize or something being done (post migration), which, IMHO, is not needed in the case of a live migration with de nova instances directory on shared storage for all compute nodes participating. \n\n  ", 
+            "date_created": "2014-08-14 09:19:08.523834+00:00", 
+            "author": "https://api.launchpad.net/1.0/~malicure"
+        }, 
+        {
+            "content": "I think this is related to a bug I have found at Bugzilla. The work around solved my issue.\n\nexcerpt from bug to workaround this issue.\n\n* stop your guests\n* stop libvirt-bin\n* edit /etc/libvirt/qemu.conf - this contains a commented out entry 'dynamic_ownership=1', which is the default. Change this to 0, and remove the comment. \n* Do a chown to libvirt-qemu:kvm for all your stopped images. \n* Start the service libvirt-bin again\n* Bring up the guests\n* Repeat on the other half of your cluster\n* Test a live migration - for me, they work again.\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1057645", 
+            "date_created": "2014-09-05 14:10:39.575860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dylan-hager"
+        }, 
+        {
+            "content": "Great, this works for me.\nThank you, Dylan.", 
+            "date_created": "2014-09-06 19:09:29.933355+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hfrenzel"
+        }, 
+        {
+            "content": "Works for me too!\nThanks a lot Dylan!", 
+            "date_created": "2014-09-08 10:26:59.675454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~malicure"
+        }, 
+        {
+            "content": "I would suggest to set user=\"nova\" and group=\"nova\" in qemu.conf too.\nWithout them, a permission denied error occured on instance creation:\n\n2014-09-08 20:08:33.267 4740 TRACE nova.compute.manager [instance: 6fbc9080-772d-4c18-a630-2196763742bf] qemu-kvm: -drive file=/var/lib/nova/instances/6fbc9080-772d-4c18-a630-2196763742bf/disk,if=none,id=drive-virtio-disk0,format=qcow2,cache=none: could not open disk image /var/lib/nova/instances/6fbc9080-772d-4c18-a630-2196763742bf/disk: Permission denied\n", 
+            "date_created": "2014-09-08 18:12:24.278429+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hfrenzel"
+        }, 
+        {
+            "content": "Agreed, and I managed to avoid bringing all running instances down by chowning the disk and monitor files to group nova and then chmod g+w  on those files. \nThen, assuming all nova nodes are using the working qemu configuration,  it is possible to live migrate the instances, and after that migration, the files can also be chowned to user nova. \nThat way there is no need for downtime", 
+            "date_created": "2014-09-09 09:06:02.700082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~malicure"
+        }, 
+        {
+            "content": "\nI still got this following error when trying to launch an instance under GlusterFS shared storage on latest updated Ubuntu 14.04.1 LTS by changing the user and group and dynamic_ownership as suggested from the above:\n\n\"libvirtError: internal error: process exited while connecting to monitor: qemu-system-x86_64: -chardev file,id=charserial0,path=/var/lib/nova/instances/3ce9acb6-fcfd-4042-93ee-372fe2221f4d/console.log: Could not open '/var/lib/nova/instances/3ce9acb6-fcfd-4042-93ee-372fe2221f4d/console.log': Permission denied\"\n\n\"libvirtError: internal error: process exited while connecting to monitor: Could not access KVM kernel module: Permission denied\n2014-10-31 04:03:36.246 5008 TRACE nova.compute.manager [instance: 76c0f9bf-d438-4f19-841a-0cc1a8cc3013] failed to initialize KVM: Permission denied\"\n", 
+            "date_created": "2014-10-31 04:12:08.731290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~chrone81"
+        }, 
+        {
+            "content": "Eli,\n\ndo you have idea how to fix this issue? I believe that it should be fixed in libvirt (don't chown if gluster detected):\n\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1057645\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1004673\nhttps://bugzilla.redhat.com/show_bug.cgi?id=714997", 
+            "date_created": "2015-04-01 11:59:11.820717+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "thanks Pawel, that seems need to be fixed in libvirt.", 
+            "date_created": "2015-04-02 05:50:44.480951+00:00", 
+            "author": "https://api.launchpad.net/1.0/~taget-9"
+        }, 
+        {
+            "content": "This is a regression introduced in Gluster 3.4.1 as pointed here - http://www.gluster.org/pipermail/gluster-users/2014-January/015885.html\nThere is a workaround for this issue: https://bugzilla.redhat.com/show_bug.cgi?id=1057645#c7\n\nMarking as invalid as this is not nova bug.", 
+            "date_created": "2015-10-02 07:19:07.749177+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }
+    ], 
+    "closed": "2015-10-02 07:19:14.515991+00:00"
+}

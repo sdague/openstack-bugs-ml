@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-02-27 20:29:18.246559+00:00", 
+    "description": "There is a problem where if a volume detach fails at the libvirt driver level for some reason, the volume detach cannot be retried and the volume cannot be detached until the instance is rebooted.\n\nCurrently, a volume detach at the libvirt driver level happens in two steps:\n\n 1. Detach from the persistent domain (this will affect the instance upon next reboot)\n 2. Detach from the transient domain (this will affect the running instance)\n\nA detach from a transient domain is a request from the host to the guest, to detach the volume. The guest can choose to ignore this request. For example, if the guest has a file open on the volume by some process, it might ignore the request to detach that volume because it is busy.\n\nIf this scenario occurs, when a user tries a later request to detach the volume, it will fail with the error:\n\n libvirtError: invalid argument: no target device <device>\n\nbecause the volume was detached from the persistent domain the first time. Because of this, the volume can only be detached by rebooting the instance.\n\nThe behavior should be changed to detach from the transient domain first, retrying if necessary, and detach from the persistent domain only if the detach from the transient domain has succeeded. This way, if the guest volume is busy and it ignores the detach request, the detach can be tried again at a later time by the user.\n\nSuggested steps to reproduce:\n\n 1. Boot an instance and attach a volume\n 2. Log in to the guest and open a file on that volume in a text editor\n 3. Try to detach the volume using 'nova volume-detach' (it should have failed)\n 4. Exit the text editor on the guest\n 5. Try to detach the volume using 'nova volume-detach' (should get the 'no target device' error)", 
+    "tags": [
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1633236", 
+    "owner": "https://api.launchpad.net/1.0/~melwitt", 
+    "id": 1633236, 
+    "index": 4652, 
+    "openned": "2016-10-13 22:18:24.805066+00:00", 
+    "created": "2016-10-13 22:18:24.805066+00:00", 
+    "title": "If volume detach fails, it cannot be retried and the instance must be rebooted to detach", 
+    "comments": [
+        {
+            "content": "There is a problem where if a volume detach fails at the libvirt driver level for some reason, the volume detach cannot be retried and the volume cannot be detached until the instance is rebooted.\n\nCurrently, a volume detach at the libvirt driver level happens in two steps:\n\n 1. Detach from the persistent domain (this will affect the instance upon next reboot)\n 2. Detach from the transient domain (this will affect the running instance)\n\nA detach from a transient domain is a request from the host to the guest, to detach the volume. The guest can choose to ignore this request. For example, if the guest has a file open on the volume by some process, it might ignore the request to detach that volume because it is busy.\n\nIf this scenario occurs, when a user tries a later request to detach the volume, it will fail with the error:\n\n libvirtError: invalid argument: no target device <device>\n\nbecause the volume was detached from the persistent domain the first time. Because of this, the volume can only be detached by rebooting the instance.\n\nThe behavior should be changed to detach from the transient domain first, retrying if necessary, and detach from the persistent domain only if the detach from the transient domain has succeeded. This way, if the guest volume is busy and it ignores the detach request, the detach can be tried again at a later time by the user.\n\nSuggested steps to reproduce:\n\n 1. Boot an instance and attach a volume\n 2. Log in to the guest and open a file on that volume in a text editor\n 3. Try to detach the volume using 'nova volume-detach' (it should have failed)\n 4. Exit the text editor on the guest\n 5. Try to detach the volume using 'nova volume-detach' (should get the 'no target device' error)", 
+            "date_created": "2016-10-13 22:18:24.805066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/386257", 
+            "date_created": "2016-10-13 22:25:21.849071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/386257\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=63b2c8962697280f37fa888f1ab1d255757d1154\nSubmitter: Jenkins\nBranch:    master\n\ncommit 63b2c8962697280f37fa888f1ab1d255757d1154\nAuthor: melanie witt <email address hidden>\nDate:   Wed Oct 12 07:37:41 2016 +0000\n\n    Raise DeviceNotFound detaching volume from persistent domain\n    \n    Currently, a volume detach at the libvirt driver level happens in two\n    steps:\n    \n      1. Detach from persistent domain (affect instance upon next reboot)\n      2. Detach from live domain (affect running instance)\n    \n    A detach from a live domain is a request from the host to the guest,\n    which the guest can choose to ignore. For example, if the guest\n    has a file open on the volume by some process, it might ignore the\n    request to detach that volume because the file is in use.\n    \n    If this scenario occurs, when a user tries a later request to detach\n    the volume, it will fail with this error when the attempt to detach\n    from the persistent domain is made:\n    \n      libvirtError: invalid argument: no target device <device>\n    \n    because the volume was detached from the persistent domain the first\n    time. Because of this, the volume can only be detached by rebooting\n    the instance.\n    \n    This handles the VIR_ERR_INVALID_ARG\n    \"invalid argument: no target device\" error [1] from libvirt for the\n    detach from persistent domain and raises DeviceNotFound. The libvirt\n    driver handles DeviceNotFound for volume detach.\n    \n    Note: Our code is already handling the VIR_ERR_OPERATION_FAILED\n    \"operation failed: disk vdb not found\" error [2] for the case of the\n    detach from live domain.\n    \n    Closes-Bug: #1633236\n    \n    [1] https://github.com/libvirt/libvirt/blob/f9d57f2/src/qemu/qemu_driver.c#L8055-L8059\n    [2] https://github.com/libvirt/libvirt/blob/f81b33b/src/qemu/qemu_hotplug.c#L2859-L2863\n    \n    Change-Id: I09230fc47b0950aa5a3db839a070613c9c817576\n", 
+            "date_created": "2017-01-24 12:00:53.449040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/425114", 
+            "date_created": "2017-01-25 10:41:37.324734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b3 development milestone.", 
+            "date_created": "2017-01-27 00:52:44.250097+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/425114\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b51231c638228f67ab130a7855b9143b202733f6\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit b51231c638228f67ab130a7855b9143b202733f6\nAuthor: melanie witt <email address hidden>\nDate:   Wed Oct 12 07:37:41 2016 +0000\n\n    Raise DeviceNotFound detaching volume from persistent domain\n    \n    Currently, a volume detach at the libvirt driver level happens in two\n    steps:\n    \n      1. Detach from persistent domain (affect instance upon next reboot)\n      2. Detach from live domain (affect running instance)\n    \n    A detach from a live domain is a request from the host to the guest,\n    which the guest can choose to ignore. For example, if the guest\n    has a file open on the volume by some process, it might ignore the\n    request to detach that volume because the file is in use.\n    \n    If this scenario occurs, when a user tries a later request to detach\n    the volume, it will fail with this error when the attempt to detach\n    from the persistent domain is made:\n    \n      libvirtError: invalid argument: no target device <device>\n    \n    because the volume was detached from the persistent domain the first\n    time. Because of this, the volume can only be detached by rebooting\n    the instance.\n    \n    This handles the VIR_ERR_INVALID_ARG\n    \"invalid argument: no target device\" error [1] from libvirt for the\n    detach from persistent domain and raises DeviceNotFound. The libvirt\n    driver handles DeviceNotFound for volume detach.\n    \n    Note: Our code is already handling the VIR_ERR_OPERATION_FAILED\n    \"operation failed: disk vdb not found\" error [2] for the case of the\n    detach from live domain.\n    \n    Closes-Bug: #1633236\n    \n    [1] https://github.com/libvirt/libvirt/blob/f9d57f2/src/qemu/qemu_driver.c#L8055-L8059\n    [2] https://github.com/libvirt/libvirt/blob/f81b33b/src/qemu/qemu_hotplug.c#L2859-L2863\n    \n    Change-Id: I09230fc47b0950aa5a3db839a070613c9c817576\n    (cherry picked from commit 63b2c8962697280f37fa888f1ab1d255757d1154)\n", 
+            "date_created": "2017-02-16 04:39:51.503761+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.4 release.", 
+            "date_created": "2017-02-27 20:29:17.324522+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-01-24 12:00:51.428513+00:00"
+}

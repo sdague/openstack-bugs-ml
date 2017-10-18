@@ -1,0 +1,81 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2016-04-18 14:58:14.958101+00:00", 
+    "description": "In nova/compute/manager.py: def prep_resize()\n\nThe design intends to catch every host error exception and then reschedule for resize/migrate like below:\n\n        with self._error_out_instance_on_exception(context, instance['uuid'],\n                                                   reservations):\n            self.conductor_api.notify_usage_exists(\n                    context, instance, current_period=True)\n            self._notify_about_instance_usage(\n                    context, instance, \"resize.prep.start\")\n            try:\n                self._prep_resize(context, image, instance,\n                                  instance_type, reservations,\n                                  request_spec, filter_properties,\n                                  node)\n            except Exception:                                  <<<<<intend to catch host exception, and reschedule for resize/migrate\n                # try to re-schedule the resize elsewhere:\n                exc_info = sys.exc_info()\n                self._reschedule_resize_or_reraise(context, image, instance,\n                        exc_info, instance_type, reservations, request_spec,\n                        filter_properties)\n\nHowever, in self._prep_resize(), it would cast request of 'resize_instance()'. Thus,  self._prep_resize() would return before resize_instance() finished. And resize_instance() may throw exception and reschedule is in need, but the exception would not be caught by prep_resize() and reschedule would not work.", 
+    "tags": [
+        "compute", 
+        "requires-large-refactor"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1263044", 
+    "owner": "None", 
+    "id": 1263044, 
+    "index": 2733, 
+    "openned": "2013-12-20 09:30:30.875252+00:00", 
+    "created": "2013-12-20 09:30:30.875252+00:00", 
+    "title": "Resize/migrate cannot reschedule", 
+    "comments": [
+        {
+            "content": "In nova/compute/manager.py: def prep_resize()\n\nThe design intends to catch every host error exception and then reschedule for resize/migrate like below:\n\n        with self._error_out_instance_on_exception(context, instance['uuid'],\n                                                   reservations):\n            self.conductor_api.notify_usage_exists(\n                    context, instance, current_period=True)\n            self._notify_about_instance_usage(\n                    context, instance, \"resize.prep.start\")\n            try:\n                self._prep_resize(context, image, instance,\n                                  instance_type, reservations,\n                                  request_spec, filter_properties,\n                                  node)\n            except Exception:                                  <<<<<intend to catch host exception, and reschedule for resize/migrate\n                # try to re-schedule the resize elsewhere:\n                exc_info = sys.exc_info()\n                self._reschedule_resize_or_reraise(context, image, instance,\n                        exc_info, instance_type, reservations, request_spec,\n                        filter_properties)\n\nHowever, in self._prep_resize(), it would cast request of 'resize_instance()'. Thus,  self._prep_resize() would return before resize_instance() finished. And resize_instance() may throw exception and reschedule is in need, but the exception would not be caught by prep_resize() and reschedule would not work.", 
+            "date_created": "2013-12-20 09:30:30.875252+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liuhoug"
+        }, 
+        {
+            "content": "Perhaps we can add some retry logic in self._prep_resize", 
+            "date_created": "2013-12-20 10:03:55.338247+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jay-lau-513"
+        }, 
+        {
+            "content": "We need to wait for the response, if an exception occurs. What about using call instead of cast in nova/compute/rpcapi.py ?", 
+            "date_created": "2013-12-27 15:54:17.702338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/64284", 
+            "date_created": "2013-12-27 16:09:41.529966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Have to check the trunk to check if that bug has been fixed. Some paches came in about the subject, so that needs to be verified.", 
+            "date_created": "2014-07-17 08:12:25.589513+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/172044", 
+            "date_created": "2015-04-09 13:17:45.046423+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/172044", 
+            "date_created": "2015-11-03 08:47:01.912159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Resetting to New as the proposed patch was abandoned and this bug is also old and needs to be reverified", 
+            "date_created": "2015-11-11 20:22:24.303608+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "@melwitt: setting to Confirmed as sahid and sdague have previously confirmed this bug", 
+            "date_created": "2015-12-10 15:19:07.918337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexisl"
+        }, 
+        {
+            "content": "OK after conferring with markus_z, this is an old bug so setting to Incomplete.\n\n@hougangliu please can you try to reproduce? @sahid, @sdague also free to try.", 
+            "date_created": "2015-12-10 16:04:58.441093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexisl"
+        }, 
+        {
+            "content": "This seems like a Tasks thing to me, specifically johnthetubaguy says:\n\n\"hmm, maybe, its the orchestration piece we want there I guess. The\noriginal plan was to first do the move to conductor work for resize,     \nmigrate and live migrate, the inter-compute stuff should be driven       \ncentrally by the conductor, then we can wrap more structured handling    \naround that. If I am remembering correctly (I had a blueprint on this I  \nnever had time to complete)\"\n\nSo the long and short is, fixing this bug will require a lot of work (still worth trying) and a lot of care to fit in with project plans. We invented tag requires-large-refactor to mark this.", 
+            "date_created": "2015-12-10 17:39:52.827373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexisl"
+        }, 
+        {
+            "content": "This is a bigger feature / structural change. And needs to come in through the specs process.", 
+            "date_created": "2016-04-18 14:58:14.284214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2016-04-18 14:57:41.461793+00:00"
+}

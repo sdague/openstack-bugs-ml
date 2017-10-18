@@ -1,0 +1,56 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-09-09 18:01:23.851596+00:00", 
+    "description": "This code in Tempest:\n\n    def test_list_servers_status_is_invalid(self):\n        \"\"\"Return an empty list when invalid status is specified\"\"\"\n        non_existing_status = 'BALONEY'\n        resp, body = self.client.list_servers(dict(status=non_existing_status))\n        servers = body['servers']\n        self.assertEqual('200', resp['status'])\n        self.assertEqual([], servers)\n\nCurrently fails with:\n\n======================================================================\nERROR: Return an empty list when invalid status is specified\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/jpipes/repos/tempest/tempest/tests/compute/test_list_servers_negative.py\", line 137, in test_list_servers_status_is_invalid\n    resp, body = self.client.list_servers(dict(status=non_existing_status))\n  File \"/home/jpipes/repos/tempest/tempest/services/nova/json/servers_client.py\", line 114, in list_servers\n    resp, body = self.get(url)\n  File \"/home/jpipes/repos/tempest/tempest/common/rest_client.py\", line 166, in get\n    return self.request('GET', url, headers)\n  File \"/home/jpipes/repos/tempest/tempest/common/rest_client.py\", line 208, in request\n    raise exceptions.BadRequest(resp_body)\nBadRequest: Bad request\nDetails: Bad request\nDetails: {u'badRequest': {u'message': u'Invalid server status: BALONEY', u'code': 400}}\n-------------------- >> begin captured logging << --------------------\ntempest.common.rest_client: ERROR: Request URL: http://127.0.0.1:8774/v2/4e0d6c1233154da0afb23f19e780befa/servers?status=BALONEY&\ntempest.common.rest_client: ERROR: Request Body: None\ntempest.common.rest_client: ERROR: Response Headers: {'date': 'Thu, 04 Oct 2012 15:51:21 GMT', 'status': '400', 'content-length': '74', 'content-type': 'application/json; charset=UTF-8', 'x-compute-request-id': 'req-4ca6978f-f67f-4111-b21c-c6e21541015d'}\ntempest.common.rest_client: ERROR: Response Body: {u'badRequest': {u'message': u'Invalid server status: BALONEY', u'code': 400}}\n--------------------- >> end captured logging << ---------------------\n\nThe return should be an empty list and 200 OK to make this consistent with other non-existing filters like flavour ID or changes-since dates in the future that return an empty list.\n\nThe fact is that the API indicates the status parameter is a string, but no more details. As such, status=BALONEY is a valid filter that should return no records since no records match that status.\n\n-jay", 
+    "tags": [
+        "in-stable-folsom", 
+        "tempest"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1061712", 
+    "owner": "https://api.launchpad.net/1.0/~dims-v", 
+    "id": 1061712, 
+    "index": 4404, 
+    "openned": "2012-10-04 16:01:05.972765+00:00", 
+    "created": "2012-10-04 16:01:05.972765+00:00", 
+    "title": "GET /servers?status=BALONEY returns 400, should return 200 with empty list", 
+    "comments": [
+        {
+            "content": "This code in Tempest:\n\n    def test_list_servers_status_is_invalid(self):\n        \"\"\"Return an empty list when invalid status is specified\"\"\"\n        non_existing_status = 'BALONEY'\n        resp, body = self.client.list_servers(dict(status=non_existing_status))\n        servers = body['servers']\n        self.assertEqual('200', resp['status'])\n        self.assertEqual([], servers)\n\nCurrently fails with:\n\n======================================================================\nERROR: Return an empty list when invalid status is specified\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/jpipes/repos/tempest/tempest/tests/compute/test_list_servers_negative.py\", line 137, in test_list_servers_status_is_invalid\n    resp, body = self.client.list_servers(dict(status=non_existing_status))\n  File \"/home/jpipes/repos/tempest/tempest/services/nova/json/servers_client.py\", line 114, in list_servers\n    resp, body = self.get(url)\n  File \"/home/jpipes/repos/tempest/tempest/common/rest_client.py\", line 166, in get\n    return self.request('GET', url, headers)\n  File \"/home/jpipes/repos/tempest/tempest/common/rest_client.py\", line 208, in request\n    raise exceptions.BadRequest(resp_body)\nBadRequest: Bad request\nDetails: Bad request\nDetails: {u'badRequest': {u'message': u'Invalid server status: BALONEY', u'code': 400}}\n-------------------- >> begin captured logging << --------------------\ntempest.common.rest_client: ERROR: Request URL: http://127.0.0.1:8774/v2/4e0d6c1233154da0afb23f19e780befa/servers?status=BALONEY&\ntempest.common.rest_client: ERROR: Request Body: None\ntempest.common.rest_client: ERROR: Response Headers: {'date': 'Thu, 04 Oct 2012 15:51:21 GMT', 'status': '400', 'content-length': '74', 'content-type': 'application/json; charset=UTF-8', 'x-compute-request-id': 'req-4ca6978f-f67f-4111-b21c-c6e21541015d'}\ntempest.common.rest_client: ERROR: Response Body: {u'badRequest': {u'message': u'Invalid server status: BALONEY', u'code': 400}}\n--------------------- >> end captured logging << ---------------------\n\nThe return should be an empty list and 200 OK to make this consistent with other non-existing filters like flavour ID or changes-since dates in the future that return an empty list.\n\nThe fact is that the API indicates the status parameter is a string, but no more details. As such, status=BALONEY is a valid filter that should return no records since no records match that status.\n\n-jay", 
+            "date_created": "2012-10-04 16:01:05.972765+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "I would say this may be a gray area where the spec doesn't explicitly state what should happen when an invalid status is specified.\n\nIn my opinion the Nova code is currently doing the correct thing by throwing a 400 if a bad status is specified. Here is the relevant code:\n\n        # Verify search by 'status' contains a valid status.\n        # Convert it to filter by vm_state for compute_api.\n        status = search_opts.pop('status', None)\n        if status is not None:\n            state = common.vm_state_from_status(status)\n            if state is None:\n                msg = _('Invalid server status: %(status)s') % locals()\n                raise exc.HTTPBadRequest(explanation=msg)\n            search_opts['vm_state'] = state\n", 
+            "date_created": "2012-10-04 16:19:24.508501+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Yes, Dan, I'm aware of what the code does. I'm saying the spec says \"string\", not \"these specific strings\", and therefore the 400 is wrong. It should return an empty list... I chatted with Waldon about this on IRC today and he said to expect disagreement.\n\nDisagreement is fine, but I think I've laid out my case, you've laid out yours, and we should have the debate... not just set the bug to Invalid.", 
+            "date_created": "2012-10-04 16:51:33.304934+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/14765", 
+            "date_created": "2012-10-24 14:17:11.765528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/14765\nCommitted: http://github.com/openstack/nova/commit/e142d21b47e8895a013c468936e69ba0e7e66041\nSubmitter: Jenkins\nBranch:    master\n\ncommit e142d21b47e8895a013c468936e69ba0e7e66041\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Wed Oct 24 10:15:39 2012 -0400\n\n    Return empty list when listing servers with bad status value\n    \n    API indicates the status parameter is a string, hence status=BALONEY is a valid\n    filter that should return zero records since no records match that status. The\n    return should be an empty list and 200 OK.\n    \n    Fixes bug 1061712\n    \n    Change-Id: If796110a18dd75ab5c5d4ba41e9c3b58180341f8\n", 
+            "date_created": "2012-10-24 22:35:37.567581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/34490", 
+            "date_created": "2013-06-26 02:47:08.413389+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/34490\nCommitted: http://github.com/openstack/nova/commit/ad48866070bf1734be03f26c89b5af18bc1ad616\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit ad48866070bf1734be03f26c89b5af18bc1ad616\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Wed Oct 24 10:15:39 2012 -0400\n\n    Return empty list when listing servers with bad status value\n    \n    API indicates the status parameter is a string, hence status=BALONEY is a valid\n    filter that should return zero records since no records match that status. The\n    return should be an empty list and 200 OK.\n    \n    Fixes bug 1061712\n    \n    Change-Id: If796110a18dd75ab5c5d4ba41e9c3b58180341f8\n    (cherry picked from commit e142d21b47e8895a013c468936e69ba0e7e66041)\n", 
+            "date_created": "2013-09-09 18:01:23.060129+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-11-21 10:02:20.912984+00:00"
+}

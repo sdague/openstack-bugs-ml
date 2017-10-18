@@ -1,0 +1,51 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-09-15 17:56:20.414383+00:00", 
+    "description": "With two hosts installed using devstack with a multi-node configuration and the directory /opt/stack/data/nova/instances/ shared using NFS.\n\nWhen performing a resize I get the following error (Complete traceback in http://paste.openstack.org/show/45368/):\n\n\"qemu-img: Could not open '/opt/stack/data/nova/instances/7dbeb7f2-39e2-4f1d-8228-0b7a84d27745/disk': Permission denied\\n\"\n\nThis problem was introduced with patch https://review.openstack.org/28424 which modified the behaviour of migrate/resize when using shared storage. Before that, the disk was moved to the new host using ssh even if using shared storage (which could cause some data loss when an error happened) but now, if we're using shared storage it won't send the disk to the other host but only assume that it will be accessible from there. In the end both are using the same storage, why should this be a problem?\n\nAfter doing some research on how NFS handles its shares on the client side, I realized that NFS client keeps a file cache with the file name and the inodes which, if no process asks for it before, will be refreshed on intervals of from 3 to 60 seconds (See nfs options ac[dir|reg][min|max] in nfs' manpage). So, if a process tries to access a file which has been renamed on the remote server it will be accessing the old version because the name is still pointing to the old inode (cache won't be updated when accessing a file but only when asking for the file attributes, e.g. ls -lh)\n\nIn the resize case, the origin compute node renamed the instance directory to \"$INSTANCE_DIR/<instance_uuid>_resize\" (owned by root after qemu stops) and created the new instance disk from it under the new directory \"$INSTANCE_DIR/<instance_uuid>\".\n\nFrom the destination host, even thought we were trying to access the new disk file from \"$INSTANCE_DIR/<instance_uuid>/disk\" we were still holding the old inode for that path which pointed to \"$INSTANCE_DIR/<instance_uuid>_resize/disk\" (owned by root, inaccessible, the wrong image, etc, etc).\n\nIf the NFS share is mounted with the option \"noac\" which (from manpage) \"forces application writes to become synchronous so that local changes to a file become visible on the server immediately\". This prevents the files to be out of sync, but it comes with the drawback of issuing a network call for every file operation which may cause performance issues.", 
+    "tags": [
+        "nfs", 
+        "resize"
+    ], 
+    "importance": "High", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1218372", 
+    "owner": "https://api.launchpad.net/1.0/~mjdoffma", 
+    "id": 1218372, 
+    "index": 1199, 
+    "openned": "2013-08-29 13:09:40.891893+00:00", 
+    "created": "2013-08-29 13:09:40.891893+00:00", 
+    "title": "[libvirt] resize fails when using NFS shared storage", 
+    "comments": [
+        {
+            "content": "With two hosts installed using devstack with a multi-node configuration and the directory /opt/stack/data/nova/instances/ shared using NFS.\n\nWhen performing a resize I get the following error (Complete traceback in http://paste.openstack.org/show/45368/):\n\n\"qemu-img: Could not open '/opt/stack/data/nova/instances/7dbeb7f2-39e2-4f1d-8228-0b7a84d27745/disk': Permission denied\\n\"\n\nThis problem was introduced in patch https://review.openstack.org/28424 which modified the behaviour of migrate/resize when using shared storage. Before that, the disk was moved to the new host using ssh even if using shared storage (which could cause some data loss when an error happened) but now, if we're using shared storage it won't send the disk to the other host but only assume that it will be accessible from there. In the end both are using the same storage, why should this be a problem?\n\nAfter doing some research on how NFS handles its shares on the client side, I realized that NFS client keeps a file cache with the file name and the inodes which, if no process asks for it before, will be refreshed on intervals of from 3 to 60 seconds (See nfs options ac[dir|reg][min|max] in nfs' manpage). So, if a process tries to access a file which has been renamed on the remote server it will be accessing the old version because the name is still pointing to the old inode (cache won't be updated when accessing a file but only when asking for the file attributes, e.g. ls -lh)\n\nIn the resize case, the origin compute node renamed the instance directory to \"$INSTANCE_DIR/<instance_uuid>_resize\" (owned by root after qemu stops) and created the new instance disk from it under the new directory \"$INSTANCE_DIR/<instance_uuid>\".\n\nFrom the destination host, even thought we were trying to access the new disk file from \"$INSTANCE_DIR/<instance_uuid>/disk\" we were still holding the old inode for that path which pointed to \"$INSTANCE_DIR/<instance_uuid>_resize/disk\" (owned by root, inaccessible, the wrong image, etc, etc).\n\nIf the NFS share is mounted with the option \"noac\" which (from manpage) \"forces application writes to become synchronous so that local changes to a file become visible on the server immediately\". This prevents the files to be out of sync, but it comes with the drawback of issuing a network call for every file operation which may cause performance issues.", 
+            "date_created": "2013-08-29 13:09:40.891893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/44359", 
+            "date_created": "2013-08-29 21:21:54.324496+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/58852", 
+            "date_created": "2013-11-27 20:35:50.358390+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There's a much simpler solution here.  We should simply recommend \"lookupcache=none\" be set as an NFS mount option. \n\nPer the NFS man page:\n===\nIf the client ignores its cache and validates every application lookup request with the server, that client can immediately detect when a new directory entry has been either created or removed by another client. You can specify this behavior using lookupcache=none. The extra NFS requests needed if the client does not cache directory entries can exact a performance penalty. Disabling lookup caching should result in less of a performance penalty than using noac, and has no effect on how the NFS client caches the attributes of files\n===\n\nThe other option is to flush all the caches (kernel doc snippet below):\n\n===\nWriting to this will cause the kernel to drop clean caches, dentries and\ninodes from memory, causing that memory to become free.\n\nTo free pagecache:\n\techo 1 > /proc/sys/vm/drop_caches\nTo free dentries and inodes:\n\techo 2 > /proc/sys/vm/drop_caches\nTo free pagecache, dentries and inodes:\n\techo 3 > /proc/sys/vm/drop_caches\n\nAs this is a non-destructive operation and dirty objects are not freeable, the\nuser should run `sync' first.\n===\n\nIn our case, I'd propose running 'sync' and then echo 2 into drop_caches on the destination.", 
+            "date_created": "2014-02-02 20:09:10.854511+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rkhardalian"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/28424/ landed in Havana.  Is this still valid?  I know there were some fixes for Ceph shared storage and resize made in Kilo which we also backported to stable/juno.  I'm not sure if those would also resolve issues for NFS, but I'd think they are related, so marking this invalid at this point.  Please re-open if this is still an issue.", 
+            "date_created": "2015-09-15 17:53:16.522786+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is the fix I was thinking of for resize with shared storage, made in kilo and backported to stable/juno:\n\nhttps://review.openstack.org/#/c/139693/", 
+            "date_created": "2015-09-15 17:56:20.011891+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ], 
+    "closed": "2015-09-15 17:53:21.448692+00:00"
+}

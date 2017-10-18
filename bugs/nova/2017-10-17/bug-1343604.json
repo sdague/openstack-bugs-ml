@@ -1,0 +1,320 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-11-17 19:54:39.349503+00:00", 
+    "description": "Currently when execute() throws a ProcessExecutionError, it returns the command without masking passwords. In the one place where it logs the command, it correctly masks the password.\n\nIt would be prudent to mask the password in the exception as well so that upstream catchers don't have to go through the mask_password() motions.\n\nThe same also goes for stdout and stderr information which should be sanitized.", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "Medium", 
+    "heat": 264, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1343604", 
+    "owner": "None", 
+    "id": 1343604, 
+    "index": 3957, 
+    "openned": "2014-07-31 09:20:20.853476+00:00", 
+    "created": "2014-07-17 21:04:18.183548+00:00", 
+    "title": "Exceptions thrown, and messages logged by execute() may include passwords (CVE-2014-7230)", 
+    "comments": [
+        {
+            "content": "Currently when execute() throws a ProcessExecutionError, it returns the command without masking passwords. In the one place where it logs the command, it correctly masks the password.\n\nIt would be prudent to mask the password in the exception as well so that upstream catchers don't have to go through the mask_password() motions.", 
+            "date_created": "2014-07-17 21:04:18.183548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amrith"
+        }, 
+        {
+            "content": "Thanks for your bug report. It does look like this could lead to information leakage in the exception handler cases where attempts > 0 and possibly when the exception is propagated up (when attempts == 0). \n\nI'm marking the OSSA bug task as incomplete until discussed with other VMT members as to whether we will issue an advisory for this problem. ", 
+            "date_created": "2014-07-17 23:33:24.832548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Grant, with respect, I disagree with your assessment.  The default values are attempts = 1 and ignore_exit_code is False and check_exit_code is None. Therefore, by default, an invocation of execute that results in an error would result in an exception being thrown.\n\nWhether you need to issue a security advisory or not may depend more on the incompleteness of the conditions in mask_password (strutils.mask_password) than just whether this function results in a thrown exception or not.\n\nIn testing my changes, I found that the masks in mask_password did not, for example, catch the usage\n\n/usr/sbin/mysqld --password=top-secret\n\n2014-07-19 18:35:01.415 20588 ERROR openstack.common.processutils [-] Running cmd (subprocess): /usr/sbin/mysqld --password=secret\n\nThey did catch\n\n/usr/sbin/mysqld --password=\"top-secret\"\n\n2014-07-19 18:35:48.686 20605 ERROR openstack.common.processutils [-] Running cmd (subprocess): /usr/sbin/mysqld --password=\"***\"\n\nI do intend to enter a bug to make the strings in strutils.mask_password more robust. \n\n", 
+            "date_created": "2014-07-19 22:37:55.710467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amrith"
+        }, 
+        {
+            "content": "Thanks for the additional information Amrith. \n\nI guess all I was trying to point out was that the command is definitely being logged here without using mask_password here:\n\nhttps://github.com/openstack/oslo-incubator/blob/master/openstack/common/processutils.py#L204\n\nI'm going to mark the OSSA task as confirmed. Especially if the mask password implementation does not catch all use cases. ", 
+            "date_created": "2014-07-19 23:39:11.162157+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Grant, thanks for the clarification. I've also entered https://bugs.launchpad.net/ossa/+bug/1345233 and will work on the mask_passwords() thing as well.", 
+            "date_created": "2014-07-19 23:57:57.006530+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amrith"
+        }, 
+        {
+            "content": "Issue is public now - https://review.openstack.org/#/c/108215\n\n", 
+            "date_created": "2014-07-22 00:45:24.739608+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Using this command: \"find */* -iname \"*.py\" | xargs grep -r 'self.cmd *= *cmd'\" reveals that in:\n\n[stable/havana]:\ncinder, glance, heat, keystone, neutron and nova are impacted\n\n[stable/icehouse]:\ncinder, glance, heat, keystone, neutron, nova and trove are impacted\n\n[master]:\ncinder, glance, heat, neutron, nova and trove are impacted\n\n\nWhile \"find */* -iname \"*.py\" | xargs grep -r 'mask_password'\" reveals that only keystone is using it across all versions \n", 
+            "date_created": "2014-07-22 12:50:37.900806+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "We should be looking more precisely at the affected list and check which projects are using execute() with command that have password passed on the command line.\nFor each identified affected project we'll need a target series and a patch for each affected branch (we are looking at 12 (stable) + 6 (master) + 3 (oslo) = 21 potential reviews!)\n\nIn the meantime, this is impact description draft #1:\n\nTitle: Potential password leak when shell command fail\nReporter: Amrith Kumar (Tesora)\nProducts: Cinder   (2013.2 versions up to 2013.2.3,\n                    2014.1 versions up to 2014.1.1)\n          Glance   (2013.2 versions up to 2013.2.3,\n                    2014.1 versions up to 2014.1.1)\n          Heat     (2013.2 versions up to 2013.2.3,\n                    2014.1 versions up to 2014.1.1)\n          Keystone (2013.2 versions up to 2013.2.3)\n          Neutron  (2013.2 versions up to 2013.2.3,\n                    2014.1 versions up to 2014.1.1)\n          Nova     (2013.2 versions up to 2013.2.3,\n                    2014.1 versions up to 2014.1.1)\n          Trove    (2014.1 versions up to 2014.1.1)\n\nDescription:\nAmrith Kumar from Tesora reported a vulnerability in the processutils execute function available from oslo-incubator and which is copied into each project's code. An attacker with read access to the services' logs may obtain passwords used as a parameter of a command that fail. All services are impacted.\n", 
+            "date_created": "2014-07-22 15:15:15.459769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hum, the mask_password is more broad than stated, here what I used to track affected version:\nfind */* -iname \"*.py\" | xargs grep -r 'mask_password(' | grep -v ':def' | grep -v '>>>'\n\nHere is the summary\n\nmask_password: [stable/havana]: keystone\nexecute:             [stable/havana]: cinder, glance, heat, keystone, neutron and nova\n\nmask_password: [stable/icehouse]: keystone, nova and trove\nexecute:             [stable/icehouse]: cinder, glance, heat, keystone, neutron, nova and trove\n\nmask_password: [master]: cinder, glance, heat, keystone, nova and trove\nexecute:             [master]: cinder, glance, heat, neutron, nova and trove are impacted\n\n\nI simplified the affected versions, it may now include unaffected version but it so much easier to read... \nHere is the combined impact description draft #2:\n\nTitle: Potential password leak when shell command fail or because of incorrect masking\nReporter: Amrith Kumar (Tesora)\nProducts: Cinder, Glance, Heat, Keystone, Neutron, Nova, Trove\nVersions: up to 2013.2.3, 2014.1 versions up to 2014.1.1\n\nDescription:\nAmrith Kumar from Tesora reported two vulnerabilities in the processutils.execute() and mask_password() functions available from oslo-incubator that are copied into each project's code. An attacker with read access to the services' logs may obtain passwords used as a parameter of a command that fail or when the mask_password does not work properly. All services are impacted.", 
+            "date_created": "2014-07-22 20:57:04.918899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Change abandoned by amrith (<email address hidden>) on branch: master\nReview: https://review.openstack.org/108215\nReason: I am abandoning https://review.openstack.org/#/c/108216/ and https://review.openstack.org/#/c/108215/ and will create a new commit with proper dependencies.", 
+            "date_created": "2014-07-24 19:06:53.864924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/109417", 
+            "date_created": "2014-07-24 21:24:49.723836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "After looking more closely at the affected project usage, it's not as broad as it firsts sounded. Either service does not log the exception/mask_password, either vulnerable are used without any password/sensitive data on command line.\n\nYet here is a more concrete list of vulnerable code:\n\nexecute: [stable/havana]:\n * cinder (cinder/brick/iscsi/iscsi.py:414),\n * nova (no clear vulnerable usage, yet the exception is re-implemented in tools/esx/guest_tool.py and nova/virt/powervm/operator.py:213 is logging the exception)\n\nmask_password: [stable/icehouse]:\n * trove (trove/extensions/mysql/service.py:85)\nexecute: [stable/icehouse]:\n * cinder (cinder/zonemanager/drivers/brocade/brcd_fc_zone_client_cli.py:331),\n * nova (unclear),\n * trove (unclear)\n\nmask_password: [master]:\n * trove (trove/instance/service.py:181)\nexecute: [master]:\n * cinder (cinder/zonemanager/drivers/brocade/brcd_fc_zone_client_cli.py:336),\n * trove (trove/guestagent/strategies/restore/couchbase_impl.py:193)\n\n\n@trove-coresec and @cinder-coresec: Can you please confirmed the impacted code ?\n\n@nova-coresec: Can you please double check Nova codebase for those vulnerability ?", 
+            "date_created": "2014-07-29 21:11:31.932132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/114656", 
+            "date_created": "2014-08-15 20:48:06.754036+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by amrith (<email address hidden>) on branch: master\nReview: https://review.openstack.org/109417\nReason: Change has been submitted to oslo.concurrency as https://review.openstack.org/#/c/114656/", 
+            "date_created": "2014-08-15 20:48:46.615170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@slicknik Can you confirm trove/icehouse is not impacted? This may leak password if the request does not encapsulate password with '\"''\n  https://github.com/openstack/trove/blob/stable/icehouse/trove/extensions/mysql/service.py#L85\ne.g., >>> mask_password(\"requests.... password=SECRET\")\nu'requests.... password=SECRET'\n\n\n@cinder-coresec: Can you check how an execution error in this call will get handled ?\n   https://github.com/openstack/cinder/blob/stable/havana/cinder/brick/iscsi/iscsi.py#L419\ne.g., if the exception is logged it might leak the password to logs (either because password is not encapsulated with '\"', either because the mask_password is not called)\n\n@Tracy Jones: Can you explain why did you added \"compute\" tag ? I double check nova source code and couldn't find a clear code path that would leak a password by logging ProcessExecutionError exception.", 
+            "date_created": "2014-08-21 19:58:14.300280+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/114656\nCommitted: https://git.openstack.org/cgit/openstack/oslo.concurrency/commit/?id=c906dccefccedd8d00d6aa3eacc76194e8199714\nSubmitter: Jenkins\nBranch:    master\n\ncommit c906dccefccedd8d00d6aa3eacc76194e8199714\nAuthor: Amrith Kumar <email address hidden>\nDate:   Thu Aug 14 00:52:02 2014 -0400\n\n    Mask passwords in exceptions and error messages\n    \n    When a ProcessExecutionError is thrown by processutils.execute(), the\n    exception may contain information such as password. Upstream\n    applications that just log the message (as several appear to do) could\n    inadvertently expose these passwords to a user with read access to the\n    log files. It is therefore considered prudent to invoke\n    strutils.mask_password() on the command, stdout and stderr in the\n    exception. A test case has been added to ensure that all three are\n    properly masked.\n    \n    OSSA is aware of this change request.\n    \n    Originally-Submitted-In: I173dfb865e84eb7dee54a22c76db1e4f125a0a8a\n    \n    Change-Id: Ie122db5f19802f519b96ed024ab3f2b5eede3eee\n    Closes-Bug: #1343604\n", 
+            "date_created": "2014-08-21 20:03:01.726316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/109417\nCommitted: https://git.openstack.org/cgit/openstack/oslo-incubator/commit/?id=63c99a0fd5fa7f60b33c7fa756020e5562b6afb0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 63c99a0fd5fa7f60b33c7fa756020e5562b6afb0\nAuthor: Amrith Kumar <email address hidden>\nDate:   Thu Jul 24 17:04:42 2014 -0400\n\n    Mask passwords in exceptions and error messages\n    \n    When a ProcessExecutionError is thrown by processutils.execute(), the\n    exception may contain information such as password. Upstream\n    applications that just log the message (as several appear to do) could\n    inadvertently expose these passwords to a user with read access to the\n    log files. It is therefore considered prudent to invoke\n    strutils.mask_password() on the command, stdout and stderr in the\n    exception. A test case has been added to ensure that all three are\n    properly masked.\n    \n    OSSA is aware of this change request.\n    \n    Submitted to oslo.concurrency in\n    Ie122db5f19802f519b96ed024ab3f2b5eede3eee\n    \n    Change-Id: I173dfb865e84eb7dee54a22c76db1e4f125a0a8a\n    Closes-Bug: #1343604\n", 
+            "date_created": "2014-08-24 15:33:15.890274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm not sure, isn't the exception info in the logs restricted access anyway here?  We don't typically emit exception info to end user, however if there are places in the client this happens (it shouldn't it should be generalized REST faults) that should certainly be fixed.\n\nI do agree that it might be worthwhile to scrub these, in the logs even for those submitting support requests, but I'm not sure i see this as a sec issue currently.", 
+            "date_created": "2014-08-25 19:42:32.089559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "@John Griffith: Well password leak in system logs is considered as a vulnerability because they may end up being shared with third parties.\nThough, about the code in iscsi.py#L419, it's not clear if this exception will get logged and if the iscsi admin password will get leaked or not.\n\nAnyway, I think cinder should triage this one for stable/havana and stable/icehouse in order to update the openstack common code of processutils.", 
+            "date_created": "2014-08-25 19:56:48.647151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@amrith Looking at oslo-incubator, didn't you missed to patch ssh_execute too ? \n https://github.com/openstack/oslo-incubator/blob/master/openstack/common/processutils.py#L271", 
+            "date_created": "2014-08-25 20:22:12.617029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/116719", 
+            "date_created": "2014-08-25 20:41:24.128430+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/116763", 
+            "date_created": "2014-08-26 01:28:25.507071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/116927", 
+            "date_created": "2014-08-26 15:46:28.768034+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/116982", 
+            "date_created": "2014-08-26 18:19:28.934904+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: master\nReview: https://review.openstack.org/116719\nReason: Taken over by https://review.openstack.org/116927", 
+            "date_created": "2014-08-26 18:20:46.206368+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/116927\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=ff0f112bb41fa0f01692f6c4eb8a20d9a4fa8a7c\nSubmitter: Jenkins\nBranch:    master\n\ncommit ff0f112bb41fa0f01692f6c4eb8a20d9a4fa8a7c\nAuthor: Jay S. Bryant <email address hidden>\nDate:   Tue Aug 26 10:32:52 2014 -0500\n\n    Sync latest processutils from oslo-incubator\n    \n    This sync is primarily being done to pull in commit\n    63c99a0f so that passwords are masked in exception and\n    error messages.\n    \n    ------------------------------------------------\n    \n    oslo-incubator head:\n    \n    commit 80a08a413fb0f23a056eca2d273b167f0a09bab6\n    Merge: 83c4098 d73f3b1\n    Author: Jenkins <email address hidden>\n    Date:   Mon Aug 25 14:32:36 2014 +0000\n    \n        Merge \"Remove unused/mutable default args\"\n    \n    -----------------------------------------------\n    \n    The sync pulls in the following changes (newest to oldest):\n    \n    63c99a0f - Mask passwords in exceptions and error messages\n    e184dd36 - Fix exception message in openstack.common.processutils.execute\n    d6b55fb2 - Remove `processutils` dependency on `log`\n    \n    -----------------------------------------------\n    \n    Change-Id: Ia92aab76fa83d01c5fbf6f9d31df2463fc26ba5c\n    Partial-bug: 1343604\n", 
+            "date_created": "2014-08-26 22:44:01.889057+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/119813", 
+            "date_created": "2014-09-08 16:52:42.826756+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/116982\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=853d8f9897f8563851441108a9be26b10908c076\nSubmitter: Jenkins\nBranch:    master\n\ncommit 853d8f9897f8563851441108a9be26b10908c076\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Tue Aug 26 18:16:40 2014 +0000\n\n    Mask passwords in exceptions and error messages\n    \n    When a ProcessExecutionError is thrown by processutils.execute(), the\n    exception may contain information such as password. Upstream\n    applications that just log the message (as several appear to do) could\n    inadvertently expose these passwords to a user with read access to the\n    log files. It is therefore considered prudent to invoke\n    strutils.mask_password() on the command, stdout and stderr in the\n    exception.\n    \n    Cherry-pick from review.openstack.org/109417\n    Partial-Bug: #1343604\n    \n    Change-Id: I9741dcdebdb4bed295ddc5ec4c4b117fffcfe88c\n", 
+            "date_created": "2014-09-09 03:16:33.419950+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Davanum Srinivas (dims) (<email address hidden>) on branch: master\nReview: https://review.openstack.org/119813", 
+            "date_created": "2014-09-09 12:04:36.970063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/120207", 
+            "date_created": "2014-09-09 20:16:51.727014+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/120209", 
+            "date_created": "2014-09-09 20:19:50.441811+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/120219", 
+            "date_created": "2014-09-09 20:42:31.999145+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: stable/havana\nReview: https://review.openstack.org/120209\nReason: Wrong cherry-pick", 
+            "date_created": "2014-09-09 20:55:19.242637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/120223", 
+            "date_created": "2014-09-09 21:02:17.183719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: stable/havana\nReview: https://review.openstack.org/120207\nReason: Wrong cherry-pick", 
+            "date_created": "2014-09-09 21:03:13.067557+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/120229", 
+            "date_created": "2014-09-09 21:13:50.045975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/120234", 
+            "date_created": "2014-09-09 21:19:46.304785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/121095", 
+            "date_created": "2014-09-12 12:55:56.110462+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: stable/havana\nReview: https://review.openstack.org/120234\nReason: Replaced by proper backport from oslo-incubator here: https://review.openstack.org/#/c/121095/", 
+            "date_created": "2014-09-12 12:57:00.808635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: stable/havana\nReview: https://review.openstack.org/120223\nReason: Replaced by proper backport from oslo-incubator here: https://review.openstack.org/#/c/121095/", 
+            "date_created": "2014-09-12 12:57:39.799038+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/121096", 
+            "date_created": "2014-09-12 13:00:12.080091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/121382", 
+            "date_created": "2014-09-13 19:36:20.524241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/121383", 
+            "date_created": "2014-09-13 19:37:48.811415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: stable/icehouse\nReview: https://review.openstack.org/120219\nReason: Replaced by proper backport from oslo-incubator here: https://review.openstack.org/121382", 
+            "date_created": "2014-09-13 19:39:34.488485+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Tristan Cacqueray (<email address hidden>) on branch: stable/icehouse\nReview: https://review.openstack.org/120229\nReason: Replaced by proper backport from oslo-incubator here: https://review.openstack.org/121383", 
+            "date_created": "2014-09-13 19:40:34.284837+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/121416", 
+            "date_created": "2014-09-14 18:56:38.628384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/121417", 
+            "date_created": "2014-09-14 19:22:16.523643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Proposed fixes can be tracked here:\n  https://review.openstack.org/#/q/I3b49b1d667f6ade9ae3f6765d735440a3e838917,n,z\n\nSo far, only Cinder, Nova and Trove have been confirmed. Here is the updated impact description:\n\nTitle: Potential password leak to log when shell command fail or because of incorrect password masking\nReporter: Amrith Kumar (Tesora)\nProducts: Cinder, Nova, Trove\nVersions: up to 2013.2.4, 2014.1 versions up to 2014.1.1\n\nDescription:\nAmrith Kumar from Tesora reported two vulnerabilities in the processutils.execute() and strutils.mask_password() functions available from oslo-incubator that are copied into each project's code. An attacker with read access to the services' logs may obtain passwords used as a parameter of a command that have failed or when the mask_password did not mask password properly. All services are impacted.", 
+            "date_created": "2014-09-15 20:47:56.282668+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121095\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=6772d5ffb2ca3fbfb0accebaed0cea18b80a03e0\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 6772d5ffb2ca3fbfb0accebaed0cea18b80a03e0\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Sat Sep 13 15:51:44 2014 +0000\n\n    Sync latest process and str utils from oslo\n    \n    This backport the necessary changes to fix both issues:\n    * Make execute method clean password in exception\n    * Make sure mask_password works properly\n    \n    Backport in oslo-incubator: 4cf1a2a158f7c3c21799bf2e6ba0e7b5fbc25d62\n    \n    Closes-Bug: 1343604\n    Closes-Bug: 1345233\n    SecurityImpact\n    \n    Change-Id: I3b49b1d667f6ade9ae3f6765d735440a3e838917\n", 
+            "date_created": "2014-09-17 22:35:01.383865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121096\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=34611b3e369f4b78c6575281858d60907ceca92d\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 34611b3e369f4b78c6575281858d60907ceca92d\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Fri Sep 12 12:58:24 2014 +0000\n\n    Sync latest process and str utils from oslo\n    \n    This backport the necessary changes to fix both issues:\n    * Make execute method clean password in exception\n    * Make sure mask_password works properly\n    \n    Backport in oslo-incubator: 4cf1a2a158f7c3c21799bf2e6ba0e7b5fbc25d62\n    \n    Closes-Bug: 1343604\n    Closes-Bug: 1345233\n    SecurityImpact\n    \n    Change-Id: I3b49b1d667f6ade9ae3f6765d735440a3e838917\n", 
+            "date_created": "2014-09-18 07:27:14.462002+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "On Impact desc:\ntitle is way too long. maybe \"Potential leak of passwords into log files\"\n\"All services are impacted\" seem to go against \"Cinder, Nova, Trove\". Maybe remove the mention altogether ?", 
+            "date_created": "2014-09-19 13:43:44.195985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx Thanks for the review!\nNote about the versions: affected products have been fixed in time for 2013.2.4 (except Trove that is not part of Havana).\nHere is the updated impact description.\n\nTitle: Potential leak of passwords into log files\nReporter: Amrith Kumar (Tesora)\nProducts: Cinder, Nova, Trove\nVersions: up to 2013.2.3, 2014.1 versions up to 2014.1.2\n\nDescription:\nAmrith Kumar from Tesora reported two vulnerabilities in the processutils.execute() and strutils.mask_password() functions available from oslo-incubator that are copied into each project's code. An attacker with read access to the services' logs may obtain passwords used as a parameter of a command that have failed or when the mask_password did not mask passwords properly.", 
+            "date_created": "2014-09-22 17:03:48.650889+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121382\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=ec249ee8c68e8d22a9e52cdc8bf062e7b0f7fd79\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit ec249ee8c68e8d22a9e52cdc8bf062e7b0f7fd79\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Sat Sep 13 18:12:05 2014 +0000\n\n    Sync latest process and str utils from oslo\n    \n    This backport the necessary changes to fix both issues:\n    * Make execute method clean password in exception\n    * Make sure mask_password works properly\n    \n    Backport in oslo-incubator: https://review.openstack.org/121365\n    \n    Closes-Bug: 1343604\n    Closes-Bug: 1345233\n    SecurityImpact\n    \n    Change-Id: I3b49b1d667f6ade9ae3f6765d735440a3e838917\n", 
+            "date_created": "2014-09-25 10:45:10.336559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121416\nCommitted: https://git.openstack.org/cgit/openstack/trove/commit/?id=a36c2a7732cc33623b95989d6c27812014a9a727\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit a36c2a7732cc33623b95989d6c27812014a9a727\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Sun Sep 14 18:17:40 2014 +0000\n\n    Sync latest process and str utils from oslo\n    \n    This sync required changes to fix these issues:\n    * Make execute method clean password in exception\n    * Make sure mask_password works properly\n    \n    This is not trivial as these fixes relies on many other changes,\n    only the necessary code have been imported/adapted.\n    \n    ------------------------------------------------\n    The sync pulls in the following changes (newest to oldest):\n    \n    63c99a0f - Mask passwords in exceptions and error messages\n    66142c34 - Make strutils.mask_password more secure\n    d6b55fb2 - Remove `processutils` dependency on `log`\n    cb5a804b - Move `mask_password` to strutils\n    \n    -----------------------------------------------\n    \n    Closes-Bug: 1343604\n    Closes-Bug: 1345233\n    SecurityImpact\n    \n    Change-Id: I3b49b1d667f6ade9ae3f6765d735440a3e838917\n", 
+            "date_created": "2014-09-26 04:45:10.923412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121383\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f58d95c964cb9a42f573596d1cc80d2034ddb23e\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit f58d95c964cb9a42f573596d1cc80d2034ddb23e\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Sat Sep 13 18:54:33 2014 +0000\n\n    Sync process and str utils from oslo\n    \n    This patch backports the necessary changes to fix both issues:\n    * Make execute method clean password in exception\n    * Make sure mask_password works properly\n    \n    ------------------------------------------------\n    The sync pulls in the following changes (newest to oldest):\n    \n    63c99a0f - Mask passwords in exceptions and error messages\n    66142c34 - Make strutils.mask_password more secure\n    d6b55fb2 - Remove `processutils` dependency on `log`\n    cb5a804b - Move `mask_password` to strutils\n    \n    -----------------------------------------------\n    \n    Backport in oslo-incubator: https://review.openstack.org/121365\n    \n    Closes-Bug: 1343604\n    Closes-Bug: 1345233\n    SecurityImpact\n    \n    Change-Id: I3b49b1d667f6ade9ae3f6765d735440a3e838917\n", 
+            "date_created": "2014-09-27 05:11:56.504324+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121417\nCommitted: https://git.openstack.org/cgit/openstack/trove/commit/?id=9672744f090d462cac5eb757ceaacd7122362708\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9672744f090d462cac5eb757ceaacd7122362708\nAuthor: Tristan Cacqueray <email address hidden>\nDate:   Sun Sep 14 19:18:06 2014 +0000\n\n    Sync latest process and str utils from oslo\n    \n    This sync required changes to fix these issues:\n    * Make execute method clean password in exception\n    * Make sure mask_password works properly\n    \n    ------------------------------------------------\n    The sync pulls in the following changes (newest to oldest):\n    \n    6a60f842 - Mask passwords in exceptions and error messages (SSH)\n    63c99a0f - Mask passwords in exceptions and error messages\n    66142c34 - Make strutils.mask_password more secure\n    \n    -----------------------------------------------\n    \n    Closes-Bug: 1343604\n    Closes-Bug: 1345233\n    SecurityImpact\n    \n    Change-Id: I3b49b1d667f6ade9ae3f6765d735440a3e838917\n", 
+            "date_created": "2014-09-28 15:08:10.657336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The ssh_execute is still vulnerable to #1343604 and we need to know if the last havana and icehouse releases are really affected...\n\n@nova-coresec: @cinder-coresec: can someone please have a look at these location:\n\nhttps://etherpad.openstack.org/p/1343604-nova-ssh_execute\nhttps://etherpad.openstack.org/p/1343604-cinder-ssh_execute\n\n", 
+            "date_created": "2014-09-30 21:39:46.974958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/126047", 
+            "date_created": "2014-10-03 19:57:11.258068+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/126052", 
+            "date_created": "2014-10-03 20:05:37.009850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Follow-up on bug 1377981", 
+            "date_created": "2014-10-06 14:56:58.645474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }
+    ], 
+    "closed": "2014-10-01 07:43:24.112181+00:00"
+}

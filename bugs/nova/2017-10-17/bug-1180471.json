@@ -1,0 +1,75 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-08-13 18:37:13.635249+00:00", 
+    "description": "When using \"thin\" provisioned VMDK with the VMwareAPI VCDriver the VMDK will fail to attach to the VM forcing the VM to be rolled back off of the vCenter inventory. When you keep Nova from rolling back the VM you will be able to boot the VM and attach the VMDK.\n\nThe error message received on failure is \"a parameter was missing\"", 
+    "tags": [
+        "vmware"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1180471", 
+    "owner": "https://api.launchpad.net/1.0/~tjones-i", 
+    "id": 1180471, 
+    "index": 1091, 
+    "openned": "2013-05-15 16:46:37.601021+00:00", 
+    "created": "2013-05-15 16:46:37.601021+00:00", 
+    "title": "vmware: vmdk fail to attach to new VMs when using 'thin' vmdk", 
+    "comments": [
+        {
+            "content": "When using \"thin\" provisioned VMDK with the VMwareAPI VCDriver the VMDK will fail to attach to the VM forcing the VM to be rolled back off of the vCenter inventory. When you keep Nova from rolling back the VM you will be able to boot the VM and attach the VMDK.\n\nThe error message received on failure is \"a parameter was missing\"", 
+            "date_created": "2013-05-15 16:46:37.601021+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I talked to Christian about this on friday.  He says that the best near-term workaround is to use a command for creating a VM from OVF in order to transfer to the file from Glance/Nova to the datastore, as there is no other public HTTP API that will correctly transfer thin images.  Apparently, the trick will be to create a \"fake VM\", deploy it as OVF, and then remove the \"parent\" VM object from the inventory leaving only the VMDK.   If what I'm saying doesn't make sense, ping Christian and can give you the real details.  ", 
+            "date_created": "2013-06-03 16:37:09.435854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Root cause is likely a Glance bug where thin provisioned VMDK are stored with the wrong image size.", 
+            "date_created": "2013-06-11 23:17:46.999630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Looks like this is the beginning of the problem \n\n\n2013-06-18 10:39:27.879 DEBUG nova.virt.vmwareapi.vmops [req-73051c93-2870-45d0-aa63-b2d394310570 demo demo] [instance: ea76e43a-18d3-4088-aaea-ba17a6b36485] Copying Virtual Disk of size 0 KB and adapter type lsiLogic on the ESX host local store datastore1 to disk type thin from (pid=6479) _copy_virtual_disk /opt/stack/nova/nova/virt/vmwareapi/vmops.py:324\n", 
+            "date_created": "2013-06-18 17:40:19.038054+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "Hi tracy,\n\napparently this is a known issue from other VIM integrations that have been done in the past, and using the \"create OVF\" call to transfer the disk seems to be the best approach.  Christian apparently has experience with this, so you could reach out to him. ", 
+            "date_created": "2013-06-18 17:55:29.543650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "This may be related:\nhttps://github.com/openstack/nova/blob/master/nova/virt/vmwareapi/vm_util.py#L344\n\nNotice the disk type is hard coded to \"eagerZeroedThick\" here when we have three modes, thin, eager zeroed, and lazy zeroed. That might be the source of other problems.", 
+            "date_created": "2013-06-18 17:59:28.398866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "I will talk with Christian - though i see in the 5.1 documentation that CopyVirtualDisk_Task is publicly available so i can't figure out why this exception is being thrown....\n\nhttp://pubs.vmware.com/vsphere-51/index.jsp#com.vmware.wssdk.apiref.doc/vim.VirtualDiskManager.html?resultof=%2522%2563%256f%2570%2579%2576%2569%2572%2574%2575%2561%256c%2564%2569%2573%256b%2522%2520", 
+            "date_created": "2013-06-18 22:57:01.585686+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "Off topic, but you might want to observe this...\n\nNotice here: https://github.com/openstack/nova/blob/master/nova/virt/vmwareapi/vm_util.py#L246\n\nThis assumes the object VirtualDiskFlatVer2BackingInfo but you could have any of  VirtualDiskFlatVer1BackingInfo, VirtualDiskFlatVer2BackingInfo, VirtualDiskRawDiskMappingVer1BackingInfo, VirtualDiskSeSparseBackingInfo, VirtualDiskSparseVer1BackingInfo, VirtualDiskSparseVer2BackingInfo\n\nI don't think this is practically a problem, but notice that the Sparse disk types are not handled. This complicates supporting formats other than thick + flat. It may be possible to do thin + flat, but we don't have the rest of the parts in place to do ... for example ... thin + sparse. See: http://cormachogan.com/2012/09/05/vsphere-5-1-storage-enhancements-part-2-se-sparse-disks/\n\ntl;dr thin + flat may be almost good to go, but we probably won't get \"sparse\" on this pass IMHO.", 
+            "date_created": "2013-07-03 03:02:44.485440+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hartsock"
+        }, 
+        {
+            "content": "Thanks. I'll take a look. I'm also meeting with Christian tomorrow to talk about his experiences with this and vcd  \n\nSent from my iPhone\n\nOn Jul 2, 2013, at 8:11 PM, Shawn Hartsock <email address hidden> wrote:\n\n> Off topic, but you might want to observe this...\n> \n> Notice here:\n> https://github.com/openstack/nova/blob/master/nova/virt/vmwareapi/vm_util.py#L246\n> \n> This assumes the object VirtualDiskFlatVer2BackingInfo but you could\n> have any of  VirtualDiskFlatVer1BackingInfo,\n> VirtualDiskFlatVer2BackingInfo,\n> VirtualDiskRawDiskMappingVer1BackingInfo,\n> VirtualDiskSeSparseBackingInfo, VirtualDiskSparseVer1BackingInfo,\n> VirtualDiskSparseVer2BackingInfo\n> \n> I don't think this is practically a problem, but notice that the Sparse\n> disk types are not handled. This complicates supporting formats other\n> than thick + flat. It may be possible to do thin + flat, but we don't\n> have the rest of the parts in place to do ... for example ... thin +\n> sparse. See: http://cormachogan.com/2012/09/05/vsphere-5-1-storage-\n> enhancements-part-2-se-sparse-disks/\n> \n> tl;dr thin + flat may be almost good to go, but we probably won't get\n> \"sparse\" on this pass IMHO.\n> \n> -- \n> You received this bug notification because you are a bug assignee.\n> https://bugs.launchpad.net/bugs/1180471\n> \n> Title:\n>  vmware: vmdk fail to attach to new VMs when using \"thin\" vmdk\n> \n> Status in OpenStack Compute (Nova):\n>  In Progress\n> \n> Bug description:\n>  When using \"thin\" provisioned VMDK with the VMwareAPI VCDriver the\n>  VMDK will fail to attach to the VM forcing the VM to be rolled back\n>  off of the vCenter inventory. When you keep Nova from rolling back the\n>  VM you will be able to boot the VM and attach the VMDK.\n> \n>  The error message received on failure is \"a parameter was missing\"\n> \n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1180471/+subscriptions\n", 
+            "date_created": "2013-07-03 03:41:31+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "thin works - i had a user error issue where i used the default adaptor type which is lsilogic.  The image i had was ide.  once i uploaded it into glance correctly it booted nicely.  I will close this and create a new one for sparse disks which do not work.\n\n\nCristian's idea of deploying an ovf is a good one but needs a blueprint as it's a larger change.  I will work on that at some point", 
+            "date_created": "2013-07-16 18:31:46.135751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }, 
+        {
+            "content": "closing as user error - one issue i encountered was mis-spelling vmware_adaptor type rather than vmware_adaptertype.  May be nice to log the disk type being used to make this easier to debug.  ", 
+            "date_created": "2013-07-26 23:01:18.853775+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tjones-i"
+        }
+    ], 
+    "closed": "2013-07-26 23:00:21.709528+00:00"
+}

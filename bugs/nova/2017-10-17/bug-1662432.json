@@ -1,0 +1,54 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-06-27 15:56:04.735330+00:00", 
+    "description": "Steps to reproduce\n==================\n\nThis is the most common case that affected us:\n\n1. Create flavor A that permits ephemeral storage. For example, an optional 200 GB ephemeral root disk.\n2. Create flavor B that does not permit ephemeral storage.\n3. Ensure that the DiskFilter is configured.\n4. Use flavor A both with and without ephemeral storage in quantity, until the sum of the possible ephemeral storage usage (the flavor specification, not the actual usage, which may be well below the capacity of the machine) exceeds the capacity of the machine. This can eventually be the state of every hypervisor.\n5. Try to schedule a virtual machine with flavor B.\n\nThe other case is where the flavor B permits storage, and the instance requests it.\n\nExpected result\n===============\n\nIn the case that the flavor B does not permit storage, the DiskFilter should permit the scheduler to use any hypervisor whether or not it has available local storage, as the flavor does not require or request any ephemeral storage, so over commitment of ephemeral storage should not be a factor.\n\nIn the case that the flavor B permits storage, and the instance requests it, the DiskFilter should permit the scheduler to use any hypervisor that has sufficient storage.\n\nActual result\n=============\n\nIn both cases, the DiskFilter will prevent the scheduler from using any hypervisor where the sum of the possible ephemeral storage usage exceeds the capacity of the machine. The virtual machine does not get scheduled, and a vague error is provided to the user.\n\nEnvironment\n===========\n\nNova 14.0.2 (Newton)\nLibvirt + KVM\nEphemeral storage is local QCOW2.\n\nAnalysis\n========\n\nThe DiskFilter relies on the ResourceTracker to calculate storage\nusage on each compute node. The ResourceTracker uses the flavor\nspecification. The instances can choose to use less storage than\nthe flavor specification permits, and in this case, the calculation\ncan be wrong. In extreme cases such as ours, the calculation can be extremely wrong and the \"free space\" can be a very large negative number.\n\nTo solve the general case, the ResourceTracker should be fixed\nto use the BDM information, and not the flavor specification.\n\nTo be more resistant to usage calculation issues now and in the future, I have found an effective work-around to bypass the DiskFilter check in the case that no storage is actually requested. From a robust code perspective, the usage calculation has been wrong, and it could be wrong in the future. Logically, when no storage is requested, the DiskFilter should not perform any filter. It could be an acceptable compromise here to implement this work-around, but to ensure that it will send a warning to the log file to let the operator be aware that this work-around is taking effect.", 
+    "tags": [
+        "openstack-version.newton"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1662432", 
+    "owner": "https://api.launchpad.net/1.0/~mark-mielke", 
+    "id": 1662432, 
+    "index": 7930, 
+    "openned": "2017-02-07 06:48:31.988604+00:00", 
+    "created": "2017-02-07 06:48:31.988604+00:00", 
+    "title": "Instance storage calculation should use BDM information instead of the flavor specification", 
+    "comments": [
+        {
+            "content": "Steps to reproduce\n==================\n\n1. Create flavor A that permits ephemeral storage. For example, an optional 200 GB ephemeral root disk.\n2. Create flavor B that does not permit ephemeral storage.\n3. Ensure that the DiskFilter is configured.\n4. Use flavor A both with and without ephemeral storage in quantity, until the sum of the possible ephemeral storage usage exceeds the capacity of the machine. This can eventually be the state of every hypervisor.\n5. Try to schedule a virtual machine with flavor B.\n\nExpected result\n===============\n\nThe DiskFilter should permit the scheduler to use any hypervisor whether or not it has available local storage, as the flavor does not require ephemeral storage, so over commitment of ephemeral storage should not be a factor.\n\n\nActual result\n=============\n\nThe DiskFilter will prevent the scheduler from using any hypervisor where the sum of the possible ephemeral storage usage exceeds the capacity of the machine. The virtual machine does not get scheduled, and a vague error is provided to the user.\n\nEnvironment\n===========\n\nNova 14.0.2 (Newton)\nLibvirt + KVM\nEphemeral storage is local QCOW2.\n\nAnalysis\n========\n\nThe DiskFilter expects the used local storage to be less than the capacity, even if scheduling a virtual machine which does not require local storage. In some cases, the used local storage calculation can exceed the capacity calculation, and this results in a negative \"available storage\" calculation. The check for available storage should be bypassed if no storage is being requested.", 
+            "date_created": "2017-02-07 06:48:31.988604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-mielke"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2017-02-07 06:48:31.988604+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-mielke"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/430091", 
+            "date_created": "2017-02-07 06:58:02.950376+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue doesn't relate to over commit, it relates to the miscalculation of disk usage. It is deterministic, and doesn't involve incremental allocation of thin storage by a running instance.\n\nThe problem is that ResourceTracker isn't correctly calculating the disk usage of an instance, because it doesn't take into account BDMs. Specifically the problem is in ResourceTracker._get_usage_dict(). _get_usage_dict() allows the caller to pass either an instance or a flavor (or a dict, but that's not used). When passed an instance, it assumes that the instance uses all the local disk allowed by its flavor. However, this can be modified by the instance's BDMs, which can define that it uses less. Note that this is unrelated to over-commit. A user may choose to create a 10G ephemeral disk when booting a flavor which allows a 20G ephemeral disk. This disk can never grow to 20G: it is a 10G disk. The extreme (and common) example of this is boot-from-volume, which the BDM specifies that the root disk will use no local disk at all, and instead use a volume. In all of these cases, _get_usage_disk will over-report the total amount of disk it is possible for an instance to use. This over-reporting can obviously lead to the reported situation where ResourceTracker has negative total disk.\n\nThe solution is to fix _get_usage_dict(). This method has 3 callers. 2 of them pass a flavor, 1 passes an instance. All three need to be updated to pass an instance. This is trivial, as instance is available in all 3 contexts. _get_usage_dict need then only support being passed an instance. Next, _get_usage_dict() needs to fetch the BDMs for the instance it has been given. We should use the methods in nova/block_device.py to pull out the various sizes we're interested in.", 
+            "date_created": "2017-02-17 12:18:08.062124+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "I totally agree with you, Matthew. Thanks for looking into this. The original problem is definitely miscalculation of storage usage based upon flavors.\n\nI opened this issue to capture what I perceived as a secondary vulnerability in DiskFilter. That is, I recognized two issues:\n\n1) The DiskFilter was being passed invalid data. This needs to be fixed.\n2) The DiskFilter was acting on data, even when its service were completely unnecessary.\n\nOf these two, the first one felt like it was harder to fix. I fully intend to chase 1) down. Your information above is very useful in this respect. It would be great if you could solve it for me. But, I am also willing to propose a fix myself.\n\nOf these two, the second one felt like it was an easy fix. To me, it is invalid that the DiskFilter would block scheduling, when no disk has been requested. By applying this simple fix, I went from a broken OpenStack cluster, to a cluster where everything was working again except that the DiskFilter was still preventing full access to the underlying ephemeral storage.\n\nI get that you want to fix the original issue. I am very happy to see your enthusiasm here. I want to see the original issue fixed too.\n\nI do not get, that you are -1'ing my change to my DiskFilter more robust, and to yield the scheduling decision to other filters in the case that no Disk is actually being requested. I think you may be presuming that if you just fix this one original issue, this change is unnecessary. But, robustness is about behaving correctly even in the face of incorrect data. To me, acting correctly is that it doesn't really matter how much free space there is on the storage... if you are asking to schedule a virtual machine that requires no disk space, the DiskFilter should not participate in this scheduling decision.\n\nNow that we all understand the issue a little better - I'm happy to go back over the Bug description and some of the text, and make sure it aligns with what you are saying. That is, you think this isn't about over commitment, so I can remove the words \"over commitment\" from the Bug description.\n\nBut are you really saying that you think the DiskFilter should participate in the scheduling decision, even when no Disk is requested? Do you think that is the the choice here?", 
+            "date_created": "2017-02-17 13:29:00.335889+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-mielke"
+        }, 
+        {
+            "content": "Thanks, Matthew. I have updated the description to title and description to match my current understanding.", 
+            "date_created": "2017-03-01 04:44:11.844630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-mielke"
+        }, 
+        {
+            "content": "Automatically discovered version newton in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:56:04.221378+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

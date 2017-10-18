@@ -1,0 +1,168 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-06-07 20:54:27.087827+00:00", 
+    "description": "This applies only when the nova/neutron event reporting mechanism is enabled.\n\nBoot instance, like this:\nnova boot --image xxx --flavor xxx --nic port-id=xxx test_vm\n\nThe booting instance is successful, but instance nw_info cache is empty.\nThis is a probabilistic problem, not always can be reproduced.\n\nAfter analysis the booting instance and nova/neutron event mechanism workflow,\nI get the reproduce timeline:\n\n1. neutronv2.api.allocate_for_instance when booting instance\n2. neutronclient.update_port trigger neutron network_change event\n3. nova get the port change event, start to dispose event\n4. instance.get_by_uuid in external_instance_event , at this time instance.nw_info_cache is empty,\nbecause nw_info cache hadn't been added into db in booting instance thread.\n5. booting instance thread start to save the instance nw_info cache into db.\n6. event disposing thread start to update instance nw_info cache to empty.\n\nFace this issue in Juno.\nI add some breakpoints in order to reproduce this bug in my devstack.", 
+    "tags": [
+        "in-stable-liberty", 
+        "juno-backport-potential", 
+        "kilo-backport-potential", 
+        "neutron"
+    ], 
+    "importance": "Medium", 
+    "heat": 70, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1407664", 
+    "owner": "https://api.launchpad.net/1.0/~sahid-ferdjaoui", 
+    "id": 1407664, 
+    "index": 4126, 
+    "openned": "2015-01-05 12:55:14.527224+00:00", 
+    "created": "2015-01-05 12:55:14.527224+00:00", 
+    "title": "Race: instance nw_info cache is updated to empty list because of nova/neutron event mechanism", 
+    "comments": [
+        {
+            "content": "This applies only when the nova/neutron event reporting mechanism is enabled.\n\nBoot instance, like this:\nnova boot --image xxx --flavor xxx --nic port-id=xxx test_vm\n\nThe booting instance is successful, but instance nw_info cache is empty.\nThis is a probabilistic problem, not always can be reproduced.\n\nAfter analysis the booting instance and nova/neutron event mechanism workflow,\nI get the reproduce timeline:\n\n1. neutronv2.api.allocate_for_instance when booting instance\n2. neutronclient.update_port trigger neutron network_change event\n3. nova get the port change event, start to dispose event\n4. instance.get_by_uuid in external_instance_event , at this time instance.nw_info_cache is empty, \nbecause nw_info cache hadn't been added into db in booting instance thread.\n5. booting instance thread start to save the instance nw_info cache into db.\n6. event disposing thread start to update instance nw_info cache to empty.\n\nFace this issue in Juno.\nI add some breakpoints in order to reproduce this bug in my devstack.", 
+            "date_created": "2015-01-05 12:55:14.527224+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiwik-chenrui"
+        }, 
+        {
+            "content": "I think the better solution is that neutron send the event 'notify_nova_on_port_data_changes' with port id! so I add a tag to neutron!", 
+            "date_created": "2015-01-09 02:18:50.831660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shihanzhang"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/146036", 
+            "date_created": "2015-01-09 08:03:54.095700+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This concurrency issue also happened between attach_interface and _heal_instance_info_cache. I think refresh instance.cache_info is ok.", 
+            "date_created": "2015-02-02 02:40:31.499245+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liudong78"
+        }, 
+        {
+            "content": "Hi @Dong, I must fulfill system_metadata, so only refresh instance.info_cache is not suitable.", 
+            "date_created": "2015-02-04 02:29:42.139845+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiwik-chenrui"
+        }, 
+        {
+            "content": "Also met the exactly same issue in Juno. Thanks working on it.", 
+            "date_created": "2015-05-20 13:10:54.215752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhuzhubj"
+        }, 
+        {
+            "content": "Any known workaround on Juno ?", 
+            "date_created": "2015-05-21 19:00:27.497615+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lacroix1547"
+        }, 
+        {
+            "content": "I applied manually the fix to my Juno setup and it seems to work well. However I am still interested in a workaround since patching the openstack setups of our client is not possible.", 
+            "date_created": "2015-05-21 21:59:33.638890+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lacroix1547"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/186315", 
+            "date_created": "2015-05-28 08:36:03.381965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reassign to Rui Chen since he is the original author of the fix then enhance the priority", 
+            "date_created": "2015-05-28 08:57:01.789080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/186315\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=3a850ac72d60b3823c5cb4a971eaf02c580a4a20\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3a850ac72d60b3823c5cb4a971eaf02c580a4a20\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Thu May 28 04:31:53 2015 -0400\n\n    network: fix instance cache refresh for empty list\n    \n    The bug introduce a race condition makes network_info as an\n    empty value. When trying to refresh cache we should use data\n    returned per Neutron.\n    \n    Co-Authored-By: Lee Yarwood <email address hidden>\n    \n    Closes-Bug: #1407664\n    Change-Id: I3b9f60a2c4aea904f39d6914c8f35c4d682a6b3a\n", 
+            "date_created": "2015-06-03 04:23:14.241343+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "sahid's patch https://review.openstack.org/#/c/186315 , fix this bug , and had been merged, so my patch https://review.openstack.org/146036 just do refactor for network api.", 
+            "date_created": "2015-06-03 07:27:34.082353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiwik-chenrui"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/189328", 
+            "date_created": "2015-06-08 15:07:16.147877+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/189350", 
+            "date_created": "2015-06-08 15:56:19.683138+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/189350\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4bb1e081bb87982f74c620b5b1f2376f8eb86640\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 4bb1e081bb87982f74c620b5b1f2376f8eb86640\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Thu May 28 04:31:53 2015 -0400\n\n    network: fix instance cache refresh for empty list\n    \n    The bug introduce a race condition makes network_info as an\n    empty value. When trying to refresh cache we should use data\n    returned per Neutron.\n    \n    Co-Authored-By: Lee Yarwood <email address hidden>\n    \n    Closes-Bug: #1407664\n    Change-Id: I3b9f60a2c4aea904f39d6914c8f35c4d682a6b3a\n    (cherry picked from commit 3a850ac72d60b3823c5cb4a971eaf02c580a4a20)\n", 
+            "date_created": "2015-06-24 23:25:39.953602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/189328\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f2ab613da511601424763936155a5781355585b5\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit f2ab613da511601424763936155a5781355585b5\nAuthor: Sahid Orentino Ferdjaoui <email address hidden>\nDate:   Thu May 28 04:31:53 2015 -0400\n\n    network: fix instance cache refresh for empty list\n    \n    The bug introduce a race condition makes network_info as an\n    empty value. When trying to refresh cache we should use data\n    returned per Neutron.\n    \n    Co-Authored-By: Lee Yarwood <email address hidden>\n    \n    (cherry picked from commit 3a850ac72d60b3823c5cb4a971eaf02c580a4a20)\n    \n    Conflicts:\n      - test_neutronv2.py\n        * about assertions imported from Kilo to\n          juno but not in relation with this change.\n        * the _get_preexisting_port_ids does not exist\n        * the name of the api attribute is different\n    \n    Closes-Bug: #1407664\n    Change-Id: I3b9f60a2c4aea904f39d6914c8f35c4d682a6b3a\n", 
+            "date_created": "2015-07-10 21:44:30.256760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I think when I have multiple ports, it does not seem to keep the original order.\n", 
+            "date_created": "2015-07-17 20:31:16.312953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~albailey1974"
+        }, 
+        {
+            "content": "Hi, I believe that the fix for bug #1467581 is able to solve this issue. However, the combination of the two fixes leads to bug #1501735. Unfortunately the blame lies with me as this fix got merged first...\n\nLooking through the nova/neutron API unit tests, I found test_get_instance_nw_info_ignores_neutron_ports, which suggests that _build_network_info_model should ignore any Neutron ports it finds that aren't in the instance info cache. Unfortunately, this test case only covers the case where there is already an interface in the cache, so it did not fire when this change went in.\n\nI believe that the fix for bug #1467581 will solve this issue because it refreshes the instance info cache from the DB before writing it back, whilst holding the refresh-cache lock. This means that although the external event may initially get an empty info cache from the DB, it will be updated later on with the correct value.\n\nCould those who worked on this bug originally please take a look through those two other bug reports and offer their opinions?", 
+            "date_created": "2015-10-01 17:29:45.190088+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mgoddard"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/230919", 
+            "date_created": "2015-10-05 09:37:35.177128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "We ran into this nasty problem in Juno, and found that the fix  for\nhttps://bugs.launchpad.net/bugs/1467581\nis the right fix. \nthe fix committed against this bug for stable/juno didnt work. \n\nIn summary, the code change done for this bug should be reverted.\n\nThis is being proposed in this code review - \nhttps://review.openstack.org/230919", 
+            "date_created": "2015-12-18 00:05:32.890060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ramu-ramamurthy"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/260462", 
+            "date_created": "2015-12-22 12:11:31.026134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/265363", 
+            "date_created": "2016-01-08 17:16:53.359434+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/265363", 
+            "date_created": "2016-01-12 07:48:32.096386+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/260462", 
+            "date_created": "2016-01-12 07:48:42.910002+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/260462", 
+            "date_created": "2016-01-13 16:44:42.149234+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by sahid (<email address hidden>) on branch: master\nReview: https://review.openstack.org/265363", 
+            "date_created": "2016-01-13 16:44:49.492032+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/270814", 
+            "date_created": "2016-01-21 13:59:10.643320+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/230919\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8694c1619d774bb8a6c23ed4c0f33df2084849bc\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8694c1619d774bb8a6c23ed4c0f33df2084849bc\nAuthor: Mark Goddard <email address hidden>\nDate:   Thu Oct 1 17:37:45 2015 +0100\n\n    network: Don't repopulate instance info cache from Neutron ports\n    \n    Allocation of network interfaces for an instance can result in\n    corruption of the instance info cache. The result is that the cache\n    may contain duplicate entries for network interfaces. This can cause\n    instance boot failure. This bug appears to be attributable to the\n    combined effects of the fixes for bugs #1467581 and #1407664.\n    \n    This change reverts the fix for bug #1407664, whilst keeping a\n    modified version of the unit test that was added with it. It also\n    adds a second unit test.\n    \n    Change-Id: I53d5284907d44ae8b5546993f8fd461b385c39e6\n    Closes-bug: #1501735\n    Related-bug: #1467581\n    Related-bug: #1407664\n", 
+            "date_created": "2016-01-22 10:32:43.597746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/270814\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ce392292353c2b289aa3247b3c401f1cf7e1506c\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit ce392292353c2b289aa3247b3c401f1cf7e1506c\nAuthor: Mark Goddard <email address hidden>\nDate:   Thu Oct 1 17:37:45 2015 +0100\n\n    network: Don't repopulate instance info cache from Neutron ports\n    \n    Allocation of network interfaces for an instance can result in\n    corruption of the instance info cache. The result is that the cache\n    may contain duplicate entries for network interfaces. This can cause\n    instance boot failure. This bug appears to be attributable to the\n    combined effects of the fixes for bugs #1467581 and #1407664.\n    \n    This change reverts the fix for bug #1407664, whilst keeping a\n    modified version of the unit test that was added with it. It also\n    adds a second unit test.\n    \n    Conflicts:\n     nova/tests/unit/network/test_neutronv2.py\n    \n    This is because If0a1f3850d92d011aae32ae34e8c8664f2ee4313 isn't in\n    stable/liberty\n    \n    \n    Change-Id: I53d5284907d44ae8b5546993f8fd461b385c39e6\n    Closes-bug: #1501735\n    Related-bug: #1467581\n    Related-bug: #1407664\n    (cherry picked from commit 8694c1619d774bb8a6c23ed4c0f33df2084849bc)\n", 
+            "date_created": "2016-06-07 20:54:26.573517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-06-24 12:16:52.608889+00:00"
+}

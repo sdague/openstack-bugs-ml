@@ -1,0 +1,60 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:27:09.730166+00:00", 
+    "description": "Issue\n=====\n\nThe console tab in Horizon doesn't show the console of the instance\nanymore if the \"serial console\" feature is enabled.\n\n\nSteps to reproduce\n==================\n\n* Enable \"serial console\" feature in \"nova.conf\"\n  [Default]\n  vnc_enabled=False\n  [serial_console]\n  enabled=True\n  base_url=ws://<host-ip>:6083\n* Launch an instance\n* Open to the \"console\" tab of that instance\n\n\nExpected behavior\n=================\n\nThe login prompt from the instance is shown via serial console \nconnection.\n\n\nActual behavior\n===============\n\n* Black screen + \"Status: Closed\"\n* The traceback shows a validation error [1]. \n* If \"base_url\" is NOT set in \"nova.conf\" the console will still not \n   connect, but nothing will be logged.\n\nPossible root causes\n--------------------\n\nThis validation logic was introduced with [2]. The unit seems to be\nbased on the assumption that the serial console uses \"https\" [3]. AFAIK\nthe supposed protocol is \"ws\".\n\n\nLogs & Env.\n===========\n\nManually added debug log: \n/opt/stack/screen-logs/screen-n-sproxy.log:2015-03-20 14:49:14.081 \nDEBUG nova.console.websocketproxy \n[req-fae1b332-5b8c-4253-a1ec-5306c56c1f3a None None] \norigin: http, expected: ws \nverify_origin_proto /opt/stack/nova/nova/console/websocketproxy.py:65\n\nNova version\n------------\n\n/opt/stack/nova$ git log --oneline -n5\n90ee915 Merge \"Add api microvesion unit test case for wsgi.action\"\n7885b74 Merge \"Remove db layer hard-code permission checks for [...]\n416f310 Merge \"Remove db layer hard-code permission checks for [...]\necb306b Merge \"Remove db layer hard-code permission checks for [...]\n6efc8ad Merge \"libvirt: don't allow to resize down the default [...]\n\n\nReferences\n==========\n\n[1] Traceback; nova.console.websocketproxy\n    http://paste.openstack.org/show/193938/\n[2] Gerrit; Websocket Proxy should verify Origin header\n    https://review.openstack.org/#/c/163033/6\n[3] test_websocketproxy.py module; \"https\" instead of \"ws\"\n    https://github.com/openstack/nova/blob/master/nova/tests/unit/console/test_websocketproxy.py#L44", 
+    "tags": [
+        "console"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1434611", 
+    "owner": "https://api.launchpad.net/1.0/~alaski", 
+    "id": 1434611, 
+    "index": 1702, 
+    "openned": "2015-03-20 15:56:11.453678+00:00", 
+    "created": "2015-03-20 15:56:11.453678+00:00", 
+    "title": "serial console in Horizon is broken by origin header verification", 
+    "comments": [
+        {
+            "content": "Issue\n=====\n\nThe console tab in Horizon doesn't show the console of the instance\nanymore if the \"serial console\" feature is enabled.\n\n\nSteps to reproduce\n==================\n\n* Enable \"serial console\" feature in \"nova.conf\"\n  [Default]\n  vnc_enabled=False\n  [serial_console]\n  enabled=True\n  base_url=ws://<host-ip>:6083\n* Launch an instance\n* Open to the \"console\" tab of that instance\n\n\nExpected behavior\n=================\n\nThe login prompt from the instance is shown via serial console \nconnection.\n\n\nActual behavior\n===============\n\n* Black screen + \"Status: Closed\"\n* The traceback shows a validation error [1]. \n* If \"base_url\" is NOT set in \"nova.conf\" the console will still not \n   connect, but nothing will be logged.\n\nPossible root causes\n--------------------\n\nThis validation logic was introduced with [2]. The unit seems to be\nbased on the assumption that the serial console uses \"https\" [3]. AFAIK\nthe supposed protocol is \"ws\".\n\n\nLogs & Env.\n===========\n\nManually added debug log: \n/opt/stack/screen-logs/screen-n-sproxy.log:2015-03-20 14:49:14.081 \nDEBUG nova.console.websocketproxy \n[req-fae1b332-5b8c-4253-a1ec-5306c56c1f3a None None] \norigin: http, expected: ws \nverify_origin_proto /opt/stack/nova/nova/console/websocketproxy.py:65\n\nNova version\n------------\n\n/opt/stack/nova$ git log --oneline -n5\n90ee915 Merge \"Add api microvesion unit test case for wsgi.action\"\n7885b74 Merge \"Remove db layer hard-code permission checks for [...]\n416f310 Merge \"Remove db layer hard-code permission checks for [...]\necb306b Merge \"Remove db layer hard-code permission checks for [...]\n6efc8ad Merge \"libvirt: don't allow to resize down the default [...]\n\n\nReferences\n==========\n\n[1] Traceback; nova.console.websocketproxy\n    http://paste.openstack.org/show/193938/\n[2] Gerrit; Websocket Proxy should verify Origin header\n    https://review.openstack.org/#/c/163033/6\n[3] test_websocketproxy.py module; \"https\" instead of \"ws\"\n    https://github.com/openstack/nova/blob/master/nova/tests/unit/console/test_websocketproxy.py#L44", 
+            "date_created": "2015-03-20 15:56:11.453678+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "I added Horizon as affected project because in review [1] was mentioned that a possible client of the exposed API has to set the header correctly.\n\n[1] https://review.openstack.org/#/c/163033/6", 
+            "date_created": "2015-03-20 15:59:35.884082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "A workaround can be:\n\n    --- a/nova/console/websocketproxy.py\n    +++ b/nova/console/websocketproxy.py\n    @@ -118,10 +120,11 @@ class NovaProxyRequestHandlerBase(object):\n                 if expected_origin_hostname != origin_hostname:\n                     detail = _(\"Origin header does not match this host.\")\n                     raise exception.ValidationError(detail=detail)\n    -            if not self.verify_origin_proto(connect_info['console_type'],\n    -                                              origin.scheme):\n    -                detail = _(\"Origin header protocol does not match this host.\")\n    -                raise exception.ValidationError(detail=detail)\n    +            # mzoeller: bug https://bugs.launchpad.net/horizon/+bug/1434611\n    +            #if not self.verify_origin_proto(connect_info['console_type'],\n    +            #                                  origin.scheme):\n    +            #    detail = _(\"Origin header protocol does not match this host.\")\n    +            #    raise exception.ValidationError(detail=detail)\n     \n             self.msg(_('connect info: %s'), str(connect_info))\n             host = connect_info['host']\n", 
+            "date_created": "2015-03-26 11:35:47.110066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "@Sean Dague: Which additional data is needed to verify the behaviour?", 
+            "date_created": "2015-03-30 13:48:34.388481+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "The check made in https://review.openstack.org/#/c/163033/, breaks browser based serial consoles.   I see in the patch where it has a special allowance to let non browser based serial console work.\n\nHorizon added a browser serial console in Kilo https://review.openstack.org/#/c/144659, which is now broken.   We need someone from Nova to look at that check and see what can be done.\n\n", 
+            "date_created": "2015-03-30 21:07:09.768302+00:00", 
+            "author": "https://api.launchpad.net/1.0/~asahlin"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/169384", 
+            "date_created": "2015-03-31 15:43:59.077621+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Not sure why the serial console base_url parameter does not use the \"http://<ip>:608<port>/vnc_auto.html\" format used by vnc and spice...\n\nhttps://review.openstack.org/169384 fixed this use-case for me.", 
+            "date_created": "2015-03-31 20:21:11.785336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/169384\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=11d5ded6d557b0f087ab676a33f07349f5fd47cb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 11d5ded6d557b0f087ab676a33f07349f5fd47cb\nAuthor: Andrew Laski <email address hidden>\nDate:   Tue Mar 31 11:40:12 2015 -0400\n\n    Expand Origin header check for serial console\n    \n    Serial consoles can use the ws or wss protocols which correspond to http\n    and https respectively from a security perspective.  The Origin header\n    check failed has been expanded to allow for those protocols and to match\n    appropriately with http/https when verifying the protocol security\n    level.\n    \n    Change-Id: I7155607488495ba70e6edd550b12abc21b3e69c4\n    Closes-Bug: 1434611\n", 
+            "date_created": "2015-04-06 22:56:29.126556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-04-10 09:19:54.399180+00:00"
+}

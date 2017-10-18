@@ -1,0 +1,95 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:43:02.519904+00:00", 
+    "description": "OpenStack Grizzly on Ubuntu 12.04, Multi host setup.\n\nI'm creating 3 different networks:\n\n# nova-manage network create --label compute-1 --fixed_range_v4 192.168.1.0/27 --num_networks 1 --network_size 32\n# nova-manage network create --label compute-2 --fixed_range_v4 192.168.2.0/27 --num_networks 1 --network_size 32\n# nova-manage network create --label compute-3 --fixed_range_v4 192.168.3.0/27 --num_networks 1 --network_size 32\n\nNot every compute node may use every network because they are distributed over different data centers. So I need to associate the hosts to the networks:\n\n# nova-manage network modify --host=compute-1 192.168.1.0/27\n# nova-manage network modify --host=compute-2 192.168.2.0/27\n# nova-manage network modify --host=compute-3 192.168.3.0/27\n\n1. Issue\n\nNow, when I call the following command:\n\n\u00a0\u00a0`nova boot --image <uuid> --flavor m1.medium --availability-zone eu-central-1 test`\n\nThe created VM gets 3 NICs due to the multinic feature. But in fact, only one network is suitable because the other 2 networks aren't even associated with the hosts.\n\nWorkaround:\n\nI need to specify the host and the network.\n\n\u00a0\u00a0`nova boot --image --nic net-id=<uuid-of-net-on-compute-1> <uuid> --flavor m1.medium --availability-zone eu-central-1:compute-1 test`\n\nUnfortunately this bypasses some useful scheduling balancer algorithms.\n\n2. Issue\n\nAfter creating the networks, I can see appropriate dnsmasq processes. On compute-1 I see:\n\n/usr/sbin/dnsmasq (...) -listen-address=192.168.1.1 --except-interface=lo --dhcp-range=set:compute-1,192.168.1.1,static,255.255.255.224,120s (...)\n\nOn compute-2 I see:\n\n/usr/sbin/dnsmasq (...) --listen-address=192.168.2.1 --except-interface=lo --dhcp-range=set:compute-2,192.168.2.1,static,255.255.255.224,120s (...)\n\nBut when I kill those dnsmasq processes and restart nova-network, then compute-2 starts dnsmasq with the configuration for compute-1.", 
+    "tags": [
+        "network"
+    ], 
+    "importance": "Undecided", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1211784", 
+    "owner": "None", 
+    "id": 1211784, 
+    "index": 5222, 
+    "openned": "2013-08-13 14:00:52.579904+00:00", 
+    "created": "2013-08-13 14:00:52.579904+00:00", 
+    "title": "nova-network associates wrong network", 
+    "comments": [
+        {
+            "content": "\nOpenStack Grizzly on Ubuntu 12.04, Multi host setup.\n\n\nI'm creating 3 different networks:\n\n# nova-manage network create --label compute-1 --fixed_range_v4 192.168.1.0/27 --num_networks 1 --network_size 32\n# nova-manage network create --label compute-2 --fixed_range_v4 192.168.2.0/27 --num_networks 1 --network_size 32\n# nova-manage network create --label compute-3 --fixed_range_v4 192.168.3.0/27 --num_networks 1 --network_size 32\n\n\nNot every compute node may use every network because they are distributed over different data centers. So I need to associate the hosts to the networks:\n\n# nova-manage network modify --host=compute-1 192.168.1.0/27\n# nova-manage network modify --host=compute-2 192.168.2.0/27\n# nova-manage network modify --host=compute-3 192.168.3.0/27\n\n\n\n1. Issue\n\nNow, when I call the following command:\n\n  `nova boot --image <uuid> --flavor m1.medium --availability-zone eu-central-1 test`\n\nThe created VM gets 3 NICs due to the multinic feature. But in fact, only one network is suitable because the other 2 networks aren't even associated with the hosts.\n  \n\nWorkaround:\n\nI need to specify the host and the network.\n\n  `nova boot --image --nic net-id=<uuid-of-net-on-compute-1> <uuid> --flavor m1.medium --availability-zone eu-central-1:compute-1 test`\n  \nUnfortunately this bypasses some useful scheduling balancer algorithms.\n\n\n\n2. Issue\n\n\nAfter creating the networks, I can see appropriate dnsmasq processes. On compute-1 I see:\n\n/usr/sbin/dnsmasq (...) -listen-address=192.168.1.1 --except-interface=lo --dhcp-range=set:compute-1,192.168.1.1,static,255.255.255.224,120s (...)\n\n\nOn compute-2 I see:\n\n/usr/sbin/dnsmasq (...) --listen-address=192.168.2.1 --except-interface=lo --dhcp-range=set:compute-2,192.168.2.1,static,255.255.255.224,120s (...)\n\n\nBut when I kill those dnsmasq processes and restart nova-network, then compute-1 starts dnsmasq with the configuration for compute-1.", 
+            "date_created": "2013-08-13 14:00:52.579904+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "I explored that this only happens if there are active VMs. It seems that the affected VMs \u201eloose\u201c their compute-node association.", 
+            "date_created": "2013-08-13 16:08:28.159887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "https://github.com/openstack/nova/blob/9e9b3328af92cb9697f1aa4be22279b09f0fa14b/nova/network/manager.py#L455\n\nI think this should only get the networks for the host\u2026 not just all networks.\nI try to validate and fix this.", 
+            "date_created": "2013-08-15 08:38:46.685712+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "I can validate that this line causes the issue.\n\nThe following should work \u2013 but self.host is undefined in this context. So I need to figure out where to get the valid host instance from.\n\n`networks = self.db.network_get_all_by_host(context, self.host)`", 
+            "date_created": "2013-08-15 13:10:25.020027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "Obviously self.host was the right way ;-)\n\nI fixed this and sent a pull request:\n\nhttps://github.com/openstack/nova/pull/27", 
+            "date_created": "2013-08-15 14:21:24.943798+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "Yves - it would be great if you could submit your patch through gerrit. Thanks!", 
+            "date_created": "2013-08-16 21:19:47.385259+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Thanks, I'll do so.", 
+            "date_created": "2013-08-26 08:45:44.992874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/43668", 
+            "date_created": "2013-08-26 09:32:53.782051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "patch was abandoned, moving back to new to be re-triaged", 
+            "date_created": "2014-07-12 18:53:10.474014+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "The code in this area has substantially changed. Is this still an issue?", 
+            "date_created": "2014-09-10 11:07:26.091894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I had no time to check this out any further because I left the company who was affected by this bug.\n\nMaybe Alexander Papaspyrou (https://launchpad.net/~lxndrp) can help you. I'll contact him.", 
+            "date_created": "2014-09-11 07:10:15.543985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "My former colleague confirms that this bug still exists.", 
+            "date_created": "2014-09-11 10:00:50.727479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vogl"
+        }, 
+        {
+            "content": "In confirm that this bug is still present, too.\n\nIm currently using Icehouse on Ubuntu/OpenSuse Nodes with nova-network and associated and non-associated networks  seems to be completely ignored when not using the \"nic\" param for nova-boot. I do believe that this is a basic feature that isn't working as expected.\n\nI cannot confirm second issue, since im not using any dnsmasq features.\n\nofftopic\n@vogl : good explanation on hetzner forum how some time ago. Setup with icehouse for hetzner is even more easy these days and works like a charm.\n\n\n", 
+            "date_created": "2014-09-11 22:24:39.206914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~looserpain"
+        }, 
+        {
+            "content": "I also have this issue, icehouse, ubuntu 14.04.\nThis bug still exists.", 
+            "date_created": "2014-11-12 17:45:15.794315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~steve-wyamch"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:43:01.838989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ], 
+    "closed": "2016-07-05 09:42:59.912291+00:00"
+}

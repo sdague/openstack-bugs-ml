@@ -1,0 +1,167 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2017-06-13 21:35:23.851007+00:00", 
+    "description": "When installing and configuring nova with puppet-nova (with either tripleo, packstack or puppet-openstack-integration), we are getting following errors:\n\nDebug: Executing: '/usr/bin/nova-manage  cell_v2 simple_cell_setup --transport-url=rabbit://guest:guest@172.19.2.159:5672/?ssl=0'\nDebug: /Stage[main]/Nova::Db::Sync_cell_v2/Exec[nova-cell_v2-simple-cell-setup]/returns: Sleeping for 5 seconds between tries\nNotice: /Stage[main]/Nova::Db::Sync_cell_v2/Exec[nova-cell_v2-simple-cell-setup]/returns: Cell0 is already setup.\nNotice: /Stage[main]/Nova::Db::Sync_cell_v2/Exec[nova-cell_v2-simple-cell-setup]/returns: No hosts found to map to cell, exiting.\n\nThe issue seems to be that it's running \"nova-manage  cell_v2 simple_cell_setup\" as part of the nova database initialization when no compute nodes have been created but it returns 1 in that case [1]. However, note that the previous steps (Cell0 mapping and schema migration) were successfully run.\n\nI think for nova bootstrap a reasonable orchestrated workflow would be:\n\n1. Create required databases (including the one for cell0).\n2. Nova db sync\n3. nova cell0 mapping and schema creation.\n4. Adding compute nodes\n5. mapping compute nodes (by running nova-manage cell_v2 discover_hosts)\n\nFor step 3 we'd need to get simple_cell_setup to return 0 when not having compute nodes, or having a different command.\n\nWith current behavior of nova-manage the only working workflow we can do is:\n\n1. Create required databases (including the one for cell0).\n2. Nova db sync\n3. Adding all compute nodes\n4. nova cell0 mapping and schema creation with \"nova-manage cell_v2 simple_cell_setup\".\n\nAm I right?, Is there any better alternative?\n\n\n[1] https://github.com/openstack/nova/blob/master/nova/cmd/manage.py#L1112-L1114", 
+    "tags": [
+        "cells", 
+        "ci", 
+        "nova-manage"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1656276", 
+    "owner": "https://api.launchpad.net/1.0/~sylvain-bauza", 
+    "id": 1656276, 
+    "index": 7890, 
+    "openned": "2017-01-13 11:09:25.269006+00:00", 
+    "created": "2017-01-13 11:09:25.269006+00:00", 
+    "title": "Error running nova-manage  cell_v2 simple_cell_setup when configuring nova with puppet-nova", 
+    "comments": [
+        {
+            "content": "When installing and configuring nova with puppet-nova (with either tripleo, packstack or puppet-openstack-integration), we are getting following errors:\n\nDebug: Executing: '/usr/bin/nova-manage  cell_v2 simple_cell_setup --transport-url=rabbit://guest:guest@172.19.2.159:5672/?ssl=0'\nDebug: /Stage[main]/Nova::Db::Sync_cell_v2/Exec[nova-cell_v2-simple-cell-setup]/returns: Sleeping for 5 seconds between tries\nNotice: /Stage[main]/Nova::Db::Sync_cell_v2/Exec[nova-cell_v2-simple-cell-setup]/returns: Cell0 is already setup.\nNotice: /Stage[main]/Nova::Db::Sync_cell_v2/Exec[nova-cell_v2-simple-cell-setup]/returns: No hosts found to map to cell, exiting.\n\nThe issue seems to be that it's running \"nova-manage  cell_v2 simple_cell_setup\" as part of the nova database initialization when no compute nodes have been created but it returns 1 in that case [1]. However, note that the previous steps (Cell0 mapping and schema migration) were successfully run.\n\nI think for nova bootstrap a reasonable orchestrated workflow would be:\n\n1. Create required databases (including the one for cell0).\n2. Nova db sync\n3. nova cell0 mapping and schema creation.\n4. Adding compute nodes\n5. mapping compute nodes (by running nova-manage cell_v2 discover_hosts)\n\nFor step 3 we'd need to get simple_cell_setup to return 0 when not having compute nodes, or having a different command.\n\nWith current behavior of nova-manage the only working workflow we can do is:\n\n1. Create required databases (including the one for cell0).\n2. Nova db sync\n3. Adding all compute nodes\n4. nova cell0 mapping and schema creation with \"nova-manage cell_v2 simple_cell_setup\".\n\nAm I right?, Is there any better alternative?\n\n\n[1] https://github.com/openstack/nova/blob/master/nova/cmd/manage.py#L1112-L1114", 
+            "date_created": "2017-01-13 11:09:25.269006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amoralej"
+        }, 
+        {
+            "content": "Everything was working a few hours ago, I think it could be related to https://review.openstack.org/#/c/409890", 
+            "date_created": "2017-01-13 12:54:30.178391+00:00", 
+            "author": "https://api.launchpad.net/1.0/~emilienm"
+        }, 
+        {
+            "content": "IIUC, review https://review.openstack.org/#/c/409890 has just uncovered an issue in how we were adding cells as we were mapping cell0, creating schema but not adding the nodes using either \"nova-manage cell_v2 discover_hosts\" or simple_cell_setup again after adding compute nodes.", 
+            "date_created": "2017-01-13 13:15:04.477621+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amoralej"
+        }, 
+        {
+            "content": "As per discussion in #openstack-nova:\n\n1. Compute nodes MUST be registered before running \"nova-manage cell_v2 simple_cell_setup\" in controller.\n\n2. The right workflow to deploy nova would be:\n\n  1. Create required databases (including the one for cell0).\n  2. Nova db sync\n  3. Adding all compute nodes\n  4. nova cell configuration with \"nova-manage cell_v2 simple_cell_setup\".\n\n3. Expected result should be similar to:\n\nMariaDB [(none)]> select * from nova_api.cell_mappings;\n+---------------------+------------+----+--------------------------------------+-------+--------------------------------------------------+--------------------------------------------------------------------------+\n| created_at          | updated_at | id | uuid                                 | name  | transport_url                                    | database_connection                                                      |\n+---------------------+------------+----+--------------------------------------+-------+--------------------------------------------------+--------------------------------------------------------------------------+\n| 2017-01-13 13:56:15 | NULL       |  1 | 00000000-0000-0000-0000-000000000000 | cell0 | none:///                                         | mysql+pymysql://nova_api:28a3029ff673411a@192.168.121.230/nova_api_cell0 |\n| 2017-01-13 14:09:37 | NULL       |  3 | ead4f623-4631-4d2d-af4f-4d71c048c66c | NULL  | rabbit://guest:guest@192.168.121.230:5672/?ssl=0 | mysql+pymysql://nova:28a3029ff673411a@192.168.121.230/nova               |\n+---------------------+------------+----+--------------------------------------+-------+--------------------------------------------------+--------------------------------------------------------------------------+\n2 rows in set (0.00 sec)\n\nMariaDB [(none)]> \n\nCould someone from nova team confirm it?\n\n\n", 
+            "date_created": "2017-01-13 15:08:07.016524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amoralej"
+        }, 
+        {
+            "content": "Hi Alfredo,\n\nYes, you are correct that compute nodes must be registered before running 'nova-manage cell_v2 simple_cell_setup'. I think the reason for this is to avoid the possibility of creating orphaned cell mappings.\n\nThe command creates a cell0 mapping and single cell mapping, and maps any found hosts to the created cell.\n\nThe 'nova-manage cell_v2 discover_hosts' command maps unmapped hosts to an existing cell mapping. It requires compute nodes to be registered already.\n\nThe 'nova-manage cell_v2 map_cell_and_hosts' command creates a cell mapping and maps found hosts to the created cell. It requires compute nodes to be registered already.", 
+            "date_created": "2017-01-13 15:55:42.732739+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/420063", 
+            "date_created": "2017-01-13 16:41:10.888624+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I think we can look at changing the simple_cell_setup command to not return 1 if there are no compute nodes in the deployment yet. And then we'd change the map_cell_and_hosts command to return 1 if there are no compute nodes because that command is specifically for that part of the setup and can't be incomplete.\n\nI'm not entirely sure what that means for simple_cell_setup for it to be incomplete, because if that doesn't fail and people continue on, but forget (or don't know) to map the hosts to cells later, then they can't do anything. That might just be a communication/docs issue though.\n\nIf we compare simple_cell_setup to the 'nova-status upgrade check' command when it's checking cells v2, it doesn't fail if there are cell mappings but no compute nodes (no host mappings):\n\nhttps://github.com/openstack/nova/blob/3ec43d81c324d8229bbb4b5db301175886a049b6/nova/cmd/status.py#L168\n\nIt prints a message, but doesn't consider it a failure. That's for the fresh install case that you've created the cell mappings but don't have any computes reporting in yet. I'm thinking we model that in simple_cell_setup also.", 
+            "date_created": "2017-01-13 16:50:48.974851+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/420068", 
+            "date_created": "2017-01-13 16:56:03.416195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm also tracking some of these open questions/issues in the wiki here:\n\nhttps://wiki.openstack.org/wiki/Nova-Cells-v2", 
+            "date_created": "2017-01-13 16:59:09.838290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/420079", 
+            "date_created": "2017-01-13 17:17:47.538219+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/420109", 
+            "date_created": "2017-01-13 17:55:21.707364+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/420063\nCommitted: https://git.openstack.org/cgit/openstack/puppet-nova/commit/?id=be0ac8f320ef31329a70e3d4c2dfee871872dace\nSubmitter: Jenkins\nBranch:    master\n\ncommit be0ac8f320ef31329a70e3d4c2dfee871872dace\nAuthor: Alex Schultz <email address hidden>\nDate:   Fri Jan 13 16:40:52 2017 +0000\n\n    Revert \"Enable cell_v2 setup by default\"\n    \n    This reverts commit 055f91446fa2e32eb2ee04f0db232bb7fc8cdba3.\n    \n    Change-Id: I063c0a062a4f391a932c60e48d3f2c0ba0e941bb\n    Related-Bug: #1656276\n", 
+            "date_created": "2017-01-13 19:21:10.122417+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/420068\nCommitted: https://git.openstack.org/cgit/openstack/tripleo-heat-templates/commit/?id=34f3ab689616517888422582357d0d4a38e0925d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 34f3ab689616517888422582357d0d4a38e0925d\nAuthor: Alex Schultz <email address hidden>\nDate:   Fri Jan 13 16:55:56 2017 +0000\n\n    Revert \"Specify cell0 db creation\"\n    \n    This reverts commit 4e3b085a59e7af49d1025986fd80796be338f5fd.\n    \n    Change-Id: Id9b3610af7167572b292ba330c3f0aad660fedc4\n    Related-Bug: #1656276\n", 
+            "date_created": "2017-01-13 19:49:30.884406+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/420109\nCommitted: https://git.openstack.org/cgit/openstack/instack-undercloud/commit/?id=3f83f39fc35d95f7bb1252af18a506a3deef8ce0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3f83f39fc35d95f7bb1252af18a506a3deef8ce0\nAuthor: Alex Schultz <email address hidden>\nDate:   Fri Jan 13 17:55:14 2017 +0000\n\n    Revert \"Add cell_v2 simple_cell_setup\"\n    \n    This reverts commit 4f1727990019e9bfbc1e1f265b163952257ada22.\n    \n    Change-Id: I579ae52dad47c29acf536dca435fdbfd17340391\n    Related-Bug: #1656276\n", 
+            "date_created": "2017-01-13 20:29:02.290081+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Packstack fails even with puppet-nova revert http://git.openstack.org/cgit/openstack/puppet-nova/commit/?id=a41d30806d4ae7b772e2276e9b058aa61e742d38\n\nhttps://ci.centos.org/job/weirdo-master-promote-packstack-scenario001/869/consoleFull\n...\n08:28:47 ERROR : Error appeared during Puppet run: 172.19.2.156_controller.pp\n08:28:47 Error: /Stage[main]/Nova::Db::Sync_cell_v2/Exec[nova-cell_v2-simple-cell-setup]: Failed to call refresh: /usr/bin/nova-manage  cell_v2 simple_cell_setup --transport-url=rabbit://guest:guest@172.19.2.156:5671/?ssl=1 returned 1 instead of one of [0]", 
+            "date_created": "2017-01-14 12:49:32.794399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Packstack needs same partial revert as in puppet-openstack-integration:\nhttps://review.openstack.org/#/c/420167/2/manifests/nova.pp", 
+            "date_created": "2017-01-14 12:51:45.438876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/420336", 
+            "date_created": "2017-01-14 12:59:12.040140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/420337", 
+            "date_created": "2017-01-14 13:03:07.828652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Alan Pevec (<email address hidden>) on branch: master\nReview: https://review.openstack.org/420337\nReason: duplicate of Iffc70e22a762f58c3f946e27cd0064f3e33b892d", 
+            "date_created": "2017-01-14 13:05:09.997629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/420336\nCommitted: https://git.openstack.org/cgit/openstack/packstack/commit/?id=0ab6d87daed904233e8ba670981e9b468f29ab9d\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0ab6d87daed904233e8ba670981e9b468f29ab9d\nAuthor: Alan Pevec <email address hidden>\nDate:   Sat Jan 14 13:56:29 2017 +0100\n\n    Revert cells v2 support\n    \n    Partial revert of a64f86e3a0ea040b9d8d6a035da5e084812110ce\n    matching puppet-openstack-integration workaround\n     https://review.openstack.org/420167\n    \n    Related-bug: 1656276\n    Change-Id: Iffc70e22a762f58c3f946e27cd0064f3e33b892d\n", 
+            "date_created": "2017-01-14 19:40:56.876330+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Seems like it doesn't happen in CI jobs anymore, removing alert and promotion-blocker tags meanwhile.", 
+            "date_created": "2017-01-15 20:26:01.236468+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sshnaidm"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/332713\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f7e9f312a064d9809e2093de5b54c18a45a75322\nSubmitter: Jenkins\nBranch:    master\n\ncommit f7e9f312a064d9809e2093de5b54c18a45a75322\nAuthor: Andrey Volkov <email address hidden>\nDate:   Tue Aug 16 11:25:54 2016 +0300\n\n    Add nova-manage cell_v2 create_cell command\n    \n    Currently, all of the commands that create a new cell require the\n    presence of compute hosts, else they won't create a cell mapping.\n    In the use case of a fresh install, it's reasonable that compute\n    host records may not yet exist at the time of cells v2 setup.\n    \n    This provides a way for operators to create a new empty cell at\n    setup time and defer adding hosts to the cell until they have\n    started their compute hosts later (via the 'discover_hosts'\n    command).\n    \n    The command optionally accepts a database connection url and\n    message queue transport url, else it will take the values from\n    the nova.conf. It returns the uuid of the newly created cell.\n    \n    Change-Id: I2fd7d854ffa579e550f6002cfb7223d7f40acac6\n    Related-Bug: #1656276\n", 
+            "date_created": "2017-01-16 20:09:34.315873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/420994", 
+            "date_created": "2017-01-16 23:28:42.114203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/420994\nCommitted: https://git.openstack.org/cgit/openstack/puppet-nova/commit/?id=d2597b32c80c3800d74f360401eb37a69396e0fa\nSubmitter: Jenkins\nBranch:    master\n\ncommit d2597b32c80c3800d74f360401eb37a69396e0fa\nAuthor: Alex Schultz <email address hidden>\nDate:   Mon Jan 16 16:27:53 2017 -0700\n\n    Align stars to fix puppet-ci\n    \n    1) Stop doing cell v2\n    Since cell v2 setup still needs work, we need to stop doing it in the\n    beaker tests for now.\n    \n    2) Fix libvirt for ubuntu\n    Ubuntu updated their libvirt package to 2.5.0 which has the debian\n    service and filename conventions.\n    \n    Change-Id: Ic315ae015300f536e88ae0b2a8808fcd6126ac37\n    Related-Bug: #1656276\n    Closes-Bug: #1657251\n", 
+            "date_created": "2017-01-18 19:17:22.792381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/422248", 
+            "date_created": "2017-01-18 21:29:34.641349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/422248\nCommitted: https://git.openstack.org/cgit/openstack/puppet-nova/commit/?id=dc2f3a358663c0fb97795666b16dec63cfcc3872\nSubmitter: Jenkins\nBranch:    master\n\ncommit dc2f3a358663c0fb97795666b16dec63cfcc3872\nAuthor: Oliver Walsh <email address hidden>\nDate:   Wed Jan 18 21:26:43 2017 +0000\n\n    Implement a proper cell_v2 setup\n    \n    Rather than use simple_cell_setup which expects that there are already\n    existing computes, this change uses map_cell0 & create_cell to setup\n    cell_v2. Once the computes are configured, the cell_v2 discover_hosts\n    should be used to finalized the installation.\n    \n    In addition, the db syncs need to be reordered as the api db sync\n    should run before the the cell_v2 setup. The main db sync should run\n    after.\n    \n    map_cell0/simple_cell_setup now uses main nova DB connection instead\n    of the api DB connection.\n    \n    Change-Id: I591b451197dc3bd0783978f5e3d2b1c830afe54e\n    Closes-Bug: #1656276\n    Related-Bug: #1656673\n    Co-Authored-By: Alex Schultz <email address hidden>\n", 
+            "date_created": "2017-01-26 02:29:55.967482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/puppet-nova 10.2.0 release.", 
+            "date_created": "2017-01-26 19:06:24.709591+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sylvain Bauza (<email address hidden>) on branch: master\nReview: https://review.openstack.org/420079\nReason: We now have a better consensus about leaving the simple_cell_setup call for just an easy upgrade, and rather call each nova-manage method for each step (create cell0, then a cell, then discover hosts for each cell) http://docs.openstack.org/developer/nova/cells.html#first-time-setup", 
+            "date_created": "2017-02-07 10:31:14.212433+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi all,\n\nIs there a fix proposed or somehow a temp fix for this? \n\nI bumped into it when using Rally on Packstack. It turns out a correct `database_connection` is populated but there is no `transport_url`, which is probably why I can't finish the instructions in https://docs.openstack.org/developer/nova/cells.html#cells-v2. ", 
+            "date_created": "2017-06-13 21:35:23.431275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jethro-sun7"
+        }
+    ], 
+    "closed": "2017-02-09 16:20:51.313111+00:00"
+}

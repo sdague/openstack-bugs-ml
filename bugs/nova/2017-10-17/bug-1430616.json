@@ -1,0 +1,70 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-10-15 08:55:06.577891+00:00", 
+    "description": "When running devstack stack.sh,  nova-compute started at 2015-03-11 10:24:01.323,  but ironic-api started at 2015-03-11 10:27:04.685. Nova-compute exited at 2015-03-11 10:26:00.083 with NovaException:\n\nTraceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/eventlet/hubs/poll.py\", line 115, in wait\n    listener.cb(fileno)\n  File \"/usr/local/lib/python2.7/dist-packages/eventlet/greenthread.py\", line 214, in main\n    result = function(*args, **kwargs)\n  File \"/opt/stack/nova/nova/openstack/common/service.py\", line 491, in run_service\n    service.start()\n  File \"/opt/stack/nova/nova/service.py\", line 164, in start\n    self.manager.init_host()\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 1201, in init_host\n    self._destroy_evacuated_instances(context)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 737, in _destroy_evacuated_instances\n    local_instances = self._get_instances_on_driver(context, filters)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 700, in _get_instances_on_driver\n    driver_uuids = self.driver.list_instance_uuids()\n  File \"/opt/stack/nova/nova/virt/ironic/driver.py\", line 422, in list_instance_uuids\n    limit=0)\n  File \"/opt/stack/nova/nova/virt/ironic/client_wrapper.py\", line 142, in call\n    raise exception.NovaException(msg)\nNovaException: Error contacting Ironic server for 'node.list'. Attempt 60 of 60\n\nIt doesn't make sense for a service.", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1430616", 
+    "owner": "https://api.launchpad.net/1.0/~zhenzan-zhou", 
+    "id": 1430616, 
+    "index": 4178, 
+    "openned": "2015-03-11 03:17:06.537734+00:00", 
+    "created": "2015-03-11 03:17:06.537734+00:00", 
+    "title": "nova-compute with IronicDriver failed to start if ironic-api service not started", 
+    "comments": [
+        {
+            "content": "When running devstack stack.sh,  nova-compute started at 2015-03-11 10:24:01.323,  but ironic-api started at 2015-03-11 10:27:04.685. Nova-compute exited at 2015-03-11 10:26:00.083 with NovaException:\n\nTraceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/eventlet/hubs/poll.py\", line 115, in wait\n    listener.cb(fileno)\n  File \"/usr/local/lib/python2.7/dist-packages/eventlet/greenthread.py\", line 214, in main\n    result = function(*args, **kwargs)\n  File \"/opt/stack/nova/nova/openstack/common/service.py\", line 491, in run_service\n    service.start()\n  File \"/opt/stack/nova/nova/service.py\", line 164, in start\n    self.manager.init_host()\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 1201, in init_host\n    self._destroy_evacuated_instances(context)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 737, in _destroy_evacuated_instances\n    local_instances = self._get_instances_on_driver(context, filters)\n  File \"/opt/stack/nova/nova/compute/manager.py\", line 700, in _get_instances_on_driver\n    driver_uuids = self.driver.list_instance_uuids()\n  File \"/opt/stack/nova/nova/virt/ironic/driver.py\", line 422, in list_instance_uuids\n    limit=0)\n  File \"/opt/stack/nova/nova/virt/ironic/client_wrapper.py\", line 142, in call\n    raise exception.NovaException(msg)\nNovaException: Error contacting Ironic server for 'node.list'. Attempt 60 of 60\n\nIt doesn't make sense for a service.", 
+            "date_created": "2015-03-11 03:17:06.537734+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhenzan-zhou"
+        }, 
+        {
+            "content": "I use Juno version, 2014.2.\nCheck the status of nova-compute service after stop ironic-api service, and get it:\n# systemctl status openstack-nova-compute.service \nopenstack-nova-compute.service - OpenStack Nova Compute Server\n   Loaded: loaded (/usr/lib/systemd/system/openstack-nova-compute.service; enabled)\n   Active: active (running) since Wed 2015-03-11 12:01:22 CST; 1h 41min ago\n Main PID: 28778 (nova-compute)\n   CGroup: /system.slice/openstack-nova-compute.service\n           \u2514\u250028778 /usr/bin/python /usr/bin/nova-compute\n\nMar 11 12:01:22 controller systemd[1]: Started OpenStack Nova Compute Server.\n\nBut in the log file of nova-compute:\n2015-03-11 13:40:56.502 28778 TRACE nova.openstack.common.periodic_task NovaException: Error contacting Ironic server for 'node.list'. Attempt 60 of 60\n\nThen start ironic-api service, and the exception was gone.\n\nIMHO this flow does not process properly. When ironic-api service stopped, nova-compute service should be exited. But now it was running. End-user can launch one instance because 'nova-compute' service is up.", 
+            "date_created": "2015-03-11 05:57:18.513611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-xiett"
+        }, 
+        {
+            "content": "I tried to stop ironic-api while nova-compute is running and I reproduced the same behavior as you pasted. For this bug, it only happened at the start up phase. \nPersonally I don't think it's a right behavior to just shutdown nova-compute if ironic-api service stopped.  You can always launch an instance even if nova-compute is stopped. And you will get error like:\n\"message\": \"No valid host was found. There are not enough hosts available.\"\nI also tried to just stop ironic-api but keeps nova-compute running, the same error for the instance:\n\"message\": \"No valid host was found. There are not enough hosts available.\"\nSo it's better to keep nova-compute and once ironic-api is back, it can recover immediately.\n\nBTW, what information do you want to change the status back to normal from incomplete? Thanks. ", 
+            "date_created": "2015-03-11 06:59:33.570708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhenzan-zhou"
+        }, 
+        {
+            "content": "I tried it as below steps:\n1) stop ironic-api\n2) stop nova-compute\n3) start nova-compute\nAnd found that nova-compute was still running.\nAnything wrong?\n\n", 
+            "date_created": "2015-03-12 07:11:07.408383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-xiett"
+        }, 
+        {
+            "content": "Does it run for long time? Do you see it reports exception periodically after step 3? If the answer is yes, then we probably meet a regression. Please try the latest Kilo code. Thanks.\n", 
+            "date_created": "2015-03-12 07:55:01.268432+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhenzan-zhou"
+        }, 
+        {
+            "content": "Ok. I will try it as soon as i can:)", 
+            "date_created": "2015-03-16 13:51:58.656347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mark-xiett"
+        }, 
+        {
+            "content": "I do believe that nova compute should not die under these situations. ", 
+            "date_created": "2015-04-01 15:46:54.325270+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "If I killed libvirtd and then start nova-compute, it got an exception:\n\nHypervisorUnavailable: Connection to the hypervisor is broken on host\n\nand quit immediately.  If killed libvirtd while nova-compute is running, it changed compute service status to disabled and won't exit with HypervisorUnavailable exceptions:\n\n2015-04-14 14:57:38.699 DEBUG nova.virt.libvirt.driver [req-5f28fc21-9769-4cd9-8d96-0ee6fd15fd8c None None] Updating compute service status to disabled from (pid=1344) _set_host_enabled /opt/stack/nova/nova/virt/libvirt/driver.py:3021\n\n", 
+            "date_created": "2015-04-14 07:10:55.009143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhenzan-zhou"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/173681", 
+            "date_created": "2015-04-15 05:50:26.278603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/173681\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cce06a1e9855d9eed3f7c653200853f23466d791\nSubmitter: Jenkins\nBranch:    master\n\ncommit cce06a1e9855d9eed3f7c653200853f23466d791\nAuthor: Zhenzan Zhou <email address hidden>\nDate:   Wed Apr 15 13:27:51 2015 +0800\n\n    Bypass ironic server not available issue\n    \n    The ironic driver needs enhancement for exception handling.\n    This patch is a workaround to make devstack with ironic enabled\n    success. A more elegant patch should be made later in ironic\n    driver for exception handling.\n    \n    Change-Id: Ibace25ad905a8278ecea4b02c69c59737a490d3a\n    Closes-Bug: #1430616\n", 
+            "date_created": "2015-07-20 02:48:46.639673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-07-28 09:08:18.393754+00:00"
+}

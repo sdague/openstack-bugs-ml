@@ -1,0 +1,51 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-09-24 04:17:58.782709+00:00", 
+    "description": "While I was working on fixing the resize for pci passthrough [1] I have notice the following issue in resize.\n\n\n\nIf you are using small image and you resize-confirm it very fast the old resources are not getting freed.\n\n\n\nAfter debug this issue I found out the root cause of it.\n\n\n\nA Good run of resize is as detailed below:\n\n\n\nWhen doing resize the _update_usage_from_migration in the resource trucker called twice.\n\n1.       The first call we return  the instance type of the new flavor and will enter this case\n\n                     https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L718\n\n2.       Then it will put in the tracked_migrations the migration and the new instance_type\n\n                    https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L763\n\n3.       The second call we return the old  instance_type and will enter this case\n\n                     https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L725\n\n4.       Then in the tracked_migrations it will overwrite  the old value with migration and the old instance type\n\n5.       https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L763\n\n6.       When doing resize-confirm the drop_move_claim called with the old instance type\n\nhttps://github.com/openstack/nova/blob/9a05d38f48ef0f630c5e49e332075b273cee38b9/nova/compute/manager.py#L3369\n\n7.       The drop_move_claim will compare the instance_type[id] from the tracked_migrations to the instance_type.id (which is the old one)\n\n8.       And because they are equals it will  remove the old resource usage\n\n                    https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L315-L328\n\n\n\nBut with small image like CirrOS   and doing the revert-confirm fast the second call of _update_usage_from_migration will not get executing.\n\nThe result is that when we enter the drop_move_claim it compares it with the new instance_type and this  expression is false https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L314\n\nThis mean that this code block is not executed  https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L315-L326 and therefore old resources are not getting freed.", 
+    "tags": [
+        "compute", 
+        "resource-tracker"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1590556", 
+    "owner": "None", 
+    "id": 1590556, 
+    "index": 7535, 
+    "openned": "2016-06-08 20:44:08.393779+00:00", 
+    "created": "2016-06-08 20:44:08.393779+00:00", 
+    "title": "race condition with resize causing old resources not to be  free", 
+    "comments": [
+        {
+            "content": "While I was working on fixing the resize for pci passthrough [1] I have notice the following issue in resize.\n\n\n\nIf you are using small image and you resize-confirm it very fast the old resources are not getting freed.\n\n\n\nAfter debug this issue I found out the root cause of it.\n\n\n\nA Good run of resize is as detailed below:\n\n\n\nWhen doing resize the _update_usage_from_migration in the resource trucker called twice.\n\n1.       The first call we return  the instance type of the new flavor and will enter this case\n\n                     https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L718\n\n2.       Then it will put in the tracked_migrations the migration and the new instance_type\n\n                    https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L763\n\n3.       The second call we return the old  instance_type and will enter this case\n\n                     https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L725\n\n4.       Then in the tracked_migrations it will overwrite  the old value with migration and the old instance type\n\n5.       https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L763\n\n6.       When doing resize-confirm the drop_move_claim called with the old instance type\n\nhttps://github.com/openstack/nova/blob/9a05d38f48ef0f630c5e49e332075b273cee38b9/nova/compute/manager.py#L3369\n\n7.       The drop_move_claim will compare the instance_type[id] from the tracked_migrations to the instance_type.id (which is the old one)\n\n8.       And because they are equals it will  remove the old resource usage\n\n                    https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L315-L328\n\n\n\nBut with small image like CirrOS   and doing the revert-confirm fast the second call of _update_usage_from_migration will not get executing.\n\nThe result is that when we enter the drop_move_claim it compares it with the new instance_type and this  expression is false https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L314\n\nThis mean that this code block is not executed  https://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L315-L326 and therefore old resources are not getting freed.", 
+            "date_created": "2016-06-08 20:44:08.393779+00:00", 
+            "author": "https://api.launchpad.net/1.0/~moshele"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/327356", 
+            "date_created": "2016-06-08 21:43:34.751189+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Moshe Levi (<email address hidden>) on branch: master\nReview: https://review.openstack.org/327356", 
+            "date_created": "2016-12-22 16:53:18.755023+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:47:39.001001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I saw you abandoned the patch, is this still a known bug?", 
+            "date_created": "2017-07-25 14:32:52.784460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-09-24 04:17:56.489849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2017-09-24 04:17:56.944825+00:00"
+}

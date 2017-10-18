@@ -1,0 +1,97 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-02-27 20:28:55.420399+00:00", 
+    "description": "Our setup consists of multiple controllers and multiple hypervisors. Our shared storage for the instances is on a nfs 4.1 export.  Using Ubuntu 16.04 LTS and Openstack Mitaka\n\nWhen we launch an instance, nova updates the mtime for the _base image to let the image cache manager know the image is actively used.  I think this was added here: https://review.openstack.org/gitweb?p=openstack/nova.git;a=commitdiff;h=fb6ca3e7c8a38328d384cd41c061ded6623dac90\nBecause of this, in our setup, we are seeing unexpected input/output errors:\n\nStderr: u\"/bin/touch: setting times of '/var/lib/nova/instances/_base/79e34519bacb47ad6f64c4baca4d33fd5c57d34d': Input/output error\n\nA full trace can be found here: http://paste.openstack.org/show/570161/\n\nThis error particularly shows itself when launching multiple instances at once.\n\nAlso, because of this error, the instances are rescheduled.  The assigned neutron ports, however, are not deleted.  This results in multiple ip's assigned to the instances, with only one of them UP.  This also results in attached floating ip's not working ..\nThis is similar to https://bugs.launchpad.net/nova/+bug/1609526, nova should tell neutron, either to delete the unused port, or update it instead of creating a new one.\n\nSome more info on our environment:\n----------------------------------\nUsing libvirt + kvm, neutron with openvswitch L3 HA\n\n# dpkg -l | grep nova\nii  nova-common                        2:13.0.0-0ubuntu2                   all          OpenStack Compute - common files\nii  nova-compute                       2:13.0.0-0ubuntu2                   all          OpenStack Compute - compute node base\nii  nova-compute-kvm                   2:13.0.0-0ubuntu2                   all          OpenStack Compute - compute node (KVM)\nii  nova-compute-libvirt               2:13.0.0-0ubuntu2                   all          OpenStack Compute - compute node libvirt support\nii  python-nova                        2:13.0.0-0ubuntu2                   all          OpenStack Compute Python libraries\nii  python-novaclient                  2:3.3.1-2                           all          client library for OpenStack Compute API - Python 2.7\n\n# dpkg -l |grep libvirt\nii  libvirt-bin                        1.3.1-1ubuntu10.1                   amd64        programs for the libvirt library\nii  libvirt0:amd64                     1.3.1-1ubuntu10.1                   amd64        library for interfacing with different virtualization systems\nii  nova-compute-libvirt               2:13.0.0-0ubuntu2                   all          OpenStack Compute - compute node libvirt support\nii  python-libvirt                     1.3.1-1ubuntu1                      amd64        libvirt Python bindings", 
+    "tags": [
+        "compute", 
+        "image-cache", 
+        "nfs"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1621818", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1621818, 
+    "index": 4620, 
+    "openned": "2016-09-09 10:12:22.924070+00:00", 
+    "created": "2016-09-09 10:12:22.924070+00:00", 
+    "title": "nova-compute unexpected input/output errors on starting instances (NFS + image-cache)", 
+    "comments": [
+        {
+            "content": "Our setup consists of multiple controllers and multiple hypervisors. Our shared storage for the instances is on a nfs 4.1 export.  Using Ubuntu 16.04 LTS and Openstack Mitaka\n\nWhen we launch an instance, nova updates the mtime for the _base image to let the image cache manager know the image is actively used.  I think this was added here: https://review.openstack.org/gitweb?p=openstack/nova.git;a=commitdiff;h=fb6ca3e7c8a38328d384cd41c061ded6623dac90\nBecause of this, in our setup, we are seeing unexpected input/output errors:\n\nStderr: u\"/bin/touch: setting times of '/var/lib/nova/instances/_base/79e34519bacb47ad6f64c4baca4d33fd5c57d34d': Input/output error\n\nA full trace can be found here: http://paste.openstack.org/show/570161/\n\nThis error particularly shows itself when launching multiple instances at once.\n\nAlso, because of this error, the instances are rescheduled.  The assigned neutron ports, however, are not deleted.  This results in multiple ip's assigned to the instances, with only one of them UP.  This also results in attached floating ip's not working ..\nThis is similar to https://bugs.launchpad.net/nova/+bug/1609526, nova should tell neutron, either to delete the unused port, or update it instead of creating a new one.\n\nSome more info on our environment:\n----------------------------------\nUsing libvirt + kvm, neutron with openvswitch L3 HA\n\n# dpkg -l | grep nova\nii  nova-common                        2:13.0.0-0ubuntu2                   all          OpenStack Compute - common files\nii  nova-compute                       2:13.0.0-0ubuntu2                   all          OpenStack Compute - compute node base\nii  nova-compute-kvm                   2:13.0.0-0ubuntu2                   all          OpenStack Compute - compute node (KVM)\nii  nova-compute-libvirt               2:13.0.0-0ubuntu2                   all          OpenStack Compute - compute node libvirt support\nii  python-nova                        2:13.0.0-0ubuntu2                   all          OpenStack Compute Python libraries\nii  python-novaclient                  2:3.3.1-2                           all          client library for OpenStack Compute API - Python 2.7", 
+            "date_created": "2016-09-09 10:12:22.924070+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsheeren"
+        }, 
+        {
+            "content": "Is there any more useful information in dmesg or syslog when this fails? Is this 100% fail or intermittent, i.e. a timing issue?\n\nDoes the image cache base directory exist?\n\n/var/lib/nova/instances/_base/\n\nAnd can nova write to it?", 
+            "date_created": "2016-09-09 21:26:52.113747+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "There is no useful information in dmesg or syslog unfortunately.\n\nThe fails are intermittent.  When launching a lot of instances at once coming from the same _base image, we see the error.\n\nThe image cache base directory exists and nova can write to it:\n\nroot@compute:/var/lib/nova/instances# ls -l\ntotal 256\ndrwxr-xr-x 2 nova nova 4096 Aug 17 14:09 02db8511-2f20-41da-bcc2-797a9bbbe63b\n... snip ...\ndrwxr-xr-x 2 nova nova 4096 Aug 29 17:24 bab8ddbf-c483-4462-9273-755812d84903\ndrwxr-xr-x 2 nova nova 4096 Sep  7 13:33 _base\ndrwxr-xr-x 2 nova nova 4096 Sep  9 17:10 c3251e4f-4c0e-42d8-a039-78ed9263b46c\n... snip\n\nroot@compute:/var/lib/nova/instances/_base# ls -la\ntotal 34802256\ndrwxr-xr-x  2 nova         nova        4096 Sep  7 13:33 .\ndrwxr-xr-x 65 nova         nova        8192 Sep  9 17:10 ..\n-rw-r--r--  1 libvirt-qemu kvm   8589934592 Sep  8 12:50 21171f1738d671d6801abab7196e4a5460c57af9\n-rw-r--r--  1 libvirt-qemu kvm  16105807872 Sep  9 09:13 3e58771f795c5e889445b424cbce395a69bbfb08\n... snip\n\nThe nfs mount point is: \n1.2.3.4:/data on /var/lib/nova/instances type nfs4 (rw,relatime,vers=4.1,rsize=65536,wsize=65536,namlen=255,hard,proto=tcp,port=0,timeo=600,retrans=2,sec=sys,clientaddr=5.6.7.8,local_lock=none,addr=1.2.3.4)\n\nWe can simulate it outside of nova by creating a file of a certain size inside the nfs export.  Then in a loop run the touch operation; and in another loop run the copy operation to wherever.  \nNow and then we see the input/output error. \n\n\n\n", 
+            "date_created": "2016-09-10 08:14:25.591706+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsheeren"
+        }, 
+        {
+            "content": "I've submitted a patch to fix this issue: https://review.openstack.org/#/c/368590/\n\nWith this patch, we put the execute call in a try, except block to catch possible errors. It also logs a warning with the path and error message. \n\nNow, at least once, the update will succeed.\n\nLogs now show:\n2016-09-09 17:10:22.033 22753 WARNING nova.virt.libvirt.utils [req-a8b01dc3-f349-44ba-85ef-2ef87b0d7eb6 9bded406068d46c5b817a1f7b604dd89 028894d76a79489ead5d682232ecbe83 - - -] Failed to update mtime on path /var/lib/nova/instances/_base/79e34519bacb47ad6f64c4baca4d33fd5c57d34d: Unexpected error while running command.\nCommand: sudo nova-rootwrap /etc/nova/rootwrap.conf touch -c /var/lib/nova/instances/_base/79e34519bacb47ad6f64c4baca4d33fd5c57d34d\nExit code: 1\nStdout: u''\nStderr: u\"/bin/touch: setting times of '/var/lib/nova/instances/_base/79e34519bacb47ad6f64c4baca4d33fd5c57d34d': Input/output error\\n\"", 
+            "date_created": "2016-09-12 07:46:12.426166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsheeren"
+        }, 
+        {
+            "content": "Updated bug to indicate this is In Progress as there is a change pushed for it.", 
+            "date_created": "2016-10-02 03:52:43.312821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "Set bug priority to Medium, as the failure occurs during spawn. I would have marked it higher if the error was consistent / not limited hit rate. Still nice to fix though.", 
+            "date_created": "2016-10-14 15:21:38.131125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbelu"
+        }, 
+        {
+            "content": "The patch was proposed against stable/mitaka but needs to be proposed against master first, then backported to stable/newton and finally stable/mitaka if that's your target release.", 
+            "date_created": "2016-10-15 13:58:11.701306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Otherwise if we landed the patch in mitaka, once you upgrade to newton or ocata the fix is gone.", 
+            "date_created": "2016-10-15 13:58:27.753505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/386956", 
+            "date_created": "2016-10-15 14:23:04.262950+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/386956\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=53da313a86e81bf1df75119ca0e8f857e7b2909c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 53da313a86e81bf1df75119ca0e8f857e7b2909c\nAuthor: Joris S'heeren <email address hidden>\nDate:   Fri Sep 9 15:40:58 2016 +0200\n\n    Catch error and log warning when not able to update mtimes\n    \n    When we launch an instance, nova updates the mtime for the _base image\n    to let the image cache manager know the image is actively used.  This\n    can lead to unexpected I/O errors when launching a large amount of\n    instances at once coming from the same _base image.\n    \n    This commit puts the execute call in a try, except block to catch\n    possible errors. It also logs a warning with the path and error message.\n    With this, at least once the update will succeed.\n    \n    Closes-Bug: #1621818\n    \n    Co-Authored-By: Matt Riedemann <email address hidden>\n    \n    Change-Id: I2fd1700aa4563a906eb574cbbe16caa63abae0d6\n    Signed-off-by: Joris S'heeren <email address hidden>\n", 
+            "date_created": "2016-10-26 18:43:48.941073+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/391091", 
+            "date_created": "2016-10-27 10:07:34.152596+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:12:24.996543+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Lee Yarwood (<email address hidden>) on branch: stable/mitaka\nReview: https://review.openstack.org/368590\nReason: Hello John,\n\nstable/mitaka has now entered phase II support [1][2], only accepting critical bugfixes and security patches. As this review does not meet these criteria it is being abandoned at this time.\n\nHowever please reopen this review if you feel it is still suitable for stable/mitaka and the nova-stable-maint team will revisit this decision.\n\n[1] http://docs.openstack.org/project-team-guide/stable-branches.html#support-phases\n[2] https://releases.openstack.org/#release-series", 
+            "date_created": "2016-12-01 14:42:39.049860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/391091\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=68402ae5443fd811b3dcb41537b621935d23f4ad\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 68402ae5443fd811b3dcb41537b621935d23f4ad\nAuthor: Joris S'heeren <email address hidden>\nDate:   Fri Sep 9 15:40:58 2016 +0200\n\n    Catch error and log warning when not able to update mtimes\n    \n    When we launch an instance, nova updates the mtime for the _base image\n    to let the image cache manager know the image is actively used.  This\n    can lead to unexpected I/O errors when launching a large amount of\n    instances at once coming from the same _base image.\n    \n    This commit puts the execute call in a try, except block to catch\n    possible errors. It also logs a warning with the path and error message.\n    With this, at least once the update will succeed.\n    \n    Closes-Bug: #1621818\n    \n    Co-Authored-By: Matt Riedemann <email address hidden>\n    \n    Change-Id: I2fd1700aa4563a906eb574cbbe16caa63abae0d6\n    Signed-off-by: Joris S'heeren <email address hidden>\n    (cherry picked from commit 53da313a86e81bf1df75119ca0e8f857e7b2909c)\n", 
+            "date_created": "2017-02-11 05:42:26.954227+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.4 release.", 
+            "date_created": "2017-02-27 20:28:54.008056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-10-26 18:43:45.782053+00:00"
+}

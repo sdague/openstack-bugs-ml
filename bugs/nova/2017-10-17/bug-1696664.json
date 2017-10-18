@@ -1,0 +1,55 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2017-06-19 14:28:19.358006+00:00", 
+    "description": "When launching an instance using the following:\n# nova boot --flavor m1.small --image <image id> --nic net-id=<net id> --nic port-id=<port id> vm1\n\nWhere the first interface is a non SR-IOV port and the second one is SR-IOV port the order is not preserved ,i.e. The first interface of the instance is the SR-IOV port.\n\nVersion:\nopenstack-nova-compute-15.0.3-3.el7ost.noarch", 
+    "tags": [
+        "neutron"
+    ], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1696664", 
+    "owner": "None", 
+    "id": 1696664, 
+    "index": 2195, 
+    "openned": "2017-06-08 07:20:35.814003+00:00", 
+    "created": "2017-06-08 07:20:35.814003+00:00", 
+    "title": "Order of the interfaces is not honored when using virt and SR-IOV interfaces", 
+    "comments": [
+        {
+            "content": "When launching an instance using the following:\n# nova boot --flavor m1.small --image <image id> --nic net-id=<net id> --nic port-id=<port id> vm1\n\nWhere the first interface is a non SR-IOV port and the second one is SR-IOV port the order is not preserved ,i.e. The first interface of the instance is the SR-IOV port.\n\nVersion:\nopenstack-nova-compute-15.0.3-3.el7ost.noarch", 
+            "date_created": "2017-06-08 07:20:35.814003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~itzikb1"
+        }, 
+        {
+            "content": "We don't really support the NIC ordering in Nova AFAIK.\nIf you look at https://developer.openstack.org/api-ref/compute/?expanded=create-server-detail#create-server we just say for the 'networks' attribute that it's possible to pass multiple UUIDs, either as ports or network IDs but we don't explicitly say that the VM NICs order will be preserved.\n\nClosing it as invalid as I don't think it's something we supported once but feel free to reopen the bug if you know that we previously supported it and we regressed somehow.", 
+            "date_created": "2017-06-08 13:15:53.347579+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "My fault, one just pointed me out that we actually try to preserve NIC ordering when calling Neutron :\n\nhttps://github.com/openstack/nova/blob/286cb904055eec3525fb61b2a0f93b14448bdd3e/nova/network/neutronv2/api.py#L2522\n\nLooks to me like a legit bug by the fact that when the user provides a port instead of a network ID, we don't preserve the ordering since ports are treated separatly from the above.\n\nhttps://github.com/openstack/nova/blob/286cb904055eec3525fb61b2a0f93b14448bdd3e/nova/network/neutronv2/api.py#L841-L848\n\n", 
+            "date_created": "2017-06-08 13:29:36.581286+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "FWIW we do preserve the order of requested networks on the boot request:\n\nhttps://github.com/openstack/nova/blob/286cb904055eec3525fb61b2a0f93b14448bdd3e/nova/network/neutronv2/api.py#L350\n\nDuring the actual network allocation this is where we build the list of networks, either via explicitly requested networks and/or via the port IDs requested:\n\nhttps://github.com/openstack/nova/blob/286cb904055eec3525fb61b2a0f93b14448bdd3e/nova/network/neutronv2/api.py#L841\n\nYou can see where we don't put the port.network_id into the list of ordered_networks:\n\nhttps://github.com/openstack/nova/blob/286cb904055eec3525fb61b2a0f93b14448bdd3e/nova/network/neutronv2/api.py#L578\n\nused here:\n\nhttps://github.com/openstack/nova/blob/286cb904055eec3525fb61b2a0f93b14448bdd3e/nova/network/neutronv2/api.py#L684\n\nAnd those net_ids are what's sorted here:\n\nhttps://github.com/openstack/nova/blob/286cb904055eec3525fb61b2a0f93b14448bdd3e/nova/network/neutronv2/api.py#L350\n\nSo yes we only preserve the order of requested networks, not networks and ports, or the networks associated with the ports.", 
+            "date_created": "2017-06-08 13:31:06.420417+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "so, after thinking more of the problem, I just feel that the current codepath is making promises that it can't sustain. To be clear, NIC ordering on a VM can sometimes be undeterministic depending on the OS.\n\nFor that precise reason, a new feature recently merged in Newton about allowing NICs to be tagged :\nhttps://specs.openstack.org/openstack/nova-specs/specs/newton/implemented/virt-device-role-tagging.html\n\nThat way, you can query the metadata service in order to know which NIC is corresponding to which port/network you passed.\n\nSee https://developer.openstack.org/api-ref/compute/?expanded=create-server-detail and lookup for the 'networks' parameter, you'll see mentioned a 'tag' attribute that is available since 2.32 API microversion.\n\nClosing the bug as WontFix since the community agreed on that direction.", 
+            "date_created": "2017-06-09 14:50:02.796232+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/472733", 
+            "date_created": "2017-06-09 15:17:39.415762+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/472733\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7d7cc942211f0523f970dd6c1268d1d778aed8a7\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7d7cc942211f0523f970dd6c1268d1d778aed8a7\nAuthor: Sylvain Bauza <email address hidden>\nDate:   Fri Jun 9 17:11:24 2017 +0200\n\n    Amend api-ref for multiple networks request\n    \n    Since there are chances that the guest OS won't honor the order of networks\n    and assign NIC#1 to the second requested network, we say to our users to\n    rather use device tagging and metadata querying.\n    Amending the api-ref to mention explicitly that Nova doesn't support NIC\n    ordering although there are codepaths for that which try that.\n    \n    Change-Id: Id134f7745111ccd12695bb041fcce182e833126a\n    Related-Bug: #1696664\n", 
+            "date_created": "2017-06-19 14:28:18.948832+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-06-09 14:50:11.351582+00:00"
+}

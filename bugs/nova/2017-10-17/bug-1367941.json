@@ -1,0 +1,113 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-10-24 17:08:49.236836+00:00", 
+    "description": "In nova-compute the semaphore \"compute_resources\" is used  in  lockutils.synchronized_with_prefix('nova-') as part of nova/compute/resource_tracker.py\n\nThe \"compute_resources\"  semaphore is acquired once at:\n\nhttp://logs.openstack.org/58/117258/2/gate/gate-tempest-dsvm-neutron-full/48c8627/logs/screen-n-cpu.txt.gz?#_2014-09-10_20_19_17_176\n\nAnd then again at:\n\nIn  http://logs.openstack.org/58/117258/2/gate/gate-tempest-dsvm-neutron-full/48c8627/logs/screen-n-cpu.txt.gz?#_2014-09-10_20_19_52_234\n\nwithout being released in between.  This means lockutils.synchronized_with_prefix('nova-') isn't working as expected.\n\nWhile https://review.openstack.org/#/c/119586/ is a possible culprit for this issue, a spot check of nova-compute logs from before that patch was merged show this was happening before (although in my spot checking it happened significantly less often, but I only checked one file).", 
+    "tags": [], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1367941", 
+    "owner": "None", 
+    "id": 1367941, 
+    "index": 1369, 
+    "openned": "2014-09-10 21:40:45.843967+00:00", 
+    "created": "2014-09-10 21:40:45.843967+00:00", 
+    "title": "Able to aquire the semaphore used in lockutils.synchronized_with_prefix twice at the same time", 
+    "comments": [
+        {
+            "content": "In nova-compute the semaphore \"compute_resources\" is used  in  lockutils.synchronized_with_prefix('nova-') as part of nova/compute/resource_tracker.py\n\nThe \"compute_resources\"  semaphore is acquired once at:\n\nhttp://logs.openstack.org/58/117258/2/gate/gate-tempest-dsvm-neutron-full/48c8627/logs/screen-n-cpu.txt.gz?#_2014-09-10_20_19_17_176\n\nAnd then again at:\n\nIn  http://logs.openstack.org/58/117258/2/gate/gate-tempest-dsvm-neutron-full/48c8627/logs/screen-n-cpu.txt.gz?#_2014-09-10_20_19_52_234\n\nwithout being released in between.  This means lockutils.synchronized_with_prefix('nova-') isn't working as expected.\n\nWhile https://review.openstack.org/#/c/119586/ is a possible culprit for this issue, a spot check of nova-compute logs from before that patch was merged show this was happening before (although in my spot checking it happened significantly less often, but I only checked one file).", 
+            "date_created": "2014-09-10 21:40:45.843967+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Hmm, I have not been able to reproduce this with lockutils and eventlet.  I modified one of the existing test cases for verifying that multiple threads can't execute at the same time and it seems to work fine.  I'll attach the test file that I created in incubator/tests/unit so everyone can take a look and tell me if I screwed anything up.\n\nI ran it with \"tox -e all -- --until-failure test_with_eventlet\" and it didn't fail once in the time I ran it.  If I remove the synchronized decorator it fails immediately, as expected.", 
+            "date_created": "2014-09-10 23:02:55.902587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bnemec"
+        }, 
+        {
+            "content": "Is there anyway we can switch out the usage of the WeakValueDictionary for semaphores and temporarily use another type to see if its the cause?\n\nSomething like http://paste.ubuntu.com/8314661/\n\nThis would just rule out the usage of WeakValueDictionary as a cause, and likely can't make the situation worse....\n\n", 
+            "date_created": "2014-09-11 01:44:47.907757+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "http://paste.ubuntu.com/8314680/ also includes a way to see when the weakref gets destroyed (which could be useful to determine what is going on here...)", 
+            "date_created": "2014-09-11 01:47:17.819182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Test to see how many hits there are for this bug in screen-n-cpu file: \n \n\n grep compute_resource screen-n-cpu.txt.gz | grep -Pzo \"Got semaphore.*\\n.*Got\"", 
+            "date_created": "2014-09-11 18:01:17.495424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "in recent gate-tempest-dsvm-full jobs for nova patches that landed the hit count is anywhere from 27 to 37 times in a single n-cpu file (sample size of 6 jobs).", 
+            "date_created": "2014-09-11 18:13:43.122352+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "similar results before https://review.openstack.org/#/c/119586/ was merged", 
+            "date_created": "2014-09-11 18:18:39.687160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Incubator change: https://review.openstack.org/#/c/120897/\n\noslo.concurrency change: https://review.openstack.org/#/c/120894/", 
+            "date_created": "2014-09-11 20:36:26.625807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This was a bug with logging and not in the actual logic or code, so we should do a incubator sync to get the correct logging when possible", 
+            "date_created": "2014-09-11 21:30:23.243656+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/120934", 
+            "date_created": "2014-09-11 23:05:14.684801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So, with the updates to the logging, i am looking at\nhttp://logs.openstack.org/34/120934/1/check/check-tempest-dsvm-neutron-full/4c35ad6/logs/screen-n-cpu.txt.gz\n\nI can see 2 Acquired one after another w/o a Releasing\n\n2014-09-11 23:50:26.641 31439 DEBUG nova.openstack.common.lockutils  Acquired semaphore \"compute_resources\" lock /opt/stack/new/nova/nova/openstack/common/lockutils.py:229\n2014-09-11 23:51:10.473 DEBUG nova.openstack.common.lockutils  Using existing semaphore \"compute_resources\" internal_lock /opt/stack/new/nova/nova/openstack/common/lockutils.py:202\n2014-09-11 23:51:37.804 DEBUG nova.openstack.common.lockutils  Acquired semaphore \"compute_resources\" lock /opt/stack/new/nova/nova/openstack/common/lockutils.py:229\n2014-09-11 23:51:37.830 DEBUG nova.openstack.common.lockutils  Releasing semaphore \"compute_resources\" lock /opt/stack/new/nova/nova/openstack/common/lockutils.py:236\n", 
+            "date_created": "2014-09-12 15:02:47.419036+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Guess it back to being an eventlet issue now?\n\nhttps://bitbucket.org/eventlet/eventlet/pull-request/29/fix-use-of-semaphore-with-tpool-issue-137/diff\nhttp://stackoverflow.com/questions/21665740/any-difference-between-lock-behaviour-in-python-thread-and-green-thread", 
+            "date_created": "2014-09-12 15:18:49.496893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Somebody correct me if I'm wrong, but I think the exception happening while we're holding the lock means the releasing log message gets skipped because it breaks out of the context before we get to do that.  It should still be doing the right thing, but we can't log it because the semaphore's context manager is taking care of cleanup.\n\nI think this is supported by the fact that the first acquisition is _never_ released, according to the log, which almost certainly isn't true because we then re-create the semaphore, which means nobody had a reference to it so it couldn't have been held through that whole time.\n\nThe direct link to the relevant section of the logs is http://logs.openstack.org/34/120934/1/check/check-tempest-dsvm-neutron-full/4c35ad6/logs/screen-n-cpu.txt.gz#_2014-09-11_23_50_26_641", 
+            "date_created": "2014-09-12 15:26:05.975384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bnemec"
+        }, 
+        {
+            "content": "I agree, if the user of the lock blows up then the last log message won't be printed.\n\nThis should be fixed @ https://review.openstack.org/121156", 
+            "date_created": "2014-09-12 15:56:21.009635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/120934\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cad742d9525cb4d0a630d4ca4c15037ea29e811e\nSubmitter: Jenkins\nBranch:    master\n\ncommit cad742d9525cb4d0a630d4ca4c15037ea29e811e\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Thu Sep 11 19:00:54 2014 -0400\n\n    Clarify logging in lockutils\n    \n    The old logging statements in lockutils made for some confusing log\n    entries where it would appear a given lock was acquired multiple\n    times by different threads at the same time.  See referenced bug\n    for details.\n    \n    In order to alleviate that confusion, this change does a few things:\n    1) Adds an explicit \"acquired\" message inside the lock so it is\n       clear when the lock was actually acquired.\n    2) Moves the release message inside the semaphore so there's no\n       chance of it being logged out of order.\n    3) Removes the \"Got semaphore\" message and splits it into two\n       separate messages depending on whether the semaphore was found\n       in the weakref dictionary.  Making it clear which code path\n       was followed should help with future debugging.\n    \n    This is the Nova port of oslo-incubator change\n    If863c9d3896bc786f3c9c46196ebb0766e57d863\n    \n    Change-Id: I530befb42a963a40e7d5bf8d4d81fc097e1cb309\n    Partial-Bug: #1367941\n", 
+            "date_created": "2014-09-13 03:44:57.691161+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/121428", 
+            "date_created": "2014-09-15 00:11:30.707925+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Removing from nova juno-rc1 as I don't think this should block the juno release.", 
+            "date_created": "2014-09-18 14:55:37.813411+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "this was a red herring in nova, its just logging issues. Last patch: https://review.openstack.org/#/c/121428/", 
+            "date_created": "2014-09-18 23:51:49.723698+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/121428\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=671fe4303994cee5078bfc2716993d20922f295a\nSubmitter: Jenkins\nBranch:    master\n\ncommit 671fe4303994cee5078bfc2716993d20922f295a\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Sun Sep 14 20:10:32 2014 -0400\n\n    Always log the releasing, even under failure\n    \n    Cherry picked from oslo-incubator change id:\n    I4b87b5d9e5c42a1ab4c837ebb4d45b86faf87c21\n    \n    Change-Id: Iae1b9035398e283b5837a3214cf0097022af54a9\n    Related-Bug: #1367941\n", 
+            "date_created": "2014-09-19 02:31:35.846208+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-09-18 23:51:53.885801+00:00"
+}

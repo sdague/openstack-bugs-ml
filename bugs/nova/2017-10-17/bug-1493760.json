@@ -1,0 +1,31 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-09-24 21:28:28.263404+00:00", 
+    "description": "When  instance's  disk in rbd backend,  compute node reports the whole ceph cluster status,  that makes sense.  We get the local_gb usage in https://github.com/openstack/nova/blob/master/nova/virt/libvirt/storage/rbd_utils.py#L313\n\n     def get_pool_info(self):\n        with RADOSClient(self) as client:\n            stats = client.cluster.get_cluster_stats()\n            return {'total': stats['kb'] * units.Ki,\n                    'free': stats['kb_avail'] * units.Ki,\n                    'used': stats['kb_used'] * units.Ki}\n\nThis reports same disk usages  with command 'ceph -s', for example:\n[root@node-1 ~]# ceph -s\n    cluster e598930a-0807-491b-b191-d57244d3c8e2\n     health HEALTH_OK\n     monmap e1: 1 mons at {node-1=192.168.0.1:6789/0}, election epoch 1, quorum 0 node-1\n     osdmap e28: 2 osds: 2 up, 2 in\n      pgmap v3985: 576 pgs, 5 pools, 295 MB data, 57 objects\n            21149 MB used, 76479 MB / 97628 MB avail\n                 576 active+clean\n\n[root@node-1 ~]#  rbd -p compute ls\n45892200-97cb-4fa4-9c29-35a0ff9e16f6_disk\n8c6a5555-394f-4c24-b7ff-e05fdf322155_disk\n944d9028-ac59-45fd-9be3-69066c8bc4e5\n9ea375dc-f0b8-472e-ba53-4d83e5721771_disk\n9fce4606-6871-40ca-bf8f-6146c05068e6_disk\ncedce585-8747-4798-885f-0c47337f0f6f_disk\ne17c9391-2032-4144-8fa1-85b092239e66_disk\ne19143c7-228c-4f89-9735-c27c333adce4_disk\nf9caf4a7-2b62-46c2-b2e1-f99cb4ce3f57_disk\n[root@node-1 ~]#  rbd -p compute info 45892200-97cb-4fa4-9c29-35a0ff9e16f6_disk\nrbd image '45892200-97cb-4fa4-9c29-35a0ff9e16f6_disk':\n\tsize 20480 MB in 2560 objects\n\torder 23 (8192 kB objects)\n\tblock_name_prefix: rbd_data.39ab250fe98b\n\tformat: 2\n\tfeatures: layering\n\tparent: compute/944d9028-ac59-45fd-9be3-69066c8bc4e5@snap\n\toverlap: 40162 kB\n\nIn above example. we have two compute node , and can create 4 instances with 20G disk in each compute. The interesting thing is the total  local_gb is 95G, and allocate 160G for instances. \n\n\nThe root cause is client.cluster.get_cluster_stats() returns  actual  used  size, means  20G instance disk maybe only occupy  200M bytes.   This is dangerous when instance use all of their disk.\n\nAn alternative solution fo calcuate  all instance's  disk size by some way  as local_gb_used.", 
+    "tags": [
+        "ceph", 
+        "libvirt"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1493760", 
+    "owner": "None", 
+    "id": 1493760, 
+    "index": 7022, 
+    "openned": "2015-09-09 09:25:56.248343+00:00", 
+    "created": "2015-09-09 09:25:56.248343+00:00", 
+    "title": "rbd backend reports  wrong 'local_gb_used' for compute node", 
+    "comments": [
+        {
+            "content": "When  instance's  disk in rbd backend,  compute node reports the whole ceph cluster status,  that makes sense.  We get the local_gb usage in https://github.com/openstack/nova/blob/master/nova/virt/libvirt/storage/rbd_utils.py#L313\n\n     def get_pool_info(self):\n        with RADOSClient(self) as client:\n            stats = client.cluster.get_cluster_stats()\n            return {'total': stats['kb'] * units.Ki,\n                    'free': stats['kb_avail'] * units.Ki,\n                    'used': stats['kb_used'] * units.Ki}\n\nThis reports same disk usages  with command 'ceph -s', for example:\n[root@node-1 ~]# ceph -s\n    cluster e598930a-0807-491b-b191-d57244d3c8e2\n     health HEALTH_OK\n     monmap e1: 1 mons at {node-1=192.168.0.1:6789/0}, election epoch 1, quorum 0 node-1\n     osdmap e28: 2 osds: 2 up, 2 in\n      pgmap v3985: 576 pgs, 5 pools, 295 MB data, 57 objects\n            21149 MB used, 76479 MB / 97628 MB avail\n                 576 active+clean\n\n[root@node-1 ~]#  rbd -p compute ls\n45892200-97cb-4fa4-9c29-35a0ff9e16f6_disk\n8c6a5555-394f-4c24-b7ff-e05fdf322155_disk\n944d9028-ac59-45fd-9be3-69066c8bc4e5\n9ea375dc-f0b8-472e-ba53-4d83e5721771_disk\n9fce4606-6871-40ca-bf8f-6146c05068e6_disk\ncedce585-8747-4798-885f-0c47337f0f6f_disk\ne17c9391-2032-4144-8fa1-85b092239e66_disk\ne19143c7-228c-4f89-9735-c27c333adce4_disk\nf9caf4a7-2b62-46c2-b2e1-f99cb4ce3f57_disk\n[root@node-1 ~]#  rbd -p compute info 45892200-97cb-4fa4-9c29-35a0ff9e16f6_disk\nrbd image '45892200-97cb-4fa4-9c29-35a0ff9e16f6_disk':\n\tsize 20480 MB in 2560 objects\n\torder 23 (8192 kB objects)\n\tblock_name_prefix: rbd_data.39ab250fe98b\n\tformat: 2\n\tfeatures: layering\n\tparent: compute/944d9028-ac59-45fd-9be3-69066c8bc4e5@snap\n\toverlap: 40162 kB\n\nIn above example. we have two compute node , and can create 4 instances with 20G disk in each compute. The interesting thing is the total  local_gb is 95G, and allocate 160G for instances. \n\n\nThe root cause is client.cluster.get_cluster_stats() returns  actual  used  size, means  20G instance disk maybe only occupy  200M bytes.   This is dangerous when instance use all of their disk.\n\nAn alternative solution fo calcuate  all instance's  disk size by some way  as local_gb_used.", 
+            "date_created": "2015-09-09 09:25:56.248343+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "If you look at https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L4628\nyou can see the three different functions used for getting available disk space.\n\n'get_volume_group_info'\n'get_pool_info' and\n'get_fs_info'\n\nAll of these methods are going to return the ACTUAL disk space used, rather than the theoretical maximum of all the instance sizes. This is because disks stored locally will be stored as sparse qcow images. LVM disks are sparse volumes.\n\nI believe that the intention of 'local_gb_used' is to report the actual disk space.\n", 
+            "date_created": "2015-09-24 21:28:02.943854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mjdoffma"
+        }
+    ], 
+    "closed": "2015-09-24 21:28:26.559869+00:00"
+}

@@ -1,0 +1,78 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 09:59:00.112363+00:00", 
+    "description": "Using nova Essex I can no longer delete instances in 'BUILD' state. \n\nThe ability to delete instances in 'BUILD' state is very useful from an end user prospective. We used to support it (in Diablo) and we should in Essex as well.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/907808", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 907808, 
+    "index": 544, 
+    "openned": "2011-12-22 15:24:40.175039+00:00", 
+    "created": "2011-12-22 15:24:40.175039+00:00", 
+    "title": "ability to delete instances in 'BUILD' state", 
+    "comments": [
+        {
+            "content": "Using nova Essex I can no longer delete instances in 'BUILD' state. \n\nThe ability to delete instances in 'BUILD' state is very useful from an end user prospective. We used to support it (in Diablo) and we should in Essex as well.", 
+            "date_created": "2011-12-22 15:24:40.175039+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Pick your poison:\n\n1) Delete instances that are building causing interesting problems for nova-compute while the instance it's trying to build is torn down while it's using it.\n2) Can't delete if instance gets stuck in BUILD.\n\nThe latter is a bug elsewhere in the code. Instances should never get stuck in BUILD, they should either go to ACTIVE or ERROR.\n\nI'd much rather fix the underlying problem than paper over it.", 
+            "date_created": "2011-12-22 16:05:46.051268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "I think we have to do both.  Of course we want to fix the underlying problem, but in the mean time, until we know about those problems, I don't want end users to have to call on operations to clean up the issues.\n\nIt is true that when they get deleted, we have a harder time troubleshooting, but the customer experience is better.  I think we need to look at logging, functional testing and other techniques to continue to identify these cases, but need to be able to clean things up in the meantime.", 
+            "date_created": "2011-12-22 16:35:02.618885+00:00", 
+            "author": "https://api.launchpad.net/1.0/~westmaas"
+        }, 
+        {
+            "content": "By the way, we discovered that poison #1 was actually a red herring based on misreading log files. ", 
+            "date_created": "2012-01-17 14:42:31.185326+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markwash"
+        }, 
+        {
+            "content": "Based on my mis-reading a log line, that is.\n\nI'd like to see this addressed now as users are definitely complaining about this.  I think we need to sit down and figure out two things:\n1) What actual actions can we say for all hypervisors should not be allowed at the same time?\n2) What is the best place to prevent those from happening?\n\nUnfortunately, I think the spec is incorrect in this case and should be updated to reflect how users actually want to use this, once we decide on which can be allowed at the same time.  In any case our API reports statuses indicating its been queued, so it should be fine to queue things in some way, regardless of the current state of the machine.  I think this is a case where we took the spec as definitive for defining state transitions in the blueprint, and we shouldn't have done that.  Obviously this discussion would have been ideal on the bp discussion, but we missed that.\n\nAside from that, there are a number of other states that reporting 409s with the current implementation, where they are reported as ACTIVE and still returning a 409.\n\nPrior to making our long term decisions, I would be ok with seeing the change backed out, certainly something should be done.  ", 
+            "date_created": "2012-01-17 15:13:50.582992+00:00", 
+            "author": "https://api.launchpad.net/1.0/~westmaas"
+        }, 
+        {
+            "content": "Poison #1 isn't a red herring. I'm not sure what you are expecting to happen when an instance is deleted out from under nova-compute when it's trying to build it. It's a classic race condition and will fail like one too.\n\nI don't think we made a mistake following the spec, that's what it is there for. However, I agree that the spec is too strict. Users do have an expectation that they won't end up in a situation they can't fix, even if it's a result of bugs on our end.\n\nSince bugs can occur anywhere in nova, we can be left with an instance cannot be deleted in pretty much any state. We still don't want race conditions in normal situations, so it's trying to figure out when an instance has been in a state for too long. That's a problem I don't want to try to solve. We will never know how long is long enough.\n\nI favor moving these instances to another project for troubleshooting purposes. This will solve the user experience problem by not having it owned by them anymore, but also gives developers and operations the opportunity to inspect the instance and figure out what went wrong that caused it to get stuck. We may end up with instances that were deleted too early but ended up completing their operation, but that should be easy to detect and automatically cleanup with scripts (the aforementioned race condition). We would be able to provide the experience users expect while still providing the information developers need to troubleshoot the problem.", 
+            "date_created": "2012-01-17 16:27:59.199860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "I'd expect the instance to end up in a deleted state, which I believe is what happened, correct?  There were of course errors from Xen, but still the end result was what everyone expected.\n\nYes, I misspoke, the spec was too strict, and it should have been caught sooner, and that was the mistake.  Following the spec was not the mistake.\n\nI'm fine with doing that, but right now we need to move forward with something.  I don't know if this will be universally accepted, but as long as we have the right configuration available (whether or not to do it, which project to move to, what to do when that account is full from a quota standpoint, etc) we can do this.  \n\nIn the meantime, I'd like to just take out the decorators on delete.  I think the one remaining issue, which we should fix (differently) is that deleting while resizing has some race conditions - most of which will end with a deleted server (as expected), but in some cases may not.\n\nAlso, this doesn't fix our inability to rebuild, change password, or other things while taking a snapshot, along with other such state issues.  There are a slew of vm and task states that translate to ACTIVE status and the user still gets a 409 back.  Again, this can be fixed in the short term by updating the decorators.\n\nWhat I propose is:\n1) Remove decorators on delete\n2) Update other decorators\n3) Add in the troubleshooting abilities Johannes mentions above\n\nI think longer term we should look at removing more and more of those restrictions at the API layer and adding more serialization lower down in the stack to resolve these race conditions.", 
+            "date_created": "2012-01-17 17:54:33.577713+00:00", 
+            "author": "https://api.launchpad.net/1.0/~westmaas"
+        }, 
+        {
+            "content": "I agree with removing the decorator on delete for now.... and dealing with the consequences.  I don't think it's a problem for 'BUILD'.  We'll get exceptions, as you mention, but they wouldn't cause any harm.  I think for resize we may just need to deal with it until we can come up with something better.\n\nAnd yeah, it is definitely an issue that 'task_state' is not exposed to a user, but we have restrictions on it and return 409s when vm_state is ACTIVE.  From the API docs, it'll say ACTIVE is a valid state for the action.. yet we might 409 because task_state is 'snapshotting'.  User has no idea what's going on, although the message being returned is somewhat informative.\n\n#3 would be helpful...   With #1, allow delete... but move the instance if it's in BUILD state and it is of a certain age.", 
+            "date_created": "2012-01-17 19:03:45.549077+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/3112", 
+            "date_created": "2012-01-17 19:36:01.877460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm very confused.\n\nWhy did this bug sit for weeks without any comment and now it's important enough to rush through a revert of behavior? We even discussed alternative fixes a while ago.\n\nWhat is wrong with my proposal that can't be implemented instead?\n\nI feel like I'm being ignored.", 
+            "date_created": "2012-01-17 20:08:04.876439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johannes.erdfelt"
+        }, 
+        {
+            "content": "I think we agree with your proposal, but complaints are rising about not being able to delete things that have failed.  It's become pretty clear that we have to have delete working in all cases.  So, I don't think you're being ignored, but I think it's fair to have a better 'customer experience' ASAP and then implement the added troubleshooting helpfulness.  (...not that things erroring in the first place is a great customer experience.  But people do try to delete the failed instances and then get even more frustrated when they can't clean up their account).\n", 
+            "date_created": "2012-01-17 21:17:17.941308+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/3112\nCommitted: http://github.com/openstack/nova/commit/c7d2f020f0fdf04b24bd21668e7a02796f1f5538\nSubmitter: Jenkins\nBranch:    master\n\ncommit c7d2f020f0fdf04b24bd21668e7a02796f1f5538\nAuthor: Dan Prince <email address hidden>\nDate:   Tue Jan 17 14:33:16 2012 -0500\n\n    Allow instances in 'BUILD' state to be deleted.\n    \n    Fixes LP Bug #907808.\n    \n    Change-Id: I4332e9e822db507951af07bd654a27b3e2ce3973\n", 
+            "date_created": "2012-01-19 19:51:18.246393+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-01-25 09:53:13.991382+00:00"
+}

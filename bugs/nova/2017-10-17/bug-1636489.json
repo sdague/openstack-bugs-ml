@@ -1,0 +1,71 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-03-21 16:19:08.921128+00:00", 
+    "description": "Steps to Reproduce:\n1. Configure Devstack setup with storage backend (LVM).\n2. Create at least 10-15 instances.\n3. Run different volume operations via automation script for 5 hours or more.\n4. Wait for 1-2 hours.\n\nObservations:\n1. Attachment failed for every volume attached to an instance. \u201cattachVolume--break out wait after 5 minutes. ERROR >>>>>> Failed to attach volume\u201d record is displayed in automation script logs.\n2. Error:DeviceIsBusy exception is raised (observed in n-cpu.log).\n\nAdditional Note:\nIt is observed only in Devstack stable/Mitaka and stable/Newton release. It works perfectly well with Devstack stable/Liberty release. Different volume operations executed randomnly via automation script are: create_volume, create_snapshot, delete_snapshot, delete_volume, attach_volume, detach_volume. \n\nPossible Suspect after analysis:\nBefore failure when the last detachment request comes to an instance, Nova's \"detach_volume\" fires the detach method into libvirt, which claims success, but the device is still attached as per the guest XML file. Hypervisor in libvirt is trying to take an exclusive lock on the disk for the subsequent attachment request, that all I/O caching is disabled. Libvirt will treat this metadata as a black box, never attempting to interpret or modify it. Nova then finishes the teardown, releasing the resources, which then causes I/O errors in the guest, and subsequent volume_attach requests from Nova to fail spectacularly due to it trying to use an in-use resource. This appears to be a race condition, in that it creates an intermittent issue and a complete attachment failure after different volume operations are triggered continuously.", 
+    "tags": [
+        "melwitt", 
+        "sdague"
+    ], 
+    "importance": "Undecided", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1636489", 
+    "owner": "https://api.launchpad.net/1.0/~deolalkar-manish", 
+    "id": 1636489, 
+    "index": 7765, 
+    "openned": "2016-10-25 12:11:47.308425+00:00", 
+    "created": "2016-10-25 12:11:47.308425+00:00", 
+    "title": "Volume attachment fails for all the available instances after running different volume operations for 1-2 hours or more.", 
+    "comments": [
+        {
+            "content": "Steps to Reproduce:\n1. Configure Devstack setup with storage backend (LVM).\n2. Create at least 10-15 instances.\n3. Run different volume operations via automation script for 5 hours or more.\n4. Wait for 1-2 hours.\n\nObservations:\n1. Attachment failed for every volume attached to an instance. \u201cattachVolume--break out wait after 5 minutes. ERROR >>>>>> Failed to attach volume\u201d record is displayed in automation script logs.\n2. Error:DeviceIsBusy exception is raised (observed in n-cpu.log).\n\nAdditional Note:\nIt is observed only in Devstack stable/Mitaka and stable/Newton release. It works perfectly well with Devstack stable/Liberty release. Different volume operations executed randomnly via automation script are: create_volume, create_snapshot, delete_snapshot, delete_volume, attach_volume, detach_volume. \n\nPossible Suspect after analysis:\nBefore failure when the last detachment request comes to an instance, Nova's \"detach_volume\" fires the detach method into libvirt, which claims success, but the device is still attached as per the guest XML file. Hypervisor in libvirt is trying to take an exclusive lock on the disk for the subsequent attachment request, that all I/O caching is disabled. Libvirt will treat this metadata as a black box, never attempting to interpret or modify it. Nova then finishes the teardown, releasing the resources, which then causes I/O errors in the guest, and subsequent volume_attach requests from Nova to fail spectacularly due to it trying to use an in-use resource. This appears to be a race condition, in that it creates an intermittent issue and a complete attachment failure after different volume operations are triggered continuously.", 
+            "date_created": "2016-10-25 12:11:47.308425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sumit-shatwara"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-10-25 12:11:47.308425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sumit-shatwara"
+        }, 
+        {
+            "content": "Nova core, appreciate your suggestions on the bug please.", 
+            "date_created": "2016-11-15 16:24:07.200200+00:00", 
+            "author": "https://api.launchpad.net/1.0/~deolalkar-manish"
+        }, 
+        {
+            "content": "Can you attach the script you're using to reproduce this? The device detach is asynchronous which is a known issue, so nova reports the volume as detached when it might not yet be detached from the guest.\n\nThere was a change that went into mitaka and was backported to liberty:\n\nhttps://review.openstack.org/#/c/227851/\n\nWhich adds a retry loop to wait for the block device to be gone from the guest. The liberty backport was released into the 12.0.2 liberty patch release. Which version of liberty code are you using where it's passing? 12.0.0?\n\nThere is a long-standing need to monitor for guest events from qemu for knowing when an asynchronous job as completed, like attaching/detaching block devices and virtual interfaces, or doing a block rebase. It's just that no one has implemented that yet.\n\nHowever, if https://review.openstack.org/#/c/227851/ is causing the issues, then that would suggest that waiting for the block device detach to complete is actually causing problems rather than fixing issues.", 
+            "date_created": "2016-11-15 16:25:55.702335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Thanks Matt, I am not facing the issue with Liberty. The issue is occurring only with Stable/Mitaka and Newton. ", 
+            "date_created": "2016-11-15 16:32:03.428371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~deolalkar-manish"
+        }, 
+        {
+            "content": "Yes, that's noted above, but which specific version of liberty? 12.0.0?", 
+            "date_created": "2016-11-15 16:34:51.242084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hi Matt,\n\nAs discussed, adding the script for review with Nova Core.\nThis is one of the blocker for us, please can you help changing the importance to High/Critical.\n\nThanks,\nManish", 
+            "date_created": "2016-11-29 05:31:15.521636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~deolalkar-manish"
+        }, 
+        {
+            "content": "Hi Nova Team , Any update on this bug ? This is major issue when OpenStack run for long hours. ", 
+            "date_created": "2017-01-19 13:59:52.231836+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sudha-kr"
+        }, 
+        {
+            "content": "Issue was with the steal entries in block devices mappings and inconsistent db status's with Cinder as well as Nova when you the continuous attach/detach/snapshot/delete etc operations in quick intervals.\nThis is handled in the script now and script ran successfully for 96 hours without any failure. \n", 
+            "date_created": "2017-02-14 09:08:16.133965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~deolalkar-manish"
+        }, 
+        {
+            "content": "Since the Mitaka cycle we use the direct release model, which means those bug reports should have Fix Released.", 
+            "date_created": "2017-03-21 16:18:55.092767+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mszankin"
+        }
+    ], 
+    "closed": "2017-03-21 16:19:06.834248+00:00"
+}

@@ -1,0 +1,155 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-14 19:41:22.174826+00:00", 
+    "description": "We go to the trouble to install translations catalogs, but then we don't properly use them. We really need to fix that. There is a great example of how to use in-tree messages can be found in the sphinx source:\n\nhttps://bitbucket.org/birkenfeld/sphinx/src/5d4cd2cca317/sphinx/locale/__init__.py", 
+    "tags": [
+        "i18n"
+    ], 
+    "importance": "High", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/995287", 
+    "owner": "https://api.launchpad.net/1.0/~markmc", 
+    "id": 995287, 
+    "index": 673, 
+    "openned": "2013-02-16 06:33:18.016735+00:00", 
+    "created": "2012-05-05 22:35:42.246445+00:00", 
+    "title": "Support using translations in devstack", 
+    "comments": [
+        {
+            "content": "We go to the trouble to install translations catalogs, but then we don't properly use them. We really need to fix that. There is a great example of how to use in-tree messages can be found in the sphinx source:\n\nhttps://bitbucket.org/birkenfeld/sphinx/src/5d4cd2cca317/sphinx/locale/__init__.py", 
+            "date_created": "2012-05-05 22:35:42.246445+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "There appear to be two issues with the current Nova translation setup. First the .pot file is generated from trunk branch on LP which is quite out of date. This means the translation files in LP are generated with old data. Need to sync to LP properly or start looking at transifex and make sure transifex has an up to date .pot.\n\nSecond, at runtime Nova installs the translations but appears to only look in the default location for the translation files. You can probably only expect these to be there when installing from a package that installs to normal system locations. In many cases these files may be in a python egg or non system locations. Need to make the translation installation a little smarter about where it looks for things. The sphinx example above appears to deal with this issue.", 
+            "date_created": "2012-05-21 22:44:23.487406+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cboylan"
+        }, 
+        {
+            "content": "Removing nova task until we're sure something actually needs to land into Nova code to fix that.", 
+            "date_created": "2012-06-07 15:27:43.616555+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Came up here again: http://lists.openstack.org/pipermail/openstack-dev/2013-January/004289.html\n\nIn Nova, we do:\n\n  gettext.install('nova', unicode=1)\n\nbut we install our .po message catalogs in $sitelib/nova/locale\n\nHowever, by default gettext looks for the binary .mo message catalogs in /usr/share\n\nSo, we need (1) to ensure we compile the message catalogs using babel at install time and (2) tell gettext to look for wherever we install them if we don't install them in /usr/share/local", 
+            "date_created": "2013-01-07 11:24:48.570149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "https://bitbucket.org/birkenfeld/sphinx/src/7c437d4e4f10b14889585d5b41d5d9c634ea1503/sphinx/locale/__init__.py?at=default\n\nThe example of how to properly use stuff is ^^^\n\nAdding to nova, as it's actually not really a infra bug.", 
+            "date_created": "2013-02-16 06:33:07.612822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "This bug has been around a while and nobody is working on it.  We have lived with it this long so I don't think it should block grizzly-rc1.  I'm moving it to the grizzly-rc-potential list, instead.", 
+            "date_created": "2013-03-12 17:20:06.817147+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "fyi, there is at least one oslo bug that's related - https://bugs.launchpad.net/oslo/+bug/1076285 - Net, i don't think we will make any progress by Grizzly IMHO.", 
+            "date_created": "2013-03-18 18:30:09.437373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Summary of what the sphinx code Monty points to actually does:\n\n  1) it provides a l_() function which delays the actual translation of the string until the string's value is needed. This appears to be for the case where a module wants to define a translatable string at import time, but not have the translation happen until runtime. With C, you'd similarly mark a string using N_() and translate it using gettext() at runtime\n\n  2) it has a locale.init() function which allows you to pass in multiple localedirs and it will use translations from any .mo files found in those dirs by merging them all into a single catalog. This is basically an improved gettext.install().\n\nI don't know any cases where we need (1) yet - but we might in future.\n\nI also don't think fixing this bug requires (2) - for any given translation domain, there's only ever a single directory in any installation where we need to look up translations.", 
+            "date_created": "2013-03-27 08:49:44.913926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "The issue here is that, for each translation domain, we need to support configuring the localedir.\n\nAt first thought, it might seem like this should be configurable via the CLI and config files (i.e. using cfg) but this needs to be configured before we ever translate a single message ... and we need to support translating messages before cfg is ever called.\n\nIn C programs, you'd typically configure this at build-time and the localedir would be baked into the binaries. We don't really have an equivalent of that with Python.\n\nThe default localedir in Fedora is /usr/share/locale - so if we install nova.mo under /usr/share/locale/$lang/LC_MESSAGES then what we do now actually works fine. I assume this is true of all distros.\n\nThe case where we want to configure an alternative localedir is devstack - e.g. if you run 'python setup.py compile_catatlog', then nova.mo will be under /opt/stack/nova/nova/locale/$lang/LC_MESSAGES/\n\nI think we should simply add support for this via env variables e.g.\n\n  gettext.install('nova', unicode=1, localedir=os.environ.get('NOVA_LOCALEDIR'))\n\nand you'd run e.g. nova-api in devstack with:\n\n  $> NOVA_LOCALEDIR=/opt/stack/nova/nova/locale /opt/stack/nova/bin/nova-api", 
+            "date_created": "2013-03-27 08:57:44.038567+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "We don't yet actually translate any of the messages in our libraries but, if/when we do that, we'll also need to support configuring the localedir they use.\n\ne.g.\n\n  gettext.translation('quantumclient', fallback=True, localedir=os.environ.get('QUANTUMCLIENT_LOCALEDIR'))\n\nWe need to have a env variable for each translation domain because, again, for devstack we want them picked up from directories like /opt/stack/python-quantumclient/quantumclient/locale", 
+            "date_created": "2013-03-27 09:08:54.767119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Excellent summary Mark, and I like the optional override through env var approach.", 
+            "date_created": "2013-03-27 13:52:30.941852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mordred"
+        }, 
+        {
+            "content": "The Oslo task here is about adding gettextutils helpers for the LOCALEDIR env vars", 
+            "date_created": "2013-04-01 15:22:37.551446+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "For Nova, we want to support the NOVA_LOCALEDIR env var", 
+            "date_created": "2013-04-01 15:23:57.970479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "In devstack, we need to do two things - a) run 'setup.py compile_catalog' and b) set NOVA_LOCALEDIR", 
+            "date_created": "2013-04-01 15:26:01.918543+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/25820", 
+            "date_created": "2013-04-01 15:35:50.088179+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/25821", 
+            "date_created": "2013-04-01 15:35:56.685835+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/25824", 
+            "date_created": "2013-04-01 15:37:54.331643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/25820\nCommitted: http://github.com/openstack/oslo-incubator/commit/d8b66c7c1bb28672402f2bf1e410a1ee8fc4bfb6\nSubmitter: Jenkins\nBranch:    master\n\ncommit d8b66c7c1bb28672402f2bf1e410a1ee8fc4bfb6\nAuthor: Mark McLoughlin <email address hidden>\nDate:   Mon Apr 1 02:01:00 2013 +0100\n\n    Add a gettextutils.install() helper function\n    \n    Part of fixing bug #995287\n    \n    Every top-level script in every project needs to call gettext.install()\n    so that a _() builtin function is installed and strings are translated\n    using the correct translation domain.\n    \n    However, translations are always installed in the default localedir\n    (which is commonly '/usr/share/locale') and, in cases like devstack, may\n    be found in a project-specific localedir. To support such a use case we\n    should have project-specific environment variables for overriding the\n    default value of localedir - e.g. NOVA_LOCALEDIR.\n    \n    Add a new gettextutils.install() helper method to make this as easy as\n    possible for projects to get right.\n    \n    Change-Id: I6c8549c8ff00797c96f2dd4b0b5266d18d77aa19\n", 
+            "date_created": "2013-04-04 14:39:35.551403+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/25821\nCommitted: http://github.com/openstack/oslo-incubator/commit/c8f676bb54158d1a03aef231af920eeda9ebe1ba\nSubmitter: Jenkins\nBranch:    master\n\ncommit c8f676bb54158d1a03aef231af920eeda9ebe1ba\nAuthor: Mark McLoughlin <email address hidden>\nDate:   Mon Apr 1 02:08:43 2013 +0100\n\n    Support overriding oslo localedir too\n    \n    Part of fixing bug #995287\n    \n    Libraries need to translate strings according to their translation\n    domain but they should not override the default _() builtin (which\n    should only be installed by the top-level script) and instead should\n    gettextutils._().\n    \n    To support the case where message catalogs are installed in a\n    non-default (and perhaps project-specific) location, we allow the\n    default localedir to be override with a project-specific environment\n    variable e.g. QUANTUMCLIENT_LOCALEDIR.\n    \n    The code makes it seem like OSLO_LOCALEDIR is the env variable we're\n    adding but, in fact, update.py magically replaces 'oslo' with the\n    project name.\n    \n    Change-Id: I62b66892a4e27892ee488d2884ffd2f40ab467ee\n", 
+            "date_created": "2013-04-04 14:41:10.861206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/26606", 
+            "date_created": "2013-04-10 12:57:20.773609+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/25824\nCommitted: http://github.com/openstack/nova/commit/5e7ef210c01d3db8c79b969da3aeda50d57c4923\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5e7ef210c01d3db8c79b969da3aeda50d57c4923\nAuthor: Mark McLoughlin <email address hidden>\nDate:   Mon Apr 1 02:15:32 2013 +0100\n\n    Add NOVA_LOCALEDIR env variable\n    \n    Part of fixing bug #995287\n    \n    Syncs these two commits from oslo-incubator:\n    \n      Support overriding oslo localedir too\n      Add a gettextutils.install() helper function\n    \n    to get a new gettextutils.install() function which allows the default\n    localedir to be overwritten via an environment variable.\n    \n    Note that gettextutils.install() must be called before any other nova\n    modules are imported since some modules attempt to translate strings\n    at import time (e.g. the 'message' attributes on classes in\n    nova.exception). This is broken and inefficient, but fixing it involves\n    adding something like spinx's l_() function and would be very invaisve.\n    \n    Also, note that calling gettextutils.install() in nova.cmd.__init__\n    means that no program which uses a different translation domain should\n    ever import any of the modules under nova.cmd.\n    \n    Change-Id: I86562b3a65d371673bb21f7179eecc7602bc0775\n", 
+            "date_created": "2013-04-15 06:38:53.473227+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/28531", 
+            "date_created": "2013-05-08 11:25:23.396046+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/28544", 
+            "date_created": "2013-05-08 12:53:13.940871+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28544\nCommitted: http://github.com/openstack/cinder/commit/68f28d257c6e167bd819ae4ce385ae8c3602c8de\nSubmitter: Jenkins\nBranch:    master\n\ncommit 68f28d257c6e167bd819ae4ce385ae8c3602c8de\nAuthor: Mark McLoughlin <email address hidden>\nDate:   Wed May 8 13:52:51 2013 +0100\n\n    Add CINDER_LOCALEDIR env variable\n    \n    Part of fixing bug #995287\n    \n    Syncs these two commits from oslo-incubator:\n    \n      Support overriding oslo localedir too\n      Add a gettextutils.install() helper function\n    \n    to get a new gettextutils.install() function which allows the default\n    localedir to be overwritten via an environment variable.\n    \n    Note that gettextutils.install() must be called before any other cinder\n    modules are imported since some modules attempt to translate strings\n    at import time (e.g. in cinder.flags). This is broken and inefficient,\n    but fixing it involves adding something like sphinx's l_() function and\n    would be very invaisve.\n    \n    Change-Id: I86562b3a65d371673bb21f7179eecc7602bc0775\n", 
+            "date_created": "2013-05-14 08:11:34.077686+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/26606\nCommitted: http://github.com/openstack/glance/commit/a0209e8757ae744202f94598fc788196e7fbf37c\nSubmitter: Jenkins\nBranch:    master\n\ncommit a0209e8757ae744202f94598fc788196e7fbf37c\nAuthor: Mark McLoughlin <email address hidden>\nDate:   Wed Apr 10 12:12:03 2013 +0100\n\n    Add GLANCE_LOCALEDIR env variable\n    \n    Part of fixing bug #995287\n    \n    Syncs these two commits from oslo-incubator:\n    \n      Support overriding oslo localedir too\n      Add a gettextutils.install() helper function\n    \n    to get a new gettextutils.install() function which allows the default\n    localedir to be overwritten via an environment variable.\n    \n    Note that gettextutils.install() must be called before any other glance\n    modules are imported since some modules attempt to translate strings\n    at import time (e.g. the help strings for config options in config.py).\n    This is broken and inefficient, but fixing it involves adding something\n    like spinx's l_() function and would be very invaisve.\n    \n    Also, note that calling gettextutils.install() in glance.cmd.__init__\n    means that no program which uses a different translation domain should\n    ever import any of the modules under glance.cmd.\n    \n    Change-Id: I86562b3a65d371673bb21f7179eecc7602bc0775\n", 
+            "date_created": "2013-05-24 19:19:51.792434+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/28531\nCommitted: http://github.com/openstack/keystone/commit/7ce56d5f45f7112f0b25061473e64145fc840c98\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7ce56d5f45f7112f0b25061473e64145fc840c98\nAuthor: Mark McLoughlin <email address hidden>\nDate:   Wed May 8 12:07:07 2013 +0100\n\n    Add KEYSTONE_LOCALEDIR env variable\n    \n    Part of fixing bug #995287\n    \n    Syncs these two commits from oslo-incubator:\n    \n      Support overriding oslo localedir too\n      Add a gettextutils.install() helper function\n    \n    to get a new gettextutils.install() function which allows the default\n    localedir to be overwritten via an environment variable.\n    \n    A few things to note:\n    \n     - the gettext.install() call is moved from common.config to the\n       toplevel scripts to fix cases (e.g. the legacy auth_token middleware)\n       where keystone code might be imported by a program who's default\n       translation domain is not 'keystone'.\n    \n     - we add a gettext.install() call in keystone.test so that tests have\n       the _() builtin installed.\n    \n    Change-Id: I86562b3a65d371673bb21f7179eecc7602bc0775\n", 
+            "date_created": "2013-05-29 13:31:36.819292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThis bug was last updated over 180 days ago, as devstack is a fast moving project\nand we'd like to get the tracker down to currently actionable bugs, this is getting\nmarked as Invalid. If the issue still exists, please feel free to reopen it.\n", 
+            "date_created": "2017-06-14 19:39:32.016047+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2013-05-29 10:16:05.659134+00:00"
+}

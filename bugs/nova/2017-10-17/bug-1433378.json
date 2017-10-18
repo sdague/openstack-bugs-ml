@@ -1,0 +1,54 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-27 16:04:25.060104+00:00", 
+    "description": "When I detached volume from my virtual-machine, \"nova-compute process\" deleted volume devices that attached to other virtual-machine.\nAs you know, when detaching volumes from virtual-machine, nova-compute is going to delete volume devices.\nHowever nova-compute deleted volume devices that attached to other virtual-machine.\nSo, file-system of those volumes had changed \"read-only\".\n\nMy Environment is following:\n- OpenStack Juno 2014.2.1\n- Hypervisor : KVM on Ubuntu 12.04.2\n- Storage : Netapp iSCSI\n\nI tried to check \"logic of deleting volume devices\", and I found that nova had a critical issue in deleting logic.\n\ndeleting logic is :\n\nnova/virt/libvirt/volume.py\ndef _delete_mpath(self, iscsi_properties, multipath_device, ips_iqns):\n\u00a0entries = self._get_iscsi_devices()\n\u00a0# Loop through ips_iqns to construct all paths\n\u00a0iqn_luns = []\n\u00a0for ip, iqn in ips_iqns:\n\u00a0\u00a0iqn_lun = '%s-lun-%s' % (iqn,iscsi_properties.get('target_lun', 0))\n\u00a0\u00a0iqn_luns.append(iqn_lun)\n\u00a0for dev in ['/dev/disk/by-path/%s' % dev for dev in entries]:\n\u00a0\u00a0for iqn_lun in iqn_luns:\n\u00a0\u00a0\u00a0if iqn_lun in dev:                                 <- this logic has problem.\n\u00a0\u00a0\u00a0\u00a0self._delete_device(dev)\n\nmy case of problem is :\n\n1. there are 1~19 of lun-id volumes that are attached virtual-machine on same hypervisor.\n2. and then, If I detach volume that have lun-id 1.\n3. nova-compute is going to delete devices of volumes that have lun-id 11~19 by \"_delete_mpath function\" in openstack nova.\n\nmore information is :\n\n1. problem logic : if iqn_lun in dev:\n2. \"dev\" has all disk on the hypervisor\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-1\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-10\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-11\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-12\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-2\n3. iqn_lun has \"iqn.xxx.netapp:sn.xxx:vs-lun-1\" that made by below logic.\n\u00a0\u00a0\u00a0iqn_lun = '%s-lun-%s' % (iqn, iscsi_properties.get('target_lun', 0))\n4. nova-compute try to delete devices that have \"iqn.xxx.netapp:sn.xxx:vs-lun-1\" by that logic.\n\u00a0\u00a0\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-1   <- delete\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-10  <- delete\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-11  <- delete\n\u00a0/dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-12  <- delete\n\nThis Bug is very critical because the nova-compute can delete other vm's devices when this case is occurred,\nso that file-system of volume can change read-only.\nActually this case was occurred and my customer's file-system was changed read-only.\n\nI think that nova-compute try to delete device in case of exactly same lun-id.\n\nPlease fix this bug ASAP.\nThank you.", 
+    "tags": [
+        "openstack-version.juno"
+    ], 
+    "importance": "Low", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1433378", 
+    "owner": "None", 
+    "id": 1433378, 
+    "index": 1619, 
+    "openned": "2015-03-18 01:16:26.763318+00:00", 
+    "created": "2015-03-18 01:16:26.763318+00:00", 
+    "title": "Problem deleting volume devices that attached to other VMs,  when the users detach volumes.", 
+    "comments": [
+        {
+            "content": "When I detached volume from my virtual-machine, \"nova-compute process\" deleted volume devices that attached to other virtual-machine.\nAs you know, when detaching volumes from virtual-machine, nova-compute is going to delete volume devices.\nHowever nova-compute deleted volume devices that attached to other virtual-machine.\nSo, file-system of those volumes had changed \"read-only\".\n\nMy Environment is following:\n- OpenStack Juno 2014.2.1 \n- Hypervisor : KVM on Ubuntu 12.04.2\n- Storage : Netapp iSCSI\n\nI tried to check \"logic of deleting volume devices\", and I found that nova had a critical issue in deleting logic.\n\ndeleting logic is :\n\nnova/virt/libvirt/volume.py\ndef _delete_mpath(self, iscsi_properties, multipath_device, ips_iqns):\n\tentries = self._get_iscsi_devices()\n\t# Loop through ips_iqns to construct all paths\n\tiqn_luns = []\n\tfor ip, iqn in ips_iqns:\n\t\tiqn_lun = '%s-lun-%s' % (iqn,\n                                     iscsi_properties.get('target_lun', 0))\n\t\tiqn_luns.append(iqn_lun)\n\tfor dev in ['/dev/disk/by-path/%s' % dev for dev in entries]:\n\t\tfor iqn_lun in iqn_luns:\n\t\t\tif iqn_lun in dev:                                 <- this logic has problem.\n\t\t\t\tself._delete_device(dev)\n\n\nmy case of problem is :\n\n1. there are 1~19 of lun-id volumes that are attached virtual-machine on same hypervisor.\n2. and then, If I detach volume that have lun-id 1.\n3. nova-compute is going to delete devices of volumes that have lun-id 11~19 by \"_delete_mpath function\" in openstack nova.\n\nmore information is :\n\n1. problem logic : if iqn_lun in dev: \n2. \"dev\" has all disk on the hypervisor \n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-1\n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-10\n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-11\n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-12\n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-2\n3. iqn_lun has \"iqn.xxx.netapp:sn.xxx:vs-lun-1\" that made by below logic.\n   iqn_lun = '%s-lun-%s' % (iqn, iscsi_properties.get('target_lun', 0))\n4. nova-compute try to delete devices that have \"iqn.xxx.netapp:sn.xxx:vs-lun-1\" by that logic. \n   /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-1   <- delete\n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-10  <- delete\n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-11  <- delete\n /dev/disk/by-path/ip-x.x.x.x:3260-iscsi-iqn.xxx.netapp:sn.xxx:vs-lun-12  <- delete\n\nThis Bug is very critical because the nova-compute can delete other vm's devices when this case is occurred, \nso that file-system of volume can change read-only.\nActually this case was occurred and my customer's file-system was changed read-only.\n\nI think that nova-compute try to delete device in case of exactly same lun-id.\n\nPlease fix this bug ASAP.\nThank you.", 
+            "date_created": "2015-03-18 01:16:26.763318+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jangseon"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/165663", 
+            "date_created": "2015-03-19 00:23:52.811378+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Added a simple fix for review, thanks\nhttps://review.openstack.org/#/c/165663/", 
+            "date_created": "2015-03-19 00:27:24.878362+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jin-t"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/165663\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-05-13 17:22:18.041931+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/309446", 
+            "date_created": "2016-04-22 14:41:51.160251+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Dave Walker (<email address hidden>) on branch: stable/kilo\nReview: https://review.openstack.org/309446\nReason: \nstable/kilo closed for 2015.1.4\n\nThis release is now pending its final release and no freeze exception has\nbeen seen for this changeset.  Therefore, I am now abandoning this change.\n\nIf this is not correct, please urgently raise a thread on openstack-dev.\n\nMore details at: https://wiki.openstack.org/wiki/StableBranch\n", 
+            "date_created": "2016-05-09 09:38:44.903371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Automatically discovered version juno in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 16:04:24.370534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

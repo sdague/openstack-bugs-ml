@@ -1,0 +1,66 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-03-31 14:19:05.660524+00:00", 
+    "description": "Openstack Version : kilo 2015.1.0\n\nReproduce steps:\n\nplease see the paths of codes:openstack/nova/nova/compute/manager.py \n\ndef _rollback_live_migration(self, context, instance,dest, block_migration, migrate_data=None):\n\n    ......................\n        for bdm in bdms:\n            if bdm.is_volume:\n                self.compute_rpcapi.remove_volume_connection(\n                        context, instance, bdm.volume_id, dest)\n    ......................\n \nActual result:\n\ndef remove_volume_connection(self, context, volume_id, instance):\n    ......................\n    ......................\n\nExpected result:\n\ndef remove_volume_connection(self, context, instance, volume_id):\n\n\npelease check this bug , thanks.", 
+    "tags": [
+        "live-migration", 
+        "volumes"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1505476", 
+    "owner": "None", 
+    "id": 1505476, 
+    "index": 3022, 
+    "openned": "2015-10-13 02:59:29.632275+00:00", 
+    "created": "2015-10-13 02:59:29.632275+00:00", 
+    "title": "when live-migrate failed,remove_volume_connection function  accept incorrect arguments order  in kilo ", 
+    "comments": [
+        {
+            "content": "Openstack Version : kilo 2015.1.0\n\nReproduce steps:\n\nplease see the paths of codes:openstack/nova/nova/compute/manager.py \n\ndef _rollback_live_migration(self, context, instance,dest, block_migration, migrate_data=None):\n\n    ......................\n        for bdm in bdms:\n            if bdm.is_volume:\n                self.compute_rpcapi.remove_volume_connection(\n                        context, instance, bdm.volume_id, dest)\n    ......................\n \nActual result:\n\ndef remove_volume_connection(self, context, volume_id, instance):\n    ......................\n    ......................\n\nExpected result:\n\ndef remove_volume_connection(self, context, instance, volume_id):\n\n\npelease check this bug , thanks.", 
+            "date_created": "2015-10-13 02:59:29.632275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liang-jingtao"
+        }, 
+        {
+            "content": "@jingtao liang:\n\nBecause the RPC API calls the \"remove_volume_connection\" method of \nthe manager with named arguments, the order of the arguments is not \nimportant. The flow is this:\n\nnova/compute/manager.py (on the source host)\n\n    def _rollback_live_migration(self, context, instance,\n                                 dest, block_migration, \n                                 migrate_data=None):\n        # [...]\n        self.compute_rpcapi.remove_volume_connection(\n                context, instance, bdm.volume_id, dest)\n    \nnova/compute/rpcapi.py (on the source host)\n\n    def remove_volume_connection(self, ctxt, instance, volume_id, host):\n        version = '4.0'\n        cctxt = self.client.prepare(server=host, version=version)\n        return cctxt.call(ctxt, 'remove_volume_connection',\n                          instance=instance, volume_id=volume_id)\n\nnova/compute/manager.py (on the target host)\n\n    def remove_volume_connection(self, context, volume_id, instance):\n        # [...]\n\nIOW, it would be an issue if this call:\n\n    return cctxt.call(ctxt, 'remove_volume_connection',\n                      instance=instance, volume_id=volume_id)\n\nwould look like this:\n\n    return cctxt.call(ctxt, 'remove_volume_connection',\n                      instance, volume_id)\n\nbut it does not, which means we are fine. \n\nBecause of this, I'll put the status of this bug to \"Invalid\". If you\ndisagree with it, please set it back to \"new\" and add a reasoning why\nyou think this is a valid failure in the behavior of Nova.", 
+            "date_created": "2015-10-13 10:57:20.940327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "thanks for your analysis,maybe I miss the detailed points.\nplease see:\n\nnova/compute/manager.py (on the target host):\nclass _ComputeV4Proxy(object):\n        def remove_volume_connection(self, ctxt, instance, volume_id):\n            return self.manager.remove_volume_connection(ctxt, instance, volume_id)\n\n\nand:\nclass ComputeManager(manager.Manager):\n            def remove_volume_connection(self, context, volume_id, instance):\n                .......\n\n\nyou can see  incorrect arguments order.\n\nthanks", 
+            "date_created": "2015-10-16 09:10:02.334664+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liang-jingtao"
+        }, 
+        {
+            "content": "It's not an issue as long as we use named arguments. Moving to wishlist as a potential improvement, but it's not a bug (yet?).", 
+            "date_created": "2015-11-04 10:25:42.334087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "thanks!!!\n\nin fact , because of the mistake. when  live-migrate failed ,the volume can not be detach correctly on the distination host.\n\nso we need to put right immediately . As you say ,we can use named arguments.", 
+            "date_created": "2015-11-04 10:49:51.864264+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liang-jingtao"
+        }, 
+        {
+            "content": "I guess we could change https://github.com/openstack/nova/blob/master/nova/compute/rpcapi.py to match the manager.py, but yeah, its not really a bug.", 
+            "date_created": "2016-02-11 16:03:53.114600+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "See https://bugs.launchpad.net/nova/+bug/1538619\n\nThere was a bug in stable/kilo, but it was in the _ComputeV4Proxy code that doesn't exist anymore on trunk.", 
+            "date_created": "2016-02-18 15:42:37.460825+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Patch for this patch is submitted by other person. https://review.openstack.org/#/c/280923/\nMy patch https://review.openstack.org/#/c/279693/ will not get merged.", 
+            "date_created": "2016-02-22 17:00:53.944928+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pushkar-umaranikar"
+        }, 
+        {
+            "content": "Change abandoned by Pushkar Umaranikar (<email address hidden>) on branch: master\nReview: https://review.openstack.org/279693\nReason: This is duplicate. Similar patch got merged. https://review.openstack.org/#/c/280923/", 
+            "date_created": "2016-03-31 14:19:04.894402+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-03-04 21:59:57.563623+00:00"
+}

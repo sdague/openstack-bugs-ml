@@ -1,0 +1,68 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-06 17:20:47.281991+00:00", 
+    "description": "I literally stumbled upon this bug report with LXC, where the network bridge takes the mac address of an interface if the mac address is numerically lower, and this causes problems if that instance is shut down.  I think it may well apply to nova?...\n\nhttps://www.redhat.com/archives/libvir-list/2010-July/msg00450.html\n\nOr\n\nhttp://sourceforge.net/tracker/?func=detail&atid=826303&aid=3411497&group_id=163076\n(Be sure to open up the comments!)\n\nThe workaround seems to be to try to generate a mac address with a high first byte eg 0xfe.  \n\nWe use 0x02, which is highly likely to have problems (in the same way that 0xfe is unlikely to!)\n\nmac = [0x02, 0x16, 0x3e,\n               random.randint(0x00, 0x7f),\n               random.randint(0x00, 0xff),\n               random.randint(0x00, 0xff)]\n        \nI think this could be related to Bug #908194, but I don't really understand the proposed workaround there.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/921838", 
+    "owner": "https://api.launchpad.net/1.0/~vishvananda", 
+    "id": 921838, 
+    "index": 2732, 
+    "openned": "2012-01-25 21:38:05.807660+00:00", 
+    "created": "2012-01-25 21:38:05.807660+00:00", 
+    "title": "Random mac address should start with a high number", 
+    "comments": [
+        {
+            "content": "I literally stumbled upon this bug report with LXC, where the network bridge takes the mac address of an interface if the mac address is numerically lower, and this causes problems if that instance is shut down.  I think it may well apply to nova?...\n\nhttps://www.redhat.com/archives/libvir-list/2010-July/msg00450.html\n\nOr\n\nhttp://sourceforge.net/tracker/?func=detail&atid=826303&aid=3411497&group_id=163076\n(Be sure to open up the comments!)\n\nThe workaround seems to be to try to generate a mac address with a high first byte eg 0xfe.  \n\nWe use 0x02, which is highly likely to have problems (in the same way that 0xfe is unlikely to!)\n\nmac = [0x02, 0x16, 0x3e,\n               random.randint(0x00, 0x7f),\n               random.randint(0x00, 0xff),\n               random.randint(0x00, 0xff)]\n        \nI think this could be related to Bug #908194, but I don't really understand the proposed workaround there.", 
+            "date_created": "2012-01-25 21:38:05.807660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~justin-fathomdb"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5111", 
+            "date_created": "2012-03-08 23:38:32.837429+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5111\nCommitted: http://github.com/openstack/nova/commit/a186df0ef557de984691d3042a21f0ba331009b4\nSubmitter: Jenkins\nBranch:    master\n\ncommit a186df0ef557de984691d3042a21f0ba331009b4\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Thu Mar 8 15:36:31 2012 -0800\n\n    Use a high number for our default mac addresses\n    \n     * FE has the locally administered bit set and multicast bit unset\n     * fixes bug 921838\n    \n    Change-Id: Id33a06985c4150da4c5367c700f894590fdac2b9\n", 
+            "date_created": "2012-03-10 04:18:15.934993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I think this might need to be reverted (yes, I know this is all my fault - sorry!)\n\nI'm trying to use FlatManager, and it simply doesn't work once this code is applied.\n\nI was getting errors like this in dmesg:\n[ 2199.836114] br100: received packet on vnet1 with own address as source address\n\nI could ping the guest from the host, but the guest couldn't ping out, because ARP resolution inside the guest was failing.  I could see the ARP request being made succesfully from the host, but the ARP table wasn't updated in the guest and it would rapidly retry ARP resolution.\n\nI couldn't ping the guest from other machines, I think because the guest didn't know where to send the return packets.\n\nReverting the change above fixes the problem immediately.\n\n\nHowever, something very odd is happening; I think maybe libvirt is doing something we're not aware of that is breaking us: the MAC address of the vnetX interface is 0xfe, though the internal address is 0x02.  It looks like when the two are the same things are FUBAR.\n\nI have below 3 machines, the first two launched with the 0xfe and broken, the last one launched with the patch reverted and working.\n\n\n(The MAC in the host (vnet2) is the same as the guest, but with 0x02 -> 0xfe)\nHost: ifconfig\n...\nvnet0     Link encap:Ethernet  HWaddr fe:16:3e:09:66:f7  \n          inet6 addr: fe80::fc16:3eff:fe09:66f7/64 Scope:Link\n...\nvnet1     Link encap:Ethernet  HWaddr fe:16:3e:14:e1:62  \n          inet6 addr: fe80::fc16:3eff:fe14:e162/64 Scope:Link\n...\nvnet2     Link encap:Ethernet  HWaddr fe:16:3e:31:8e:88  \n          inet6 addr: fe80::fc16:3eff:fe31:8e88/64 Scope:Link\n...\n\n\n\n(The MAC in the guest is the same as vnet2, but with 0x02)\nGuest: ifconfig \neth0      Link encap:Ethernet  HWaddr 02:16:3e:31:8e:88  \n...\n\n", 
+            "date_created": "2012-03-14 09:11:45.005665+00:00", 
+            "author": "https://api.launchpad.net/1.0/~justin-fathomdb"
+        }, 
+        {
+            "content": "On a hunch, I changed the magic byte to 0xfc.  That now works.  Libvirt (or whoever it is that is tweaking the address) sets the first byte to 0xfe, we get a 0xfc MAC.  They're different, so all is OK.  At least that's my theory.\n\nOf course, if libvirt is tweaking the address, then we didn't need the change in the first place - sorry!  Any idea if libvirt does this (or if not, how is the bridge address getting set to 0xfe?)\n\nWith 0xfc:\n\nGuest ifconfig:\neth0      Link encap:Ethernet  HWaddr fc:16:3e:63:63:3c  \n...\n\nHost ifconfig:\nifconfig vnet3\nvnet3     Link encap:Ethernet  HWaddr fe:16:3e:63:63:3c  \n", 
+            "date_created": "2012-03-14 09:15:36.719577+00:00", 
+            "author": "https://api.launchpad.net/1.0/~justin-fathomdb"
+        }, 
+        {
+            "content": "I did some source-code splunking.  It is libvirt that's changing the address to 0xfe.\n\nHere's the patch where it was introduced; this is \nhttp://libvirt.org/git/?p=libvirt.git;a=commit;h=6ea90b843eff95be6bcbb49a327656fc6f6445ef\n\n(If you're looking at the latest code, and scratching your head, it's because this file was split into 3 files about a year ago and then the MAC code was rearchitected 11 days ago in c1b164d70c738b0d7de530417f49a142680fe294)\n\nSo, it looks like libvirt is fixing the problem for us, even if we specify a different mac address.  Note that this causes all kinds of problems for e.g. OpenVSwitch, because the MAC address we specify isn't the one that gets configured on the bridge.\n\nI think the bridge has a problem when the guest and host MAC addresses are the same, though I don't know why this should be the case.\n\nSo I think we can simply revert this change, though this means that the original bug is still problematic.  \n\nI'm going to stay away from networking for a while I think...", 
+            "date_created": "2012-03-14 09:47:12.417448+00:00", 
+            "author": "https://api.launchpad.net/1.0/~justin-fathomdb"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5351", 
+            "date_created": "2012-03-14 17:35:34.482427+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5351\nCommitted: http://github.com/openstack/nova/commit/b684d651f540fc512ced58acd5ae2ef4d55a885c\nSubmitter: Jenkins\nBranch:    master\n\ncommit b684d651f540fc512ced58acd5ae2ef4d55a885c\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Wed Mar 14 10:34:33 2012 -0700\n\n    Refix mac change to work around libvirt issue\n    \n     * fixes bug 921838\n    \n    Change-Id: I11278a03c4429686499b2f62c66a7f442258f5a6\n", 
+            "date_created": "2012-03-15 17:04:05.969895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/6327", 
+            "date_created": "2012-04-06 13:00:19.272850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The fix is above is actually for the related bug 975043", 
+            "date_created": "2012-04-06 17:20:46.642687+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }
+    ], 
+    "closed": "2012-04-06 17:20:09.867498+00:00"
+}

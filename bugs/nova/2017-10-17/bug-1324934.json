@@ -1,0 +1,106 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-02-19 20:18:13.832931+00:00", 
+    "description": "Sometimes an instance fails to boot because the call to neutron to allocate a port fails.  However, we see cases where this happens but the port is actually created and allocated to the now-deleted instance.\n\nThe same problem has been reported regarding hpcloud internal monitoring tools, and the openstack-infra nodepool tenant.  There seems to be a port leak.\n\nEvidence\n========\n\nSometimes instances fail to boot with the following error:\n\n2014-05-27 00:09:23 ERROR   : [NOV58] NovaServers.add Failed: OverLimit - Maximum number of ports exceeded (HTTP 413) (Request-ID: req-e05525c3-0876-4da4-8a81-8dcc3432b418) args('('SLAM_META_m1_az1_00_09_NC_TEMP', u'8c096c29-a666-4b82-99c4-c77dc70cfb40', u'100', 'metastmkey_m1_az1', 'metastm_m1_az1', u'ee7d6d37-d855-4d30-a67b-0d88a03e72fc', 'az1'),{}')\n\nHow did we run out of ports?  Investigating further, starting with the neutron database:\n\n\u00a0\u00a0mysql> select * from ports where device_owner like 'comput%';\n\nThis gives a table which shows neutron ports and the instance uuids that they are allocated to (example: http://paste.openstack.org/show/82394/)\n\nMatching neutron's `device_id` with `uuid` in nova's instances table, we found that approximately 50% of the ports were allocated to instances that had been deleted.  As far as we know this must be a bug, as there is no way to create a port without linking it to an instance, and deleting an instance should delete its ports atomically.\n\nThe effect is that the user has unused ports counting toward their port quota, which will prevent them from booting instances when the quota is fully allocated.\n\nLogs\n====\n\nThe nova-compute log which relates to an instance that is failing to boot because of port starvation is not interesting here.  However we have the case where an instance fails to boot for \"Neutron error creating port\", but a port is actually created:\n\nnova-compute.log:\n2014-05-28 08:08:53.413 16699 DEBUG neutronclient.client [-] throwing ConnectionFailed : [Errno 104] Connection reset by peer _cs_request /usr/lib/python2.7/dist-packages/neutronclient/client.py:153\n2014-05-28 08:08:53.417 16699 ERROR nova.network.neutronv2.api [-] [instance: 2e479806-d13e-4d11-81c1-cc2244a26ef7] Neutron error creating port on network 63657422-b84f-4d2d-b7d2-765ac560546b\n\n(fuller section of log: http://paste.openstack.org/show/82392/)\n\n0.2s later, nova-compute.log:\n2014-05-28 08:08:53.664 16699 DEBUG neutronclient.client [-] RESP:{'date': 'Wed, 28 May 2014 08:08:53 GMT', 'status': '200', 'content-length': '13', 'content-type': 'application/json', 'content-location': 'https://region-b.geo-1.network-internal.hpcloudsvc.com/v2.0/ports.json?tenant_id=10409882459003&device_id=2e479806-d13e-4d11-81c1-cc2244a26ef7'} {\"ports\": []}\n\n(this is repeated once more after 0.2s longer.  Slightly longer log section: http://paste.openstack.org/show/82395/)\n\nBut eventually the port is present in the neutron database:\n\n+----------------+--------------------------------------+--------------------+--------------------------------------+-------------------+----------------+--------+--------------------------------------+--------------+\n| tenant_id      | id                                   | name               | network_id                           | mac_address       | admin_state_up | status | device_id                            | device_owner |\n+----------------+--------------------------------------+--------------------+--------------------------------------+-------------------+----------------+--------+--------------------------------------+--------------+\n| 10409882459003 | 916cba73-8925-45a2-80e9-6e9d03e602c8 |                    | 63657422-b84f-4d2d-b7d2-765ac560546b | fa:16:3e:a8:7d:14 |              1 | ACTIVE | 2e479806-d13e-4d11-81c1-cc2244a26ef7 | compute:az2  |\n\nIt looks like this port has been leaked by neutron.  Our guess is that the \"Failed to create port\" is spuriously caused by the neutronclient's connection being dropped.  In fact the port is being created, but it takes some time, and during that time neutron reports that there are no ports on that instance, so nothing is cleaned up when the instance is deleted.  Then, the port details are actually written to the db and the port is leaked.\n\nOpenstack-infra's nodepool was unable to boot instances recently, and found several hundred ports in this state.\n\nSolutions\n=========\n\nNeither nova nor neutron has enough information to determine which ports are leaked - so a periodic task in either of those two services would not be possible.\n\nA user can free up their ports with a script like  https://gist.github.com/moorryan/93fa4be65fc5ea60b3ed - and I think an operator could do the same.  But there is a risk with this script that instances/ports which are currently being created could be wrongly identified.  So care is needed.\n\nNeutron synchronizing get_ports calls with create_port (nb I don't know the neutron codebase to know how feasible this is).", 
+    "tags": [
+        "in-stable-icehouse", 
+        "network"
+    ], 
+    "importance": "High", 
+    "heat": 28, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1324934", 
+    "owner": "https://api.launchpad.net/1.0/~matthew-gilliard-u", 
+    "id": 1324934, 
+    "index": 1501, 
+    "openned": "2014-05-30 13:41:32.525795+00:00", 
+    "created": "2014-05-30 13:40:59.251535+00:00", 
+    "title": "Neutron port leak when connection is dropped during port create in instance boot.", 
+    "comments": [
+        {
+            "content": "If an instance is deleted after it has a neutron port allocated but before it has reached ACTIVE state, sometimes the port is not deleted but the instance is.  These orphan ports count toward the user's quota so if it happens enough times the user will be unable to boot instances.", 
+            "date_created": "2014-05-30 13:40:59.251535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matthew-gilliard-u"
+        }, 
+        {
+            "content": "As a logged-in user this script will clean up ports allocated to deleted instances: https://gist.github.com/moorryan/93fa4be65fc5ea60b3ed  But we should be preventing it from happenning in the first place.", 
+            "date_created": "2014-05-30 13:48:14.813745+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matthew-gilliard-u"
+        }, 
+        {
+            "content": "During the flow here, where the instance never makes it to ACTIVE, it is deleted immediately: https://github.com/openstack-infra/nodepool/blob/master/nodepool/nodepool.py#L328-L354\n\nOur suspicion is that neutron is reporting failure to create a port (which prevents the instance becoming ACTIVE), but then the port is actually created.  The instance it's associated with is deleted though, so the port is orphan at this point.", 
+            "date_created": "2014-05-30 14:33:47.626805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matthew-gilliard-u"
+        }, 
+        {
+            "content": "Hi Matthew, is there an evidence that port was actually created while neutron has reported failure?\nIs there any logs available for such case? That seems quite strange.", 
+            "date_created": "2014-05-30 21:32:07.955403+00:00", 
+            "author": "https://api.launchpad.net/1.0/~enikanorov"
+        }, 
+        {
+            "content": "I tried to reproduce this in master by doing: \n\nnova boot --image cirros-0.3.2-x86_64-uec --flavor 1 --nic net-id=5cb38a33-9fca-4422-b19d-47fd1acbc651 asdf; nova delete asdf;\n\nbut i was unable to reproduce this with both the nova-neutron event stuff enabled and disabled. What commit is the code you're running off of based at?", 
+            "date_created": "2014-05-30 21:51:14.655605+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/96955", 
+            "date_created": "2014-05-30 21:56:25.428406+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hello,  sorry I didn't provide much detail in the initial bug report.  I will update this morning.", 
+            "date_created": "2014-06-02 07:44:13.628680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~matthew-gilliard-u"
+        }, 
+        {
+            "content": "Important to backport this to Icehouse because icehouse compute will start using this code path if you update your conductor to Juno", 
+            "date_created": "2014-06-05 15:45:35.927687+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Is this still actual for neutron?\nI'll mark it as Incomplete meanwhile", 
+            "date_created": "2014-06-08 12:54:32.240915+00:00", 
+            "author": "https://api.launchpad.net/1.0/~enikanorov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/98806", 
+            "date_created": "2014-06-09 14:43:59.330922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/96955\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5a364cb00a39b31a9d5ddb30b5cc24af54e89f4a\nSubmitter: Jenkins\nBranch:    master\n\ncommit 5a364cb00a39b31a9d5ddb30b5cc24af54e89f4a\nAuthor: Andrew Laski <email address hidden>\nDate:   Fri May 30 17:52:53 2014 -0400\n\n    Cleanup allocating networks when InstanceNotFound is raised\n    \n    Allocated networks were not being cleaned up if InstanceNotFound was\n    raised after the allocation request was made.  This ensures that the\n    cleanup happens for this case.\n    \n    Also bypasses exception logging that should not occur in this case.\n    \n    Change-Id: Icd544752444415812714d91971e45b3ae2fb68ee\n    Closes-Bug: 1324934\n", 
+            "date_created": "2014-06-10 14:30:33.991084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matthew Gilliard (<email address hidden>) on branch: master\nReview: https://review.openstack.org/98806\nReason: Not sure the nova fix will be sufficient but Mark's argument about clustered neutrons is strong enough by itself for me to abandon.", 
+            "date_created": "2014-06-12 10:39:55.080485+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/100573", 
+            "date_created": "2014-06-17 14:54:22.614217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/100573\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d1c573652d213fe1ef960369a113ebce708e807b\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit d1c573652d213fe1ef960369a113ebce708e807b\nAuthor: Andrew Laski <email address hidden>\nDate:   Fri May 30 17:52:53 2014 -0400\n\n    Cleanup allocating networks when InstanceNotFound is raised\n    \n    Allocated networks were not being cleaned up if InstanceNotFound was\n    raised after the allocation request was made.  This ensures that the\n    cleanup happens for this case.\n    \n    Also bypasses exception logging that should not occur in this case.\n    \n    Conflicts:\n    \tnova/tests/compute/test_compute_mgr.py\n    \n    NOTE(mriedem): The conflict is due to commit b1994711 which is on\n    master but not stable/icehouse. It's part of a blueprint so that\n    will not be backported.\n    \n    Change-Id: Icd544752444415812714d91971e45b3ae2fb68ee\n    Closes-Bug: 1324934\n    (cherry picked from commit 5a364cb00a39b31a9d5ddb30b5cc24af54e89f4a)\n", 
+            "date_created": "2014-07-03 02:24:10.717328+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/64769\nReason: this seems abandoned", 
+            "date_created": "2014-08-27 22:41:26.066368+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/135260", 
+            "date_created": "2014-11-18 12:15:08.038946+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/135260\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-01-23 15:28:37.391859+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-06-11 13:42:53.968800+00:00"
+}

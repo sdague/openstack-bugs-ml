@@ -1,0 +1,63 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-03-18 01:50:33.262488+00:00", 
+    "description": "openstack-nova-2011.3-13.fc16.noarch\n\nTest case:\nFedora 16 Guest\nFedora 16 Host\nStart two test guests\nping the bridge gateway from each host\n\nterminate one of the virtual machines with euca-terminate-instances\n\nThe remaining VM takes 30-60 seconds before network connectivity is restored.  Immediately after termination on the host:\n[root@beast net]# cat /proc/net/arp\nIP address       HW type     Flags       HW address            Mask     Device\n192.168.1.1      0x1         0x2         00:1d:7e:c1:2a:81     *        wlan0\n\nIt appears the act of qemu being terminated clears the arp cache.\n\nAfter 30-60 seconds elapsed:\n[root@beast net]# cat /proc/net/arp\nIP address       HW type     Flags       HW address            Mask     Device\n192.168.1.1      0x1         0x2         00:1d:7e:c1:2a:81     *        wlan0\n10.0.0.3         0x1         0x2         02:16:3e:62:ee:4b     *        br0\n\nThe vnets:\nvnet0     Link encap:Ethernet  HWaddr FE:16:3E:3F:89:E3\nvnet1     Link encap:Ethernet  HWaddr FE:16:3E:62:EE:4B\n\ntcpdump of br0 shows:\n\nat same time as kill of vm:\n09:02:49.498818 ARP, Request who-has 10.0.0.3 tell reserved, length 28^M\n09:02:49.499612 ARP, Reply 10.0.0.3 is-at 02:16:3e:62:ee:4b (oui\nUnknown), length 28\n\nNote \"02:...\" is the guests MAC address\n\nSome time later (30-60 seconds) the network enables again when this arp is detected:\n09:03:34.499680 ARP, Request who-has reserved tell 10.0.0.3, length 28^M\n09:03:34.499722 ARP, Reply reserved is-at fe:16:3e:62:ee:4b (oui\nUnknown), length 28^M\n\nNote \"fe:....\" is the guests VNET address\n\nThen the networking is active again.\n\n\n\n\n\n\n\n\n\nstart two", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/908194", 
+    "owner": "None", 
+    "id": 908194, 
+    "index": 2697, 
+    "openned": "2011-12-23 17:38:23.393292+00:00", 
+    "created": "2011-12-23 17:38:23.393292+00:00", 
+    "title": "ARP table removed for br0 on host when node terminated", 
+    "comments": [
+        {
+            "content": "openstack-nova-2011.3-13.fc16.noarch\n\nTest case:\nFedora 16 Guest\nFedora 16 Host\nStart two test guests\nping the bridge gateway from each host\n\nterminate one of the virtual machines with euca-terminate-instances\n\nThe remaining VM takes 30-60 seconds before network connectivity is restored.  Immediately after termination on the host:\n[root@beast net]# cat /proc/net/arp\nIP address       HW type     Flags       HW address            Mask     Device\n192.168.1.1      0x1         0x2         00:1d:7e:c1:2a:81     *        wlan0\n\nIt appears the act of qemu being terminated clears the arp cache.\n\nAfter 30-60 seconds elapsed:\n[root@beast net]# cat /proc/net/arp\nIP address       HW type     Flags       HW address            Mask     Device\n192.168.1.1      0x1         0x2         00:1d:7e:c1:2a:81     *        wlan0\n10.0.0.3         0x1         0x2         02:16:3e:62:ee:4b     *        br0\n\nThe vnets:\nvnet0     Link encap:Ethernet  HWaddr FE:16:3E:3F:89:E3\nvnet1     Link encap:Ethernet  HWaddr FE:16:3E:62:EE:4B\n\ntcpdump of br0 shows:\n\nat same time as kill of vm:\n09:02:49.498818 ARP, Request who-has 10.0.0.3 tell reserved, length 28^M\n09:02:49.499612 ARP, Reply 10.0.0.3 is-at 02:16:3e:62:ee:4b (oui\nUnknown), length 28\n\nNote \"02:...\" is the guests MAC address\n\nSome time later (30-60 seconds) the network enables again when this arp is detected:\n09:03:34.499680 ARP, Request who-has reserved tell 10.0.0.3, length 28^M\n09:03:34.499722 ARP, Reply reserved is-at fe:16:3e:62:ee:4b (oui\nUnknown), length 28^M\n\nNote \"fe:....\" is the guests VNET address\n\nThen the networking is active again.\n\n\n\n\n\n\n\n\n\nstart two", 
+            "date_created": "2011-12-23 17:38:23.393292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdake"
+        }, 
+        {
+            "content": "Note I found the root cause of this issue to be that the MAC address of br0 bounces around the vnetXX devices.  If the active vnet device has the same MAC address as br0, it will flush the arp table and result in loss of connectivity for 30-60 seconds.\n\nThis does raise the problem of what to do when the eth0/em1 interface is downed.  I proposed a solution here:\n\nhttp://lists.fedoraproject.org/pipermail/cloud/2011-December/001116.html", 
+            "date_created": "2011-12-23 20:22:01.211086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdake"
+        }, 
+        {
+            "content": "Justin pointed out that the bug he filed may be related to this: https://bugs.launchpad.net/nova/+bug/921838. What do you think, Steven?", 
+            "date_created": "2012-01-27 18:42:36.937955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "Brian,\n\nYa his bug is the same but his workaround is invalid.  What is happening is the mac address for the bridge is being set to 00:00:00:00:00:00 when the first vnet is removed from the brige.  This causes the bridge to determine a new vnet which triggers a network outage of 30-60 seconsds for the bridge.\n\nThis problem at one point also existed in libvirt.  The workaround they used was to insert a vnic into the bridge on startup of the system that was a \"dummy\".  See:\n\nhttp://lists.fedoraproject.org/pipermail/cloud/2012-January/001125.html\n\nRegards\n-steve", 
+            "date_created": "2012-01-27 19:54:30.475746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdake"
+        }, 
+        {
+            "content": "Is this bug still valid? I'm unable to reproduce it on current master...", 
+            "date_created": "2012-08-09 18:35:02.346241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Dan,\n\nBug remains.\n\nA simple reproducer:\nStart one VM on a fresh system (no vnet shown with ifconfig)\n\nStart a second VM on that same system\nssh into the second VM and run ping www.news.com\n\nTerminate the first vm\n\nThe ping delays for 35 seconds while the .  My output from second vm is:\n42 time=32.9 ms\n64 bytes from phx1-rb-gtm3-tron-xw-lb.cnet.com (64.30.224.82): icmp_req=16 ttl=242 time=32.8 ms\n64 bytes from phx1-rb-gtm3-tron-xw-lb.cnet.com (64.30.224.82): icmp_req=17 ttl=242 time=32.8 ms\n64 bytes from phx1-rb-gtm3-tron-xw-lb.cnet.com (64.30.224.82): icmp_req=53 ttl=242 time=35.5 ms\n64 bytes from phx1-rb-gtm3-tron-xw-lb.cnet.com (64.30.224.82): icmp_req=54 ttl=242 time=33.6 ms\n\nnotice the delay happens from icmp_req 17 to icmp-req 53", 
+            "date_created": "2012-08-09 23:07:09.464045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdake"
+        }, 
+        {
+            "content": "Yeah, that's what I did before asking if it's still a problem :) I don't see the outage.\n\nAre you running a bridge with no physical nic attached and NAT'ing out of your guests? I'm not, but perhaps that's the difference. If so, I'll try to reproduce it that way.", 
+            "date_created": "2012-08-10 00:44:02.300518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Marking as incomplete without more information on how to reproduce (since I can't)", 
+            "date_created": "2013-03-15 18:43:22.676169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "This bug lacks the necessary information to effectively reproduce and fix it, therefore it has been closed. Feel free to reopen the bug by providing the requested information and set the bug status back to ''New''.", 
+            "date_created": "2013-03-18 01:50:23.450233+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ], 
+    "closed": "2013-03-18 01:50:30.837074+00:00"
+}

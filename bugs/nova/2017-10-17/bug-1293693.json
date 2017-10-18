@@ -1,0 +1,73 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-04-01 13:52:38.987573+00:00", 
+    "description": "Trying to use icehouse, libvirt 1.1.3, Xen 4.3.0, OpenVswitch 1.11.0, with VLAN tagging.\n\nProblem is that networking is non-functional on instance launch. 'ovs-vsctl show' output shows that the tap interface for the instance does not have the appropriate (internal) VLAN tag (no tag is set). Consequently, the instance is unable to obtain an IP address from DHCP, etc. Setting the tag manually with 'ovs-vsctl set port tapXXX tag=1' is a workaround (but not a very good one).\n\nExploring this, I find that the neutron OVS agent scans the OVS ports and examines the 'external-ids' to see which ones are of interest. When it sees a new port that is of interest, it sets the VLAN tag as required. In my case, the VIF port that's added when an instance is launched has empty 'external-ids', and so the agent ignores it. The port is getting added to the OVS integration bridge by the Xen scripts, but the 'external-ids' are not getting set (Xen knows nothing about this part).\n\nLooking further; when nova.conf has 'firewall_driver=nova.virt.firewall.NoopFirewallDriver', the LibvirtBaseVIFDriver (nova/virt/libvirt/vif.py) uses function plug_ovs_bridge(), which is a no-op.  When firewall_driver=nova.virt.libvirt.firewall.IptablesFirewallDriver, a different function, plug_ovs_hybrid(), is used. When OVS is older than version 0.9.11, a function called plug_ovs_ethernet() is used. Both plug_ovs_hybrid() and plug_ovs_ethernet() call linux_net.create_ovs_vif_port(), and that's where the 'external-ids' get set.\n\nI tried modifying plug_ovs_bridge() to call linux_net.create_ovs_vif_port(), but that causes the Xen hotplug scripts to fail (\"ovs-vsctl: cannot create a port named tap3ccfe10f-c4 because a port named tap3ccfe10f-c4 already exists on bridge br-int\")\n\nWhen the Noop firewall_driver is used in conjunction with newer OVS, something needs to set the 'external-ids' on the VIF port so that the neutron agent will see it and set the VLAN tag.", 
+    "tags": [
+        "libvirt", 
+        "network", 
+        "neutron", 
+        "ovs"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1293693", 
+    "owner": "None", 
+    "id": 1293693, 
+    "index": 5926, 
+    "openned": "2014-03-18 17:29:29.003379+00:00", 
+    "created": "2014-03-17 17:17:07.238936+00:00", 
+    "title": "libvirt OVS VLAN tag not set", 
+    "comments": [
+        {
+            "content": "Trying to use icehouse, libvirt-Xen, OpenVswitch 1.11.0, with VLAN tagging.\n\nProblem is that networking is non-functional on instance launch. 'ovs-vsctl show' output shows that the tap interface for the instance does not have the appropriate (internal) VLAN tag (no tag is set). Consequently, the instance is unable to obtain an IP address from DHCP, etc. Setting the tag manually with 'ovs-vsctl set port tapXXX tag=1' is a workaround (but not a very good one).\n\nExploring this, I find that the neutron OVS agent scans the OVS ports and examines the 'external-ids' to see which ones are of interest. When it sees a new port that is of interest, it sets the VLAN tag as required. In my case, the VIF port that's added when an instance is launched has empty 'external-ids', and so the agent ignores it. The port is getting added to the OVS integration bridge by the Xen scripts, but the 'external-ids' are not getting set (Xen knows nothing about this part).\n\nLooking further; when nova.conf has 'firewall_driver=nova.virt.firewall.NoopFirewallDriver', the LibvirtBaseVIFDriver (nova/virt/libvirt/vif.py) uses function plug_ovs_bridge(), which is a no-op.  When firewall_driver=nova.virt.libvirt.firewall.IptablesFirewallDriver, a different function, plug_ovs_hybrid(), is used. When OVS is older than version 0.9.11, a function called plug_ovs_ethernet() is used. Both plug_ovs_hybrid() and plug_ovs_ethernet() call linux_net.create_ovs_vif_port(), and that's where the 'external-ids' get set.\n\nI tried modifying plug_ovs_bridge() to call linux_net.create_ovs_vif_port(), but that causes the Xen hotplug scripts to fail (\"ovs-vsctl: cannot create a port named tap3ccfe10f-c4 because a port named tap3ccfe10f-c4 already exists on bridge br-int\")\n\nWhen the Noop firewall_driver is used in conjunction with newer OVS, something needs to set the 'external-ids' on the VIF port so that the neutron agent will see it and set the VLAN tag.", 
+            "date_created": "2014-03-17 17:17:07.238936+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dseven"
+        }, 
+        {
+            "content": "This is a neutron issue as nova does not set the vlan tag the l2-agent does. Removing nova. ", 
+            "date_created": "2014-03-18 06:48:44.947287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Per the problem description, it is the nova VIF driver that sets the external-ids on the OVS port. Neutron later picks up that information to set the VLAN tag. It is nova that's not doing its part.", 
+            "date_created": "2014-03-18 17:30:23.481682+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dseven"
+        }, 
+        {
+            "content": "Hi Iain, \n\nSorry about that I see. Would you mind confirming if you have this patch applied to you're code base? https://review.openstack.org/#/c/67981/   also another think you might want to try is added a return False here https://github.com/openstack/nova/blob/master/nova/virt/libvirt/vif.py#L79  to see if this works. Newer versions of libvirt handle pushing this external-id config info themselves through the xml file then into ovsdb. Perhaps there is an issue with libvirt-xen (not sure I've never tested with xen). \n", 
+            "date_created": "2014-03-19 07:36:42.520234+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arosen"
+        }, 
+        {
+            "content": "Hi Aaron,\n\nI do not have that patch, but I don't believe it would help me, because the patch applies the function that I have identified as NOT being called by plug_ovs_bridge().\n\nCould you point me to the code that's supposed to push the external-ids into the libvirt XML? My XML does NOT contain any reference to external-ids. Here's an example:\n\n<domain type='xen'>\n  <name>instance-00000001</name>\n  <uuid>32364981-7b5e-4032-a4ba-e08816cecdd4</uuid>\n  <memory unit='KiB'>2097152</memory>\n  <currentMemory unit='KiB'>2097152</currentMemory>\n  <vcpu placement='static'>1</vcpu>\n  <bootloader></bootloader>\n  <os>\n    <type>linux</type>\n    <cmdline>root=/dev/xvda </cmdline>\n  </os>\n  <clock offset='utc' adjustment='reset'/>\n  <on_poweroff>destroy</on_poweroff>\n  <on_reboot>restart</on_reboot>\n  <on_crash>destroy</on_crash>\n  <devices>\n    <emulator>/usr/lib/xen/bin/qemu-dm</emulator>\n    <disk type='file' device='disk'>\n      <driver name='file'/>\n      <source file='/var/lib/nova/instances/32364981-7b5e-4032-a4ba-e08816cecdd4/disk'/>\n      <target dev='xvda' bus='xen'/>\n    </disk>\n    <interface type='bridge'>\n      <mac address='fa:16:3e:e7:1e:c3'/>\n      <source bridge='br-int'/>\n      <script path='vif-bridge'/>\n      <target dev='tap43b9d367-32'/>\n    </interface>\n    <console type='pty'>\n      <target type='xen' port='0'/>\n    </console>\n    <input type='mouse' bus='xen'/>\n    <graphics type='vnc' port='-1' autoport='yes' listen='10.79.247.174' keymap='en-us'>\n      <listen type='address' address='10.79.247.174'/>\n    </graphics>\n  </devices>\n</domain>\n\n", 
+            "date_created": "2014-03-21 00:17:42.817745+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dseven"
+        }, 
+        {
+            "content": "Can you indicate which version of libvirt you're using?", 
+            "date_created": "2014-05-29 15:12:43.585917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sross-7"
+        }, 
+        {
+            "content": "OVS version is noted in the first line of the bug description ;)", 
+            "date_created": "2014-05-30 17:14:31.026053+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dseven"
+        }, 
+        {
+            "content": "Oops.. I misread the question. libvirt is version 1.1.3", 
+            "date_created": "2014-05-30 17:36:54.668726+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dseven"
+        }, 
+        {
+            "content": "[Expired for neutron because there has been no activity for 60 days.]", 
+            "date_created": "2014-07-30 04:17:58.757674+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "auto expired on neutron, closing out of nova for now.", 
+            "date_created": "2015-04-01 13:52:38.297889+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2015-04-01 13:52:26.575820+00:00"
+}

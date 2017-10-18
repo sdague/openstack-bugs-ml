@@ -1,0 +1,50 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2016-07-20 15:03:47.035561+00:00", 
+    "description": "The Nova rescue feature powers off a running instance and, boots a rescue instance attaching the ephemeral disk of the original instance to it to allow an admin to try and recover the instance.  The problem is that if a Cinder Volume is attached to that instance when we do a rescue we don't do a detach or any sort of maintenance on the block mapping that we have set up for it.  We do check to see if we have it, and verify it's attached but that's it.\n\nThe result is that after the rescue operation subsequent LVM calls to do things like lvs and vgs will attempt to open a device file that no longer exists which takes up to 60 seconds for each device.  An example is the current tempest test:\ntempest.api.compute.servers.test_server_rescue_negative.ServerRescueNegativeTestJSON.test_rescued_vm_detach_volume[gate,negative,volume]\n\nWhich if you look at tempest results you'll notice that test always takes in excess of 100 seconds, but it's not just because it's a long test, it's the blocking LVM calls.\n\nWe should detach any cinder volumes that are attached to an instance during the rescue process.  One concern with this that came from folks on the Nova team was 'what about boot from volume'?  Rescue of a volume booted instance is currently an invalid case as is evident by the code that checks for it and fails here:\nhttps://github.com/openstack/nova/blob/master/nova/compute/api.py#L2822\n\nProbably no reason we can't automate this as part of rescue in the future but for now it's a separate enhancement independent of this bug.", 
+    "tags": [
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1423654", 
+    "owner": "https://api.launchpad.net/1.0/~john-griffith", 
+    "id": 1423654, 
+    "index": 4157, 
+    "openned": "2015-02-19 18:34:17.964419+00:00", 
+    "created": "2015-02-19 18:34:17.964419+00:00", 
+    "title": "Nova rescue causes LVM timeouts after moving attachments", 
+    "comments": [
+        {
+            "content": "The Nova rescue feature powers off a running instance and, boots a rescue instance attaching the ephemeral disk of the original instance to it to allow an admin to try and recover the instance.  The problem is that if a Cinder Volume is attached to that instance when we do a rescue we don't do a detach or any sort of maintenance on the block mapping that we have set up for it.  We do check to see if we have it, and verify it's attached but that's it.\n\nThe result is that after the rescue operation subsequent LVM calls to do things like lvs and vgs will attempt to open a device file that no longer exists which takes up to 60 seconds for each device.  An example is the current tempest test:\ntempest.api.compute.servers.test_server_rescue_negative.ServerRescueNegativeTestJSON.test_rescued_vm_detach_volume[gate,negative,volume]\n\nWhich if you look at tempest results you'll notice that test always takes in excess of 100 seconds, but it's not just because it's a long test, it's the blocking LVM calls.\n\nWe should detach any cinder volumes that are attached to an instance during the rescue process.  One concern with this that came from folks on the Nova team was 'what about boot from volume'?  Rescue of a volume booted instance is currently an invalid case as is evident by the code that checks for it and fails here:\nhttps://github.com/openstack/nova/blob/master/nova/compute/api.py#L2822\n\nProbably no reason we can't automate this as part of rescue in the future but for now it's a separate enhancement independent of this bug.", 
+            "date_created": "2015-02-19 18:34:17.964419+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Seems that what happens here is that during the attach swap we run into a problem with devices not being quiesced.  If we add 10 seconds (yes, 10 seconds) between when we issue the unrescue call and when we report the instance as ACTIVE again we eliminate the problem.  Ideally we'd figure out exactly what the the state we're waiting for is and how to detect it, but in a number of tempest runs it seems that 5 seconds isn't enough, 8 is marginal and 10 seems to consistently eliminate the problem.\n\nNote this also appears to be the root cause of the remaining issues with:\nhttps://bugs.launchpad.net/cinder/+bug/1373513\n\n", 
+            "date_created": "2015-02-27 04:52:04.211249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "> We should detach any cinder volumes that are attached to an instance during \n> the rescue process. One concern with this that came from folks on the Nova\n>  team was 'what about boot from volume'? Rescue of a volume booted instance\n>  is currently an invalid case as is evident by the code that checks for it and fails here:\n\nNo, we should *not* detach cinder volumes during rescue. The storage attached to a rescue VM should be *identical* to the storage attached to a normally running VM, with the exception of the extra rescue disk being added.  The administrator may well need data from the volumes during the rescue process. Nova libvirt doesnt currently handle cinder vols correctly during rescue but we should fix that, not remove them altogether.", 
+            "date_created": "2015-03-10 09:35:00.798785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "Change abandoned by John Griffith (<email address hidden>) on branch: master\nReview: https://review.openstack.org/159713\nReason: I give up, no hard feelings but honestly this is silly.", 
+            "date_created": "2015-03-10 21:01:39.408749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "FYI, we couldn't get a change in to Nova so we modified setup to work around the issue.\n\nWe added the use of lvm.config to isolate the disks cinder looks at/uses.  It's automated in devstack setup here:\nhttps://review.openstack.org/#/c/165281/\n\nand it's documents in install guide here:\nhttp://docs.openstack.org/kilo/install-guide/install/apt/content/cinder-install-storage-node.html", 
+            "date_created": "2015-07-08 18:59:15.169588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "from the last comment it seems to me that this bug is not going to be fixed in Nova but a workaround is in place in Cinder. Considering that and considering that the last comment was 1+ year ago I am going to close this ticket as \"Won't fix\".\nPlease feel free to comment here if you disagree.", 
+            "date_created": "2016-07-20 15:03:33.897708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }
+    ], 
+    "closed": "2016-07-20 15:03:44.050343+00:00"
+}

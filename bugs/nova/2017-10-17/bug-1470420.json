@@ -1,0 +1,91 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-21 23:15:16.380337+00:00", 
+    "description": "In resize, confirm-resize and revert-resize operation, migration status\nis marked as 'error' in case of failure for respective operation.\n\nMigration object support is added in live-migration operation, which\nmark migration status to 'failed' if live-migration operation fails in-between.\n\nTo make live-migration consistent with resize, confirm-resize and revert-resize operation, it needs to mark migration status to 'error' instead of 'failed' in case of failure.", 
+    "tags": [
+        "in-stable-mitaka", 
+        "live-migration"
+    ], 
+    "importance": "Low", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1470420", 
+    "owner": "https://api.launchpad.net/1.0/~abhishek-kekane", 
+    "id": 1470420, 
+    "index": 1773, 
+    "openned": "2015-07-01 09:03:47.842973+00:00", 
+    "created": "2015-07-01 09:03:47.842973+00:00", 
+    "title": "Set migration status to 'error' instead of 'failed' during live-migration", 
+    "comments": [
+        {
+            "content": "In resize, confirm-resize and revert-resize operation, migration status\nis marked as 'error' in case of failure for respective operation.\n\nMigration object support is added in live-migration operation, which\nmark migration status to 'failed' if live-migration operation fails in-between.\n\nTo make live-migration consistent with resize, confirm-resize and revert-resize\noperation, it needs to mark migration status to 'error' instead of 'failed' in case\nof failure.", 
+            "date_created": "2015-07-01 09:03:47.842973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rajesh-tailor"
+        }, 
+        {
+            "content": "@Rajesh Tailor:\n\nSince you are set as assignee, I switch the status to 'In Progress'.", 
+            "date_created": "2015-07-03 08:36:09.786884+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "@rajesh, do you still work on this bug? If no, I'd like to take this bug. Thanks. :)", 
+            "date_created": "2015-08-20 02:30:27.373643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shuquan"
+        }, 
+        {
+            "content": "Hi Shuquan,\n\nI am working on this bug and I will push patch for the same as soon as possible.", 
+            "date_created": "2015-08-20 09:43:03.772800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rajesh-tailor"
+        }, 
+        {
+            "content": "Sure.  Go ahead. :)", 
+            "date_created": "2015-08-21 06:21:21.402609+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shuquan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/215483", 
+            "date_created": "2015-08-21 07:04:20.625900+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi\n\nFollowing are some approaches to solve this issue. Please suggest which would be the better way.\n\n1) As suggested by Paul Murray, we can modify resize operation and set migration status to 'failed' on resize operation failure.\nIn this case, we need to modify periodic_task _cleanup_incomplete_migrations and add 'failed' status instead of 'error' in filter for migrations.\n\n2) We can add new migration status 'cleaned', which will be set in periodic task _cleanup_incomplete_migrations.\n\nWe can filter migration status which are having 'error' or 'failed' status in periodic task _cleanup_incomplete_migrations and once instance files are deleted from compute node (either source or dest node)  we can set newly added migration status 'cleaned' so that the same record is not filtered in subsequent periodic task run. \n\n3) As suggested by Nikola Dipanov, it is reasonable to have retry logic in on self.driver.live_migration call. In that case, if retry logic is not successful (i.e. its unrecoverable situation) then ultimately migration status would be set to 'error' by _rollback_live_migration. But as of now, we don't have retry logic on live_migration driver call.\n\n4) We can stick to the patch which is currently under review and replace migration status from 'failed' to 'error' wherever required.", 
+            "date_created": "2015-11-24 07:15:56.294405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rajesh-tailor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/215483\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d61e15818c1d108275b3286a6665fa3e6540e7e7\nSubmitter: Jenkins\nBranch:    master\n\ncommit d61e15818c1d108275b3286a6665fa3e6540e7e7\nAuthor: Rajesh Tailor <email address hidden>\nDate:   Thu Jul 2 03:22:01 2015 -0700\n\n    Set migration status to 'error' on live-migration failure\n    \n    (A) In resize, confirm-resize and revert-resize operation, migration status\n    is marked as 'error' in case of failure for respective operation.\n    \n    Migration object support is added in live-migration operation, which mark\n    migration status to 'failed' if live-migration operation fails in-between.\n    \n    To make live-migration consistent with resize, confirm-resize and revert-\n    resize operation, it needs to mark migration status to 'error' instead of\n    'failed' in case of failure.\n    \n    (B) Apart from consistency, proposed change fixes issue (similar to [1])\n    which might occur on live-migration failure as follows:\n    If live-migration fails (which sets migration status to 'failed') after\n    copying instance files from source to dest node and then user request for\n    instance deletion. In that case, delete api will only remove instance\n    files from instance.host and not from other host (which could be either\n    source or dest node but not instance.host). Since instance is already\n    deleted, instance files will remain on other host (not instance.host).\n    \n    Set migration status to 'error' on live-migration failure, so that\n    periodic task _cleanup_incomplete_migrations [2] will remove orphaned\n    instance files from compute nodes after instance deletion in above case.\n    \n    [1] https://bugs.launchpad.net/nova/+bug/1392527\n    [2] https://review.openstack.org/#/c/219299/\n    \n    DocImpact: On live-migration failure, set migration status to 'error'\n    instead of 'failed'.\n    \n    Change-Id: I7a0c5a32349b0d3604802d22e83a3c2dab4b1370\n    Closes-Bug: 1470420\n", 
+            "date_created": "2016-06-03 15:49:33.384133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b2 development milestone.", 
+            "date_created": "2016-07-14 13:02:39.146366+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/353851", 
+            "date_created": "2016-08-11 06:26:31.831337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/353851\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8825efa3b263f1334aa78c786b01c9dfdd3ad726\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 8825efa3b263f1334aa78c786b01c9dfdd3ad726\nAuthor: Rajesh Tailor <email address hidden>\nDate:   Thu Jul 2 03:22:01 2015 -0700\n\n    Set migration status to 'error' on live-migration failure\n    \n    (A) In resize, confirm-resize and revert-resize operation, migration status\n    is marked as 'error' in case of failure for respective operation.\n    \n    Migration object support is added in live-migration operation, which mark\n    migration status to 'failed' if live-migration operation fails in-between.\n    \n    To make live-migration consistent with resize, confirm-resize and revert-\n    resize operation, it needs to mark migration status to 'error' instead of\n    'failed' in case of failure.\n    \n    (B) Apart from consistency, proposed change fixes issue (similar to [1])\n    which might occur on live-migration failure as follows:\n    If live-migration fails (which sets migration status to 'failed') after\n    copying instance files from source to dest node and then user request for\n    instance deletion. In that case, delete api will only remove instance\n    files from instance.host and not from other host (which could be either\n    source or dest node but not instance.host). Since instance is already\n    deleted, instance files will remain on other host (not instance.host).\n    \n    Set migration status to 'error' on live-migration failure, so that\n    periodic task _cleanup_incomplete_migrations [2] will remove orphaned\n    instance files from compute nodes after instance deletion in above case.\n    \n    [1] https://bugs.launchpad.net/nova/+bug/1392527\n    [2] https://review.openstack.org/#/c/219299/\n    \n    DocImpact: On live-migration failure, set migration status to 'error'\n    instead of 'failed'.\n    \n    Change-Id: I7a0c5a32349b0d3604802d22e83a3c2dab4b1370\n    Closes-Bug: 1470420\n    (cherry picked from commit d61e15818c1d108275b3286a6665fa3e6540e7e7)\n", 
+            "date_created": "2016-09-30 02:14:18.653837+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-10-10 13:20:21.857481+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-11-10 02:06:29.223679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/247519\nReason: This patch has been sitting unchanged for more than 12 weeks. I am therefore going to abandon it to keep the nova review queue sane. Please feel free to restore the change if you're still working on it.", 
+            "date_created": "2016-12-21 23:15:15.093206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-06-03 15:49:30.739023+00:00"
+}

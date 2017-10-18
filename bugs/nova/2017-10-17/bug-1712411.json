@@ -1,0 +1,107 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-09-25 14:28:09.066207+00:00", 
+    "description": "This could also be true for cold migrate/resize/unshelve, but I'm specifically looking at live migration here.\n\nAs of this change in Pike:\n\nhttps://review.openstack.org/#/c/491012/\n\nOnce all computes are upgraded, the resource tracker will no longer \"heal\" allocations in Placement for it's local node, meaning creating allocations for the node if the instance is on it, or removing allocations for the instance if the instance is not on the node.\n\nDuring live migration, conductor will call the scheduler to select a host which is also going to claim resources against the dest node:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/conductor/tasks/live_migrate.py#L181\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/scheduler/filter_scheduler.py#L287\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/scheduler/client/report.py#L147\n\nThe problem during live migration is once the scheduler picks a host, conductor performs some additional checks:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/conductor/tasks/live_migrate.py#L194\n\nWhich could fail, and then conductor will retry the scheduler to get another host, until one is found and passes the pre-migration checks, or the number of retries are exhausted.\n\nThe problem is the allocation created in Placement for the destination node, which failed some later pre-migration check, is never cleaned up if the update_available_resource periodic task in the compute manager doesn't clean it up (again, once all computes are upgraded to Pike). This leaves the destination node having resources claimed against it which aren't really on the node.\n\nWe could rollback the allocation in conductor on a failure, or we could put some other kind of periodic cleanup task in the compute service which looks for failed migrations where the destination node in the migration record is for that node, and removes any failed allocations for that node and the given instance.", 
+    "tags": [
+        "in-stable-pike", 
+        "live-migration", 
+        "placement"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1712411", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1712411, 
+    "index": 2129, 
+    "openned": "2017-08-22 19:16:30.267617+00:00", 
+    "created": "2017-08-22 19:16:30.267617+00:00", 
+    "title": "Allocations may not be removed from dest node during failed migrations", 
+    "comments": [
+        {
+            "content": "This could also be true for cold migrate/resize/unshelve, but I'm specifically looking at live migration here.\n\nAs of this change in Pike:\n\nhttps://review.openstack.org/#/c/491012/\n\nOnce all computes are upgraded, the resource tracker will no longer \"heal\" allocations in Placement for it's local node, meaning creating allocations for the node if the instance is on it, or removing allocations for the instance if the instance is not on the node.\n\nDuring live migration, conductor will call the scheduler to select a host which is also going to claim resources against the dest node:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/conductor/tasks/live_migrate.py#L181\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/scheduler/filter_scheduler.py#L287\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/scheduler/client/report.py#L147\n\nThe problem during live migration is once the scheduler picks a host, conductor performs some additional checks:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc1/nova/conductor/tasks/live_migrate.py#L194\n\nWhich could fail, and then conductor will retry the scheduler to get another host, until one is found and passes the pre-migration checks, or the number of retries are exhausted.\n\nThe problem is the allocation created in Placement for the destination node, which failed some later pre-migration check, is never cleaned up if the update_available_resource periodic task in the compute manager doesn't clean it up (again, once all computes are upgraded to Pike). This leaves the destination node having resources claimed against it which aren't really on the node.\n\nWe could rollback the allocation in conductor on a failure, or we could put some other kind of periodic cleanup task in the compute service which looks for failed migrations where the destination node in the migration record is for that node, and removes any failed allocations for that node and the given instance.", 
+            "date_created": "2017-08-22 19:16:30.267617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Semi-related, but probably a separate bug, is that there is the ability to cancel an in-progress live migration and that also does not remove the allocation on the destination node for the instance.", 
+            "date_created": "2017-08-22 19:44:22.035780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Another semi-related bug Alex Xu pointed out, is that we don't cleanup allocations for the current host when doing a reschedule. The scheduler will claim allocations against the next host, but won't remove them for the current host.", 
+            "date_created": "2017-08-24 03:27:27.063923+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "@Matt, yea, I filed a bug for that https://bugs.launchpad.net/nova/+bug/1712718", 
+            "date_created": "2017-08-24 06:16:19.042004+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhj"
+        }, 
+        {
+            "content": "After discussing this bug in the nova-scheduler meeting today, we agreed to just fix the problem in the conductor live migration task at the point of failure, rather than work on some periodic cleanup task.", 
+            "date_created": "2017-08-28 15:05:14.516627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/498627", 
+            "date_created": "2017-08-29 00:09:27.509438+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/498861", 
+            "date_created": "2017-08-29 16:31:16.946196+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Following up on some earlier comments, this is already handled for cold migration / resize via this change: https://review.openstack.org/#/c/497606/", 
+            "date_created": "2017-08-29 17:02:06.648127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Looks like evacuate has some gaps still though, which should go into a new bug:\n\n1. If the user specifies a host with evacuate, conductor bypasses the scheduler and we don't create allocations on the destination host:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/conductor/manager.py#L749\n\nThis could eventually lead to the claim failing on the destination compute:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L2795\n\n2. If the user does not specify a host with evacuate, and the claim (or rebuild) fails on the destination node, we don't cleanup the allocation on the destination node even if the instance isn't spawned on it:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L2795\n\n^ is pretty obvious that we should cleanup because the claim for resources failed.\n\nThis generic exception handling is harder to know if we should cleanup though since we'd need to know if the guest was spawned on it:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L2812\n\nBut since we don't set the instance.host/node to the current host/node it won't be reported there anyway:\n\nhttps://github.com/openstack/nova/blob/16.0.0.0rc2/nova/compute/manager.py#L2822-L2824\n\nI've reported this all as bug 1713786.", 
+            "date_created": "2017-08-29 17:32:22.469033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Bug 1713796 is reported for some things missing in unshelve instance scenarios.", 
+            "date_created": "2017-08-29 18:48:47.369898+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/498627\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0b05655ef8b62bcb21345e778baeed3114c11571\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0b05655ef8b62bcb21345e778baeed3114c11571\nAuthor: Matt Riedemann <email address hidden>\nDate:   Mon Aug 28 20:07:30 2017 -0400\n\n    Add functional recreate test for live migration pre-check fails\n    \n    This adds a functional test to recreate bug 1712411 where\n    the allocations created against the destination node are not\n    cleaned up by conductor when a MigrationPreCheckError happens\n    and a rechedule to another host happens (or max retries are\n    exceeded which is the case here with only two computes).\n    \n    Change-Id: Ieee45521c7e362b7dd053b20d3c39dea330ca080\n    Relatd-Bug: #1712411\n", 
+            "date_created": "2017-09-04 17:19:15.693151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/pike\nReview: https://review.openstack.org/500907", 
+            "date_created": "2017-09-05 16:03:28.289434+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/pike\nReview: https://review.openstack.org/500908", 
+            "date_created": "2017-09-05 16:03:43.907844+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/498861\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=94b904abbad1c9655b6dec1a2e58d73bc913ed47\nSubmitter: Jenkins\nBranch:    master\n\ncommit 94b904abbad1c9655b6dec1a2e58d73bc913ed47\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Aug 29 12:28:43 2017 -0400\n\n    Cleanup allocations on invalid dest node during live migration\n    \n    Starting in Pike, the scheduler creates an allocation on a\n    chosen destination node during live migration. This happens\n    before the destination node pre-checks occur, which could\n    fail and trigger a retry to the scheduler. The allocations\n    created in Placement against the failed destination node\n    were not being cleaned up though.\n    \n    This change adds some cleanup code to the live migration task\n    in conductor to clean the allocations for the failed destination\n    node before retrying.\n    \n    The functional recreate test for the bug is updated to show\n    that the bug is fixed now.\n    \n    Also updates the docstring in the SchedulerReportClient\n    remove_provider_from_instance_allocation method so that we\n    no longer have to enumerate all of the places that call it.\n    \n    Change-Id: I41e5e1fa9938b5e04f7e20f78ccd77eca658885f\n    Closes-Bug: #1712411\n", 
+            "date_created": "2017-09-06 01:06:54.414924+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/500907\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=fd59e9adc62bec4502e764ff380a318d27a58b57\nSubmitter: Jenkins\nBranch:    stable/pike\n\ncommit fd59e9adc62bec4502e764ff380a318d27a58b57\nAuthor: Matt Riedemann <email address hidden>\nDate:   Mon Aug 28 20:07:30 2017 -0400\n\n    Add functional recreate test for live migration pre-check fails\n    \n    This adds a functional test to recreate bug 1712411 where\n    the allocations created against the destination node are not\n    cleaned up by conductor when a MigrationPreCheckError happens\n    and a rechedule to another host happens (or max retries are\n    exceeded which is the case here with only two computes).\n    \n    Change-Id: Ieee45521c7e362b7dd053b20d3c39dea330ca080\n    Relatd-Bug: #1712411\n    (cherry picked from commit 0b05655ef8b62bcb21345e778baeed3114c11571)\n", 
+            "date_created": "2017-09-15 22:14:57.514660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/500908\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a1462d2608bd0c3ee9cd8686b145bb1d84ffab3b\nSubmitter: Jenkins\nBranch:    stable/pike\n\ncommit a1462d2608bd0c3ee9cd8686b145bb1d84ffab3b\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Aug 29 12:28:43 2017 -0400\n\n    Cleanup allocations on invalid dest node during live migration\n    \n    Starting in Pike, the scheduler creates an allocation on a\n    chosen destination node during live migration. This happens\n    before the destination node pre-checks occur, which could\n    fail and trigger a retry to the scheduler. The allocations\n    created in Placement against the failed destination node\n    were not being cleaned up though.\n    \n    This change adds some cleanup code to the live migration task\n    in conductor to clean the allocations for the failed destination\n    node before retrying.\n    \n    The functional recreate test for the bug is updated to show\n    that the bug is fixed now.\n    \n    Also updates the docstring in the SchedulerReportClient\n    remove_provider_from_instance_allocation method so that we\n    no longer have to enumerate all of the places that call it.\n    \n    Change-Id: I41e5e1fa9938b5e04f7e20f78ccd77eca658885f\n    Closes-Bug: #1712411\n    (cherry picked from commit 94b904abbad1c9655b6dec1a2e58d73bc913ed47)\n", 
+            "date_created": "2017-09-15 22:19:20.858151+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.1 release.", 
+            "date_created": "2017-09-25 14:28:08.002847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-09-06 01:06:52.420151+00:00"
+}

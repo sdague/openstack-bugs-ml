@@ -1,0 +1,105 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2015-08-06 15:17:22.692737+00:00", 
+    "description": "When creating a flavor in the parent cell it isn\u2019t created in the child cells.\nAt the moment flavors need to be created individually in all cells.", 
+    "tags": [
+        "cells"
+    ], 
+    "importance": "High", 
+    "heat": 76, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1211011", 
+    "owner": "None", 
+    "id": 1211011, 
+    "index": 1178, 
+    "openned": "2013-08-11 15:18:46.040580+00:00", 
+    "created": "2013-08-11 15:18:46.040580+00:00", 
+    "title": "A flavor created in the parent cell is not propagated to the child", 
+    "comments": [
+        {
+            "content": "When creating a flavor in the parent cell it isn\u2019t created in the child cells.\nAt the moment flavors need to be created individually in all cells.", 
+            "date_created": "2013-08-11 15:18:46.040580+00:00", 
+            "author": "https://api.launchpad.net/1.0/~moreira-belmiro-email-lists"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/43119", 
+            "date_created": "2013-08-21 12:57:31.934640+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Liyingjum are you still working in this bug?\nIf not I will start working on it.", 
+            "date_created": "2014-01-29 11:32:31.073530+00:00", 
+            "author": "https://api.launchpad.net/1.0/~moreira-belmiro-email-lists"
+        }, 
+        {
+            "content": "We can think of two possible approaches to solving this problem. Both these approaches assume that flavors are only created in the top-level cell:\n1. Use a UUID for designating flavors. Rather than rely on auto-incrementing id field in the instance_type table, we can generate a uuid for the table. On creation/deletion/modification of the flavor, the parent informs the child cells which perform the same procedure on the flavor with the given uuid. Syncing parent and child cell DBs is easier with a UUID than an auto-incrementing field.\n2. Have the flavor information live only in the top-level cells and have the children \"ask\" the parents for such information when they need it (booting a new instance/resizing). This will involve having a FlavorAPI (Like the AggregateAPI/HostAPI) for flavor related tasks. For the API cell, the API talks to the local DB but for compute child cells, the API sends a message to parent cell requesting the flavor information. The child cells will then need to have their own API (ChildCellsAPI which will be a subclass of the compute.API that they currently use).\nThoughts on these? or any alternatives? ", 
+            "date_created": "2014-09-17 14:14:42.100730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dheeraj-gupta4"
+        }, 
+        {
+            "content": "Another possible solution is to pass the instance_type objects all the way down to the driver while creating an instance. In the existing code the instance_type pbject is read from the DB when a new boot request is received and passed on to till the nova.compute.api.API.create which calls _provision_instances which creates the instance DB object. After this step, only the \"instance\" object is passed and instance_type objects is either extracted from instance object or read fresh from the DB as needed. The \"instance_type\" object can be propagated all the way till the driver.spawn which will eliminate any local DB reads and need for parent-child communication.", 
+            "date_created": "2014-09-18 09:13:48.293650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dheeraj-gupta4"
+        }, 
+        {
+            "content": "We've been moving in the direction such that nova-compute doesn't need access to the flavors entries in the DB. We've been storing some data along with Instances in system_metadata table. I want to keep us moving in that direction. What that means is that only nova-api really needs access to the flavors. The data for nova-compute to be able to do its job is all passed via messaging or stored with the instance.\n\nIf we continue that route, then we should also be able to eliminate the need for child cells to know about the flavors in the DB. Ie, all data needed is passed to child cells in messages and/or stored with the Instance. That means you would not need to configure flavors at all in the child cell (the tables can be empty) and you wouldn't need to worry about synchronizing flavors, either.\n", 
+            "date_created": "2014-09-19 17:24:26.389307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Can the same approach be applied for other areas such as server groups (https://bugs.launchpad.net/nova/+bug/1369518) ? We see several cases of this scenario and since CERN is running cells at scale, it is of great interest to resolve these aspects in a consistent way across Nova.\n", 
+            "date_created": "2014-09-19 18:22:05.601398+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tim-bell"
+        }, 
+        {
+            "content": "The other aspect is whether the configuration of multiple parent cells is a valid one, i.e. is it a tree or a mesh ? If it is a mesh, all the parents need to share the same flavor data. If it is a tree, we can rely on the parents to pass the data.\n", 
+            "date_created": "2014-09-19 18:23:33.495719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tim-bell"
+        }, 
+        {
+            "content": "At the moment the driver extracts flavor information and different drivers do it differently.\nThe findings are documented at http://lists.openstack.org/pipermail/openstack-dev/2014-September/046512.html\n\nSince nova-api performs the DB lookup and passes that info to compute API, I think we can pass that flavor info to the driver (whether in a cell or non-cell setup) to enforce uniformity. Since the FlavorNotFound error in cells is generated by the driver, it will also handle the bug.\nThe flavor info stored in instance and instance_system_metadata can also be used but I think extra_specs is not a part of that atm.\nThoughts?", 
+            "date_created": "2014-09-19 19:16:48.636993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dheeraj-gupta4"
+        }, 
+        {
+            "content": "Yeah, so this is quite an issue here.\n\nextra specs are possibly missing in the instance_system_metadata.\n\nMaking the flavor API calls push the data down to all the cells makes quite a bit of sense.\n\nWe just need to decide what the flavor in the API cells means vs what is in the child cell, and if they should be allowed to be different.", 
+            "date_created": "2014-10-03 16:26:34.875553+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/126064", 
+            "date_created": "2014-10-03 20:38:14.606810+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@Tim Bell cells as it's currently worked on is considered to be a tree structure.  I can't say that setting multiple parents wouldn't work if certain data synchronization, i.e. flavors, was in place but there's no intention that it should work.", 
+            "date_created": "2014-10-06 18:05:05.003577+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Thanks, at CERN, we're running in a tree but I had misunderstood that a mesh was possible. We had been interested for disaster recovert scenarios.\n\nAs you say, if there are UUIDs and a clear deleted/active flag, a mesh would be do-able with parent cell to parent cell synchronisation.\n\nLet's solve the parent to child propogation for all the use cases and then we can always come back to parent to parent as time permits.\n", 
+            "date_created": "2014-10-06 18:22:09.650453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tim-bell"
+        }, 
+        {
+            "content": "Please please please be careful here!\n\nRemember that cells is not only about homogenous compute scalability, it is also a method of federation, and there is no guarantee any particular child cell has the same capabilities or high-level architecture as any others.\n\nIt's VERY IMPORTANT for existing deployments that things like flavor extra-specs are set or can be overridden in the child compute cells. This is of particular relevance to things like resource quotas which may be set differently based on the hardware architecture in the cell.", 
+            "date_created": "2014-10-27 02:10:54.469512+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blair-bethwaite"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/126064\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2015-01-23 15:26:25.654549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Removing \"In Progress\" status and assignee as change is abandoned.", 
+            "date_created": "2015-02-12 14:50:41.686369+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This will not be addressed in cells v1.  V2 will get around this.", 
+            "date_created": "2015-08-06 15:17:21.896344+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }
+    ], 
+    "closed": "2015-08-06 15:16:53.960148+00:00"
+}

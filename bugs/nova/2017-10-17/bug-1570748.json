@@ -1,0 +1,153 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 17:41:45.899445+00:00", 
+    "description": "Error occured when resize instance after edit flavor with horizon (and also delete flavor used by instance)\n\nReproduce step : \n\n1. create flavor A\n2. boot instance using flavor A\n3. edit flavor with horizon (or delete flavor A)\n    -> the result is same to edit or to delelet flavor because edit flavor means delete/recreate flavor)\n4. resize or migrate instance\n5. Error occured\n\nLog : \nnova-compute.log\n   File \"/opt/openstack/src/nova/nova/conductor/manager.py\", line 422, in _object_dispatch\n     return getattr(target, method)(*args, **kwargs)\n\n   File \"/opt/openstack/src/nova/nova/objects/base.py\", line 163, in wrapper\n     result = fn(cls, context, *args, **kwargs)\n\n   File \"/opt/openstack/src/nova/nova/objects/flavor.py\", line 132, in get_by_id\n     db_flavor = db.flavor_get(context, id)\n\n   File \"/opt/openstack/src/nova/nova/db/api.py\", line 1479, in flavor_get\n     return IMPL.flavor_get(context, id)\n\n   File \"/opt/openstack/src/nova/nova/db/sqlalchemy/api.py\", line 233, in wrapper\n     return f(*args, **kwargs)\n\n   File \"/opt/openstack/src/nova/nova/db/sqlalchemy/api.py\", line 4732, in flavor_get\n     raise exception.FlavorNotFound(flavor_id=id)\n\n FlavorNotFound: Flavor 7 could not be found.\n\n\nThis Error is occured because of below code:\n/opt/openstack/src/nova/nova/compute/manager.py\n\n    def resize_instance(self, context, instance, image,\n                        reservations, migration, instance_type,\n                        clean_shutdown=True):\n....\n            if (not instance_type or\n                not isinstance(instance_type, objects.Flavor)):\n                instance_type = objects.Flavor.get_by_id(\n                    context, migration['new_instance_type_id'])\n....\n\nI think that deleted flavor should be taken when resize instance. \nI tested this in stable/kilo, but I think stable/liberty and stable/mitaka has same bug because source code is not changed.\n\nthanks.", 
+    "tags": [
+        "migrate", 
+        "mitaka-backport-potential", 
+        "nova", 
+        "resize"
+    ], 
+    "importance": "High", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1570748", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1570748, 
+    "index": 1912, 
+    "openned": "2016-04-15 08:30:56.149753+00:00", 
+    "created": "2016-04-15 08:30:56.149753+00:00", 
+    "title": "Bug: resize instance after edit flavor with horizon", 
+    "comments": [
+        {
+            "content": "Error occured when resize instance after edit flavor with horizon (and also delete flavor used by instance)\n\nReproduce step : \n\n1. create flavor A\n2. boot instance using flavor A\n3. edit flavor with horizon (or delete flavor A)\n    -> the result is same to edit or to delelet flavor because edit flavor means delete/recreate flavor)\n4. resize or migrate instance\n5. Error occured\n\nLog : \nnova-compute.log\n   File \"/opt/openstack/src/nova/nova/conductor/manager.py\", line 422, in _object_dispatch\n     return getattr(target, method)(*args, **kwargs)\n\n   File \"/opt/openstack/src/nova/nova/objects/base.py\", line 163, in wrapper\n     result = fn(cls, context, *args, **kwargs)\n\n   File \"/opt/openstack/src/nova/nova/objects/flavor.py\", line 132, in get_by_id\n     db_flavor = db.flavor_get(context, id)\n\n   File \"/opt/openstack/src/nova/nova/db/api.py\", line 1479, in flavor_get\n     return IMPL.flavor_get(context, id)\n\n   File \"/opt/openstack/src/nova/nova/db/sqlalchemy/api.py\", line 233, in wrapper\n     return f(*args, **kwargs)\n\n   File \"/opt/openstack/src/nova/nova/db/sqlalchemy/api.py\", line 4732, in flavor_get\n     raise exception.FlavorNotFound(flavor_id=id)\n\n FlavorNotFound: Flavor 7 could not be found.\n\n\nThis Error is occured because of below code:\n/opt/openstack/src/nova/nova/compute/manager.py\n\n    def resize_instance(self, context, instance, image,\n                        reservations, migration, instance_type,\n                        clean_shutdown=True):\n....\n            if (not instance_type or\n                not isinstance(instance_type, objects.Flavor)):\n                instance_type = objects.Flavor.get_by_id(\n                    context, migration['new_instance_type_id'])\n....\n\nI think that deleted flavor should be taken when resize instance. \nI tested this in stable/kilo, but I think stable/liberty and stable/mitaka has same bug because source code is not changed.\n\nthanks.", 
+            "date_created": "2016-04-15 08:30:56.149753+00:00", 
+            "author": "https://api.launchpad.net/1.0/~raymon-ha"
+        }, 
+        {
+            "content": "Its working fine in stable/mitaka . I am able to resize the instance after deleting the flavor with which the instance is launched. ", 
+            "date_created": "2016-04-15 10:00:21.713820+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gundarapu-reddy"
+        }, 
+        {
+            "content": "I can reproduce this bug in master.", 
+            "date_created": "2016-04-15 19:50:41.771811+00:00", 
+            "author": "https://api.launchpad.net/1.0/~qijing-lee"
+        }, 
+        {
+            "content": "If this works in mitaka but not master, I'd want to know: Have you run online migrations to get the flavors moved over to the api database yet?\n\nAlso, I need to see more of the logs around the failure please.", 
+            "date_created": "2016-04-18 18:17:58.319603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "I was able to confirm this with a newish (created last week) newton devstack.  The failure wasn't on the resize, it was on the revert.  Steps:\n\n1. create a duplicate of flavor 42, call it flavor 43 m1.nano2\n2. boot instance using flavor 42\n3. delete flavor 42\n4. resize instance to flavor 43\n5. revert the resize, at this point it fails:\n\nERROR (BadRequest): Flavor used by the instance could not be found. (HTTP 400) (Request-ID: req-98916fd8-846e-4564-ac45-a09933883bb0)\n\nThis is my version of nova:\n\nstack@swapvol:/opt/stack/nova$ git log -1\ncommit 6ae2b4534a8a0d5394317533a41ad1ee3fa13964\nMerge: 177a2c4 9e305c2\nAuthor: Jenkins <email address hidden>\nDate:   Thu Apr 14 14:17:51 2016 +0000\n\n    Merge \"cleanup some issues in parameters.yaml\"\nstack@swapvol:/opt/stack/nova$\n\n\nThis is all I see in the n-api logs:\n\n2016-04-18 18:24:59.406 DEBUG nova.compute.api [req-98916fd8-846e-4564-ac45-a09933883bb0 admin admin] [instance: 630f2bbe-b104-4497-b1a8-936b75fe9356] Fetching instance by UUID from (pid=27352) get /opt/stack/nova/nova/compute/api.py:2041\n2016-04-18 18:24:59.497 INFO nova.osapi_compute.wsgi.server [req-98916fd8-846e-4564-ac45-a09933883bb0 admin admin] 9.5.125.128 \"POST /v2.1/servers/630f2bbe-b104-4497-b1a8-936b75fe9356/action HTTP/1.1\" status: 400 len: 383 time: 0.2037680\n", 
+            "date_created": "2016-04-18 18:29:51.201460+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It looks like the problem is here:\n\nhttps://github.com/openstack/nova/blob/9989a75384aeb6c6b398e7caf8dee140c6bf0423/nova/compute/utils.py#L462\n\nWhen doing a revert_resize from the compute API, it calls nova.compute.utils.reverse_upsize_quota_delta which tries to lookup the old flavor using the flavor ID from the migration record rather than the instance, and since the flavor was deleted we get a 404.", 
+            "date_created": "2016-04-18 18:36:15.031473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The fix is that reverse_upsize_quota_delta should be using instance.old_flavor rather than relying on the old_instance_type in the migration object.", 
+            "date_created": "2016-04-18 18:40:52.353062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "We should also have a tempest test for this scenario since we missed it. We have tempest testing for reverting a resize, but not one where the flavor was deleted in between the resize and the revert.", 
+            "date_created": "2016-04-18 18:41:29.466435+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/307438", 
+            "date_created": "2016-04-18 19:41:52.041989+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/307518", 
+            "date_created": "2016-04-18 23:37:07.892888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/307438\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a46e847aad4ee7edbb63eb08f97f6635e6c9ccb0\nSubmitter: Jenkins\nBranch:    master\n\ncommit a46e847aad4ee7edbb63eb08f97f6635e6c9ccb0\nAuthor: Dan Smith <email address hidden>\nDate:   Mon Apr 18 12:40:54 2016 -0700\n\n    Fix reverse_upsize_quota_delta attempt to look up deleted flavors\n    \n    When we did the \"great flavor migration of 2015\" we missed a quota method\n    which still looks up flavors by id from the migration. Now that flavors\n    are moved to the api database and actually removed when deleted, this no\n    longer works. The problem manifests itself as a failure when trying to\n    revert a migration or resize operation when the original flavor has been\n    deleted.\n    \n    Change-Id: I5f95021410a309ac07fe9f474cbcd0214d1af208\n    Closes-Bug: #1570748\n", 
+            "date_created": "2016-04-20 17:36:21.350834+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/309040", 
+            "date_created": "2016-04-21 14:39:47.962395+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/309110", 
+            "date_created": "2016-04-21 17:06:03.888821+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/309168", 
+            "date_created": "2016-04-21 20:03:33.438268+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/309168\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7e3d3abf50732a8dd9350a1ab65376780e7ee0bd\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 7e3d3abf50732a8dd9350a1ab65376780e7ee0bd\nAuthor: Dan Smith <email address hidden>\nDate:   Mon Apr 18 12:40:54 2016 -0700\n\n    Fix reverse_upsize_quota_delta attempt to look up deleted flavors\n    \n    When we did the \"great flavor migration of 2015\" we missed a quota method\n    which still looks up flavors by id from the migration. Now that flavors\n    are moved to the api database and actually removed when deleted, this no\n    longer works. The problem manifests itself as a failure when trying to\n    revert a migration or resize operation when the original flavor has been\n    deleted.\n    \n    Conflicts:\n            nova/compute/api.py\n            nova/compute/utils.py\n            nova/tests/unit/compute/test_compute_api.py\n            nova/tests/unit/compute/test_compute_utils.py\n    \n    NOTE(mriedem): The conflicts are due to _reverse_upsize_quota_delta\n    being moved from nova.compute.api to nova.compute.utils in liberty\n    in commit 60411ddf1bada3629f0588de8726c63b5ab00357. So the\n    nova.compute.utils changes are omitted here. Also, there was no direct\n    testing of _reverse_upsize_quota_delta until that change in liberty\n    so as part of this cherry pick we pull back the test_reverse_quota_delta\n    test. It's modified slightly since it's in a NoDBTestCase.\n    \n    Change-Id: I5f95021410a309ac07fe9f474cbcd0214d1af208\n    Closes-Bug: #1570748\n    (cherry picked from commit a46e847aad4ee7edbb63eb08f97f6635e6c9ccb0)\n    (cherry picked from commit 30aad1e796778a94da7719b1d4586bd3cdecb821)\n    (cherry picked from commit 5374568fadebf639886febe6073baf352c2a9d83)\n", 
+            "date_created": "2016-04-22 16:21:24.998107+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/309040\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=30aad1e796778a94da7719b1d4586bd3cdecb821\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 30aad1e796778a94da7719b1d4586bd3cdecb821\nAuthor: Dan Smith <email address hidden>\nDate:   Mon Apr 18 12:40:54 2016 -0700\n\n    Fix reverse_upsize_quota_delta attempt to look up deleted flavors\n    \n    When we did the \"great flavor migration of 2015\" we missed a quota method\n    which still looks up flavors by id from the migration. Now that flavors\n    are moved to the api database and actually removed when deleted, this no\n    longer works. The problem manifests itself as a failure when trying to\n    revert a migration or resize operation when the original flavor has been\n    deleted.\n    \n    Change-Id: I5f95021410a309ac07fe9f474cbcd0214d1af208\n    Closes-Bug: #1570748\n    (cherry picked from commit a46e847aad4ee7edbb63eb08f97f6635e6c9ccb0)\n", 
+            "date_created": "2016-04-22 16:40:53.402283+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/309110\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5374568fadebf639886febe6073baf352c2a9d83\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 5374568fadebf639886febe6073baf352c2a9d83\nAuthor: Dan Smith <email address hidden>\nDate:   Mon Apr 18 12:40:54 2016 -0700\n\n    Fix reverse_upsize_quota_delta attempt to look up deleted flavors\n    \n    When we did the \"great flavor migration of 2015\" we missed a quota method\n    which still looks up flavors by id from the migration. Now that flavors\n    are moved to the api database and actually removed when deleted, this no\n    longer works. The problem manifests itself as a failure when trying to\n    revert a migration or resize operation when the original flavor has been\n    deleted.\n    \n    Conflicts:\n            nova/tests/unit/compute/test_compute_utils.py\n    \n    NOTE(mriedem): The conflict is due to uuidsentinel not being imported\n    in liberty (and is not needed here) and test_migration still being\n    used in liberty (but not mitaka).\n    \n    Change-Id: I5f95021410a309ac07fe9f474cbcd0214d1af208\n    Closes-Bug: #1570748\n    (cherry picked from commit a46e847aad4ee7edbb63eb08f97f6635e6c9ccb0)\n    (cherry picked from commit 30aad1e796778a94da7719b1d4586bd3cdecb821)\n", 
+            "date_created": "2016-04-22 19:40:38.758993+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/307518\nCommitted: https://git.openstack.org/cgit/openstack/tempest/commit/?id=98c32b7860f03bedbe2d4d8e35ec53cfa0c0c5cb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 98c32b7860f03bedbe2d4d8e35ec53cfa0c0c5cb\nAuthor: Matt Riedemann <email address hidden>\nDate:   Mon Apr 18 19:34:47 2016 -0400\n\n    Add a test for reverting a resize with a deleted flavor\n    \n    A user should be able to boot a server, resize it and\n    then reject the resize even though the original flavor\n    used to boot the instance is deleted. This is because\n    the old flavor information is stored with the instance\n    in the nova database, so the original flavor doesn't\n    actually need to exist anymore.\n    \n    Depends-On: I5f95021410a309ac07fe9f474cbcd0214d1af208\n    \n    Change-Id: I356411f96a601f1443d75ac90e42567bef1f8228\n    Closes-Bug: #1570748\n", 
+            "date_created": "2016-04-24 02:40:02.684880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/311145\nCommitted: https://git.openstack.org/cgit/openstack/nova-powervm/commit/?id=e72a505860b2f7ce2dd4a492f65d426f8b091e1f\nSubmitter: Jenkins\nBranch:    master\n\ncommit e72a505860b2f7ce2dd4a492f65d426f8b091e1f\nAuthor: Drew Thorstensen <email address hidden>\nDate:   Fri Apr 29 10:12:33 2016 -0500\n\n    Fix revert migration if flavor deleted\n    \n    After an instance is created, the flavor could be deleted.  But\n    operations still need to be able to occur against the VM when that\n    occurs.  A new test in Tempest showed that we had been using the\n    incorrect (and potentially deleted) flavor when a resize/migration was\n    reverting.\n    \n    This change updates the code to use the flavor that is stored on the\n    instance itself.\n    \n    Change-Id: I16254d8eb74a724e3e0a538f47259e9627c4233a\n    Closes-Bug: 1570748\n", 
+            "date_created": "2016-04-30 04:43:23.685633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/311521", 
+            "date_created": "2016-04-30 13:54:21.078917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/311521\nCommitted: https://git.openstack.org/cgit/openstack/nova-powervm/commit/?id=f98749a2d3154452d8edb8c0e95b54f5cde579d1\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit f98749a2d3154452d8edb8c0e95b54f5cde579d1\nAuthor: Drew Thorstensen <email address hidden>\nDate:   Fri Apr 29 10:12:33 2016 -0500\n\n    Fix revert migration if flavor deleted\n    \n    After an instance is created, the flavor could be deleted.  But\n    operations still need to be able to occur against the VM when that\n    occurs.  A new test in Tempest showed that we had been using the\n    incorrect (and potentially deleted) flavor when a resize/migration was\n    reverting.\n    \n    This change updates the code to use the flavor that is stored on the\n    instance itself.\n    \n    Change-Id: I16254d8eb74a724e3e0a538f47259e9627c4233a\n    Closes-Bug: 1570748\n    (cherry picked from commit e72a505860b2f7ce2dd4a492f65d426f8b091e1f)\n    Conflicts:\n    \tnova_powervm/tests/virt/powervm/test_driver.py\n", 
+            "date_created": "2016-05-02 15:47:11.525109+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 2015.1.4 release.", 
+            "date_created": "2016-05-10 13:37:37.650316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:33:26.836785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.4 release.", 
+            "date_created": "2016-06-08 21:35:32.466922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.0 release.", 
+            "date_created": "2016-06-14 15:42:04.452759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 2015.1.4 release.", 
+            "date_created": "2016-11-10 00:55:42.555566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-04-20 17:36:17.767678+00:00"
+}

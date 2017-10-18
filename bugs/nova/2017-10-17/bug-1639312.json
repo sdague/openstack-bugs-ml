@@ -1,0 +1,40 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-15 17:35:51.340318+00:00", 
+    "description": "Due to all changes in nova live migration code path there is condition that is always evaluated to False:\n\nhttps://github.com/openstack/nova/blob/5a81b00e6b2adba2a380b90e402ff391d64ea6a5/nova/virt/libvirt/driver.py#L5888\n\nEven when using the lowest RPC microversion (4.0) migrata_data will always be populated with graphics console addresses. This data will not be there only when doing live migration, e.g., from Kilo to Newton, which is not supported anyway. Even though both options, graphics_listen_addr_vnc and graphics_listen_addr_spice are nullable:\n\nhttps://github.com/openstack/nova/blob/4eb89c206e68a7172ebad897ad24769036c7bdd6/nova/objects/migrate_data.py#L125\n\nthere is no way to pass None through nova.conf, instead it is always passed as string (e.g. \"None\"). Therefore values of both options will be validated whether they are valid IP addresses. Also by default vncserver_listen and server_listen are not set to None, but to 127.0.0.1 \n\nhttps://github.com/openstack/nova/blob/cd3b57d0c0cb867ef48a6e9721d9b3e28cb08e84/nova/conf/vnc.py#L58\nhttps://github.com/openstack/nova/blob/cd3b57d0c0cb867ef48a6e9721d9b3e28cb08e84/nova/conf/spice.py#L65\n\nBecause of all this stuff nova never reaches code that should validate graphics console addresses and we might allow live migration that breaks graphics console on instance.", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1639312", 
+    "owner": "https://api.launchpad.net/1.0/~pawel-koniszewski", 
+    "id": 1639312, 
+    "index": 7782, 
+    "openned": "2016-11-04 17:31:37.185106+00:00", 
+    "created": "2016-11-04 17:31:37.185106+00:00", 
+    "title": "Nova does not validate graphics console addresses", 
+    "comments": [
+        {
+            "content": "Due to all changes in nova live migration code path there is condition that is always evaluated to False:\n\nhttps://github.com/openstack/nova/blob/5a81b00e6b2adba2a380b90e402ff391d64ea6a5/nova/virt/libvirt/driver.py#L5888\n\nEven when using the lowest RPC microversion (4.0) migrata_data will always be populated with graphics console addresses. This data will not be there only when doing live migration, e.g., from Kilo to Newton, which is not supported anyway. Even though both options, graphics_listen_addr_vnc and graphics_listen_addr_spice are nullable:\n\nhttps://github.com/openstack/nova/blob/4eb89c206e68a7172ebad897ad24769036c7bdd6/nova/objects/migrate_data.py#L125\n\nthere is no way to pass None through nova.conf, instead it is always passed as string (e.g. \"None\"). Therefore values of both options will be validated whether they are valid IP addresses. Also by default vncserver_listen and server_listen are not set to None, but to 127.0.0.1 \n\nhttps://github.com/openstack/nova/blob/cd3b57d0c0cb867ef48a6e9721d9b3e28cb08e84/nova/conf/vnc.py#L58\nhttps://github.com/openstack/nova/blob/cd3b57d0c0cb867ef48a6e9721d9b3e28cb08e84/nova/conf/spice.py#L65\n\nBecause of all this stuff nova never reaches code that should validate graphics console addresses and we might allow live migration that breaks graphics console on instance.", 
+            "date_created": "2016-11-04 17:31:37.185106+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "Patch is up for review - https://review.openstack.org/#/c/373264", 
+            "date_created": "2016-11-10 10:07:51.084344+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/373264\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f84ae10c66aeda223581b26c134b5c44c15d9e6e\nSubmitter: Jenkins\nBranch:    master\n\ncommit f84ae10c66aeda223581b26c134b5c44c15d9e6e\nAuthor: Pawel Koniszewski <email address hidden>\nDate:   Wed Nov 16 11:05:10 2016 +0100\n\n    Refactor console checks in live migration process\n    \n    _check_graphics_addresses_can_live_migrate was added to check\n    whether we can live migrate a VM with VNC/SPICE enabled when:\n    \n    * libvirt did not allow to change and migrate guest XML with\n      updated graphics listen addresses. Right now we always can update\n      VNC/SPICE listen address.\n    * Destination node was running old-code that does not set the fields.\n      Currently when live migrating between two versions of OpenStack\n      (N and N-1) the fields are always set.\n    \n    Therefore this check is redundant and can be removed.\n    \n    Going deeper in this code - graphics_listen_addr_vnc and\n    graphics_listen_addr_spice in libvirt migrate data object are of\n    type IPAddressField. It means that both need to contain valid IP address.\n    By default in nova.conf it is 127.0.0.1. It can't be set to None because\n    IP address is taken from nova.conf and even if set to None it will be\n    passed as a string 'None' and will fail IPAddressField validation.\n    \n    graphics_listen_addrs in migration.py currently always returns a dict\n    which contains IP addresses of both VNC and spice graphics consoles.\n    \n    This means that:\n    * check 'if listen_addrs' is always True\n    * check 'if not listen_addrs' is always False\n    \n    So we really never passed through 'if not listen_addrs' since\n    migrate_data is objectified as those addresses are always there.\n    \n    However, serial_listen_addr is handled different way. The type of\n    this field in libvirt migrate data object is StringField that might\n    be set to None or empty string through nova.conf. So we still need\n    to validate whether serial console can be migrated so that we will\n    be sure that particular live migration will not break serial console\n    in case when serial listen address is not configured at destination.\n    \n    Change-Id: I73f7bfafa4554bf1c2dfc980289be88154170282\n    Closes-Bug: #1639312\n", 
+            "date_created": "2016-11-21 21:22:12.449008+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b2 development milestone.", 
+            "date_created": "2016-12-15 17:35:49.968660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-11-21 21:22:09.403452+00:00"
+}

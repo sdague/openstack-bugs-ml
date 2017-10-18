@@ -1,0 +1,122 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-03-07 14:18:32.434198+00:00", 
+    "description": "tempest.api.compute.servers.test_server_rescue_negative:ServerRescueNegativeTestJSON.test_rescued_vm_detach_volume\n\nThis test passes however it fails to properly cleanup after itself - the detach completes but without running the necessary iscsiadm commands.\n\nIn nova.virt.libvirt.volume.LibvirtISCSIVolumeDriver.disconnect_volume the list returned by self.connection._get_all_block_devices includes the host_device which means that self._disconnect_from_iscsi_portal is never run.\n\n\nYou can see evidence of this in /etc/iscsi/nodes as well as errors logged in /var/log/syslog\n\nI'm guessing there is a race between the unrescue and the detach within libvirt. In nova.virt.libvirt.driver.LibvirtDriver.detach_volume if I put in a sleep before virt_dom.detachDeviceFlags(xml, flags) the detach appears to work properly however if I sleep after that line it does not appear to have any effect.", 
+    "tags": [
+        "in-stable-liberty", 
+        "libvirt", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 40, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1374508", 
+    "owner": "https://api.launchpad.net/1.0/~rdmcnair", 
+    "id": 1374508, 
+    "index": 4061, 
+    "openned": "2014-09-26 15:35:31.167694+00:00", 
+    "created": "2014-09-26 15:35:31.167694+00:00", 
+    "title": "Mismatch happens between BDM and domain XML If instance does not respond to ACPI hotplug during detach/attach.", 
+    "comments": [
+        {
+            "content": "tempest.api.compute.servers.test_server_rescue_negative:ServerRescueNegativeTestJSON.test_rescued_vm_detach_volume\n\nThis test passes however it fails to properly cleanup after itself - the detach completes but without running the necessary iscsiadm commands.\n\nIn nova.virt.libvirt.volume.LibvirtISCSIVolumeDriver.disconnect_volume the list returned by self.connection._get_all_block_devices includes the host_device which means that self._disconnect_from_iscsi_portal is never run.\n\n\nYou can see evidence of this in /etc/iscsi/nodes as well as errors logged in /var/log/syslog\n\nI'm guessing there is a race between the unrescue and the detach within libvirt. In nova.virt.libvirt.driver.LibvirtDriver.detach_volume if I put in a sleep before virt_dom.detachDeviceFlags(xml, flags) the detach appears to work properly however if I sleep after that line it does not appear to have any effect.", 
+            "date_created": "2014-09-26 15:35:31.167694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~git-harry"
+        }, 
+        {
+            "content": "potential dup of https://bugs.launchpad.net/openstack-ci/+bug/1317298\n\nI have an e-r query out for review here: https://review.openstack.org/#/c/124456/", 
+            "date_created": "2014-09-26 17:15:06.264820+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boden"
+        }, 
+        {
+            "content": "I don't see how this is a duplicate of #1317298 - that bug looks unrelated. This is not an issue with tempest timing out.", 
+            "date_created": "2014-09-26 19:20:50.717186+00:00", 
+            "author": "https://api.launchpad.net/1.0/~git-harry"
+        }, 
+        {
+            "content": "I've removed the duplicate link.", 
+            "date_created": "2014-09-26 19:23:26.570975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~git-harry"
+        }, 
+        {
+            "content": "I added https://bugs.launchpad.net/cinder/+bug/1440201 as a duplicate of this bug.", 
+            "date_created": "2015-04-09 23:58:55.292455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mitsuhiro-tanino"
+        }, 
+        {
+            "content": "Further investigation there are some differences between normal volume detachment and this error case of volume detachment.\n\n(1) libvirtd.log of Normal volume detach\nhttp://paste.openstack.org/show/202077/\n\n(2) libvirtd.log of this error case during volume detach\nhttp://paste.openstack.org/show/202078/\n\nIn the log (1), I can see the following logs which mentions removing the virtio-disk. However, I couldn't see same logs in the log (2).\n--- snip ---\n2015-04-10 14:46:33.098+0000: 787: debug : qemuProcessHandleDeviceDeleted:1349 : Device virtio-disk1 removed from domain 0x7f7da0026b60 instance-0000002e\n2015-04-10 14:46:33.098+0000: 787: debug : qemuDomainRemoveDiskDevice:2444 : Removing disk virtio-disk1 from domain 0x7f7da0026b60 instance-0000002e\n\nAlso I confirmed following two points.\n(3) Login the instance via ssh after reboot to confirm device list of instance.\n(4) Check virsh dumpxml result to confirm the device list of instance.\n\nAs for (3), I couldn't see the device file(/dev/vdb) for the Cinder volume. This means that the device was already detached from the viewpoint of qemu-kvm.\nAs for (4), the Cinder volume configuration still remained in the XML file of the instance.So libvirt kept Cinder volume information even though there was no device in the VM.\n\nVery odd status...", 
+            "date_created": "2015-04-10 15:29:17.438147+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mitsuhiro-tanino"
+        }, 
+        {
+            "content": "Mitsuhiro,\n\nI have now been able to recreate this in devstack.  I think I understand why I was initially having trouble recreating.  On the system where we originally saw this the VM was running RHEL instead of Cirros, so the reboot was taking much longer.  The window to hit the timing issue is much smaller in devstack with Cirros.  Anyway, now that I can recreate I plan to spend some time working on this next week.\n\nThanks for your continued assistance on this as well!\nJay", 
+            "date_created": "2015-04-10 22:14:17.948116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jsbryant"
+        }, 
+        {
+            "content": "This issue ( self._disconnect_from_iscsi_portal is not called ) also happens when the guest kernel is crashed.\n\n\n(1) In the guest, crash the kernel.\n  echo 1 > /proc/sys/kernel/sysrq\n  echo c > /proc/sysrq-trigger\n\n(2) Rnu \"nova volume-detach <server> <volume-id>\"\n\nThis might be because guest doesn't prospectively respond to ACPI hotplug event.\nWhile (re)-booting the guest OS, there also is the window the guest doesn't respond to the event.", 
+            "date_created": "2015-04-13 18:57:12.184946+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tsekiyama"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/175067", 
+            "date_created": "2015-04-17 22:04:06.853357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Able to reproduce this issue by issuing soft reboot in Horizon and immediately detaching a volume using \"nova detach\".  On the Cinder side, the volume gets detached from the instance and is no longer \"in-use\". \n\nHowever, the VM still has the mapping to the device on \"/dev/vdb\" and trying to write to the device results in a \"write error: No space on disk\".  Also, libvirt still has this device mapping in \"libvirt.driver._get_all_block_devices()\".", 
+            "date_created": "2015-09-22 16:51:56.901915+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rdmcnair"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/227851", 
+            "date_created": "2015-09-25 13:36:50.899928+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Mitsuhiro Tanino (<email address hidden>) on branch: master\nReview: https://review.openstack.org/175067\nReason: https://review.openstack.org/227851 covers this problem.", 
+            "date_created": "2015-11-13 21:15:49.493990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/227851\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=3a3fb3cfb2c41ad182545e47649ff12a4f3a743e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3a3fb3cfb2c41ad182545e47649ff12a4f3a743e\nAuthor: Ryan McNair <email address hidden>\nDate:   Thu Sep 24 22:20:23 2015 +0000\n\n    Add retry logic for detaching device using LibVirt\n    \n    Add retry logic for removing a disk device from the LibVirt\n    guest domain XML. This is needed because immediately after a guest\n    reboot, libvirtmod.virDomainDetachDeviceFlags() will silently fail\n    to remove the mapping from the guest domain. The async retry\n    behavior is done in Guest and is generic so it can be re-used by any other\n    detaches which hit this same race condition.\n    \n    Change-Id: I983f80822a5c210929f33e1aa348a0fef91e890b\n    Closes-Bug: #1374508\n", 
+            "date_created": "2015-12-19 00:39:49.274831+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/liberty\nReview: https://review.openstack.org/259685", 
+            "date_created": "2015-12-19 08:03:54.492412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/260127", 
+            "date_created": "2015-12-21 17:40:04.254791+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/kilo\nReview: https://review.openstack.org/260127\nReason: Not appropriate for stable/kilo.", 
+            "date_created": "2016-01-13 15:16:59.435816+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b2 development milestone.", 
+            "date_created": "2016-01-21 13:43:47.360687+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: stable/kilo\nReview: https://review.openstack.org/260127\nReason: This doesn't help on https://review.openstack.org/#/c/218355/ so dropping it again.", 
+            "date_created": "2016-01-27 08:56:07.941990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/259685\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9701921f1e921885d7c65bfde9b3cc384389fe74\nSubmitter: Jenkins\nBranch:    stable/liberty\n\ncommit 9701921f1e921885d7c65bfde9b3cc384389fe74\nAuthor: Ryan McNair <email address hidden>\nDate:   Thu Sep 24 22:20:23 2015 +0000\n\n    Add retry logic for detaching device using LibVirt\n    \n    Add retry logic for removing a disk device from the LibVirt\n    guest domain XML. This is needed because immediately after a guest\n    reboot, libvirtmod.virDomainDetachDeviceFlags() will silently fail\n    to remove the mapping from the guest domain. The async retry\n    behavior is done in Guest and is generic so it can be re-used by any other\n    detaches which hit this same race condition.\n    \n    Change-Id: I983f80822a5c210929f33e1aa348a0fef91e890b\n    Closes-Bug: #1374508\n    (cherry picked from commit 3a3fb3cfb2c41ad182545e47649ff12a4f3a743e)\n", 
+            "date_created": "2016-02-22 19:22:23.083064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 12.0.2 release.", 
+            "date_created": "2016-03-07 14:18:30.743074+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ], 
+    "closed": "2015-12-19 00:39:46.568750+00:00"
+}

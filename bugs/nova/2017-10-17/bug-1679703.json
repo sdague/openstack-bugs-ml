@@ -1,0 +1,75 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2017-07-28 12:13:16.845044+00:00", 
+    "description": "Description of problem:\n\nBooted VM with Direct-physical port (The entire PF is associated to the instance).\nWhen I deleted the instance I expected that PF will be available and online.\nActually when I am trying to boot instance with direct port (VF)\nI get this error message :\n\nVM in error state- \nfault | {\"message\": \"Exceeded maximum number of retries. Exceeded max scheduling attempts 3 for instance 102fde1b-22d3-4b05-8246-0f1af520455a. Last exception: internal error: Unable to configure VF 4 of PF 'p1p1' because the PF is not online. Please change host network config\", \"code\": 500, \"details\": \"  File \\\"/usr/lib/python2.7/site-packages/nova/conductor/manager.py\\\", line 524, in build_instances |     filter_properties, instances[0].uuid)  \n\n[root@compute-0 ~]# ifconfig |grep p1p1 --->PF is not online\nit's impossible to create an instance with a direct port (VF)\n\n\nversion: \nOcata \nHow reproducible:\nAlways\n\nSteps to Reproduce:\n1. Deploy SRIOV setup with PF support \n2. boot instance with Direct-physical port\n3. Delete VM that is associated to PF\n4. boot instance with Direct port (VF)\n\nExpected results:\nVM with direct port should be booted. PF should be released\n\nAdditional info:\nWorkaround - systemctl restart network", 
+    "tags": [
+        "openstack-version.ocata"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1679703", 
+    "owner": "None", 
+    "id": 1679703, 
+    "index": 8039, 
+    "openned": "2017-05-12 11:27:47.665131+00:00", 
+    "created": "2017-04-04 13:48:53.917118+00:00", 
+    "title": "Unable to boot instance with VF( direct-port ) because the PF is not online", 
+    "comments": [
+        {
+            "content": "Description of problem:\n\nBooted VM with Direct-physical port (The entire PF is associated to the instance).\nWhen I deleted the instance I expected that PF will be available and online.\nActually when I am trying to boot instance with direct port (VF)\nI get this error message :\n\nVM in error state- \nfault | {\"message\": \"Exceeded maximum number of retries. Exceeded max scheduling attempts 3 for instance 102fde1b-22d3-4b05-8246-0f1af520455a. Last exception: internal error: Unable to configure VF 4 of PF 'p1p1' because the PF is not online. Please change host network config\", \"code\": 500, \"details\": \"  File \\\"/usr/lib/python2.7/site-packages/nova/conductor/manager.py\\\", line 524, in build_instances |     filter_properties, instances[0].uuid)  \n\n[root@compute-0 ~]# ifconfig |grep p1p1 --->PF is not online\nit's impossible to create an instance with a direct port (VF)\n\n\nversion: \nOcata \nHow reproducible:\nAlways\n\nSteps to Reproduce:\n1. Deploy SRIOV setup with PF support \n2. boot instance with Direct-physical port\n3. Delete VM that is associated to PF\n4. boot instance with Direct port (VF)\n\nExpected results:\nVM with direct port should be booted. PF should be released\n\nAdditional info:\nWorkaround - systemctl restart network", 
+            "date_created": "2017-04-04 13:48:53.917118+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ekuris"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2017-04-04 13:48:53.917118+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ekuris"
+        }, 
+        {
+            "content": "Hello Eran:\n\nI reproduced the bug and I saw what is happening. The problem is not in Neutron, is in Nova.\n\nWhen a PF is used, virsh (I assume you are using libvirt) attaches the PCI device to the VM; the VF information stored in sriov_numvfs is lost. When the PCI device is attached again to the host OS, this information should be restored (currently it's not).\n\nI'm digging into the code and I think I could sumbit a patch soon. Of course, the main problem of this bug is the \"functional\" of \"tempest\" test must be done manually. I'll report the logs in this bug.\n", 
+            "date_created": "2017-05-12 13:59:45.165373+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rodolfo-alonso-hernandez"
+        }, 
+        {
+            "content": "Hello Eran:\n\nI found two ways of solving this problem:\n\n- The first one involves storing/reading the VF information for each PF when it's detached from the kernel. Once it's attached again, crate again the number of VFs by writting the file sriov_numvfs files. That could be done, for example, in the vrit driver when the PF is detached from the VM.\n\n- The second one, very easy and clean: modify the config-sriov guide in openstack-manuals, by including a note, encouraging (or coercing) the system administrator to set a \"pre-up\" command in the PF interface.\n\nauto enp8s0f1\niface enp8s0f1 inet dhcp\npre-up echo '4' > /sys/class/net/enp8s0f1/device/sriov_numvfs\n\nIs there any feedback?", 
+            "date_created": "2017-05-15 15:45:08.630149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rodolfo-alonso-hernandez"
+        }, 
+        {
+            "content": "Hi everyone:\n\nI have feedback from libvirt guys: [1]\n\nLibvirt is not responsible of storing this information, so we can't ask libvirt to restore the number of VFs when the network interface is retached to the OS.\n\nAccording to the conversation in OFTC #virt channel (sorry, I don't know where the logs are stored, you can see it in [1]), the second alternative (adding a pre-up command) is valid.\n\n[1] http://paste.openstack.org/show/609591/", 
+            "date_created": "2017-05-15 16:59:48.684617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rodolfo-alonso-hernandez"
+        }, 
+        {
+            "content": "Hi Rodolfo, \nIn Bugzilla- https://bugzilla.redhat.com/show_bug.cgi?id=1438828\nYou can see that after I added a new parameter to my deployment the PF is online but still I have an error to boot VF-VM.  So  I am not sure that \"pre=up\" command is needed here.\n", 
+            "date_created": "2017-05-16 05:31:55.552093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ekuris"
+        }, 
+        {
+            "content": "Hello Eran:\n\nPlease, check https://review.openstack.org/#/c/464970/. I amended the SR-IOV VF configuration to make it permanent. Once the PF is rebinded to the OS, the ifup script will rewrite the VF configuration.\n\nI've tested this manually in Fedora 25 and Ubuntu 16.04. You can test it by deleting the VF in an interface (setting sriov_numfvs to '0'). Then you can ifdown and ifup the interface; check if the number of VF matches the number of VFs set in the script file.\n", 
+            "date_created": "2017-05-16 08:33:33.864865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rodolfo-alonso-hernandez"
+        }, 
+        {
+            "content": "Thanks, Rodolfo\nI will try that.", 
+            "date_created": "2017-05-16 08:57:40.301824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ekuris"
+        }, 
+        {
+            "content": "Hello Sean:\n\nI don't think this bug should be solved in Nova. I pushed to openstack-manuals a guide to configure the PF: https://review.openstack.org/#/c/464970/.\n\nWith this solution you can avoid having this problem because when the PF is online again, the VF are automatically assigned again.\n\nA solution in Nova could be implemented but could be more complex.", 
+            "date_created": "2017-06-26 08:04:31.348119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rodolfo-alonso-hernandez"
+        }, 
+        {
+            "content": "Automatically discovered version ocata in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 16:04:55.471661+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fixed in docs.", 
+            "date_created": "2017-07-28 12:13:16.031417+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2017-07-28 12:13:05.642580+00:00"
+}

@@ -1,0 +1,89 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-10-03 15:25:06.083500+00:00", 
+    "description": "Hi,\n\nAfter renaming our availability zones via Horizon Dashboard, we couldn't migrate any \"old\" instance anymore, the scheduler returning \"No valid Host found\"...\n\nAfter searching, we found in the nova DB `instances` table, the \"availability_zone\" field contains the name of the availability zone, instead of the ID ( or maybe it is intentional ;) ). \n\nSo renaming AZ leaves the hosts created prior to this rename orphan and the scheduler cannot find any valid host for them...\n\nOur openstack install is on debian wheezy, with the icehouse \"official\" repository from archive.gplhost.com/debian/, up to date.\n\nIf you need any more infos, I'd be glad to help.\n\nCheers", 
+    "tags": [
+        "api", 
+        "availability-zones", 
+        "compute", 
+        "db", 
+        "low-hanging-fruit", 
+        "openstack-version.icehouse"
+    ], 
+    "importance": "Low", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1378904", 
+    "owner": "https://api.launchpad.net/1.0/~avolkov", 
+    "id": 1378904, 
+    "index": 1419, 
+    "openned": "2014-10-08 15:56:58.597551+00:00", 
+    "created": "2014-10-08 15:56:58.597551+00:00", 
+    "title": "renaming availability zone doesn't modify host's availability zone", 
+    "comments": [
+        {
+            "content": "Hi,\n\nAfter renaming our availability zones via Horizon Dashboard, we couldn't migrate any \"old\" instance anymore, the scheduler returning \"No valid Host found\"...\n\nAfter searching, we found in the nova DB `instances` table, the \"availability_zone\" field contains the name of the availability zone, instead of the ID ( or maybe it is intentional ;) ). \n\nSo renaming AZ leaves the hosts created prior to this rename orphan and the scheduler cannot find any valid host for them...\n\nOur openstack install is on debian wheezy, with the icehouse \"official\" repository from archive.gplhost.com/debian/, up to date.\n\nIf you need any more infos, I'd be glad to help.\n\nCheers", 
+            "date_created": "2014-10-08 15:56:58.597551+00:00", 
+            "author": "https://api.launchpad.net/1.0/~guillaume-winter"
+        }, 
+        {
+            "content": "I faced the same problem on my setup:\n\nOS: Ubuntu 14.04\nOpenStack: Kilo from the ubuntu-cloud repo\n\nI could rename the availability-zone from the dashboard or the API but I couldn't migrate the instances anymore. I had to edit the following fields:\n\ndb->nova,table->instances,row->availability_zone\ndb->neutron,table->ports,row->device_owner\n\nafter the manually update the VMs could be migrated again.\n", 
+            "date_created": "2015-09-25 14:01:28.513133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-aviolat"
+        }, 
+        {
+            "content": "I also faced the same problem on my setup:\n\nOS: CentOS Linux release 7.1.1503 (Core)\nOpenStack: Juno from rdo-release\n\nI have two compute nodes, compute1 in AZ1 and compute2 in AZ2.\nI created one instance on each compute, which are instance1 in compute1 and instance2 in compute2.\n\nI can live migrate instance1 to compute2, after migration, available zone was changed from AZ1 to AZ2 on dashboard, but when check the instances table in nova database, instance1's available zone is still AZ1.\nSo though compute1 and compute2 are in different AZ, I can cold migrate instance1 back to compute1.\n\nChange Host Aggregates is just like live migration, instances AZ is changed on dashboard, but not really changed in dashboard.\n\nBTW, when get instance's detail by using \"nova --debug list\", it also prints the wrong result\n\n\n", 
+            "date_created": "2015-10-09 02:14:43.900208+00:00", 
+            "author": "https://api.launchpad.net/1.0/~feli5"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:53:35.098587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "CONFIRMED FOR: MITAKA\n$ nova-manage --version\n13.0.0\n\n# Reproduce Steps:\n1) Create a HA/AZ.  ie., \"AZ1\"\n2) Add compute nodes to \"AZ1\" (Admin->System->Host Aggregates->Manage Hosts)\n3) Launch VM in this AZ.\n4) Live migrate/migrate VM - will succeed\n5) Create a new HA/AZ.  ie., \"AZ2\"\n6) Remove compute nodes from \"AZ1\"\n7) Add compute nodes to \"AZ2\"\n8) Try to migrate VM\n\nFails with ERROR: Error: No valid host was found. There are not enough hosts available. compute-1: (AvailabilityZoneFilter) avail zone az1 not in host AZ: set([u'az2'])\n\n# nova-scheduler.log\n2016-11-17 21:08:38.690 168453 INFO nova.filters [req-e9cede77-e888-4553-83d6-4e112a8e44a7 59d4a769c88545acb86f646b2464f4d1 93dd4afc2ddb4bfd88d8b5d13d348998 - - -] AvailabilityZoneFilter: (compute-1) REJECT: avail zone az1 not in host AZ: set([u'az2'])\n\n# nova show <uuid> displays correct AZ for VM\n| OS-EXT-AZ:availability_zone          | az2   \n\n# however nova --debug list displays in the RESP BODY:\n\"OS-EXT-AZ:availability_zone\": \"az1\"\n\n# check the VM in DB, availability_zone is still listed as 'az1' as well.\n\n", 
+            "date_created": "2016-11-17 21:24:49.026140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jiggernaut"
+        }, 
+        {
+            "content": "This looks like a real issue. The short term fix for this would be to also update instances when availability_zone name is updated over the API. ", 
+            "date_created": "2016-12-07 20:25:29.221276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/419502", 
+            "date_created": "2017-01-12 15:02:20.262014+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Automatically discovered version icehouse in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:55:02.426855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "CONFIRMED FOR NEWTON. After renaming the availability zone which has some instances running in it manual changes to the nova database need to be made in order to update the availability_zone. After that if live migration is carried out without specifying a host or anything which requires the AvailabilityZoneFilter returns no host found and this error message in the nova-scheduler.log\n INFO nova.filters [req-f0377310-f38a-47d8-a01b-65d90d79f202 7682adbc49f741ae8555915f95776a7b 07d042659b65465794e46ceafb1a1397 - - -] Filter AvailabilityZoneFilter returned 0 hosts\n2017-08-24 10:04:17.687 20388 INFO nova.filters [req-f0377310-f38a-47d8-a01b-65d90d79f202 7682adbc49f741ae8555915f95776a7b 07d042659b65465794e46ceafb1a1397 - - -] Filtering removed all hosts for the request with\n instance ID 'd08b2dd4-039b-4de0-98f4-28c00c0c8cee'. Filter results: ['RetryFilter: (start: 2, end: 2)', 'AvailabilityZoneFilter: (start: 2, end: 0)']\n\nAdding some addition info to the log point to this:\nAvailability Zone 'texas' requested. (d52-54-77-77-01-04, d52-54-77-77-01-04.c14.cloud.suse.de) ram: 1991MB disk: 14336MB io_ops: 0 instances: 0 has AZs: set([u'austin'])\nfor all the available hosts.", 
+            "date_created": "2017-08-24 11:09:21.252772+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sayalilunkad"
+        }, 
+        {
+            "content": "After renaming availability zones via horizon the live migrate option for instances in horizon does not work unless a host is specified. This is due to the AvailibilityZone filter which removes all hosts because the availibility_zone of the host is obtained from the RequestSpec object which is stored in the request_specs table in the nova_api database. When availability_zone is renamed it is not updated in this table hence the mismatch. Not sure if we need to file another bug for this.", 
+            "date_created": "2017-08-28 14:18:37.835864+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sayalilunkad"
+        }, 
+        {
+            "content": "There is clear upstream consensus on the fact that since availability zones are for end-users, updating an AZ from an operator point-of-view would confuse their users.\n\nLet me explain further : say you'd like to change AZ \"foo\" into \"bar\". For end-users looking at the AZ API before booting their instances, they can see \"foo\" as a valid target. So they just use --availability_zone foo in their instance boot calls and they expect to see their instances in AZ foo.\n\nNow, what if operator turns \"foo\" into \"bar\" ? If I'm an end-user, I'd be very surprised to see my instances being now in \"bar\" while I explicitely asked \"foo\"! \n\nAs a clear design decision, we really want to make it explicit that renaming an AZ should be forbidden if there are active instances hosted within that AZ. \nClosing that bug as Wontfix since I feel not being able to modify an AZ is not a bug but rather a design decision, but I feel we also need to modify the aggregates API to return a HTTP40x if someone is wanting to update an aggregate metadata containing AZ information when there are instances attached to it.", 
+            "date_created": "2017-09-22 09:31:15.560254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Change abandoned by Radoslav Gerganov (<email address hidden>) on branch: master\nReview: https://review.openstack.org/419502", 
+            "date_created": "2017-09-29 06:48:16.927024+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/509206", 
+            "date_created": "2017-10-03 15:25:05.566477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

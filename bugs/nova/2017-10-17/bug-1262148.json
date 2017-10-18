@@ -1,0 +1,83 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-09-26 23:58:42.579355+00:00", 
+    "description": "When using the latest config generator from oslo-incubator, see https://review.openstack.org/62815, and trying to generate the nova.conf.sample by using the following commands:\n\nNOVA_CONFIG_GENERATOR_EXTRA_MODULES=keystoneclient.middleware.auth_token tools/config/generate_sample.sh -p nova \n\n2013-12-18 18:22:03.187 30506 CRITICAL nova [-] Unable to find group for option memcached_servers, maybe it's defined twice in the same group?\n\n\nThis is because the config option memcached_servers is defined both in the python module keystoneclient.middleware.auth_token and nova.openstack.common.memorycache.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1262148", 
+    "owner": "None", 
+    "id": 1262148, 
+    "index": 5665, 
+    "openned": "2013-12-18 10:46:48.072354+00:00", 
+    "created": "2013-12-18 10:46:48.072354+00:00", 
+    "title": "duplicated definition of config option memcached_servers ", 
+    "comments": [
+        {
+            "content": "When using the latest config generator from oslo-incubator, see https://review.openstack.org/62815, and trying to generate the nova.conf.sample by using the following commands:\n\nNOVA_CONFIG_GENERATOR_EXTRA_MODULES=keystoneclient.middleware.auth_token tools/config/generate_sample.sh -p nova \n\n2013-12-18 18:22:03.187 30506 CRITICAL nova [-] Unable to find group for option memcached_servers, maybe it's defined twice in the same group?\n\n\nThis is because the config option memcached_servers is defined both in the python module keystoneclient.middleware.auth_token and nova.openstack.common.memorycache.", 
+            "date_created": "2013-12-18 10:46:48.072354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lianhao-lu"
+        }, 
+        {
+            "content": "Maybe the keystoneclient should switch to oslo's momorycache implementation or rename the option?", 
+            "date_created": "2013-12-18 10:52:18.903842+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lianhao-lu"
+        }, 
+        {
+            "content": "I dig into this a little bit.\n\nThe config.generator works by first importing all the python modules, then for each imported python module, it will try to find all the CfgOpt options in it and print it. \n\nDuring the finding process, the config.generator._guess_groups() will try to find if the CfgOpt is belonging to the 'DEFAULT' group or other groups, this is where the error happens.\n\nThe reason behind this is that \"keystoneclient.middleware.auth_token\" imports \"keystoneclient.openstack.common.memorycache\" which registers an option \"memcached_servers\". Later, when importing \"nova.openstack.common.memorycache\" which also has the same option \"memcached_servers\" , that option  is never registered because we already have the same option from keystoneclient registered.\n\nWhen the config.generator \"_guess_groups()\"  the option \"memcached_servers\" from \"nova.openstack.common.memorycache\", it uses operator '==' to compare if two options are the same. But the oslo.cfg.Opt class doesn't implement the __eq__ method, it only implements the __ne__ method. That's why the '==' operator doesn't give us the expected result.\n\nWe should implement the __eq__ method in oslo.cfg. Before that, we should use 'not a == b' in the config.generator as a temporary workaround.", 
+            "date_created": "2013-12-19 08:28:15.771892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lianhao-lu"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/63073", 
+            "date_created": "2013-12-19 08:53:52.446750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/63073\nCommitted: https://git.openstack.org/cgit/openstack/oslo-incubator/commit/?id=7c18261df5609d689a32c697c77c0a97512342bc\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7c18261df5609d689a32c697c77c0a97512342bc\nAuthor: Lianhao Lu <email address hidden>\nDate:   Thu Dec 19 16:44:10 2013 +0800\n\n    Temporary workaround for config generator\n    \n    Current oslo.config.cfg.Opt doesn't support operator '=='. So use 'not\n    !=' instead. This is a temporary workaround before the newly released\n    oslo.config support the operator '=='.\n    \n    Partial-Bug: 1262148\n    \n    Change-Id: I19279cd211594bb107777d6b98ebe6990063ebc7\n", 
+            "date_created": "2013-12-19 16:56:09.848474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Can you explain why this is not a bug in Nova? On the face of it, the code in Oslo is doing exactly what it intended: finding options that have been registered twice in the same group and raising the error:\n\n  \"Unable to find group for option memcached_servers, maybe it's defined twice in the same group?\"\n\nAfter this change, the code no longer detects these errors as intended. Worse, now if a similar option is defined in a different group, that option will fail to show up in the output (see bug 1288586).\n\nIt seems like one or both of these Nova options should be in a separate group, so that they can be configured independently.", 
+            "date_created": "2014-03-11 18:42:45.764681+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zaneb"
+        }, 
+        {
+            "content": "I'm just following same logic at https://github.com/openstack/oslo.config/blob/master/oslo/config/cfg.py#L515 to detect if an opt is registered in the same group.", 
+            "date_created": "2014-03-14 05:55:02.989829+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lianhao-lu"
+        }, 
+        {
+            "content": "Ah, interesting, thank you.\n\nSo it seems like we need to stop _guessing_ which group an option belongs to and actually find out. In the general case of equivalent options in different groups each being registered multiple times, that appears to be impossible though :( Oslo.config would have to store the group in the option at the time it is registered.", 
+            "date_created": "2014-03-14 13:19:23.108599+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zaneb"
+        }, 
+        {
+            "content": "BTW I've just noticed that when the option gets registered twice it now appears in the sample config file twice too, which is probably undesirable. I'll work on a fix as part of bug 1288586.", 
+            "date_created": "2014-03-14 20:21:45.237801+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zaneb"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/81412", 
+            "date_created": "2014-03-19 01:30:42.035983+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/81414", 
+            "date_created": "2014-03-19 01:51:10.367033+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/81415", 
+            "date_created": "2014-03-19 01:51:18.445787+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "All new development has been moved to keystonemiddleware. If this is a continuing issue please reopen/open new against keystonemiddleware.", 
+            "date_created": "2014-09-26 23:58:38.269935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }
+    ], 
+    "closed": "2013-12-19 08:30:52.388069+00:00"
+}

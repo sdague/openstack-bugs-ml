@@ -1,0 +1,63 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 08:57:25.257446+00:00", 
+    "description": "The pci extension for the v3 API does another instance lookup back to the database for instance objects. The issue being that when you are doing something like a list_* operation on instances, this means that we're making a second trip to the database that's distinct from the first lookup in the request handling. If an instance got deleted between the request and the extension hook running, this will generate a database exception, which turns into an InstanceNot found, and 404s the list operation *if any instance was deleted during the request*\n\nWe are managing to hit this quite frequently in tempest with our test_list_servers_by_admin_with_all_tenants (even at only concurency 2)  - http://logs.openstack.org/80/67480/1/gate/gate-tempest-dsvm-full/24f9aab/console.html#_2014-01-20_01_18_11_102\n\nThe explosion looks like this - http://logs.openstack.org/80/67480/1/gate/gate-tempest-dsvm-full/24f9aab/logs/screen-n-api.txt.gz?level=INFO#_2014-01-20_00_57_44_352\n\nLogstash picks up these tracebacks really easily. This kind of explosion doesn't always trigger a Tempest failure, because some times this might be in cleanup code, where we protect against 404s (though it probably means we are leaking resources a lot on a normal run).\n\nLogstash query - http://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiVFJBQ0Ugbm92YS5hcGkub3BlbnN0YWNrXCIgQU5EIG1lc3NhZ2U6XCJJbnN0YW5jZU5vdEZvdW5kOiBJbnN0YW5jZVwiIEFORCBmaWxlbmFtZTpcImxvZ3Mvc2NyZWVuLW4tYXBpLnR4dFwiIiwiZmllbGRzIjpbXSwib2Zmc2V0IjowLCJ0aW1lZnJhbWUiOiI2MDQ4MDAiLCJncmFwaG1vZGUiOiJjb3VudCIsInRpbWUiOnsidXNlcl9pbnRlcnZhbCI6MH0sInN0YW1wIjoxMzkwMTgzNzk1ODI1fQ==", 
+    "tags": [], 
+    "importance": "Critical", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1270680", 
+    "owner": "https://api.launchpad.net/1.0/~russellb", 
+    "id": 1270680, 
+    "index": 167, 
+    "openned": "2014-01-20 02:11:16.862765+00:00", 
+    "created": "2014-01-20 02:11:16.862765+00:00", 
+    "title": "v3 extensions api inherently racey wrt instances", 
+    "comments": [
+        {
+            "content": "The pci extension for the v3 API does another instance lookup back to the database for instance objects. The issue being that when you are doing something like a list_* operation on instances, this means that we're making a second trip to the database that's distinct from the first lookup in the request handling. If an instance got deleted between the request and the extension hook running, this will generate a database exception, which turns into an InstanceNot found, and 404s the list operation *if any instance was deleted during the request*\n\nWe are managing to hit this quite frequently in tempest with our test_list_servers_by_admin_with_all_tenants (even at only concurency 2)  - http://logs.openstack.org/80/67480/1/gate/gate-tempest-dsvm-full/24f9aab/console.html#_2014-01-20_01_18_11_102\n\nThe explosion looks like this - http://logs.openstack.org/80/67480/1/gate/gate-tempest-dsvm-full/24f9aab/logs/screen-n-api.txt.gz?level=INFO#_2014-01-20_00_57_44_352\n\nLogstash picks up these tracebacks really easily. This kind of explosion doesn't always trigger a Tempest failure, because some times this might be in cleanup code, where we protect against 404s (though it probably means we are leaking resources a lot on a normal run).\n\nLogstash query - http://logstash.openstack.org/#eyJzZWFyY2giOiJtZXNzYWdlOlwiVFJBQ0Ugbm92YS5hcGkub3BlbnN0YWNrXCIgQU5EIG1lc3NhZ2U6XCJJbnN0YW5jZU5vdEZvdW5kOiBJbnN0YW5jZVwiIEFORCBmaWxlbmFtZTpcImxvZ3Mvc2NyZWVuLW4tYXBpLnR4dFwiIiwiZmllbGRzIjpbXSwib2Zmc2V0IjowLCJ0aW1lZnJhbWUiOiI2MDQ4MDAiLCJncmFwaG1vZGUiOiJjb3VudCIsInRpbWUiOnsidXNlcl9pbnRlcnZhbCI6MH0sInN0YW1wIjoxMzkwMTgzNzk1ODI1fQ==", 
+            "date_created": "2014-01-20 02:11:16.862765+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "So this affects both V2 and V3. We in many cases just cache a small reference when getting information about an instance in the server code and the extension can then access the server id and use it to access the db to get more info when the hook runs. I guess we've just been really lucky or haven't noticed it previously (perhaps some timing has changed in the tests)\n\nI can see two ways of fixing this - cache a whole lot more information or alternatively just fail gracefully in extensions. I prefer the latter as its much simpler and I don't think we need to be too concerned about omitting information provided by extensions when reporting on an instance which has just been deleted.\n", 
+            "date_created": "2014-01-20 04:55:42.117455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/67767", 
+            "date_created": "2014-01-20 06:37:21.130000+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So I think this race may have been introduced by the use of objects. We end up caching the instance object rather than the values and when retrieving the data at a later point end up querying the db rather than having stale data. \n\nI think we can possibly convert the object before caching it which would restore the old behavior but that will require so fairly widespread changes to revert some of the object accessing changes in the API layer. So for the moment I have just submitted a small patch which handles the InstanceNotFound exception for the PCI extension. And we can work out what we want to do post I-2 (either have stale data or don't supply data when its no longer accessible).\n", 
+            "date_created": "2014-01-20 06:41:32.209308+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cyeoh-0"
+        }, 
+        {
+            "content": "Chris,\n\nIf the pre-objects code had joined the pci_devices relationship, then the data would be there here as well, and thus the lazy-load wouldn't be triggered. If it wasn't, then this would  have hit us due to an empty dict there, or a SessionError from SQLAlchemy trying to do a late load.\n\nI really feel like the proper fix for this is to catch the deleted instance exception while filling things out and just skip that one instance instead of continuing to process the now-deleted instance and potentially hitting the same issue in a later extension.", 
+            "date_created": "2014-01-20 15:40:42.017658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/67914\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=119e2a690a64fdfd541010590285f754b3393653\nSubmitter: Jenkins\nBranch:    master\n\ncommit 119e2a690a64fdfd541010590285f754b3393653\nAuthor: Russell Bryant <email address hidden>\nDate:   Mon Jan 20 13:54:29 2014 -0500\n\n    Join pci_devices when getting all servers in API\n    \n    The PCI API extension goes back and hits the database for every instance\n    when getting a list of all instances through the API.  This is causing\n    problems in testing because it's possible for the instance to be deleted\n    in between getting the initial list and when the API extension runs.\n    \n    The API extension really shouldn't be going back to hit the database\n    anyway, so this patch will resolve that problem.\n    \n    Change-Id: Id3c8a0b187e399ce2acecd4aaa37ac95e731d46c\n    Closes-bug: #1270680\n", 
+            "date_created": "2014-01-20 22:11:27.983533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/68147", 
+            "date_created": "2014-01-21 15:52:50.711717+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The elastic-recheck signature for this bug appears to be broken... we got a legitimate unit test failure in keystone (   https://review.openstack.org/#/c/44836/ patchset 20) and elastic-recheck cited this bug.", 
+            "date_created": "2014-01-21 17:42:58.643921+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dolph"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/68147\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f5d1943992d11446e095beaebf66443ec0f01ee0\nSubmitter: Jeremy Stanley (<email address hidden>)\nBranch:    master\n\ncommit f5d1943992d11446e095beaebf66443ec0f01ee0\nAuthor: Russell Bryant <email address hidden>\nDate:   Tue Jan 21 10:49:54 2014 -0500\n\n    Join pci_devices for servers API\n    \n    A previous change, 119e2a690a64fdfd541010590285f754b3393653, joined\n    pci_devices in the v3 servers API when getting a full list of instances.\n    This was to work around a race condition with the PCI API extension.\n    When the PCI extension runs later, it lazy-loads pci_devices.  This may\n    raise InstanceNotFound if the instance was deleted in the meantime.\n    \n    The last patch did not fully resolve this race condition, as we are also\n    seeing it rather regularly in API calls for a single server.  This patch\n    updates the compute_api.get() calls to join pci_devices, as well.\n    \n    Change-Id: Id3e60c3c56c2eb4209e8aca8a2c26881ca86b435\n    Closes-bug: #1270680\n", 
+            "date_created": "2014-01-22 01:31:23.609705+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-01-22 16:10:14.474971+00:00"
+}

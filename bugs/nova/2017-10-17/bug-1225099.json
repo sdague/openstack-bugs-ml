@@ -1,0 +1,168 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 12:43:17.515744+00:00", 
+    "description": "The __str__ method in openstack.common.gettextutils.Message is hard-coded to encode to utf-8 which creates problems when other logic goes to decode the string using the default encoding, e.g. when formatting log messages.  Message objects with double-byte translations fail to log because of this.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 28, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1225099", 
+    "owner": "https://api.launchpad.net/1.0/~locke105", 
+    "id": 1225099, 
+    "index": 1227, 
+    "openned": "2013-10-01 12:55:36.472058+00:00", 
+    "created": "2013-09-13 17:23:21.633535+00:00", 
+    "title": "Encoding hard-coded in gettextutils.Message", 
+    "comments": [
+        {
+            "content": "The __str__ method in openstack.common.gettextutils.Message is hard-coded to encode to utf-8 which creates problems when other logic goes to decode the string using the default encoding, e.g. when formatting log messages.  Message objects with double-byte translations fail to log because of this.", 
+            "date_created": "2013-09-13 17:23:21.633535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jswarren"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/46553", 
+            "date_created": "2013-09-13 18:16:08.197631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Since Nova calls gettextutils.enable_lazy(), I'm assuming this is potentially a serious issue for Nova ... so targeting to Nova's rc1", 
+            "date_created": "2013-10-01 12:56:30.249040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "ceilometer also calls enable_lazy()", 
+            "date_created": "2013-10-01 12:58:04.656052+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Ah, cinder calls gettextutils.install('cinder', lazy=True)", 
+            "date_created": "2013-10-01 13:10:58.354447+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Heat calls gettextutils.install('heat', lazy=True)", 
+            "date_created": "2013-10-01 13:14:49.996770+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Neutron calls gettextutils.install('neutron', lazy=True)", 
+            "date_created": "2013-10-01 13:18:24.563391+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "See also https://blueprints.launchpad.net/openstack/?searchtext=user-locale-api", 
+            "date_created": "2013-10-01 13:18:31.268458+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Meh, that search link doesn't get completed blueprints\n\nFor reference\n\nhttps://blueprints.launchpad.net/nova/+spec/user-locale-api\nhttps://blueprints.launchpad.net/glance/+spec/user-locale-api\nhttps://blueprints.launchpad.net/ceilometer/+spec/user-locale-api\nhttps://blueprints.launchpad.net/heat/+spec/user-locale-api\nhttps://blueprints.launchpad.net/cinder/+spec/user-locale-api\nhttps://blueprints.launchpad.net/neutron/+spec/user-locale-api\nhttps://blueprints.launchpad.net/keystone/+spec/user-locale-api", 
+            "date_created": "2013-10-01 13:22:44.109056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "ttx, dhellman and I discussed this a little on irc - conclusions:\n\n1) We're not 100% sure what the user impact of this issue is, but we suspect it has the potential to be a critical issue for some users. Is it the case that a translation containing double-byte characters can basically render a service completely unusable?\n\n2) Our fear is that the fix is complex enough such that there's a reasonable chance it's broken in some way\n\ni.e. this is a critical issue and we don't have a huge amount of confidence that this fix resolves the issue without introducing further issues\n\nThat all suggests that we should disable lazy translation in all projects and revisit in Icehouse\n\nThis would involve removing the calls to gettextutils.enable_lazy() or gettextutils.install(lazy=True)\n\nBut we're eager to hear thoughts from folks more intimately familiar with the work - e.g. mrodden, luisg, bnemec, jswarren", 
+            "date_created": "2013-10-01 13:30:13.470415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Sorry we missed you on IRC Mark. We met with dhellman, and bnemec on IRC. \n\nWe all agree that the current proposal of basically changing the Message class at a fundamental level so that it is immutable is a no-go for Havana, given the complexity of the fix and risk for regressions.\n\nHowever given how the issue is limited to logging, there is a different approach that was proposed by dhellman that addresses the specific problem with logging instead of having to drop the whole REST API translations feature.\n\nTo recap the problem, inside python logging the Message is converted first to string then to unicode, which breaks if the message contained non-ascii characters. It is converted first to string because that is the default behavior for non-basestring classes which Message is.\n\ndhellman proposes creating a LoggerAdapter, very similar to ContextAdapter, that will unicode() the Message objects so the loggers don't deal with Messages. \n\nWe will write, test and send out a patch shortly.", 
+            "date_created": "2013-10-01 17:01:44.151110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~luisg-8"
+        }, 
+        {
+            "content": "We still need to look at jwarren's changeset to see if the Message class has any fundamental issues. \n\nI also still think it is safer to disable the lazy evaluation in the other projects for now, and focus on fixing translation handling more completely during Icehouse.", 
+            "date_created": "2013-10-01 17:32:35.683745+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/49230", 
+            "date_created": "2013-10-01 18:10:14.904007+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "My comments in my changeset were addressed to people who wanted to have Message extend unicode and keep the rest of the class basically in tact.  I don't see a problem with keeping Message extending UserString and handling the issue via a logging Adapter as a tactical solution.  I would recommend making the changes I suggested to Message class in Icehouse.", 
+            "date_created": "2013-10-01 18:15:24.273396+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jswarren"
+        }, 
+        {
+            "content": "\nI will be out of the office starting  2013/10/01 and will not return until\n2013/10/07.\n\nI will check mails at night and try to respond you ASAP", 
+            "date_created": "2013-10-01 20:13:04+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xingzhou"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/49266", 
+            "date_created": "2013-10-01 21:42:58.099824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/49275", 
+            "date_created": "2013-10-01 22:02:27.557132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/49278", 
+            "date_created": "2013-10-01 22:21:57.804015+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49230\nCommitted: http://github.com/openstack/oslo-incubator/commit/572cfecb4da5c618a407b8de2a7feae9c3f35ce4\nSubmitter: Jenkins\nBranch:    master\n\ncommit 572cfecb4da5c618a407b8de2a7feae9c3f35ce4\nAuthor: Matt Odden <email address hidden>\nDate:   Tue Oct 1 05:11:43 2013 +0000\n\n    Make Messages unicode before hitting logging\n    \n    Some of the log handlers in the python standard library\n    are hitting issues with Messages since they check for\n    basestring types only, and attempt to coerce anything else\n    to string. This leads to Messages being coerced to bad encodings,\n    resulting in unhandled exceptions.\n    \n    This change adds a check that looks for non-basestring\n    objects and coerces them to unicode before they hit the problematic\n    logging areas.\n    \n    bug 1225099\n    \n    Change-Id: I0bff6b52205e3c88db38876b8c6de1bd820f460a\n    Co-authored-by: Luis A. Garcia <email address hidden>\n", 
+            "date_created": "2013-10-01 22:23:10.963318+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/49287", 
+            "date_created": "2013-10-01 23:17:02.736085+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Nova change: https://review.openstack.org/#/c/49277/", 
+            "date_created": "2013-10-02 08:58:20.274518+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "We used this etherpad for coordinating: https://etherpad.openstack.org/disable-lazy-translation", 
+            "date_created": "2013-10-02 09:35:48.197148+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49266\nCommitted: http://github.com/openstack/heat/commit/53b9314799c7d83779032c4535734f1c05326a27\nSubmitter: Jenkins\nBranch:    master\n\ncommit 53b9314799c7d83779032c4535734f1c05326a27\nAuthor: Ben Nemec <email address hidden>\nDate:   Tue Oct 1 21:39:07 2013 +0000\n\n    Disable lazy translation\n    \n    Late in the Havana cycle bug 1225099 was found in the lazy\n    translation code, and to be safe it was decided to disable lazy\n    translation for Havana.  This change does that.\n    \n    Change-Id: Ia934a7df9386baf6ae8eb9ff48c24386c47ecd23\n    Partial-bug: 1225099\n", 
+            "date_created": "2013-10-02 10:34:09.292852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49275\nCommitted: http://github.com/openstack/cinder/commit/52a98c29755f893154263a7793c0135c763938f6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 52a98c29755f893154263a7793c0135c763938f6\nAuthor: Doug Hellmann <email address hidden>\nDate:   Tue Oct 1 18:01:59 2013 -0400\n\n    Disable lazy translation\n    \n    Late in the Havana cycle bug 1225099 was found in the lazy\n    translation code, and to be safe it was decided to disable lazy\n    translation for Havana.  This change does that.\n    \n    Change-Id: Ia934a7df9386baf6ae8eb9ff48c24386c47ecd23\n    Partial-bug: 1225099\n", 
+            "date_created": "2013-10-02 10:59:39.200985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49278\nCommitted: http://github.com/openstack/ceilometer/commit/6840df8e5e48117438a8431bcf428343f988ddc4\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6840df8e5e48117438a8431bcf428343f988ddc4\nAuthor: Ben Nemec <email address hidden>\nDate:   Tue Oct 1 22:19:51 2013 +0000\n\n    Disable lazy translation\n    \n    Late in the Havana cycle bug 1225099 was found in the lazy\n    translation code, and to be safe it was decided to disable lazy\n    translation for Havana. This change does that.\n    \n    Change-Id: Ia934a7df9386baf6ae8eb9ff48c24386c47ecd23\n    Partial-bug: 1225099\n", 
+            "date_created": "2013-10-02 14:34:40.640650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49277\nCommitted: http://github.com/openstack/nova/commit/e355d476187951181ed644ebc2d0f7e858cb3cf4\nSubmitter: Jenkins\nBranch:    master\n\ncommit e355d476187951181ed644ebc2d0f7e858cb3cf4\nAuthor: Matt Odden <email address hidden>\nDate:   Tue Oct 1 09:20:04 2013 +0000\n\n    Disable lazy gettext\n    \n    This change disables lazy gettext functionality in Nova,\n    due to problems with character encoding and logging\n    detailed in bug 1225099.\n    \n    It is part of a series of commits across all projects with\n    lazy gettext enabled.\n    \n    Change-Id: Ia934a7df9386baf6ae8eb9ff48c24386c47ecd23\n    Partial-bug: 1225099\n", 
+            "date_created": "2013-10-02 19:29:40.984123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49287\nCommitted: http://github.com/openstack/neutron/commit/76e7542f0f54779f469df7125ff7b94480c44963\nSubmitter: Jenkins\nBranch:    master\n\ncommit 76e7542f0f54779f469df7125ff7b94480c44963\nAuthor: Ben Nemec <email address hidden>\nDate:   Tue Oct 1 23:15:23 2013 +0000\n\n    Disable lazy translation\n    \n    Late in the Havana cycle bug 1225099 was found in the lazy\n    translation code, and to be safe it was decided to disable lazy\n    translation for Havana. This change does that.\n    \n    Change-Id: Ia934a7df9386baf6ae8eb9ff48c24386c47ecd23\n    Partial-bug: 1225099\n", 
+            "date_created": "2013-10-02 22:33:33.099307+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Keystone patch is here: https://review.openstack.org/#/c/49285/", 
+            "date_created": "2013-10-03 13:50:01.050840+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/49285\nCommitted: http://github.com/openstack/keystone/commit/c3b92295b718a41c3136876eb39297081015a97c\nSubmitter: Jenkins\nBranch:    master\n\ncommit c3b92295b718a41c3136876eb39297081015a97c\nAuthor: Matt Odden <email address hidden>\nDate:   Tue Oct 1 08:52:15 2013 +0000\n\n    Disable lazy gettext\n    \n    This change disables lazy gettext functionality in Keystone,\n    due to problems with character encoding and logging\n    detailed in bug 1225099.\n    \n    It is part of a series of commits across all projects with\n    lazy gettext enabled.\n    \n    Change-Id: Ia934a7df9386baf6ae8eb9ff48c24386c47ecd23\n    Partial-bug: 1225099\n", 
+            "date_created": "2013-10-04 15:49:36.600338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/52120", 
+            "date_created": "2013-10-16 14:22:05.800886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-10-03 07:45:22.468049+00:00"
+}

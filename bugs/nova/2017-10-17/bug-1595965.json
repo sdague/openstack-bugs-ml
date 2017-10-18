@@ -1,0 +1,54 @@
+{
+    "status": "Incomplete", 
+    "last_updated": "2017-06-27 15:52:46.888254+00:00", 
+    "description": "This is a strange one. I had setup my transport_url incorrectly which made me discover this. I am filing this bug because I believe there is one.\n\nWhen using a correctly formatted transport_url that was missing data _and_ multiple workers for conductor it would incorrectly parse the transport_url.\n\nHere is the incorrect transport_url:\n\nrabbit://<user>:<pass>@server01,server02/openstack\n\nThe correct transport_url should be:\n\nrabbit://<user>:<pass>@server01,<user>:<pass>@server02/openstack\n\nAccording to the docs [1], when the username and password is not specified, the server should be omitted from the list of servers. So for the incorrect transport_url only server01 would be setup.  Here is a list of scenarios and what the behavior I see is.\n\n* with the incorrect transport_url and a single thread all services contact only server01\n* with the incorrect transport_url and multiple threads all services contact only server01 _except_ conductor which will attempt to contact server02 with the default username and password\n* with the correct transport_url all services contact server01 and server02 properly\n\nTo reproduce this, get two rabbitmq hosts and set the incorrect transport_url and at least 2 conductor workers. Look at the rabbitmq logs on server02 and youll see it is trying to login via the guest user. Set the number of workers to 1 and notice there is no bad logins in rabbitmq logs. Fix the transport_url and it will use all servers appropriately no matter the number of workers.\n\nThe following is a gut feeling. I believe the issue is around the point it gets forked with oslo.service. It may not properly be reparsing the transport_url. I couldn't prove that though.\n\nNova versions tested: 13.0.0 and 13.1.0\nall libraries were within the upper-constraints for mitaka\n\n[1] http://docs.openstack.org/developer/oslo.messaging/transport.html", 
+    "tags": [
+        "openstack-version.mitaka"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1595965", 
+    "owner": "None", 
+    "id": 1595965, 
+    "index": 7567, 
+    "openned": "2016-06-24 14:08:53.453586+00:00", 
+    "created": "2016-06-24 14:08:53.453586+00:00", 
+    "title": "transport_url is being parsed different when forking with oslo.service", 
+    "comments": [
+        {
+            "content": "This is a strange one. I had setup my transport_url incorrectly which made me discover this. I am filing this bug because I believe there is one.\n\nWhen using a correctly formatted transport_url that was missing data _and_ multiple workers for conductor it would incorrectly parse the transport_url.\n\nHere is the incorrect transport_url:\n\nrabbit://<user>:<pass>@server01,server02/openstack\n\nThe correct transport_url should be:\n\nrabbit://<user>:<pass>@server01,<user>:<pass>@server02/openstack\n\nAccording to the docs [1], when the username and password is not specified, the server should be omitted from the list of servers. So for the incorrect transport_url only server01 would be setup.  Here is a list of scenarios and what the behavior I see is.\n\n* with the incorrect transport_url and a single thread all services contact only server01\n* with the incorrect transport_url and multiple threads all services contact only server01 _except_ conductor which will attempt to contact server02 with the default username and password\n* with the correct transport_url all services contact server01 and server02 properly\n\nTo reproduce this, get two rabbitmq hosts and set the incorrect transport_url and at least 2 conductor workers. Look at the rabbitmq logs on server02 and youll see it is trying to login via the guest user. Set the number of workers to 1 and notice there is no bad logins in rabbitmq logs. Fix the transport_url and it will use all servers appropriately no matter the number of workers.\n\nThe following is a gut feeling. I believe the issue is around the point it gets forked with oslo.service. It may not properly be reparsing the transport_url. I couldn't prove that though.\n\nNova versions tested: 13.0.0 and 13.1.0\nall libraries were within the upper-constraints for mitaka\n\n[1] http://docs.openstack.org/developer/oslo.messaging/transport.html", 
+            "date_created": "2016-06-24 14:08:53.453586+00:00", 
+            "author": "https://api.launchpad.net/1.0/~s8m"
+        }, 
+        {
+            "content": "this feels like it may very well be an issue in oslo.service itself, adding that", 
+            "date_created": "2016-08-01 13:36:57.655229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "In http://docs.openstack.org/developer/oslo.messaging/transport.html\n\nUsername and password should be specified for each host, in case of lack of specification they will be omitted:\n\nuser:pass@host1:port1,host2:port2\n\n[\n  {\"username\": \"user\", \"password\": \"pass\", \"host\": \"host1:port1\"},\n  {\"host\": \"host2:port2\"}\n]\n\n\nI doesn't mean the server is ommited , but username/password are ommited. so It works as design. \n\nWe can make it more clear about this, maybe a warning is logged in this case.\n", 
+            "date_created": "2016-08-03 08:14:06.728333+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/350438", 
+            "date_created": "2016-08-03 08:20:18.480155+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/350438\nCommitted: https://git.openstack.org/cgit/openstack/oslo.messaging/commit/?id=34122ee3cb08b4de379b8095f4b18d64c38f62e2\nSubmitter: Jenkins\nBranch:    master\n\ncommit 34122ee3cb08b4de379b8095f4b18d64c38f62e2\nAuthor: ChangBo Guo(gcb) <email address hidden>\nDate:   Wed Aug 3 16:08:57 2016 +0800\n\n    Add warning when credential is not specified for each host\n    \n    User may not set username/password for each host in config\n    option transport_url. All hosts should have username/password,\n    or no host have username/password at the same time.\n    This commit adds warning if user doesn't set properly.\n    \n    Closes-Bug: #1595965\n    Change-Id: I4e204ce8365274566064168a2ba02c3278579717\n", 
+            "date_created": "2016-08-19 21:03:24.575677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/oslo.messaging 5.9.0 release.", 
+            "date_created": "2016-08-22 21:02:00.588471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Automatically discovered version mitaka in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:52:46.404610+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

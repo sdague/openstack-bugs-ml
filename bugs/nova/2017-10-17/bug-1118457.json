@@ -1,0 +1,52 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-04-20 04:17:46.547921+00:00", 
+    "description": "Using folsom and VlanManager, if one launches multiple vm for a new tenant/project by setting the number of instances to 4 or 5 then there is a race condition and potentially two or more vlan/networks are assigned to one tenant.\n\nIt seems to me that the assignment of a network to a tenant is lazy evaluated until the first instance for the project is launched.  This\ncan be confirmed by creating a new tenant and then doing 'nova-manage network list'.\n\nAfter launching the vms this is the output of 'nova-manage network list', showing the multiple vlans assigned to the same tenant:\nid      IPv4                    IPv6            start address   DNS1            DNS2            VlanID          project         uuid\n1       172.17.0.0/24           None            172.17.0.3      None            None            143             cc76e58acf6741d5a7238b74473c6a9d        f43f2aab-80c1-4efe-a57a-65927b192bc5\n2       172.17.1.0/24           None            172.17.1.3      None            None            144             aeecc883b1a34e3cbc0ba1f5f6deae51        b0ebbe87-5554-42a2-8a2b-b68fde29e6bd\n3       172.17.2.0/24           None            172.17.2.3      None            None            145             aeecc883b1a34e3cbc0ba1f5f6deae51        e9a5c116-eb56-4c23-9018-6f2a2107356b\n4       172.17.3.0/24           None            172.17.3.3      None            None            146             dda25aeeb8cf4bb099ba7982ce05520c        51d51655-8231-4d72-b880-3bc40e6ef027\n5       172.17.4.0/24           None            172.17.4.3      None            None            147             dda25aeeb8cf4bb099ba7982ce05520c        073d948b-2ee2-4da2-8b90-ca47fac52854\n6       172.17.5.0/24           None            172.17.5.3      None            None            148             None            a23fe5a0-44b6-45e8-a32b-9bb249588426\n\nThere is some discussion of the issue here:\nhttp://lists.openstack.org/pipermail/openstack-dev/2013-February/005473.html", 
+    "tags": [
+        "db", 
+        "network", 
+        "vlan"
+    ], 
+    "importance": "Low", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1118457", 
+    "owner": "None", 
+    "id": 1118457, 
+    "index": 772, 
+    "openned": "2013-02-07 15:26:05.658164+00:00", 
+    "created": "2013-02-07 15:26:05.658164+00:00", 
+    "title": "Simultaneous launch of multiple instances from horizon leads to multiple LANs assigned to new tenant", 
+    "comments": [
+        {
+            "content": "Using folsom and VlanManager, if one launches multiple vm for a new tenant/project by setting the number of instances to 4 or 5 then there is a race condition and potentially two or more vlan/networks are assigned to one tenant.\n\nIt seems to me that the assignment of a network to a tenant is lazy evaluated until the first instance for the project is launched.  This\ncan be confirmed by creating a new tenant and then doing 'nova-manage network list'.\n\nAfter launching the vms this is the output of 'nova-manage network list', showing the multiple vlans assigned to the same tenant:\nid      IPv4                    IPv6            start address   DNS1            DNS2            VlanID          project         uuid\n1       172.17.0.0/24           None            172.17.0.3      None            None            143             cc76e58acf6741d5a7238b74473c6a9d        f43f2aab-80c1-4efe-a57a-65927b192bc5\n2       172.17.1.0/24           None            172.17.1.3      None            None            144             aeecc883b1a34e3cbc0ba1f5f6deae51        b0ebbe87-5554-42a2-8a2b-b68fde29e6bd\n3       172.17.2.0/24           None            172.17.2.3      None            None            145             aeecc883b1a34e3cbc0ba1f5f6deae51        e9a5c116-eb56-4c23-9018-6f2a2107356b\n4       172.17.3.0/24           None            172.17.3.3      None            None            146             dda25aeeb8cf4bb099ba7982ce05520c        51d51655-8231-4d72-b880-3bc40e6ef027\n5       172.17.4.0/24           None            172.17.4.3      None            None            147             dda25aeeb8cf4bb099ba7982ce05520c        073d948b-2ee2-4da2-8b90-ca47fac52854\n6       172.17.5.0/24           None            172.17.5.3      None            None            148             None            a23fe5a0-44b6-45e8-a32b-9bb249588426\n\nThere is some discussion of the issue here:\nhttp://lists.openstack.org/pipermail/openstack-dev/2013-February/005473.html", 
+            "date_created": "2013-02-07 15:26:05.658164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r3za"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-02-07 15:26:05.658164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r3za"
+        }, 
+        {
+            "content": "Hi, everyone! I've done a little search. Is this bug still actual? When I try to reproduce it I have another bug: https://bugs.launchpad.net/nova/+bug/1161812\n I have a look at nova/compute/manager.py and see that when we try to create instance we called:\nnetwork_info = self._allocate_network(context, instance, requested_networks)\n\nHere is _allocate_network code:\n\ndef _allocate_network(self, context, instance, requested_networks):\n         \"\"\"Allocate networks for an instance and return the network info\"\"\"\n         self._instance_update(context, instance['uuid'],    \n                               vm_state=vm_states.BUILDING,\n                               task_state=task_states.NETWORKING,\n                               expected_task_state=None)\n        is_vpn = instance['image_ref'] == str(FLAGS.vpn_image_id)\n         try:\n             # allocate and get network info\n             network_info = self.network_api.allocate_for_instance(\n                                 context, instance, vpn=is_vpn,\n                                 requested_networks=requested_networks)\n         except Exception: \n             LOG.exception(_('Instance failed network setup'),\n                           instance=instance)\n             raise                \n\n         LOG.debug(_('Instance network_info: |%s|'), network_info,\n                   instance=instance)\n                         \n         return network_info\n\nSo it try to give network to instance, not to project/tenant.", 
+            "date_created": "2013-04-05 11:08:52.011969+00:00", 
+            "author": "https://api.launchpad.net/1.0/~starodubcevna"
+        }, 
+        {
+            "content": "I think the last word of the first sentence in the bug's discription, is no \"one tenant\" but \"one VM\".\r\n\r\nI meet the same bugs.\r\nWhen I try to launche multiple vms (every vm has one vlan/network only),  I got some vm that have two or more vlan/networks.", 
+            "date_created": "2014-03-11 00:54:28.864201+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kexiaodong"
+        }, 
+        {
+            "content": "This is a really old bug, and so much about the network stack has changed, including neutron being the primary network environment. Marked as incomplete, we should let this age out unless there a more recent exposure of it. ", 
+            "date_created": "2016-02-20 00:34:17.871915+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2016-04-20 04:17:42.957744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2016-04-20 04:17:43.569839+00:00"
+}

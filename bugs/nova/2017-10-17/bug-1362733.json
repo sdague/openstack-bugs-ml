@@ -1,0 +1,63 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:12:21.583257+00:00", 
+    "description": "I recently had a few nova-driven ironic nodes fail to deploy, and resurrected them by issuing another nova rebuild.\n\nThis worked quite nicely, but the Status stayed as ERROR, when I would have expected it to change back to REBUILD", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1362733", 
+    "owner": "https://api.launchpad.net/1.0/~rh-s", 
+    "id": 1362733, 
+    "index": 4007, 
+    "openned": "2014-09-15 18:02:40.196052+00:00", 
+    "created": "2014-08-28 17:57:05.193270+00:00", 
+    "title": "Rebuilding a node in ERROR state should set status to REBUILD", 
+    "comments": [
+        {
+            "content": "I recently had a few nova-driven ironic nodes fail to deploy, and resurrected them by issuing another nova rebuild.\n\nThis worked quite nicely, but the Status stayed as ERROR, when I would have expected it to change back to REBUILD", 
+            "date_created": "2014-08-28 17:57:05.193270+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clint-fewbar"
+        }, 
+        {
+            "content": "Was able to reproduce this issue.\n\nwhen nova uses ironic driver, rebuilding a node does not set the status to REBUILD.\n(However, when nova uses libvirt driver, rebuilding a node sets the status to REBUILD.)\n", 
+            "date_created": "2014-09-09 14:12:22.169947+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rh-s"
+        }, 
+        {
+            "content": "sorry, This issue occurs for libvirt driver also. It is not specific to ironic driver.\n\nIn an setup wherein nova uses libvirt driver, the instance turned ERROR state for whatever reason.\nI tried to 'rebuild' the instance and here is the result.\n\nstack@ubuntu:/home/rakesh/devstack$ nova rebuild cc35c64d-fba7-416b-8934-92aff76ab52f 90625fc0-cce1-419d-b6c2-ab441c7d5e87\n...\nstack@ubuntu:/home/rakesh/devstack$ nova list\n+--------------------------------------+------+--------+------------------+-------------+------------------+\n| ID                                   | Name | Status | Task State       | Power State | Networks         |\n+--------------------------------------+------+--------+------------------+-------------+------------------+\n| cc35c64d-fba7-416b-8934-92aff76ab52f | test | ERROR  | rebuild_spawning | Running     | private=10.0.0.2 |\n+--------------------------------------+------+--------+------------------+-------------+------------------+\n\nYou can see that the 'Status' did not turn to 'REBUILD'\nHence this issue is not specific to nova using 'ironic driver'.\n", 
+            "date_created": "2014-09-15 17:42:04.204978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rh-s"
+        }, 
+        {
+            "content": "figured out the root cause of this issue:\n\nFix needs to be done in nova:\n\nIn nova, generally STATUS field is determined by the 'vm_state' and 'task_state'.\nAnd presently for an instance with vm_state= ERROR, will always report status as ERROR. (since it does not take into account the present task_state of instance)\n\ni.e in, \nnova/nova/api/openstack/common.py \n\n   vm_states.ERROR: {\n        'default': 'ERROR',\n    },\nAs you can see above the task_state of instance is not taken into account if vm_state is in ERROR.\n\n\nFIX:\nneed to change it to:\n   vm_states.ERROR: {\n        'default': 'ERROR',\n        task_states.REBUILDING: 'REBUILD',\n        task_states.REBUILD_BLOCK_DEVICE_MAPPING: 'REBUILD',\n        task_states.REBUILD_SPAWNING: 'REBUILD',\n    },\n\nwill wait for nova guys to let me know if they are ok with this change.", 
+            "date_created": "2014-09-15 18:01:44.308317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rh-s"
+        }, 
+        {
+            "content": "This seems sane to me, it's mostly a display item.", 
+            "date_created": "2014-09-15 18:27:49.400785+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "The compute API definitely allows you to rebuild and instance in error state (and active and stopped for that matter):\n\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/compute/api.py#n2208\n\n    @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,\n                                    vm_states.ERROR])\n\nSo it seems right to update the status mapping as noted above.", 
+            "date_created": "2014-09-15 19:06:34.113827+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Thanks for replying guys.. will proceed with the changes and will push an patch soon.", 
+            "date_created": "2014-09-16 04:42:47.140223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rh-s"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/123628", 
+            "date_created": "2014-09-24 04:54:25.530086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/123628\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=93d25c38b8a1c7554ec124c5cf71a3e0d74e5bb3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 93d25c38b8a1c7554ec124c5cf71a3e0d74e5bb3\nAuthor: Rakesh H S <email address hidden>\nDate:   Wed Sep 24 10:23:19 2014 +0530\n\n    consistently set status as REBUILD when rebuilding\n    \n    Consider an instance is in SHUTOFF status(stopped). When a rebuild\n    is issued on this instance, the status does not display as REBUILD.\n    \n    Similarly, when a rebuild is issued on an instance and the operation\n    fails, the instance turns to ERROR state. Now if we issue a rebuild\n    again, the status does not display as REBUILD.\n    \n    This patch fixes the above mentioned issues by displaying the correct\n    status i.e REBUILD.\n    \n    Change-Id: Id11c9d31683a049c61fd751dc0ddabaf22c96cb9\n    Closes-Bug: #1362733\n", 
+            "date_created": "2014-10-08 19:36:58.888729+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-12-18 20:01:34.143782+00:00"
+}

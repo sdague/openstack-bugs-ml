@@ -1,0 +1,80 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2015-09-02 09:12:19.128786+00:00", 
+    "description": "In virt.libvirt.driver.LibvirtDriver._is_storage_shared_with() we first check IP addresses and if they don't match then we'll try to use ssh to check whether the storage is actually shared or not.\n\nIf ssh keys are not set up between the compute nodes for the user running nova-compute then the call to utils.ssh_execute() will fail and we will return wrong information.\n\nutils.ssh_execute() is also used in _cleanup_remote_migration() and migrate_disk_and_power_off() and would suffer from similar issues there.\n\nEither we need to ensure that the requirement for pre-sharing the ssh keys is clearly documented, or we need to convert these to to use RPC calls like live migration.", 
+    "tags": [
+        "compute", 
+        "libvirt"
+    ], 
+    "importance": "Low", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1459782", 
+    "owner": "None", 
+    "id": 1459782, 
+    "index": 1744, 
+    "openned": "2015-05-28 18:46:28.357748+00:00", 
+    "created": "2015-05-28 18:46:28.357748+00:00", 
+    "title": "_is_storage_shared_with() in libvirt/driver.py gives possibly false results if ssh keys not configured", 
+    "comments": [
+        {
+            "content": "In virt.libvirt.driver.LibvirtDriver._is_storage_shared_with() we first check IP addresses and if they don't match then we'll try to use ssh to check whether the storage is actually shared or not.\n\nIf ssh keys are not set up between the compute nodes for the user running nova-compute then the call to utils.ssh_execute() will fail and we will return wrong information.\n\nutils.ssh_execute() is also used in _cleanup_remote_migration() and migrate_disk_and_power_off() and would suffer from similar issues there.\n\nEither we need to ensure that the requirement for pre-sharing the ssh keys is clearly documented, or we need to convert these to to use RPC calls like live migration.", 
+            "date_created": "2015-05-28 18:46:28.357748+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "It sounds like this is part of the overall limitation of live migrate requiring ssh connectivity to work.", 
+            "date_created": "2015-06-02 00:44:20.483999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "This is actually not part of live-migrate, but rather cold migrate.  Live migration uses RPC calls to determine whether storage is shared.\n\nAnd in any case, live migration doesn't require ssh connectivity to work since by default it is tunnelled via libvirt.", 
+            "date_created": "2015-06-02 04:05:15.529465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Sorry, I was thinking of resize/cold migration requiring ssh connectivity.", 
+            "date_created": "2015-06-02 17:23:50.123920+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Do we document that resize/cold migration requires ssh connectivity?  I don't remember reading about that anywhere.", 
+            "date_created": "2015-06-02 17:50:48.538793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "I wasn't aware it was documented but a quick search yielded the Configuration Reference which has a brief explanation:\n\nhttp://docs.openstack.org/kilo/config-reference/content/configuring-resize.html", 
+            "date_created": "2015-06-02 18:11:09.171202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Interesting, hadn't seen that.  The way it's written it sounds like it's just for copying the disks over, but nova actually requires it for shared storage as well.", 
+            "date_created": "2015-06-03 02:37:14.069927+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Although it is documented right now, I think we should reuse the RPC call mechanic from the live-migration, right? Seems odd to me to have two different ways to determine if there is shared storage.", 
+            "date_created": "2015-08-05 14:14:16.308230+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "The documentation issue is also reported in bug 1477296. I'd like to have this one as a bug for the currently two ways of how to determine if it is a shared storage.", 
+            "date_created": "2015-08-05 14:55:18.921588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Based on the code submission comments in commit 9290bdd it appears that it was expected that all the resize/migration code was going to be refactored in Havana to switch to using RPC like live migration.  Looks like that never happened.  That would fix the immediate issue raised in this bug.\n\nThere's a complication though.  In virt.libvirt.utils.copy_image() we also rely on passwordless authentication to do either \"rsync\" or \"scp\" to copy the image file over when doing cold migration with local storage.  So for the case of local storage we'd still need to set up passwordless ssh between compute nodes to handle cold migration.", 
+            "date_created": "2015-08-05 15:06:13.281942+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "As you mentioned in bug 1477296 the issue of needing ssh was raised on the mailing list at http://lists.openstack.org/pipermail/openstack-dev/2014-February/028137.html\n\nUnfortunately that discussion didn't go very far, but the original post made it clear that dealing with the actual file copy was the main sticking point with getting rid of passwordless ssh completely.", 
+            "date_created": "2015-08-05 15:13:21.202675+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "@<whoever-fixes-this-bug>: \nThe manuals describe the need for SSH for detecting if there is shared storage [1]. This should be updated as soon as this bug here is fixed.\n\n[1] https://review.openstack.org/#/c/219294", 
+            "date_created": "2015-09-02 09:12:18.245509+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ]
+}

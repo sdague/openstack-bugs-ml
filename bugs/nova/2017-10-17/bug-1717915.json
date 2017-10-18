@@ -1,0 +1,104 @@
+{
+    "status": "New", 
+    "last_updated": "2017-09-28 13:16:44.219280+00:00", 
+    "description": "Centos 7\nRDO installation\n\nAfter upgrading from newton to ocata, i configured transport_url as:\ntransport_url = rabbit://nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672/nova_vhost\n\nand I removed [oslo_messaging_rabbit]\n\nBut then the services din't start and I could ofcourse launch an instance.\n\nRabbitmq-logs:\n\n=ERROR REPORT==== 18-Sep-2017::14:30:17 ===\nError on AMQP connection <0.24592.64> (192.168.110.2:51662 -> 192.168.110.2:5672 - nova-conductor:13053:a5fd524a-b479-4dbb-b8e5-4dd46bf8da74, user: 'nova', state: opening):\naccess to vhost 'nova' refused for user 'nova'\n\nnova-conductor logs:\n\n2017-09-18 13:59:58.600 27799 ERROR oslo_service.service NotAllowed: Connection.open: (530) NOT_ALLOWED - access to vhost 'nova' refused for user 'nova'\n\nWhen I removed the transport_url and reconfigured the [oslo_messaging_rabbit] section the services started but again I couldnt launch n instance with the same error logs :\n\n[oslo_messaging_rabbit]\nrabbit_hosts = 192.168.110.1:5672,192.168.110.2:5672,192.168.110.3:5672\nrabbit_userid = \"nova\"\nrabbit_password = \"nova_pass\"\nrabbit_virtual_host = \"/nova_vhost\"\n\n\nFinaly I reconfigured transport_url removed the /nova_vhost from the end, gave access to nova user for / vhost and everything worked. Keep in mind that of course nova user had access to /nova_vhost before. I also did cell_v2 update to update the transport_url in the db.", 
+    "tags": [
+        "openstack-version.ocata"
+    ], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1717915", 
+    "owner": "None", 
+    "id": 1717915, 
+    "index": 8306, 
+    "openned": "2017-09-18 12:16:27.223068+00:00", 
+    "created": "2017-09-18 12:16:27.223068+00:00", 
+    "title": "nova services and transport_url, cannot connect to vhost if specified", 
+    "comments": [
+        {
+            "content": "Centos 7\nRDO installation\n\nAfter upgrading from newton to ocata, i configured transport_url as:\ntransport_url = rabbit://nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672/nova_vhost\n\nand I removed [oslo_messaging_rabbit]\n\nBut then the services din't start and I could ofcourse launch an instance.\n\nRabbitmq-logs:\n\n=ERROR REPORT==== 18-Sep-2017::14:30:17 ===\nError on AMQP connection <0.24592.64> (192.168.110.2:51662 -> 192.168.110.2:5672 - nova-conductor:13053:a5fd524a-b479-4dbb-b8e5-4dd46bf8da74, user: 'nova', state: opening):\naccess to vhost 'nova' refused for user 'nova'\n\nnova-conductor logs:\n\n2017-09-18 13:59:58.600 27799 ERROR oslo_service.service NotAllowed: Connection.open: (530) NOT_ALLOWED - access to vhost 'nova' refused for user 'nova'\n\nWhen I removed the transport_url and reconfigured the [oslo_messaging_rabbit] section the services started but again I couldnt launch n instance with the same error logs :\n\n[oslo_messaging_rabbit]\nrabbit_hosts = 192.168.110.1:5672,192.168.110.2:5672,192.168.110.3:5672\nrabbit_userid = \"nova\"\nrabbit_password = \"nova_pass\"\nrabbit_virtual_host = \"/nova_vhost\"\n\n\nFinaly I reconfigured transport_url removed the /nova_vhost from the end, gave access to nova user for / vhost and everything worked. Keep in mind that of course nova user had access to /nova_vhost before. I also did cell_v2 update to update the transport_url in the db.", 
+            "date_created": "2017-09-18 12:16:27.223068+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gparaskevas"
+        }, 
+        {
+            "content": "transport_url is a stropt, not a listopt, so I've never seen this specified as a list before.", 
+            "date_created": "2017-09-18 19:50:35.742892+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "OK I see that [oslo_messaging_rabbit]/rabbit_hosts is deprecated in favor of [DEFAULT]/transport_url and the former is a ListOpt while the latter is a StrOpt, and the help for transport_url doesn't mention anything about how to format it for clustered rabbit.\n\nI've added oslo.messaging to this bug since it seems at least their docs need to be updated.", 
+            "date_created": "2017-09-18 19:55:07.622544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "From the oslo.messaging code, it looks like transport_url is split on semi-colon (;). So try that instead of commas.", 
+            "date_created": "2017-09-18 19:57:23.685528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Looks like this is the oslo.messaging change that deprecated the rabbit_hosts option:\n\nhttps://github.com/openstack/oslo.messaging/commit/2f0d53b\n\nBut it doesn't add any testing to make sure that transport_url will work with clustered hosts and doesn't update the transport_url option help docs in any way to clarify this.", 
+            "date_created": "2017-09-18 20:01:55.327056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I think this is the code that parses the transport_url option:\n\nhttps://github.com/openstack/oslo.messaging/blob/393ecff3451091404832dd6b8a088e1bec760101/oslo_messaging/transport.py#L492\n\nAnd that wouldn't work with how it's specified above as a comma-delimited list of URLs:\n\nuser@ubuntu:~$ python\nPython 2.7.12 (default, Nov 19 2016, 06:48:10) \n[GCC 5.4.0 20160609] on linux2\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> from six.moves.urllib import parse\n>>> transport_url = \"rabbit://nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672/nova_vhost\"\n>>> url = parse.urlparse(transport_url)\n>>> url\nParseResult(scheme='rabbit', netloc='nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672', path='/nova_vhost', params='', query='', fragment='')\n>>> \n", 
+            "date_created": "2017-09-18 20:08:59.112941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Oh I guess it does split the netloc on comma here:\n\nhttps://github.com/openstack/oslo.messaging/blob/393ecff3451091404832dd6b8a088e1bec760101/oslo_messaging/transport.py#L512", 
+            "date_created": "2017-09-18 20:10:13.548957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This is the parsed TransportURL object (using git hash 393ecff3451091404832dd6b8a088e1bec760101):\n\nuser@ubuntu:~/git/oslo.messaging$ source .tox/venv/bin/activate\n(venv) user@ubuntu:~/git/oslo.messaging$ python\nPython 2.7.12 (default, Nov 19 2016, 06:48:10) \n[GCC 5.4.0 20160609] on linux2\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> transport_url = \"rabbit://nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672/nova_vhost\"\n>>> from oslo_messaging import transport\n>>> import mock\n>>> conf = mock.MagicMock()\n>>> trans_url = transport.TransportURL.parse(conf, transport_url)\n>>> trans_url\n<TransportURL transport='rabbit', virtual_host='nova_vhost', hosts=[<TransportHost hostname='192.168.110.1', port=5672, username='nova', password='nova_pass'>, <TransportHost hostname='192.168.110.2', port=5672, username='nova', password='nova_pass'>, <TransportHost hostname='192.168.110.3', port=5672, username='nova', password='nova_pass'>]>\n>>> \n\nShould the virtual_host be applied to all 3 TransportHosts?", 
+            "date_created": "2017-09-18 20:19:37.418471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "What is the value of the transport_url in the nova_api.cell_mappings database table when this fails?\n\nIs it \"rabbit://nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672/nova_vhost\"?", 
+            "date_created": "2017-09-18 20:37:00.363722+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "yes that is exactly what it is. Actually its whatever the setting in nova.conf is after you do nova-manage cell_v2 cell_update --cell-uuid uuid. Now its \"rabbit://nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672\" because I didnt set it to a vhost due the problems I mentioned. But before it was exaclty as you wrote it above.", 
+            "date_created": "2017-09-18 20:54:38.615160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gparaskevas"
+        }, 
+        {
+            "content": "Matt,\n\nLooks legit, see\n\nhttp://git.openstack.org/cgit/openstack/oslo.messaging/tree/oslo_messaging/transport.py#n454\n\ntransport://user:pass@host:port[,userN:passN@hostN:portN]/virtual_host?query\n\nSo:\n\"rabbit://nova:nova_pass@192.168.110.1:5672,nova:nova_pass@192.168.110.2:5672,nova:nova_pass@192.168.110.3:5672/nova_vhost\"\n\nturns to:\n\"<TransportURL transport='rabbit', virtual_host='nova_vhost', hosts=[<TransportHost hostname='192.168.110.1', port=5672, username='nova', password='nova_pass'>, <TransportHost hostname='192.168.110.2', port=5672, username='nova', password='nova_pass'>, <TransportHost hostname='192.168.110.3', port=5672, username='nova', password='nova_pass'>]>\"\n", 
+            "date_created": "2017-09-18 21:08:43.453087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Matt,\n\nNote that George says, even after he went back to the old style oslo_messaging_rabbit section, the rabbit_virtual_host = \"/nova_vhost\" didn't work. \n\n-- Dims", 
+            "date_created": "2017-09-18 21:11:04.466028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Yes that is correct, after the migration i retained the [oslo_messaging_rabbit] config from newton and it didnt work with the mentioned error messages.", 
+            "date_created": "2017-09-19 07:34:14.090019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gparaskevas"
+        }, 
+        {
+            "content": "I suggest asking the TripleO team what they do about configuring nova for cells with the transport_url as I believe TripleO supports clustered rabbit. I'm told Ollie Walsh (owalsh) from Red Hat should know about this.", 
+            "date_created": "2017-09-21 01:23:17.070431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Yea, looks like a legit issue if the vhost isn't being applied to all 3 TransportHosts.\n\nWe happen to avoid this in TripleO as we don't specify a vhost:\n\nE.g from the nova.conf from a HA CI job in TripleO:\ntransport_url=rabbit://guest:<email address hidden>:5672,guest:<email address hidden>:5672,guest:<email address hidden>:5672/?ssl=0\n\nWhen setting up cells v2 the value the transport_url value from nova.conf is used (by puppet-nova).\n\nI don't see a workaround that allows a non-default vhost to be used. I assume this applies when handling both the nova.conf transport_url and the cell v2 transport_url. Reverting to the deprecated rabbit_virtual_host option would only address this in nova.conf.", 
+            "date_created": "2017-09-21 09:22:13.781740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~owalsh"
+        }, 
+        {
+            "content": "I am pretty sure that openstack-ansible team also uses clustered rabbitmq and they use the exact same configuration like the one I tried to use. SO maybe they can give us a hint on that too.", 
+            "date_created": "2017-09-26 12:42:03.903633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gparaskevas"
+        }, 
+        {
+            "content": "With 'transport_url = rabbit://user1:pass1@host1:port1[,userN:passN@hostN:portN]//vhost' it works. Probably something wrong with parsing the URL?", 
+            "date_created": "2017-09-28 13:16:43.193975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hfrenzel"
+        }
+    ]
+}

@@ -1,0 +1,65 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-01-27 00:51:50.749431+00:00", 
+    "description": "When creating an aggregate using the Nova API, it doesn't return the new aggregate's uuid:\n\nDEBUG (connectionpool:400) http://192.168.33.12:8774 \"POST /v2.1/os-aggregates HTTP/1.1\" 200 179\nDEBUG (session:371) RESP: [200] Content-Length: 179 Content-Type: application/json Openstack-Api-Version: compute 2.37 X-Openstack-Nova-Api-Version: 2.37 Vary: OpenStack-API-Version, X-OpenStack-Nova-API-Version X-Compute-Request-Id: req-90906f19-0f69-46d0-bb33-134eb962421a Date: Mon, 26 Dec 2016 16:04:16 GMT Connection: keep-alive \nRESP BODY: {\"aggregate\": {\"name\": \"test-aggregate\", \"availability_zone\": null, \"deleted\": false, \"created_at\": \"2016-12-26T16:04:16.077923\", \"updated_at\": null, \"deleted_at\": null, \"id\": 3}}\n\nThis becomes a problem when the aggregate is intended to be associated with a resource provider through the placement API, which requires the aggregate's uuid:\n\n(Pdb) my_client.aggregates.associate('29f69c38-57b8-45b4-a9d4-287faeab74d7', ['3'])\n*** BadRequest: {\"errors\": [{\"status\": 400, \"request_id\": \"req-3e5a0b16-67f5-41b5-8f90-997cb88db31e\", \"detail\": \"The server could not comply with the request since it is either malformed or otherwise incorrect.\\n\\n JSON does not validate: u'3' is not a 'uuid'  Failed validating 'format' in schema['items']:     {'format': 'uuid', 'type': 'string'}  On instance[0]:     u'3'  \", \"title\": \"Bad Request\"}]} (HTTP 400) (Request-ID: req-3e5a0b16-67f5-41b5-8f90-997cb88db31e)\n\nI am testing this with a 4 nodes devstack built with Nova and Neutron master branches", 
+    "tags": [
+        "api"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1652642", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1652642, 
+    "index": 2016, 
+    "openned": "2016-12-26 16:12:04.193352+00:00", 
+    "created": "2016-12-26 16:12:04.193352+00:00", 
+    "title": "Nova API doesn't return aggregate's uuid, which is needed when using the placement API", 
+    "comments": [
+        {
+            "content": "When creating an aggregate using the Nova API, it doesn't return the new aggregate's uuid:\n\nDEBUG (connectionpool:400) http://192.168.33.12:8774 \"POST /v2.1/os-aggregates HTTP/1.1\" 200 179\nDEBUG (session:371) RESP: [200] Content-Length: 179 Content-Type: application/json Openstack-Api-Version: compute 2.37 X-Openstack-Nova-Api-Version: 2.37 Vary: OpenStack-API-Version, X-OpenStack-Nova-API-Version X-Compute-Request-Id: req-90906f19-0f69-46d0-bb33-134eb962421a Date: Mon, 26 Dec 2016 16:04:16 GMT Connection: keep-alive \nRESP BODY: {\"aggregate\": {\"name\": \"test-aggregate\", \"availability_zone\": null, \"deleted\": false, \"created_at\": \"2016-12-26T16:04:16.077923\", \"updated_at\": null, \"deleted_at\": null, \"id\": 3}}\n\nThis becomes a problem when the aggregate is intended to be associated with a resource provider through the placement API, which requires the aggregate's uuid:\n\n(Pdb) my_client.aggregates.associate('29f69c38-57b8-45b4-a9d4-287faeab74d7', ['3'])\n*** BadRequest: {\"errors\": [{\"status\": 400, \"request_id\": \"req-3e5a0b16-67f5-41b5-8f90-997cb88db31e\", \"detail\": \"The server could not comply with the request since it is either malformed or otherwise incorrect.\\n\\n JSON does not validate: u'3' is not a 'uuid'  Failed validating 'format' in schema['items']:     {'format': 'uuid', 'type': 'string'}  On instance[0]:     u'3'  \", \"title\": \"Bad Request\"}]} (HTTP 400) (Request-ID: req-3e5a0b16-67f5-41b5-8f90-997cb88db31e)\n\nI am testing this with a 4 nodes devstack built with Nova and Neutron master branches", 
+            "date_created": "2016-12-26 16:12:04.193352+00:00", 
+            "author": "https://api.launchpad.net/1.0/~minsel"
+        }, 
+        {
+            "content": "IMO, the fix for this has to consider the following:\n\n1) When creating an aggregate, the Nova API has to return the uuid assigned to it in the response\n2) In the placement API, GET /resource_providers/{uuid}/aggregates returns the list of uuid's associated with the resource provider (http://specs.openstack.org/openstack/nova-specs/specs/newton/implemented/generic-resource-pools.html#get-resource-providers-uuid-aggregates). As a consequence, at a minimum, when doing a GET /os-aggregates (Nova API), the response must include an uuid attribute for each aggregate listed. This will enable the user to translate the aggregates uuids in the placement API to the ids used by the aggregate operations (GET /os-aggregates/{aggregate_id}, PUT /os-aggregates/{aggregate_id}, DELETE /os-aggregates/{aggregate_id}) in the Nova API.\n\n- Ideally, the GET /os-aggregates/{aggregate_id}, PUT /os-aggregates/{aggregate_id} and DELETE /os-aggregates/{aggregate_id} in the Nova API will also accept uuids (i.e. GET /os-aggregates/{aggregate_uuid}, PUT /os-aggregates/{aggregate_uuid} and DELETE /os-aggregates/{aggregate_uuid}). But this is a nice to have, not essential, as long as Nova's GET /os-aggregates return the uuids\n", 
+            "date_created": "2016-12-26 17:53:27.556646+00:00", 
+            "author": "https://api.launchpad.net/1.0/~minsel"
+        }, 
+        {
+            "content": "Setting to critical since without this, we have no way of determining the UUID of aggregates to associate via the placement API...", 
+            "date_created": "2016-12-26 20:38:30.901463+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/415031", 
+            "date_created": "2016-12-26 23:01:12.119040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is a REST API impacting change and a new microversion so we're going to need a blueprint and a spec for it.", 
+            "date_created": "2016-12-27 19:34:09.502953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "I'm tracking the Ocata blueprint here:\n\nhttps://blueprints.launchpad.net/nova/+spec/return-uuid-from-os-aggregates-api", 
+            "date_created": "2016-12-28 16:21:16.826420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/415031\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=03c2776e49e12ff7f877480a041626a654533f27\nSubmitter: Jenkins\nBranch:    master\n\ncommit 03c2776e49e12ff7f877480a041626a654533f27\nAuthor: Jay Pipes <email address hidden>\nDate:   Mon Dec 26 17:58:44 2016 -0500\n\n    Return uuid attribute for aggregates\n    \n    Adds a Compute API microversion that triggers returning an aggregate's UUID\n    field. This field is necessary for scripts that must populate the placement API\n    with resource provider to aggregate relationships, which rely on UUIDs for\n    global identification.\n    \n    APIImpact\n    blueprint: return-uuid-from-os-aggregates-api\n    Change-Id: I4112ccd508eb85403933fec8b52efd468e866772\n    Closes-bug: #1652642\n", 
+            "date_created": "2017-01-07 05:12:24.750453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Jay, Matt and the rest of the Nova team,\n\nThank you very much from the Neutron team for the quick fixing of this. Highly appreciated ", 
+            "date_created": "2017-01-07 21:08:07.364797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~minsel"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b3 development milestone.", 
+            "date_created": "2017-01-27 00:51:50.155150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-01-07 05:12:22.614368+00:00"
+}

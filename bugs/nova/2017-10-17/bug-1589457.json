@@ -1,0 +1,50 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-08-11 11:16:52.229723+00:00", 
+    "description": "Description\n===========\n\nVolume-backed instances fails to migrate when config-drive is enabled(even with vfat). \nMigration fails with exception.InvalidSharedStorage during check_can_live_migrate_source method execution https://github.com/openstack/nova/blob/545d8d8666389f33601b0b003dec844004694919/nova/virt/libvirt/driver.py#L5388\n\nThe root cause:\nhttps://github.com/openstack/nova/blob/545d8d8666389f33601b0b003dec844004694919/nova/virt/libvirt/driver.py#L5344 - flags is calculated incorrectly.\n\n\nSteps to reproduce\n==================\n1. use vfat as config drive format, no shared storage like nfs;\n2. boot instance from volume;\n3. try to live-migrate instance;\n\nExpected result\n===============\ninstance migrated successfully\n\nActual result\n=============\nlive-migration is not even started:\nroot@node-1:~# nova live-migration server00 node-4.test.domain.local\nERROR (BadRequest): Migration pre-check error: Cannot block migrate instance f477e6da-4a04-492b-b7a6-e57b7823d301 with mapped volumes. Selective block device migration feature requires libvirt version 1.2.17 (HTTP 400) (Request-ID: req-4e0fce45-8b7c-43c0-90e7-cc929d2d60a1)\n\nEnvironment\n===========\n\nmultinode env, without file based shared storages like NFS.\ndriver libvirt/kvm\nopenstack branch stable/mitaka,\nshould also be valid for master.", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1589457", 
+    "owner": "None", 
+    "id": 1589457, 
+    "index": 4550, 
+    "openned": "2016-06-06 10:39:30.205274+00:00", 
+    "created": "2016-06-06 10:39:30.205274+00:00", 
+    "title": "live-migration fails for volume-backed  instances with config-drive type vfat", 
+    "comments": [
+        {
+            "content": "Description\n===========\n\nVolume-backed instances fails to migrate when config-drive is enabled(even with vfat). \nMigration fails with exception.InvalidSharedStorage during check_can_live_migrate_source method execution https://github.com/openstack/nova/blob/545d8d8666389f33601b0b003dec844004694919/nova/virt/libvirt/driver.py#L5388\n\nThe root cause:\nhttps://github.com/openstack/nova/blob/545d8d8666389f33601b0b003dec844004694919/nova/virt/libvirt/driver.py#L5344 - flags is calculated incorrectly.\n\n\nSteps to reproduce\n==================\n1. use vfat as config drive format, no shared storage like nfs;\n2. boot instance from volume;\n3. try to live-migrate instance;\n\nExpected result\n===============\ninstance migrated successfully\n\nActual result\n=============\nlive-migration is not even started:\nroot@node-1:~# nova live-migration server00 node-4.test.domain.local\nERROR (BadRequest): Migration pre-check error: Cannot block migrate instance f477e6da-4a04-492b-b7a6-e57b7823d301 with mapped volumes. Selective block device migration feature requires libvirt version 1.2.17 (HTTP 400) (Request-ID: req-4e0fce45-8b7c-43c0-90e7-cc929d2d60a1)\n\nEnvironment\n===========\n\nmultinode env, without file based shared storages like NFS.\ndriver libvirt/kvm\nopenstack branch stable/mitaka,\nshould also be valid for master.", 
+            "date_created": "2016-06-06 10:39:30.205274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tdurakov"
+        }, 
+        {
+            "content": "Setting to Medium, as only instances with config drive are affected and we currently don't force those to have config drives by default.", 
+            "date_created": "2016-06-06 10:44:58.533795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "libvirt version prior to 1.2.17 was used, so it has no feature to block-migrate instance with booted volumes", 
+            "date_created": "2016-06-06 13:24:40.853672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tdurakov"
+        }, 
+        {
+            "content": "I believe that this bug is valid and we might corrupt volume-backed VMs when libvirt version is <=1.2.17.\n\nSo the bug starts here https://github.com/openstack/nova/blob/660ecaee66ccab895b282c2ed45c95c809ad6833/nova/virt/libvirt/driver.py#L5592 - for volume backed VMs dest_check_data.is_volume_backed will be True, but \"not bool(jsonutils.loads(self.get_instance_disk_info(instance, block_device_info)))\" will return False and in the result whole method will return that block storage is not shared.\n\nNow we have 3 cases:\n\n* Libvirt version is >= 1.2.17 and tunnelling is OFF. This causes block live migration of volume-backed VM with config drive attached. It works perfectly fine, because we have implemented support for selective disk migration, so that nova will exclude volume from list of devices that needs to be migrated to destination. This is because volume is shared and there is really no need to migrate it: \nhttps://github.com/openstack/nova/blob/660ecaee66ccab895b282c2ed45c95c809ad6833/nova/virt/libvirt/driver.py#L6059\nand\nhttps://github.com/openstack/nova/blob/660ecaee66ccab895b282c2ed45c95c809ad6833/nova/virt/libvirt/driver.py#L6068\nThis even helps with live migration of volume-backed VMs with local config drive, because it finally works. Libvirt takes care of copying config drive to destination... but it works by mistake.\n\n* Libvirt version is >= 1.2.17 and tunnelling is on. This again causes block live migration of volume-backed VM with config drive attached. Because libvirt does not support selective disk migration with tunnelling it will be refused because this feature is not supported, not because live migration with local disk is not supported.\n\n* Libvirt version is < 1.2.17. This causes volumes to be copied to themselves during live migrations. Nova again incorrectly calculates live migration type and fire offs block live migration of volume-backed VMs. Unfortunately condition to exclude volumes from a list of devices that should be migrated to destination is not met:\nhttps://github.com/openstack/nova/blob/660ecaee66ccab895b282c2ed45c95c809ad6833/nova/virt/libvirt/driver.py#L6048\nBecause of this volumes are not skipped during live migration and therefore we again hit this bug: https://bugs.launchpad.net/nova/+bug/1398999\n\nPlease correct me if I'm wrong, but I believe we are hitting #1398999 once again due to wrong calculation of migration type.", 
+            "date_created": "2016-07-06 19:33:17.375370+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "Just realized that case #3 is not valid due to check https://github.com/openstack/nova/blob/660ecaee66ccab895b282c2ed45c95c809ad6833/nova/virt/libvirt/driver.py#L5523\n\nHowever, still case #1 is valid. For volume-backed VMs with config-drive nova chooses block live migration. Not sure how we should treat this. It definitely helps to live migrate volume-backed VMs with local disks.", 
+            "date_created": "2016-07-06 19:43:22.886605+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "Talked with danpb on IRC and looks like we can use block live migration in such case, so #1 and #2 are invalid too.", 
+            "date_created": "2016-08-11 11:16:42.062876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }
+    ], 
+    "closed": "2016-08-11 11:16:49.725863+00:00"
+}

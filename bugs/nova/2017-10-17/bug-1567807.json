@@ -1,0 +1,227 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-03-30 16:54:36.330216+00:00", 
+    "description": "I've been setting up a Mitaka Openstack using the cloud archive running on Trusty, and am having problems working with EFI enabled instances on ARM64.\n\nI've done some work with wgrant and gotten things to a stage where I can boot instances, using the aavmf images.\n\nHowever, when I tried to delete a VM booted like this, I get an error:\n\n  libvirtError: Requested operation is not valid: cannot delete inactive domain with nvram\n\nI've included the full traceback at https://paste.ubuntu.com/15682718/.\n\nThanks to a suggestion from wgrant again, I got it working by editing nova/virt/libvirt/guest.py in delete_configuration() and replacing  self._domain.undefineFlags(libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE) with self._domain.undefineFlags(libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE | libvirt.VIR_DOMAIN_UNDEFINE_NVRAM).\nI've attached a rough patch.\n\nOnce that's applied and nova-compute restarted, I was able to delete the instance fine.\n\nCould someone please investigate this and see if its the correct fix, and look at getting it fixed in the archive?\n\nThis was done on a updated trusty deployment using the cloud-archives for mitaka.\n\n$ dpkg-query -W python-nova\npython-nova     2:13.0.0~b2-0ubuntu1~cloud0\n\nPlease let me know if you need any further information.", 
+    "tags": [
+        "arm64", 
+        "canonical-bootstack", 
+        "hs-arm64", 
+        "libvirt", 
+        "mitaka-backport-potential", 
+        "uosci", 
+        "verification-done", 
+        "verification-mitaka-done"
+    ], 
+    "importance": "Low", 
+    "heat": 52, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1567807", 
+    "owner": "https://api.launchpad.net/1.0/~derekh", 
+    "id": 1567807, 
+    "index": 1986, 
+    "openned": "2016-04-11 23:24:15.893938+00:00", 
+    "created": "2016-04-08 07:36:13.617045+00:00", 
+    "title": "nova delete doesn't work with EFI booted VMs", 
+    "comments": [
+        {
+            "content": "I've been setting up a Mitaka Openstack using the cloud archive running on Trusty, and am having problems working with EFI enabled instances on ARM64.\n\nI've done some work with wgrant and gotten things to a stage where I can boot instances, using the aavmf images.\n\nHowever, when I tried to delete a VM booted like this, I get an error:\n\n  libvirtError: Requested operation is not valid: cannot delete inactive domain with nvram\n\nI've included the full traceback at https://paste.ubuntu.com/15682718/.\n\nThanks to a suggestion from wgrant again, I got it working by editing nova/virt/libvirt/guest.py in delete_configuration() and replacing  self._domain.undefineFlags(libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE) with self._domain.undefineFlags(libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE | libvirt.VIR_DOMAIN_UNDEFINE_NVRAM).\nI've attached a rough patch.\n\nOnce that's applied and nova-compute restarted, I was able to delete the instance fine.\n\nCould someone please investigate this and see if its the correct fix, and look at getting it fixed in the archive?\n\nThis was done on a updated trusty deployment using the cloud-archives for mitaka.\n\n$ dpkg-query -W python-nova\npython-nova     2:13.0.0~b2-0ubuntu1~cloud0\n\nPlease let me know if you need any further information.", 
+            "date_created": "2016-04-08 07:36:13.617045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brad-marshall"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-04-08 07:36:13.617045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brad-marshall"
+        }, 
+        {
+            "content": "To get an arm64 UEFI instance running, grab libvirt (minor apparmor patch) and aavmf (UEFI firmware) from https://launchpad.net/~wgrant/+archive/ubuntu/scalingstack-trusty-mitaka/, then boot a uefi1 arm64 image with the hw_firmware_type=uefi glance property set. But it's probably reproducible with amd64 UEFI instances too.\n\nnova creates a libvirt instance with <loader> and <nvram> elements, and libvirt refuses to implicitly delete the nvram file. nova should probably be taught to force that, which is what my suggested delete_configuration patch does.", 
+            "date_created": "2016-04-08 07:40:55.009312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wgrant"
+        }, 
+        {
+            "content": "Your fix looks reasonable to me, but we'd need a test as well I think. I've tagged this as being of possible backport interest to mitaka as well.", 
+            "date_created": "2016-04-11 23:27:50.145528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "My understanding is that using the VIR_DOMAIN_UNDEFINE_NVRAM flag[1] you are passing the --nvram argument and according to the documentation for undefine method this argument[2] is used for remove the nvram file.  I still need to check the process to create VMs, especially when it uses uefi and checks if that a copy of nvram is created for every new instance.  So, my question is if once that this change is applied is possible to create a new instance?\n\n[1] https://github.com/libvirt/libvirt/blob/d9a0a885e2b1cf3c9fc5260f9cdf4fc8a768f26c/tools/virsh-domain.c#L3681-L3682\n[2] https://github.com/libvirt/libvirt/blob/d9a0a885e2b1cf3c9fc5260f9cdf4fc8a768f26c/tools/virsh-domain.c#L3605", 
+            "date_created": "2016-04-12 14:07:51.445287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~electrocucaracha"
+        }, 
+        {
+            "content": "Yes, it is still possible to create an instance after changing only the delete method. The generated libvirt domain XML looks like this:\n\n  <os>\n    <type arch='aarch64' machine='virt'>hvm</type>\n    <loader readonly='yes' type='pflash'>/usr/share/AAVMF/AAVMF_CODE.fd</loader>\n    <nvram template='/usr/share/AAVMF/AAVMF_CODE.fd'>/var/lib/libvirt/qemu/nvram/instance-00000005_VARS.fd</nvram>\n    <boot dev='hd'/> \n  </os>\n\nThat is, the nvram file is copied from a global template to an instance-specific file -- it's that file under /var/lib/libvirt/qemu/nvram that VIR_DOMAIN_UNDEFINE_NVRAM removes. It should arguably be using template=AAVMF_VARS.fd rather than AAVMF_CODE.fd, but that's unrelated to this and doesn't really matter.\n\n\nThe most annoying part of this change is feature detection. I think delete_configuration might have to know to try unsetting flags until the method works, as older libvirts don't support VIR_DOMAIN_UNDEFINE_NVRAM and I can't see a way to test at runtime. But in our environment we know the libvirt version, so we just pass the flag in unconditionally.", 
+            "date_created": "2016-04-13 00:42:36.261480+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wgrant"
+        }, 
+        {
+            "content": "Could you propose that up as a gerrit review? We don't do patches in the tracker. ", 
+            "date_created": "2016-05-03 13:24:52.270708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/335512", 
+            "date_created": "2016-06-29 14:00:11.803515+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Ching Kuo,\n   Are you still working on this?", 
+            "date_created": "2016-07-05 09:10:54.491385+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kevin-zhao"
+        }, 
+        {
+            "content": "Hi Kevin,\n\nStill working on this bug. Trying to find out why Xen and Hyper-V CI failed.", 
+            "date_created": "2016-07-06 04:28:24.172018+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gene-kuo"
+        }, 
+        {
+            "content": "Hi Ching,\n   How is that patch going?\n   We've need this fix emergency. If you not working on this, I'll help to fix this bug. \n   Thanks~", 
+            "date_created": "2016-07-23 15:18:29.796975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kevin-zhao"
+        }, 
+        {
+            "content": "Hi Kevin,\n\nI've encountered some problem when running Xen and Hyper-V CI.\nIf you have any good ideas maybe we can discuss and fix it together.\n\nThanks", 
+            "date_created": "2016-07-23 18:27:22.884481+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gene-kuo"
+        }, 
+        {
+            "content": "Hi Ching,\n    I have told this issue to Daniel and he has gave some comments on your patch. I think maybe this will help to fix the XenCI problem. Also since the libvirt version that lower 1.2.8 can not recognize the nvram parameters,you need to more about UNDEFINE_NVRAM", 
+            "date_created": "2016-07-27 11:57:29.495798+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kevin-zhao"
+        }, 
+        {
+            "content": "Hi Kevin,\n\nI also found out that maybe the problem. I'm going to fix it soon.\nThanks for the suggestion.\n", 
+            "date_created": "2016-08-05 07:07:23.353669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gene-kuo"
+        }, 
+        {
+            "content": "Hello Ching,\nThe workaround we did for Clear Linux about this was something like:\n\ndiff --git a/nova/virt/libvirt/guest.py b/nova/virt/libvirt/guest.py\nindex 263f873..1df0476 100644\n--- a/nova/virt/libvirt/guest.py\n+++ b/nova/virt/libvirt/guest.py\n@@ -199,8 +199,13 @@ class Guest(object):\n     def delete_configuration(self):\n         \"\"\"Undefines a domain from hypervisor.\"\"\"\n         try:\n-            self._domain.undefineFlags(\n-                libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE)\n+            if '<nvram template=' in self._domain.XMLDesc():\n+                self._domain.undefineFlags(\n+                    libvirt.VIR_DOMAIN_UNDEFINE_NVRAM |\n+                    libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE)\n+            else:\n+                self._domain.undefineFlags(\n+                    libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE)\n         except libvirt.libvirtError:\n             LOG.debug(\"Error from libvirt during undefineFlags. %d\"\n                       \"Retrying with undefine\", self.id)\n\nThat way the `VIR_DOMAIN_UNDEFINE_NVRAM` flag will be called only if the instance was booted using uefi (NVRAM)\n\nAs you can check in our nova src.rpm in https://download.clearlinux.org/releases/7310/clear/source/SRPMS/nova-12.0.2-133.src.rpm\n( you could extract the files by running\n$ rpm2cpio https://download.clearlinux.org/releases/7310/clear/source/SRPMS/nova-12.0.2-133.src.rpm | cpio -divm\nand then take a look at the 0006-Enable-UEFI-boot-for-kvm-and-qemu.patch )", 
+            "date_created": "2016-08-10 19:46:45.074857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mrkzmrkz"
+        }, 
+        {
+            "content": "Just to remind that the bug fix is:\nhttps://review.openstack.org/#/c/357190/\nIt's strange that it can't be attached here automatically.", 
+            "date_created": "2016-08-25 01:32:52.631217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kevin-zhao"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/335512\nReason: This patch has been sitting unchanged for more than 12 weeks. I am therefore going to abandon it to keep the nova review queue sane. Please feel free to restore the change if you're still working on it.", 
+            "date_created": "2016-11-24 05:25:08.582010+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi, any update on the fix being merge soon?\n\nThanks,\nCarlos", 
+            "date_created": "2017-01-04 20:14:42.966316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cargonza"
+        }, 
+        {
+            "content": "+1", 
+            "date_created": "2017-01-04 20:27:15.440380+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kevpn"
+        }, 
+        {
+            "content": "Linking to new bug so we can track this:\n\nhttps://review.openstack.org/#/c/357190/", 
+            "date_created": "2017-01-05 18:59:01.907978+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/357190/\n\nThe patch set has been set  to \"workflow +1\" but never merge yet?\nIs there any need before merging?", 
+            "date_created": "2017-01-19 01:29:41.226817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kevin-zhao"
+        }, 
+        {
+            "content": "FWIW, confirmed issue on Xenial-Mitaka aarch64:\n\n$ openstack server list\n+--------------------------------------+-----------------------------+---------+------------------------------------+------------+\n| ID                                   | Name                        | Status  | Networks                           | Image Name |\n+--------------------------------------+-----------------------------+---------+------------------------------------+------------+\n| 58d20cf7-a5c4-4845-8f26-47222513dfba | xenial-uefi-20170119b221218 | ACTIVE  | private=172.16.0.15, 10.111.222.70 |            |\n| 3fd7e3ae-c710-44d2-9a81-3077ed89b196 | xenial-uefi-20170119b221212 | ACTIVE  | private=172.16.0.14, 10.111.222.67 |            |\n| d1a8d761-44e4-464f-8056-bf58bc8b2407 | xenial-uefi-20170119b221205 | ACTIVE  | private=172.16.0.13, 10.111.222.66 |            |\n| df488910-3151-43c1-9de9-794d5095b66d | xenial-uefi-20170119212539  | SHUTOFF | private=172.16.0.12, 10.111.222.65 |            |\n| d7a46c4b-2b63-4a8d-9ab7-dfcbf9e7032f | xenial-uefi-20170119212534  | SHUTOFF | private=172.16.0.11, 10.111.222.69 |            |\n| 5d1275ef-9346-4598-8654-10a4b0b8da47 | xenial-uefi-20170119212528  | SHUTOFF | private=172.16.0.10, 10.111.222.68 |            |\n+--------------------------------------+-----------------------------+---------+------------------------------------+------------+\n\n.\n\n$ for i in $(openstack server list | grep uefi | awk '{ print $2 }'); do echo $i; openstack server delete $i; done\n58d20cf7-a5c4-4845-8f26-47222513dfba\n3fd7e3ae-c710-44d2-9a81-3077ed89b196\nd1a8d761-44e4-464f-8056-bf58bc8b2407\ndf488910-3151-43c1-9de9-794d5095b66d\nd7a46c4b-2b63-4a8d-9ab7-dfcbf9e7032f\n5d1275ef-9346-4598-8654-10a4b0b8da47\n\n.\n\n$ openstack server list\n+--------------------------------------+-----------------------------+--------+----------+------------+\n| ID                                   | Name                        | Status | Networks | Image Name |\n+--------------------------------------+-----------------------------+--------+----------+------------+\n| 58d20cf7-a5c4-4845-8f26-47222513dfba | xenial-uefi-20170119b221218 | ERROR  |          |            |\n| 3fd7e3ae-c710-44d2-9a81-3077ed89b196 | xenial-uefi-20170119b221212 | ERROR  |          |            |\n| d1a8d761-44e4-464f-8056-bf58bc8b2407 | xenial-uefi-20170119b221205 | ERROR  |          |            |\n| df488910-3151-43c1-9de9-794d5095b66d | xenial-uefi-20170119212539  | ERROR  |          |            |\n+--------------------------------------+-----------------------------+--------+----------+------------+\n\n\nTraceback (most recent call last):\n  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 2510, in do_terminate_instance\n    self._delete_instance(context, instance, bdms, quotas)\n  File \"/usr/lib/python2.7/dist-packages/nova/hooks.py\", line 154, in inner\n    rv = f(*args, **kwargs)\n  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 2473, in _delete_instance\n    quotas.rollback()\n  File \"/usr/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 220, in __exit__\n    self.force_reraise()\n  File \"/usr/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 196, in force_reraise\n    six.reraise(self.type_, self.value, self.tb)\n  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 2437, in _delete_instance\n    self._shutdown_instance(context, instance, bdms)\n  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 2346, in _shutdown_instance\n    requested_networks)\n  File \"/usr/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 220, in __exit__\n    self.force_reraise()\n  File \"/usr/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 196, in force_reraise\n    six.reraise(self.type_, self.value, self.tb)\n  File \"/usr/lib/python2.7/dist-packages/nova/compute/manager.py\", line 2333, in _shutdown_instance\n    block_device_info)\n  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 1039, in destroy\n    destroy_disks, migrate_data)\n  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 1152, in cleanup\n    self._undefine_domain(instance)\n  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 1051, in _undefine_domain\n    {'errcode': errcode, 'e': e}, instance=instance)\n  File \"/usr/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 220, in __exit__\n    self.force_reraise()\n  File \"/usr/lib/python2.7/dist-packages/oslo_utils/excutils.py\", line 196, in force_reraise\n    six.reraise(self.type_, self.value, self.tb)\n  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/driver.py\", line 1045, in _undefine_domain\n    guest.delete_configuration()\n  File \"/usr/lib/python2.7/dist-packages/nova/virt/libvirt/guest.py\", line 224, in delete_configuration\n    self._domain.undefine()\n  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 186, in doit\n    result = proxy_call(self._autowrap, f, *args, **kwargs)\n  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 144, in proxy_call\n    rv = execute(f, *args, **kwargs)\n  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 125, in execute\n    six.reraise(c, e, tb)\n  File \"/usr/lib/python2.7/dist-packages/eventlet/tpool.py\", line 83, in tworker\n    rv = meth(*args, **kwargs)\n  File \"/usr/lib/python2.7/dist-packages/libvirt.py\", line 2701, in undefine\n    if ret == -1: raise libvirtError ('virDomainUndefine() failed', dom=self)\nlibvirtError: Requested operation is not valid: cannot delete inactive domain with nvram", 
+            "date_created": "2017-01-27 00:00:21.288528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~1chb1n"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/357190\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=539d381434ccadcdc3f5d58c2705c35558a3a065\nSubmitter: Jenkins\nBranch:    master\n\ncommit 539d381434ccadcdc3f5d58c2705c35558a3a065\nAuthor: Kevin Zhao <email address hidden>\nDate:   Thu Jan 5 21:32:41 2017 +0000\n\n    libvirt: fix nova can't delete the instance with nvram\n    \n    Currently libvirt needs a flag when deleting an VM with a nvram file,\n    without which nova can't delete an instance booted with UEFI. Add\n    deletion flag for NVRAM. Also add a test case.\n    \n    Co-authored-by: Derek Higgins <email address hidden>\n    Change-Id: I46baa952b6c3a1a4c5cf2660931f317cafb5757d\n    Closes-Bug: #1567807\n", 
+            "date_created": "2017-02-01 16:36:20.541561+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/428314", 
+            "date_created": "2017-02-02 18:09:25.318988+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Chuck has started the backport to stable/newton upstream.  We won't be able to get the patch backported upstream to stable/mitaka at this point since they're only accepting critical/security fixes at this time.  The patch appears to apply cleanly to stable/mitaka.", 
+            "date_created": "2017-02-02 18:56:42.794081+00:00", 
+            "author": "https://api.launchpad.net/1.0/~corey.bryant"
+        }, 
+        {
+            "content": "So we'll have to carry the patch in our mitaka package.", 
+            "date_created": "2017-02-02 18:57:13.372207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~corey.bryant"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0rc1 release candidate.", 
+            "date_created": "2017-02-03 19:08:36.179609+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/428314\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=bf6c5ba86509c1e162b1f9d23c7cab603abce914\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit bf6c5ba86509c1e162b1f9d23c7cab603abce914\nAuthor: Kevin Zhao <email address hidden>\nDate:   Thu Jan 5 21:32:41 2017 +0000\n\n    libvirt: fix nova can't delete the instance with nvram\n    \n    Currently libvirt needs a flag when deleting an VM with a nvram file,\n    without which nova can't delete an instance booted with UEFI. Add\n    deletion flag for NVRAM. Also add a test case.\n    \n    Co-authored-by: Derek Higgins <email address hidden>\n    Change-Id: I46baa952b6c3a1a4c5cf2660931f317cafb5757d\n    Closes-Bug: #1567807\n    (cherry picked from commit 539d381434ccadcdc3f5d58c2705c35558a3a065)\n", 
+            "date_created": "2017-02-11 02:25:13.550739+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.4 release.", 
+            "date_created": "2017-02-27 20:28:59.016169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Marking zesty and Ocata UCA tasks as fix committed as included in 15.0.0~rc1", 
+            "date_created": "2017-03-15 10:23:42.614372+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "The fix for this is included in nova 14.0.4 which is currently in yakkety-proposed; however its not referenced in the changelog so I'll mark tasks related to Yakkety/Newton as Fix Committed.", 
+            "date_created": "2017-03-15 10:26:48.007137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "SRU information for Mitaka/Xenial (and Newton/Yakkety):\n\n[Impact]\nUsers of EFI enabled instances on the arm64 architecture are unable to destroy running instances on OpenStack Clouds\n\n[Test Case]\nboot an instance on a arm64 based OpenStack cloud using an EFI enabled image\nnova delete <instance-uuid> - fails\n\n[Regression Potential]\nFix in latest OpenStack release and backported upstream to the Newton release; Mitaka is closed for anything other than security/critical bug fixes upstream so holding a patch in packaging for Xenial.  Overall low potential for regression.", 
+            "date_created": "2017-03-15 10:30:52.685970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Hello Brad, or anyone else affected,\n\nAccepted nova into xenial-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/nova/2:13.1.3-0ubuntu1 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation on how to enable and use -proposed.Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2017-03-15 17:19:03.029201+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "Hello Brad, or anyone else affected,\n\nAccepted nova into mitaka-proposed. The package will build now and be available in the Ubuntu Cloud Archive in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package. To enable the -proposed repository:\n\n  sudo add-apt-repository cloud-archive:mitaka-proposed\n  sudo apt-get update\n\nYour feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-mitaka-needed to verification-mitaka-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-mitaka-failed. In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification . Thank you in advance!", 
+            "date_created": "2017-03-16 15:00:21.484281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Confirmed fixed @ xenial-newton for nova 14.0.4-0ubuntu1.2~cloud0.", 
+            "date_created": "2017-03-23 16:52:44.291610+00:00", 
+            "author": "https://api.launchpad.net/1.0/~1chb1n"
+        }, 
+        {
+            "content": "Confirmed fixed @ xenial-mitaka for nova 13.1.3-0ubuntu1.\n", 
+            "date_created": "2017-03-23 20:30:06.104419+00:00", 
+            "author": "https://api.launchpad.net/1.0/~1chb1n"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2017-03-30 16:40:34.110996+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2:13.1.3-0ubuntu1\n\n---------------\nnova (2:13.1.3-0ubuntu1) xenial; urgency=medium\n\n  * New upstream point release for OpenStack Mitaka. (LP: #1668313)\n  * d/patches/uefi-delete-instances.patch: Fix deletion of instances\n    with UEFI is enabled. (LP: #1567807)\n\n -- Chuck Short <email address hidden>  Wed, 01 Mar 2017 08:44:03 -0500", 
+            "date_created": "2017-03-30 16:50:33.561087+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates. In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2017-03-30 16:54:28.493202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "\nThis bug was fixed in the package nova - 2:13.1.3-0ubuntu1~cloud0\n---------------\n\n nova (2:13.1.3-0ubuntu1~cloud0) trusty-mitaka; urgency=medium\n .\n   * New upstream release for the Ubuntu Cloud Archive.\n .\n nova (2:13.1.3-0ubuntu1) xenial; urgency=medium\n .\n   * New upstream point release for OpenStack Mitaka. (LP: #1668313)\n   * d/patches/uefi-delete-instances.patch: Fix deletion of instances\n     with UEFI is enabled. (LP: #1567807)\n", 
+            "date_created": "2017-03-30 16:54:30.949880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }
+    ], 
+    "closed": "2017-02-01 16:36:16.399309+00:00"
+}

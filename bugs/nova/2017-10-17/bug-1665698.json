@@ -1,0 +1,451 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-05-08 22:25:53.800297+00:00", 
+    "description": "SRU - Nova\n[Impact]\nOpenStack deployments using vif types `tap`, `ivs`, `iovisor`, `midonet`, and `vrouter` are unable to boot instances using libvirt 1.3.1 from Ubuntu 16.04 (as used by the Newton Ubuntu Cloud Archive). Note that this impacts the nova package which is currently in yakkety-proposed/newton-proposed - the version in *-updates does not have this issue.\n\n[Test case]\nUsing an OpenStack cloud deployed with one of the above SDN's boot an instance.\nThe instance will fail to boot with a libvirt error.\nNote cloud must be deployed using the -proposed packages from the Newton UCA.\n\n[Regression Potential]\nMinimal - the patch restores the previous behaviour for older libvirt versions, ensuring compatibility with documented libvirt version baselines in OpenStack Nova.\n\n---\n\nSRU - libvirt\n[Impact]\n\n\u00a0* Please do note that this SRU statement is about the libvirt portion\n\u00a0\u00a0\u00a0of it, this is a fix of essentially an API break from Xenial to\n\u00a0\u00a0\u00a0Yakkety. This is independent to any decision to the Openstack context\n\u00a0\u00a0\u00a0discussion about the change to drop specifying a path at all.\n\n\u00a0* Before 9c17d665fdc5f (v1.3.2 which means 1.3.1 in Xenial for us) it\n\u00a0\u00a0\u00a0was possible to have the following interface configuration:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<interface type='ethernet'/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<script path=''/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0</interface>\n\u00a0\u00a0\u00a0This resulted in -netdev tap,script=,.. Fortunately, qemu helped\n\u00a0\u00a0\u00a0us to get away with this as it just ignored the empty script\n\u00a0\u00a0\u00a0path. However, after the commit mentioned above it's libvirtd\n\u00a0\u00a0\u00a0who is executing the script. Unfortunately without special\n\u00a0\u00a0\u00a0case-ing empty script path.\n\n\u00a0* The fix adds the special casing that qemu had into libvirts handling\n\u00a0\u00a0\u00a0of the interface definition.\n\n[Test Case]\n\n\u00a0* That is tricky as the way openstack is using to shove that in\n\u00a0\u00a0\u00a0seems to not care on xml validation as much as e.g. virsh.\n\u00a0\u00a0\u00a0If normally adding a device like\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<interface type='ethernet'>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<script path=''/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<model type='virtio'/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0</interface>\n\u00a0\u00a0\u00a0At least in xenial AND yakkety blocked by the XML validation.\n\u00a0\u00a0\u00a0But if trying to work around like with path='&quot;&quot;'\n\u00a0\u00a0 this gives \"-netdev tap,script=\"\",id=hostnet1\" on yakkety then\n\u00a0\u00a0\u00a0the fix does not apply as this is '\"\"' and not ''.\n\u00a0\u00a0\u00a0So to add the above snippet you have to edit it in via --skip-\n   validate like\n\u00a0\u00a0\u00a0$ virsh edit --skip-validate zesty-on-x-test\n\u00a0\u00a0\u00a0This on older libvrit gave: -netdev tap,script=,id=hostnet1\n\u00a0\u00a0\u00a0Which qemu understood as nop. But newer libvirt refuses.\n\n\u00a0* Error:\n\u00a0\u00a0\u00a0error: Failed to start domain <name>\n\u00a0\u00a0\u00a0error: Cannot find '' in path: No such file or directory\n\n\u00a0* Expected:\n\u00a0\u00a0\u00a0Starting the domain as-is without calling a script,\n\u00a0\u00a0\u00a0but also without complaining about being empty.\n\n[Regression Potential]\n\n\u00a0* Regression should be low because of:\n\u00a0\u00a0\u00a0* The fix is upstream for a while now without follow on fix\n\u00a0\u00a0\u00a0* We are essentially going back to how it was\n\u00a0\u00a0\u00a0* There is no case like \"I had '' set in my setup but now it is\n\u00a0\u00a0\u00a0\u00a0\u00a0a no-op which makes me fail\" because if one had '' it failed until\n\u00a0\u00a0\u00a0\u00a0\u00a0now.\n\u00a0* Fix is in zesty for a few days without new fallout being reported\n\u00a0* also it passed several levels of testing (on the case and general\n\u00a0\u00a0\u00a0regression testing)\n\u00a0* Due to extra xml checks a device like path='' is not even definable.\n\u00a0\u00a0\u00a0So only those who run --skip-validate or similar are affected in\n\u00a0\u00a0\u00a0the first place.\n\n[Other Info]\n\n\u00a0* n/a\n\n----\n\nI have VMs failing to start with 2017-02-17 15:38:44.458 264015 ERROR nova.compute.manager [instance: 0c97ab16-2d30-43fa-b0e4-a064a842b5ed] libvirtError: internal error: process exited while connecting to monitor: 2017-02-17T15:38:43.907222Z qemu-system-x86_64: -netdev tap,ifname=tapf34ef99e-18,id=hostnet0,vhost=on,vhostfd=28: network script /etc/qemu-ifup failed with status 256\n\nLog excerpt:\nhttp://cdn.pasteraw.com/b3tw4cjefomfi3e9k09hvodrfun85z\n\nSeems to be that /etc/qemu-ifup is being blocked by apparmor:\ntype=AVC msg=audit(1487347189.015:28536): apparmor=\"DENIED\" operation=\"exec\" profile=\"libvirt-4a03fea7-e966-48e4-80ac-aa138db67243\" name=\"/etc/qemu-ifup\" pid=285438 comm=\"qemu-system-x86\" requested_mask=\"x\" denied_mask=\"x\" fsuid=0 ouid=0\ntype=PATH msg=audit(1487347189.015:28536): item=0 name=\"/etc/qemu-ifup\" inode=66403 dev=08:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL\n\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# cat /etc/apparmor.d/libvirt/libvirt-4a03fea7-e966-48e4-80ac-aa138db67243\n#\n# This profile is for the domain whose UUID matches this file.\n#\n\n#include <tunables/global>\n\nprofile libvirt-4a03fea7-e966-48e4-80ac-aa138db67243 {\n\u00a0\u00a0#include <abstractions/libvirt-qemu>\n\u00a0\u00a0#include <libvirt/libvirt-4a03fea7-e966-48e4-80ac-aa138db67243.files>\n\n}\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# cat /etc/apparmor.d/libvirt/libvirt-4a03fea7-e966-48e4-80ac-aa138db67243.files\n# DO NOT EDIT THIS FILE DIRECTLY. IT IS MANAGED BY LIBVIRT.\n\u00a0\u00a0\"/var/log/libvirt/**/instance-00000008.log\" w,\n\u00a0\u00a0\"/var/lib/libvirt/qemu/domain-instance-00000008/monitor.sock\" rw,\n\u00a0\u00a0\"/var/run/libvirt/**/instance-00000008.pid\" rwk,\n\u00a0\u00a0\"/run/libvirt/**/instance-00000008.pid\" rwk,\n\u00a0\u00a0\"/var/run/libvirt/**/*.tunnelmigrate.dest.instance-00000008\" rw,\n\u00a0\u00a0\"/run/libvirt/**/*.tunnelmigrate.dest.instance-00000008\" rw,\n\u00a0\u00a0\"/var/lib/nova/instances/4a03fea7-e966-48e4-80ac-aa138db67243/console.log\" rw,\n\u00a0\u00a0\"/var/lib/nova/instances/4a03fea7-e966-48e4-80ac-aa138db67243/console.log\" rw,\n\u00a0\u00a0# for qemu guest agent channel\n\u00a0\u00a0owner \"/var/lib/libvirt/qemu/channel/target/domain-instance-00000008/**\" rw,\n\u00a0\u00a0/dev/vhost-net rw,\n\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# dpkg -S libvirt-qemu\nlibvirt-bin: /etc/apparmor.d/abstractions/libvirt-qemu\n\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# dpkg -l libvirt-bin\nDesired=Unknown/Install/Remove/Purge/Hold\n| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend\n|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)\n||/ Name                                      Version                   Architecture              Description\n+++-=========================================-=========================-=========================-=======================================================================================\nii  libvirt-bin                               1.3.1-1ubuntu10.6~cloud0  amd64                     programs for the libvirt library\n\nSeeing identical behavior on Xenial\nubuntu@ubuntu-xenial-5165:~$ dpkg -l libvirt-bin\nDesired=Unknown/Install/Remove/Purge/Hold\n| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend\n|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)\n||/ Name                                      Version                   Architecture              Description\n+++-=========================================-=========================-=========================-=======================================================================================\nii  libvirt-bin                               1.3.1-1ubuntu10.8         amd64                     programs for the libvirt library", 
+    "tags": [
+        "verification-done", 
+        "verification-newton-done"
+    ], 
+    "importance": "High", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1665698", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1665698, 
+    "index": 2039, 
+    "openned": "2017-03-20 15:01:20.058071+00:00", 
+    "created": "2017-02-17 16:21:27.994733+00:00", 
+    "title": "/etc/qemu-ifup not allowed by apparmor", 
+    "comments": [
+        {
+            "content": "I have VMs failing to start with 2017-02-17 15:38:44.458 264015 ERROR nova.compute.manager [instance: 0c97ab16-2d30-43fa-b0e4-a064a842b5ed] libvirtError: internal error: process exited while connecting to monitor: 2017-02-17T15:38:43.907222Z qemu-system-x86_64: -netdev tap,ifname=tapf34ef99e-18,id=hostnet0,vhost=on,vhostfd=28: network script /etc/qemu-ifup failed with status 256\n\nLog excerpt:\nhttp://cdn.pasteraw.com/b3tw4cjefomfi3e9k09hvodrfun85z\n\nSeems to be that /etc/qemu-ifup is being blocked by apparmor:\ntype=AVC msg=audit(1487347189.015:28536): apparmor=\"DENIED\" operation=\"exec\" profile=\"libvirt-4a03fea7-e966-48e4-80ac-aa138db67243\" name=\"/etc/qemu-ifup\" pid=285438 comm=\"qemu-system-x86\" requested_mask=\"x\" denied_mask=\"x\" fsuid=0 ouid=0\ntype=PATH msg=audit(1487347189.015:28536): item=0 name=\"/etc/qemu-ifup\" inode=66403 dev=08:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL\n\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# cat /etc/apparmor.d/libvirt/libvirt-4a03fea7-e966-48e4-80ac-aa138db67243\n#\n# This profile is for the domain whose UUID matches this file.\n#\n\n#include <tunables/global>\n\nprofile libvirt-4a03fea7-e966-48e4-80ac-aa138db67243 {\n  #include <abstractions/libvirt-qemu>\n  #include <libvirt/libvirt-4a03fea7-e966-48e4-80ac-aa138db67243.files>\n\n}\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# cat /etc/apparmor.d/libvirt/libvirt-4a03fea7-e966-48e4-80ac-aa138db67243.files\n# DO NOT EDIT THIS FILE DIRECTLY. IT IS MANAGED BY LIBVIRT.\n  \"/var/log/libvirt/**/instance-00000008.log\" w,\n  \"/var/lib/libvirt/qemu/domain-instance-00000008/monitor.sock\" rw,\n  \"/var/run/libvirt/**/instance-00000008.pid\" rwk,\n  \"/run/libvirt/**/instance-00000008.pid\" rwk,\n  \"/var/run/libvirt/**/*.tunnelmigrate.dest.instance-00000008\" rw,\n  \"/run/libvirt/**/*.tunnelmigrate.dest.instance-00000008\" rw,\n  \"/var/lib/nova/instances/4a03fea7-e966-48e4-80ac-aa138db67243/console.log\" rw,\n  \"/var/lib/nova/instances/4a03fea7-e966-48e4-80ac-aa138db67243/console.log\" rw,\n  # for qemu guest agent channel\n  owner \"/var/lib/libvirt/qemu/channel/target/domain-instance-00000008/**\" rw,\n  /dev/vhost-net rw,\n\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# dpkg -S libvirt-qemu\nlibvirt-bin: /etc/apparmor.d/abstractions/libvirt-qemu\n\nroot@ubuntu-trusty-5773:/etc/apparmor.d/abstractions# dpkg -l libvirt-bin\nDesired=Unknown/Install/Remove/Purge/Hold\n| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend\n|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)\n||/ Name                                      Version                   Architecture              Description\n+++-=========================================-=========================-=========================-=======================================================================================\nii  libvirt-bin                               1.3.1-1ubuntu10.6~cloud0  amd64                     programs for the libvirt library\n\n\nSeeing identical behavior on Xenial\nubuntu@ubuntu-xenial-5165:~$ dpkg -l libvirt-bin\nDesired=Unknown/Install/Remove/Purge/Hold\n| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend\n|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)\n||/ Name                                      Version                   Architecture              Description\n+++-=========================================-=========================-=========================-=======================================================================================\nii  libvirt-bin                               1.3.1-1ubuntu10.8         amd64                     programs for the libvirt library", 
+            "date_created": "2017-02-17 16:21:27.994733+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "/etc/qemu-ifup is a non-standard command. Can you give details of how you setup your system to use this?\n\nWORKAROUND: add the following to /etc/apparmor.d/abstractions/libvirt-qemu:\n/etc/qemu-ifup ixr,\n\nand restart your VMs.", 
+            "date_created": "2017-02-17 17:36:34.978248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "That has been my challenge this morning in figuring this out. As far as I know, I don't use it or need what it provides. I can't find anything in /etc/libvirt or even /etc or my Openstack venv that is calling toward qemu-ifup. I grepped thru /usr looking for 'qemu-ifup' and the only hits were from the /usr/share/doc/qemu-system-*/common/qemu-doc.html mentions.\n\nI began to suspect a possible packaging issue when I saw that it is sourced from upstream Ubuntu packaging, so that's what prompted this bug:\n\nroot@ubuntu-trusty-5773:~# dpkg -S /etc/qemu-ifup\nqemu-system-common: /etc/qemu-ifup\nroot@ubuntu-trusty-5773:~# dpkg -l qemu-system-common\nDesired=Unknown/Install/Remove/Purge/Hold\n| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend\n|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)\n||/ Name                                      Version                   Architecture              Description\n+++-=========================================-=========================-=========================-=======================================================================================\nii  qemu-system-common                        1:2.5+dfsg-5ubuntu10.5~cl amd64                     QEMU full system emulation binaries (common files)\n\n\n", 
+            "date_created": "2017-02-17 17:52:29.108101+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Also thanks for the workaround suggestion. I was looking at adding a workaround like that to the abstraction earlier but wasn't sure on the syntax :)", 
+            "date_created": "2017-02-17 17:55:32.637730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "I wonder if https://review.openstack.org/#/c/425637/ has broken this on my version of libvirt by removing the script='' entry, which is maybe causing qemu to revert to its default of calling /etc/qemu-ifup, which as we know is not allowed by apparmor.", 
+            "date_created": "2017-02-17 18:06:46.384594+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Thank you for responding. Marking back to New so a member of the cloud team can take a further look.", 
+            "date_created": "2017-02-17 20:13:45.632183+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Hi Logan, thank you for your report.\nAnd also tanks Jamie to already provide a workaround for thew apparmor case.\n\nWe just SRUed a fix to Xenial to \"allow execution of those scripts\".\nSee https://bugs.launchpad.net/ubuntu/+source/libvirt/+bug/1620407\n\nFrom your report I see that you likely have Clou-Archive Mitaka which gave you access to the same SRU of libvirt to 1.3.1-1ubuntu10.8.\n\nIt very much confuses me that for your case it now seems to prohibiting such an execution.\nAs that is just inverse to what the fix does. Never the less it is too related to consider it just an accident.\n\nAdding Cloud-Archive task to get their expertise as well.", 
+            "date_created": "2017-02-20 09:40:59.061676+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Marking Critical as it is a potential SRU-regression", 
+            "date_created": "2017-02-20 09:42:38.615802+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Let me outline on the /etc/qemu-ifup a bit - or at least my understanding of it.\nIf you happen to run \"type=ethernet\" networking the script gets to be important.\nSee https://libvirt.org/formatdomain.html#elementsNICSEthernet\nIn general this is not recommended for various security reasons (you have to give libvirt/qemu more permissions/capabilities to get this working).\nNow if you have type=ethernet and no script set, then the default is /etc/qemu-ifup, maybe that is how it gets this \"config\" in your case.\n\nThe Openstack commit you referred to could absolutely be related as well.\nBut it should not be in your software stack in your case right?\n\nIf applied this would make the xml instead `script=\"\"` not set anything and yes - in that case it would then fall back to /etc/qemu-ifup which might tickle down to showing your issue.", 
+            "date_created": "2017-02-20 09:43:37.728467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "The function the upstream fix relates to in Openstack is:\ndef set_vif_host_backend_ethernet_config(conf, tapname):\n    \"\"\"Populate a LibvirtConfigGuestInterface instance\n    with host backend details for an externally configured\n    host device.\n\nBefore the change it was part of \"get_config(self, instance, network, mapping)\" in\n\"class LibvirtOpenVswitchDriver(LibvirtBaseVIFDriver)\"\n\nI'm not sure but does that imply it might trigger in any openvswitch setup?\nSome of our tests should have had the same then.\nI'll rerun some of those later to be sure.\n\n\n\nThe libvirt change on the other hand \"only\" changes to NOT refuse guests right away that have a script= attribute set. See the referred bug for details.\nNow it does no more refuse to start those - that should (tm) not cause the issue. Maybe it really is the openstack commit you referred to (causing it to fallback to the default).\nBut as I said I'd wonder if that commit is active in your Software stack at all.", 
+            "date_created": "2017-02-20 09:58:00.186461+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "I'm going off some more testing with that in mind what I documented on the bug already.\n\nI really want to understand why it hits you now and if this is a SRU-regression, so here some questions.\n\nQuestions to Logan:\n- Could you share your guest XML to help me to understand what combination drives your guest into being stopped by this apparmor DENY now?\n- Did the workaround suggested by Jamie fix it for you?\n- Could you also try downgrading to 1.3.1-1ubuntu10.7 if that get you working again?\n- I have made assumptions, but want to confirm what are the releases you are using for Ubuntu, Cloud-Archive, Openstack?\n\nQuestions to the Cloud Archive Team:\n- It didn't in mine, but did that show up in any of your usual regular tests?\n- is the referred Openstack commit active in any of our cloud-archive release (if so in which)?\n- Can we reproduce that somehow to iterate more quickly on it?", 
+            "date_created": "2017-02-20 09:59:22.728524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "I was testing various type=ethernet XML configurations.\n\nCases:\ndefaultpath => <script path='/etc/qemu-ifup'/>\nemptyattrib => <script path=''/>\nnoattrib => no script tag at all\n\nThe target statement which the error of the known bug refers to is optional, so add another set of cases with\nthe same three again without a <target ...> attribute called \"notgt-*\".\n\n                         Pre-Fix            Post-Fix\ndefault              bug 1620407             working\nempty                bug 1620407             working\nno                   bug 1620407  still bug 1620407*\nnotgt-default            working             working\nnotgt-empty     can't be defined    can't be defined\nnotgt-no                 working             working\n\n*We fixed bug 1620407 with a mimimal fix intentionally, to the \"no\" case is \"ok\" to still fail.\n\nNow the Openstack case should (IMHO) be one of the \"empty\" cases before the fix to openstack that was referred.\nThat is the path='', since notgt-empty can't be defined (xml validation) it has to be the normal \"empty\" case.\nAfter the fix it should be one of the 'no' cases.\n\nBut all cases either stayed as-is or were fixed, so I don't know.\nAlso I had no apparmor DENIES along any of that - even when using explicitly in the *default cases.\n\nI really need the XML that is generated to understand what might be going on.\nAlso please help to answer the questions I listed in commend #10\n", 
+            "date_created": "2017-02-20 11:00:03.988673+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "I think I found the guest definition in the attached raw log, analyzing ...\n\nThe important snippet is:\n<interface type='ethernet'>\n      <mac address='fa:16:3e:3b:8b:2b'/>\n      <target dev='tapf34ef99e-18'/>\n      <model type='virtio'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>\n</interface>\n\nThat is my \"no\" case which should still fail the same way.\nYet I think I need to run that with an externally created tap device to fully match the Openstack+Openvswitch case. Doing that now ...\n\n\nStill please help to answer all the other questions in comment #10.", 
+            "date_created": "2017-02-20 11:12:18.589319+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Even with that things are still working correctly for me:\nHere the \"no\" case re-ran with the device being set up externally.\n\n$ tunctl -t manualdevname\n$ ip link set manualdevname up\n$ ip link set manualdevname master virbr0\n\nFor the config:\n    <interface type='ethernet'>\n      <mac address='52:54:00:18:0d:a3'/>\n      <target dev='manualdevname'/>\n      <model type='virtio'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x07' function='0x0'/>\n    </interface>\n\nThis case worked prior and after the fix in 1.3.1-1ubuntu10.8 for me then.", 
+            "date_created": "2017-02-20 11:49:20.788902+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "FYI - while not confirmed I marked it regression-update for now until we know for sure it is not (to get the right attention).\nI also pinged some Cloud Archive people on IRC to take a look.", 
+            "date_created": "2017-02-20 11:50:07.097189+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Just wanted to make one more thing clear, the libvirt in Xenial (and here in the bug) is 1.3.1.\nThat means it is pre http://libvirt.org/git/?p=libvirt.git;a=commitdiff;h=9c17d66\nSo the prereq to need https://review.openstack.org/#/c/425637/ is not given.\nMaybe those two bite each other, but I still need some way to reproduce to fully understand.\n\nMy remaining check would be to run on Trusty+UCA?, but for that I need more confirmations what exactly is used and also another system to do so.", 
+            "date_created": "2017-02-20 11:56:10.232631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Summarizing open questions to stop referring back:\n\nQuestions to Logan:\n- Did the workaround suggested by Jamie fix it for you?\n- Could you also try downgrading to 1.3.1-1ubuntu10.7 (or before) if that get you working again?\n- I have made assumptions so far, but want to confirm what are the releases you are using for Ubuntu, Cloud-Archive, Openstack?\n\nQuestions to the Cloud Archive Team:\n- It did not show up in explicit or automated tests, did that show up in any of your usual tests?\n- is the referred Openstack commit active in any of our cloud-archive release (if so in which)?\n- Can you reproduce that somehow to iterate more quickly on it?", 
+            "date_created": "2017-02-20 11:56:13.891028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "I have checked with our support people, but they somewhat calmed me down that this is not lighting up everywhere (?yet?). So keeping the state as is for now.", 
+            "date_created": "2017-02-20 13:48:41.215959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Hi Christian,\n\nI have not tested the workaround yet. What I have done since I posted this was tried to narrow it down to the specific nova commit that I suspected triggered this. To be specific, I am deploying Newton using OpenStack-Ansible. \n\nOSA pulls nova directly from upstream openstack git sources and does not consume Ubuntu Cloud Archive for that. However, the libvirt installed is sourced from UCA. For OSA newton on trusty, libvirt is sourced from UCA's trusty/mitaka repo. For OSA newton on xenial, libvirt comes from UCA xenial/newton.\n\nWithout changing the libvirt being installed, I have confirmed the specific nova change that triggers this is https://review.openstack.org/#/c/425637/. The guest xml that nova generates when this commit is applied is in the OP (http://cdn.pasteraw.com/b3tw4cjefomfi3e9k09hvodrfun85z). When I revert my nova SHA to the parent commit of this change, b51231c638228f67ab130a7855b9143b202733f6, without changing any libvirt bits, the VMs launch as expected since they now contain the \"<script path=''/>\" bits in the network interface xml. \n\nWithout digging in to libvirt too much, it seems like it should be fairly easy to reproduce by installing the latest xenial/newton or trusty/mitaka UCA sourced libvirt, and launching a VM with not \"<script path=''/>\" XML on the ethernet vif.\n\nI am limited on how much time I can commit to testing other changes at this time, but I will try to test the workaround and/or the previous libvirt version you suggested asap. Hopefully this will help fill in the blanks but if you have any other questions I missed let me know!", 
+            "date_created": "2017-02-20 13:52:47.337759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Just found that the report was for 1.3.1-1ubuntu10.6~cloud0 and only stated to \"also apply\" to 1.3.1-1ubuntu10.8. By that dropping the regression-update tag.", 
+            "date_created": "2017-02-20 14:24:50.689991+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "I tried to puzzle together the timeline on this.\nThanks rbasask for discussing with me to refocus on this issue.\n\nTimeline:\n#1 libvirt passed script to qemu, qemu executed\n   1.3.1 as in Xenial or UCA-Mitaka still do that\n   But Openstack passed script='' and qemu silently ignored it\n\n#2 libvirt changed, now libvirt executes\n   http://libvirt.org/git/?p=libvirt.git;a=commit;h=9c17d665fdc5f\n   That is in Yakkety and later.\n   This had an unintentional API change, that empty scripts behave differently.\n\n#3 Openstack adapted to that API change\n   https://review.openstack.org/#/c/425637/\n   Not sure - is that in Ocata only - commit in 2017?\n   Now new Openstack (#3) + New Libvirt (#2) work\n   But if you happen to have an old libvirt like in #1 you now have different behavior.\n\n#4 Upstream libvirt realizes the API break and fixes it\n   http://libvirt.org/git/?p=libvirt.git;a=commit;h=1d9ab0f04af310e52f80b4281751655bb3bb7601\n   But backporting that would not help, this is meant for libvirt later or equal to #2\n\n#5 IMHO openstack should either\n   - detect libvirt version and do differently depending on that (keep script='' for old ones)\n   - or instead of not passing script at all pass /bin/true which will work on libvirt as old as #1\n\nI expect you have an openstack of #4 and a libvirt of #1 which due to that cause this.\nI still don't see the apparmor issue on my end, but that might be an additional issue.\nEven in the /bin/true case we might hit an apparmor on /bin/true.\n\n\nPlease everybody still try to hep sorting out questions in comment #16.", 
+            "date_created": "2017-02-20 14:51:58.517396+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "I'm having a hard time testing the workaround in #1 -- is there an additional step necessary after modifying the abstractions/libvirt-qemu file with the additional rule? Ie. some command to reload the file? I restarted apparmor, libvirt-bin, and nova-compute services and it is still failing with the same message despite the line being added to the apparmor abstraction file.\n\nDowngrading to 1.3.1-1ubuntu10.7 on Xenial did not fix the issue for me.", 
+            "date_created": "2017-02-24 15:50:11.185019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "I also tested hacking in conf.script = \"/bin/true\" to nova. You suspected it might fail with apparmor preventing /bin/true execution, I can confirm that it did indeed fail.\n\ntype=AVC msg=audit(1487951915.530:99345): apparmor=\"DENIED\" operation=\"exec\" profile=\"libvirt-5ea8f14c-73c8-4e21-9f64-28d60c1919c6\" name=\"/bin/true\" pid=802296 comm=\"qemu-system-x86\" requested_mask=\"x\" denied_mask=\"x\" fsuid=0 ouid=0\ntype=PATH msg=audit(1487951915.530:99345): item=0 name=\"/bin/true\" inode=44 dev=08:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL", 
+            "date_created": "2017-02-24 16:00:20.125645+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "On Fri, Feb 24, 2017 at 4:50 PM, Logan V <email address hidden> wrote:\n\n> is there an\n> additional step necessary after modifying the abstractions/libvirt-qemu\n> file with the additional rule? Ie. some command to reload the file? I\n> restarted apparmor, libvirt-bin, and nova-compute services and it is\n> still failing with the same message despite the line being added to the\n> apparmor abstraction file.\n>\n\nSee https://help.ubuntu.com/lts/serverguide/apparmor.html\nBut you stated you restarted apparmor already.\n\nThe workflow is that on guest creation it\nuses /etc/apparmor.d/libvirt/TEMPLATE.qemu to build a guest specific file.\nThat is then loaded for the guests qemu and at that point the (now changed)\nabstraction is pulled in.\n\n\n-- \nChristian Ehrhardt\nSoftware Engineer, Ubuntu Server\nCanonical Ltd\n", 
+            "date_created": "2017-02-27 10:12:40+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Yep, just to confirm with the suggested workaround applied and restarting apparmor + rebooting the system it did not work.", 
+            "date_created": "2017-03-06 20:37:31.053890+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Thanks to you already listing an example of a full profile from your system in the description and a libvirt xml in http://cdn.pasteraw.com/b3tw4cjefomfi3e9k09hvodrfun85z both seem pretty standard and includes the abstractions/libvirt-qemu.\n\nMaybe when you added \"/etc/qemu-ifup ixr,\" you added it to the end which might be inside the qemu_bridge_helper child profile - it should go above that.\n\n@Logan - In any way it might be helpful if you could share the modified abstraction file as well just to be able to have a look if there would be anything odd in your case.\n\n@Logan - are you running upstream Openstack or a packaged one?\n\n@Logan - you said \"I also tested hacking in conf.script = \"/bin/true\" to nova.\" If you'd happen to set this to conf.script = \"\" I'd hope that the effective generated guest config would match what openstack did before https://review.openstack.org/#/c/425637/ and by that make it work with the libvirt 1.3.1 version again. Could you try that as well?\n\n@Cloud-Archive Team - did you do anything special in Xenial-Ocata to avoid that issue in general?\n\n", 
+            "date_created": "2017-03-07 07:52:07.926280+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "I must've done something wrong when originally testing the abstraction fix. I re-tested based on your advice and it does indeed fix the problem. The abstraction file that I just tested, which worked, is http://cdn.pasteraw.com/9u16uk9938mp5t3x530ok0w791nkooc.\n\nRegarding upstream vs. packaged, I went into some detail on that in #18, but basically it is upstream Openstack sourced from git, with libvirt and non-openstack bits sourced from cloud-archive.\n\nAlso yes I can confirm that reverting nova to the empty string behavior results in a working system:\n    <interface type='ethernet'>\n      <mac address='fa:16:3e:23:fe:4d'/>\n      <script path=''/>\n      <target dev='tap7f277872-98'/>\n      <model type='virtio'/>\n      <alias name='net0'/>\n      <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>\n    </interface>", 
+            "date_created": "2017-03-09 18:49:11.878043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Thank you so much for confirming that Logan!\nThat kind of reset my sanity on understanding the issue.\n\nBut I wonder that if one uses cloud archive Ocata he would also get this combo IMO.\nIt would use Ocata and the libvirt 2.5 th you also have - just as you do with your combo.\n\nI don't know why the Cloud Team is not seeing this, and I'd like to hear their opinion before releasing a fix. I'm explicitly subscribing some of them to poll their statements.\n\n\nAt the same time this does not stop me from preparing and testing a fix myself and with your help.\nI'm preparing something and will update here once ready.\n", 
+            "date_created": "2017-03-10 08:02:14.665708+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "So we have:\n- old openstack: sets script=''\n- new openstack: sets nothing\n- old libvirt: passes to qemu, which does nothing on ''\n- new libvirt: executes script, but can't handle ''\n- any libvirt: if nothing is set defaults to /etc/qemu-ifup\n\nInstead of the rule to allow that to qemu, I'd prefer to backport the libvirt fix. Because essentially '' does not mean \"run qemu/ifup\" which would be what the apparmor change allows.\nWe want back to '' when set really executing nothing.\nWell that will at least \"allow\" it to handle script='' correctly.\n\nIMHO newer openstack is broken as setting nothing implies /etc/qemu-ifup which might not be what they wanted. Never the less from the libvirt perspective we want to allow that.\n\nBut here my brain runs into a knot while trying to prep a patch.\nIn your case Logan, the newer Openstack sets nothing which implies /etc/qemu-ifup.\nThat should be executed by libvirt which should run under the apparmor profile usr.sbin.libvirtd.\nSince you can \"fix\" your case by adding to the libvirt-qemu abstraction shouldn't that be qemu executing it in your case.\n\nReading your Deny log again comm=\"qemu-system-x86\".\nHmm, could it be that you run the \"new\" openstack against the \"old\" libvirt?\nI see you said \"with libvirt and non-openstack bits sourced from cloud-archive\", but then I'd have expected the apparmor fail against libvirt - if any.\n\nDon't get me wrong we might still want to backport the fix for libvirt, but I want to understand where to fix apparmor rules would be correct.\n\n@Logan:\n- Could you report the output of:\n  $ dpkg -l 'libvirt-bin' 'libvirt-daemon-system' 'qemu-kvm'\n- You said you run Cloud Archive - might I ask which one at the moment?", 
+            "date_created": "2017-03-10 08:25:15.741603+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Note: a backport of the upstream libvirt fix is building here - https://launchpad.net/~ci-train-ppa-service/+archive/ubuntu/2559\nFeel free to test, but I really think we need to understand the dependencies to consider the apparmor change at the right place first.", 
+            "date_created": "2017-03-10 08:26:10.142019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "@Christian: what does the default /etc/qemu-ifup do?\n\nAlthough I'm inclined to accept your argument that my recent change to Nova was a step in the wrong direction, I'm wondering why it seems to work (at least in my testing) in practice. \n\nAlso, if there was now a change in libvirt to interpret '' as \"do nothing\", is there something straightforward we could put in the Nova code to detect when libvirt has that fix - and so set '' - and when it doesn't - in which case best to set None.\n", 
+            "date_created": "2017-03-12 14:25:57.755625+00:00", 
+            "author": "https://api.launchpad.net/1.0/~neil-jerram"
+        }, 
+        {
+            "content": "Hi Neil,\n\n1) on what /etc/qemu.ifup (as being the default) actually does\nYou can look at Debian/Ubuntus script (unchanged since 2013)\nhttps://anonscm.debian.org/cgit/pkg-qemu/qemu.git/tree/debian/qemu-ifup.linux\nAFAIK Fedora provides no default, but in most cases it is meant for custom scripts anyway, e.g. https://en.wikibooks.org/wiki/QEMU/Networking#qemu-ifup as a base to create such.\n\nFrom there the TL;DR for Debian/Ubuntu is in the top quote:\n # Script to bring a network (tap) device for qemu up.                            \n # The idea is to add the tap device to the same bridge                           \n # as we have default routing to.\nIt has various paths with exit as a no-op e.g. if no bridge is there.\n\n\n\n2) Why it works in tests\nI outlined several combinations of libvirt and openstack above (see the timeline in comment #20) that work well together. If you are on any of those your testing will not show issues.\nAlso the \"error\" is not this script failing. It very likely would work just doing nothing or something useless in the case here (yet it is dangerous to rely on that). The issue reported here is that due to the unexpected calling of /etc/qemu-ifup (due to now path being not set) the apparmor protection kicks in and blocks it. So if you tested on a platform without apparmor or with other rules you would not have seen it.\nYet it is correct by apparmor to do so - a user is usually meant to add exceptions if needed (as the workaround for Logan does.)\n\n\n3)\nOn detection of the fix that lets libvirt handle \"\" as no-op - to my knowledge - there is no externally visible thing to check.\nIt will be upstream with libvirt 3.1 so you can assume it is there starting from this.\nBut you'll never know who will have it backported or not.\n\n\n\n4)\nIMHO there is one little piece to the puzzle still missing which is want to understand why in Logans case qemu is calling it (as in newer libvirt it should do it) - see comment #28.\nSo I'd have expected libvirt saying \"error executing '' or anything like it, not the apparmor issue he hit for qemu.\"\nBut I'll have to wait on his reply for that.\n", 
+            "date_created": "2017-03-13 08:09:54.334669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Sorry for the delay on getting this info.\n\nroot@ubuntu-xenial-6494:~# dpkg -l 'libvirt-bin' 'libvirt-daemon-system' 'qemu-kvm'\nDesired=Unknown/Install/Remove/Purge/Hold\n| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend\n|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)\n||/ Name                                Version                Architecture           Description\n+++-===================================-======================-======================-===========================================================================\nii  libvirt-bin                         1.3.1-1ubuntu10.8      amd64                  programs for the libvirt library\nun  libvirt-daemon-system               <none>                 <none>                 (no description available)\nun  qemu-kvm                            <none>                 <none>                 (no description available)\n\nroot@ubuntu-xenial-6494:~# cat /etc/apt/sources.list.d/mirror_lstn_net_ubuntu_cloud_archive.list\ndeb http://mirror.lstn.net/ubuntu-cloud-archive xenial-updates/newton main\n", 
+            "date_created": "2017-03-17 03:34:37.076512+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Also in regard to: \"Reading your Deny log again comm=\"qemu-system-x86\".\nHmm, could it be that you run the \"new\" openstack against the \"old\" libvirt?\nI see you said \"with libvirt and non-openstack bits sourced from cloud-archive\", but then I'd have expected the apparmor fail against libvirt - if any.\"\n\nThis is Newton UCA on Xenial running against stable/newton Nova. The openstack bits happen to be sourced from upstream (non UCA), but if UCA is pulling in stable/newton release tags at some point then I'm sure it will hit this eventually too.", 
+            "date_created": "2017-03-17 03:39:37.836453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Ok, that confirms my theory of new Openstack vs (too) old libvirt.\nBut IIRC UCA Newton should be Newton form openstack and virtualization bits from Yakkety Ubuntu release.\nThat would be libvirt 2.1.0-1ubuntu9.1\n\n$ lxc launch ubuntu-daily:xenial xenial-uca-newton\n$ lxc exec xenial-uca-newton -- add-apt-repository cloud-archive:newton\n$ lxc exec xenial-uca-newton -- apt update\n$ lxc exec xenial-uca-newton -- apt-cache policy libvirt-bin\nlibvirt-bin:\n     1.3.1-1ubuntu10.8 500\n        500 http://archive.ubuntu.com/ubuntu xenial-updates/main amd64 Packages\n\nOk so Newton UCA really has not Yakketies libvirt.\nBut you are running Ocata level code, so their the UCA version would run into the same not having a newer libvirt.\n$ lxc launch ubuntu-daily:xenial xenial-uca-ocata\n$ lxc exec xenial-uca-ocata -- add-apt-repository cloud-archive:ocata\n$ lxc exec xenial-uca-ocata -- apt update\n$ lxc exec xenial-uca-ocata -- apt-cache policy libvirt-bin\nlibvirt-bin:\n  Installed: (none)\n  Candidate: 2.5.0-3ubuntu3~cloud0\n  Version table:\n     2.5.0-3ubuntu3~cloud0 500\n        500 http://ubuntu-cloud.archive.canonical.com/ubuntu xenial-updates/ocata/main amd64 \n\nHere we go.\nPlease don't ask me why the libvirt 2.1 is not in the Newton UCA, that is up to the Cloud Archives Teams reasons and decisions. But they are subscribed and can answer that.\n\nThat explains why we are not seeing the issue when using Newton (not having the Openstack change) nor with Ocata (has Openstack but also a newer libvirt) - both cases match.\nA cross version usage is not supported by UCA as far as I know.\n\nSo if you are running \"ocata-level\" upstream you should switch to UCA-Ocata and things hopefully should just work.", 
+            "date_created": "2017-03-17 08:42:55.014044+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "It is still right to fix the empty script execution (#4 in my timeline post) in the version that is in Zesty. Tests are mostly good, should hit zesty-proposed soon.\n\nAs it is not called on Yakkety in any supported case there is no real reason to SRU there. And it won't help you as we just clarified that the UCA-Newton still has the libvirt of Xenial.", 
+            "date_created": "2017-03-17 08:49:42.472606+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "This bug was fixed in the package libvirt - 2.5.0-3ubuntu4\n\n---------------\nlibvirt (2.5.0-3ubuntu4) zesty; urgency=medium\n\n  * d/p/ubuntu/qemu-Allow-empty-script-path-to-interface.patch: in the past\n    it was possible to have <script path=''/> which now fails - fix to match\n    the old behavior (LP: #1665698)\n\n -- Christian Ehrhardt <email address hidden>  Fri, 10 Mar 2017 08:57:18 +0100", 
+            "date_created": "2017-03-17 13:35:02.609506+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Will the libvirt fix be back-ported? We can't effectively use noscript in OpenStack with any versions missing the fix.", 
+            "date_created": "2017-03-17 23:57:23.477436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kevinbenton"
+        }, 
+        {
+            "content": "The change in Openstack is in Ocata only, if you run Ocata on Zesty or Xenial+UCA-Ocata you should be good already with the fix above.\n\nI'm considering to backport it to Yakkety where libvirt is in the broken state (script is handled by libvirt, but it doesn't know about \"\" being meant to be a no-op). Looking into that somewhen this week.\n\nBut I won't backport to Xenial (makes no sense, the code it fixes isn't there at all).\nAnd that means UCA-Newton on Xenial as well won't get a fix as it does not apply.\nI'm open to a community driven fix for it in Xenial, but there IMO the override in the apparmor is more likely the right way to do it.\n\nThe problem that is left IMHO is that the openstack change from passing 'path=\"\"' to \"not passed at all\" is suboptimal, as this is \"defined\" in qemu/libvirt as \"fall back to default path\". But that fix would have to be in Openstack.", 
+            "date_created": "2017-03-20 12:32:47.581958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "The OpenStack change is not just in Ocata. It was also backported to Newton. Please note the merged OpenStack patch in #4 is on branch stable/newton. We need this fix in Newton UCA as well please.", 
+            "date_created": "2017-03-20 12:43:48.816623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Having read through the history on this bug I'm a little confused; Newton UCA does not contain any version of libvirt - Newton deployments on Xenial will use the libvirt version shipped in Xenial itself, which I think is the same version that will be used in all gates for OpenStack so I'm not clear on exactly what needs 'fixing' for the Newton UCA.\n\nThis is also reflected in the latest set of tests for Newton SRU's which are currently in-flight - I'm not seeing any unexpected test failures from tempest for the proposed packages which include the changes referenced on the stable/newton branch.\n\nDoe the change in behaviour in OpenStack only impact on certain vif types?", 
+            "date_created": "2017-03-20 13:39:24.267109+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Yes it only affects the \"tap\" vif type.", 
+            "date_created": "2017-03-20 13:54:25.152129+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "http://lists.openstack.org/pipermail/openstack-dev/2016-December/109080.html and https://bugs.launchpad.net/nova/+bug/1649527 contain additional info about the bug and nova fix.", 
+            "date_created": "2017-03-20 13:58:26.613714+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Add what's the baseline libvirt version compatibility that nova documents?", 
+            "date_created": "2017-03-20 14:21:28.865009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Looks like that is defined here: https://github.com/openstack/nova/blob/stable/newton/nova/virt/libvirt/driver.py#L190-L208", 
+            "date_created": "2017-03-20 14:54:51.287704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "newton and ocata are both:\nMIN_LIBVIRT_VERSION = (1, 2, 1)\nMIN_QEMU_VERSION = (1, 5, 3)\n\n", 
+            "date_created": "2017-03-20 14:55:31.079125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "OK so reading the code and reading:\n\n  https://wiki.openstack.org/wiki/LibvirtDistroSupportMatrix\n\nThe Newton nova libvirt driver should maintain compatibility with 1.2.1, with Pike being compatible with 1.2.9 and Queens with 1.3.1 (the current Xenial version).\n\n\n", 
+            "date_created": "2017-03-20 15:00:17.653456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Marking Cloud Archive task as Invalid (as the Newton UCA does not have any libvirt/qemu packages).", 
+            "date_created": "2017-03-20 15:01:02.390731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Adding bug task for Nova as its not currently compatible in stable/newton with the documented minimum libvirt version of 1.2.1.", 
+            "date_created": "2017-03-20 15:01:59.962427+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "I believe the fixes for bug 1649527 fixed things for libvirt >= 1.3.3, but broke compatibility with the documented baseline version of libvirt for Nova breaking drivers that use the 'tap' vif type on Ubuntu Xenial.", 
+            "date_created": "2017-03-20 15:05:48.671021+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "To summarize:\n\nBefore 1.3.3)\n- qemu executed the script\n- passing: \"\" got to qemu and it and knew about it being a nop\n- not passing anything: means qemu will run the default path /etc/qemu-ifup\n\nSince 1.3.3)\n- libvirt executes the script\n- passing \"\": libvirt does not know \"\" should be a nop and might have had issues\n- not passing anything: does nothing (= nop)\n\nSince 3.1\n- passing: \"\": libvirt now knows \"\" it is meant to be a nop\n- not passing anything: does nothing (still a nop)\n\nBecause openstack wants libvirt/qemu to do nothing, I think with the openstack change in place it is only compat >=1.3.3 where \"not passing anything\" is a nop.\n", 
+            "date_created": "2017-03-20 15:13:02.572100+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "(FTR we'll hold bug 1664306 - Newton stable point releases - until this is resolved one way or the other).", 
+            "date_created": "2017-03-20 15:29:08.975545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "FYI on the delay for yakkety: To fix the issue of \"\" being a nop in yakkety as well requires the former SRU to complete first. But that is totally orthogonal to any of the Openstack considerations we did in the last few comments.\n", 
+            "date_created": "2017-03-20 15:56:24.576008+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "The former SRU was waiting in unapproved still while this SRU was already prepared here.\nI checked with SRU Team and so we rejected the current upload to bundle it with the next one.\n\nThis is now as 2.1.0-1ubuntu9.3 in unapproved queue for yakkety.", 
+            "date_created": "2017-03-21 13:05:54.167610+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "To clarify my understanding of this, per comment 50 and the release note that went with the change:\n\nhttps://review.openstack.org/#/c/425637/1/releasenotes/notes/libvirt-script-with-empty-path-2b49caa68b05278d.yaml\n\nWe basically want:\n\nif libvirt < 1.3.3:\n   script.path = '' (as before the change)\nelse:\n   script.path = None (as in the change)\n\nCorrect?", 
+            "date_created": "2017-03-21 16:19:51.633780+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "@mriedem\n\nYes I believe that's correct.", 
+            "date_created": "2017-03-21 16:36:07.851028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "On Tue, Mar 21, 2017 at 5:19 PM, Matt Riedemann <email address hidden>\nwrote:\n\n> if libvirt < 1.3.3:\n>    script.path = '' (as before the change)\n> else:\n>    script.path = None (as in the change)\n>\n\nSounds right to me at least.\n", 
+            "date_created": "2017-03-21 16:41:20+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/448203", 
+            "date_created": "2017-03-21 17:27:34.063746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/ocata\nReview: https://review.openstack.org/448242", 
+            "date_created": "2017-03-21 19:15:51.467152+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/448253", 
+            "date_created": "2017-03-21 19:35:56.038313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/448203\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a41d265a19b7bcb1af8fc179bf864e00023c6cc6\nSubmitter: Jenkins\nBranch:    master\n\ncommit a41d265a19b7bcb1af8fc179bf864e00023c6cc6\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Mar 21 13:18:08 2017 -0400\n\n    libvirt: conditionally set script path for ethernet vif types\n    \n    Change I4f97c05e2dec610af22a5150dd27696e1d767896 worked around\n    a change introduced in libvirt 1.3.3 where the script path on\n    a LibvirtConfigGuestInterface could not be the emptry string\n    because libvirt would literally take that as the path and couldn't\n    resolve it, when in fact it used to indicate to libvirt that the\n    script path is a noop. This has been fixed in libvirt 3.1.\n    \n    On Ubuntu with libvirt<1.3.3, if the script path is None then\n    it defaults to /etc/qemu-ifup which is blocked by AppArmor.\n    \n    So this change adds a conditional check when setting the script\n    path value based on the libvirt version so we can straddle releases.\n    \n    Change-Id: I192c61b93bd3736fdfe16b6a6906d58997d3eef9\n    Closes-Bug: #1665698\n    Related-Bug: #1649527\n", 
+            "date_created": "2017-03-22 01:05:51.548500+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Due to libvirt/nova combinations this bug does not impact either zesty or the ocata UCA (marking tasks Invalid).", 
+            "date_created": "2017-03-22 09:12:25.626403+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Ubuntu SRU Information\n\n[Impact]\nOpenStack deployments using vif types `tap`, `ivs`, `iovisor`, `midonet`, and `vrouter` are unable to boot instances using libvirt 1.3.1 from Ubuntu 16.04 (as used by the Newton Ubuntu Cloud Archive).  Note that this impacts the nova package which is currently in yakkety-proposed/newton-proposed - the version in *-updates does not have this issue.\n\n[Test case]\nUsing an OpenStack cloud deployed with one of the above SDN's boot an instance.\nThe instance will fail to boot with a libvirt error.\nNote cloud must be deployed using the -proposed packages from the Newton UCA.\n\n[Regression Potential]\nMinimal - the patch restores the previous behaviour for older libvirt versions, ensuring compatibility with documented libvirt version baselines in OpenStack Nova.", 
+            "date_created": "2017-03-22 09:19:59.874247+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Hello Logan, or anyone else affected,\n\nAccepted nova into yakkety-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/nova/2:14.0.4-0ubuntu1.1 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation on how to enable and use -proposed.Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2017-03-22 11:12:16.723820+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apw"
+        }, 
+        {
+            "content": "Hello Logan, or anyone else affected,\n\nAccepted libvirt into yakkety-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/libvirt/2.1.0-1ubuntu9.3 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2017-03-22 12:13:06.530895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arges"
+        }, 
+        {
+            "content": "Hello Logan, or anyone else affected,\n\nAccepted nova into yakkety-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/nova/2:14.0.4-0ubuntu1.2 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation on how to enable and use -proposed.Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2017-03-22 15:58:57.948725+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apw"
+        }, 
+        {
+            "content": "Hello Logan, or anyone else affected,\n\nAccepted nova into newton-proposed. The package will build now and be available in the Ubuntu Cloud Archive in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package. To enable the -proposed repository:\n\n  sudo add-apt-repository cloud-archive:newton-proposed\n  sudo apt-get update\n\nYour feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-newton-needed to verification-newton-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-newton-failed. In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification . Thank you in advance!", 
+            "date_created": "2017-03-23 09:40:12.887627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "For the libvirt portion:\n- testing of the issue of this bug itself - done\n- in & cross version migration tests - done\n- upgrade tests - done\n- general QA regression testing - done\n\nThat said verification (for the yakkety-libvirt portion, not Nova) - done.\n\nP.S. James will also add a statement once he could check his Tempest.\nEspecially to see if the rbd auth now works - that is bug 1672367 which is bundled in here.\n\n@James - I'd consider all else done, would you set the \"final\" verification-done tag then?", 
+            "date_created": "2017-03-24 07:53:32.322822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Yakkety newton verification testing:\n\n09:23:00 ======\n09:23:00 Totals\n09:23:00 ======\n09:23:00 Ran: 103 tests in 1556.0000 sec.\n09:23:00 - Passed: 96\n09:23:00 - Skipped: 6\n09:23:00 - Expected Fail: 0\n09:23:00 - Unexpected Success: 0\n09:23:00 - Failed: 1\n09:23:00 Sum of execute time for each test: 937.5234 sec.\n\nSingle failure looks unrelated to this bug (but is consistent) so looking into that now.", 
+            "date_created": "2017-03-24 10:01:27.311786+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Xenial newton verification testing:\n\n10:00:49 ======\n10:00:49 Totals\n10:00:49 ======\n10:00:49 Ran: 103 tests in 1427.0000 sec.\n10:00:49  - Passed: 97\n10:00:49  - Skipped: 6\n10:00:49  - Expected Fail: 0\n10:00:49  - Unexpected Success: 0\n10:00:49  - Failed: 0\n10:00:49 Sum of execute time for each test: 738.4477 sec.\n\nSo no regressions with the proposed updates for nova; however it is worth noting that just like the OpenStack nova gate, these checks do not exercise the impacted vif types.", 
+            "date_created": "2017-03-24 10:02:50.746185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "yakkety-newton test failure was the:\n\n tempest.scenario.test_volume_boot_pattern.TestVolumeBootPattern.test_volume_boot_pattern\n\ntests; I've re-run this independently and it passes OK:\n\n======\nTotals\n======\nRan: 1 tests in 178.5077 sec.\n - Passed: 1\n - Skipped: 0\n - Expected Fail: 0\n - Unexpected Success: 0\n - Failed: 0\nSum of execute time for each test: 144.9156 sec.", 
+            "date_created": "2017-03-24 13:44:48.472067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "yakkety-newton test failure was the:\n\n tempest.scenario.test_volume_boot_pattern.TestVolumeBootPattern.test_volume_boot_pattern\n\ntests; I've re-run this independently and it passes OK:\n\n======\nTotals\n======\nRan: 1 tests in 178.5077 sec.\n - Passed: 1\n - Skipped: 0\n - Expected Fail: 0\n - Unexpected Success: 0\n - Failed: 0\nSum of execute time for each test: 144.9156 sec.", 
+            "date_created": "2017-03-24 13:45:41.252260+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "Since we have one \"issue\" but two related fixes we had two SRU Templates, one in the bug description and one in comment #62 - I copied the one in the comment up and marked them as libvirt/nova so that an SRU Team member finds this information more easily.", 
+            "date_created": "2017-03-31 05:47:12.834477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Uploaded a no change rebuild as version 2.1.0-1ubuntu9.4 to help properly linking the other linked SRU bug as well.", 
+            "date_created": "2017-03-31 06:01:26.677191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "Hello Logan, or anyone else affected,\n\nAccepted libvirt into yakkety-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/libvirt/2.1.0-1ubuntu9.4 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation on how to enable and use -proposed.Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2017-03-31 06:29:34.749931+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apw"
+        }, 
+        {
+            "content": "The automated proposed regression check on qemu/libvirt passed and confirmed that there should be no regression.\nAlso I was able to test the explicit fix of this vs proposed.\nThat said - verification-done (libvirt)", 
+            "date_created": "2017-04-04 05:57:08.602037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~paelzer"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates. In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2017-04-04 07:37:51.187583+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "\nThis bug was fixed in the package nova - 2:14.0.4-0ubuntu1.2~cloud0\n---------------\n\n nova (2:14.0.4-0ubuntu1.2~cloud0) xenial-newton; urgency=medium\n .\n   * New update for the Ubuntu Cloud Archive.\n .\n nova (2:14.0.4-0ubuntu1.2) yakkety; urgency=medium\n .\n   * d/p/libvirt-set-vlan-tag-for-macvtap.patch: Pick dependent patch\n     for fix for libvirt 1.3.1 compatibility (LP: #1665698).\n .\n nova (2:14.0.4-0ubuntu1.1) yakkety; urgency=medium\n .\n   * d/patches/libvirt-set-script-path.patch: Conditionally set\n     the script path for ethernet vif types (LP: #1665698).\n", 
+            "date_created": "2017-04-04 07:37:53.870568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~james-page"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2:14.0.4-0ubuntu1.2\n\n---------------\nnova (2:14.0.4-0ubuntu1.2) yakkety; urgency=medium\n\n  * d/p/libvirt-set-vlan-tag-for-macvtap.patch: Pick dependent patch\n    for fix for libvirt 1.3.1 compatibility (LP: #1665698).\n\nnova (2:14.0.4-0ubuntu1.1) yakkety; urgency=medium\n\n  * d/patches/libvirt-set-script-path.patch: Conditionally set\n    the script path for ethernet vif types (LP: #1665698).\n\nnova (2:14.0.4-0ubuntu1) yakkety; urgency=medium\n\n  * New upstream point release for OpenStack Newton (LP: #1664306).\n  * d/control: Bump python-rfc3986 version.\n\n -- James Page <email address hidden>  Wed, 22 Mar 2017 15:46:21 +0000", 
+            "date_created": "2017-04-05 15:01:53.742935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "@Matt, nova: Can we get some eyes on the Newton and Ocata fix you have up? It is a pretty severe bug for me since I'm running a vif_type=ethernet plugin with regular Ubuntu distro libvirt, so I haven't been able to use any nova sha since early Feb due to this bug.", 
+            "date_created": "2017-04-06 14:06:37.526077+00:00", 
+            "author": "https://api.launchpad.net/1.0/~loganv"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/448242\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cc495a24656893c94031f491a3fed2bc94fe1850\nSubmitter: Jenkins\nBranch:    stable/ocata\n\ncommit cc495a24656893c94031f491a3fed2bc94fe1850\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Mar 21 13:18:08 2017 -0400\n\n    libvirt: conditionally set script path for ethernet vif types\n    \n    Change I4f97c05e2dec610af22a5150dd27696e1d767896 worked around\n    a change introduced in libvirt 1.3.3 where the script path on\n    a LibvirtConfigGuestInterface could not be the emptry string\n    because libvirt would literally take that as the path and couldn't\n    resolve it, when in fact it used to indicate to libvirt that the\n    script path is a noop. This has been fixed in libvirt 3.1.\n    \n    On Ubuntu with libvirt<1.3.3, if the script path is None then\n    it defaults to /etc/qemu-ifup which is blocked by AppArmor.\n    \n    So this change adds a conditional check when setting the script\n    path value based on the libvirt version so we can straddle releases.\n    \n    Change-Id: I192c61b93bd3736fdfe16b6a6906d58997d3eef9\n    Closes-Bug: #1665698\n    Related-Bug: #1649527\n    (cherry picked from commit a41d265a19b7bcb1af8fc179bf864e00023c6cc6)\n", 
+            "date_created": "2017-04-10 23:12:37.712091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.3 release.", 
+            "date_created": "2017-04-12 18:55:11.125842+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 16.0.0.0b1 development milestone.", 
+            "date_created": "2017-04-14 09:22:36.358854+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This bug was fixed in the package libvirt - 2.1.0-1ubuntu9.4\n\n---------------\nlibvirt (2.1.0-1ubuntu9.4) yakkety; urgency=medium\n\n  * no change rebuild to properly pick up all the changes since the last\n    release to yakkety-updates.\n\nlibvirt (2.1.0-1ubuntu9.3) yakkety; urgency=medium\n\n  * d/p/ubuntu/qemu-Allow-empty-script-path-to-interface.patch: in the past\n    <script path=''/> meant a no-op, but libvirt now fails - fix to match\n    the old behavior (LP: #1665698).\n\nlibvirt (2.1.0-1ubuntu9.2) yakkety; urgency=medium\n\n  * d/p/ubuntu/fix-command-generation-for-rbd.patch: fix the generation\n    of the command used to add disks when secrets are provided like when\n    using rbd (LP: #1672367).\n\n -- Christian Ehrhardt <email address hidden>  Fri, 31 Mar 2017 07:48:25 +0200", 
+            "date_created": "2017-04-21 04:34:30.903803+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/448253\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8142d526dfd6f4a56dbe382d25cf4110abf57f44\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 8142d526dfd6f4a56dbe382d25cf4110abf57f44\nAuthor: Matt Riedemann <email address hidden>\nDate:   Tue Mar 21 13:18:08 2017 -0400\n\n    libvirt: conditionally set script path for ethernet vif types\n    \n    Change I4f97c05e2dec610af22a5150dd27696e1d767896 worked around\n    a change introduced in libvirt 1.3.3 where the script path on\n    a LibvirtConfigGuestInterface could not be the emptry string\n    because libvirt would literally take that as the path and couldn't\n    resolve it, when in fact it used to indicate to libvirt that the\n    script path is a noop. This has been fixed in libvirt 3.1.\n    \n    On Ubuntu with libvirt<1.3.3, if the script path is None then\n    it defaults to /etc/qemu-ifup which is blocked by AppArmor.\n    \n    So this change adds a conditional check when setting the script\n    path value based on the libvirt version so we can straddle releases.\n    \n    Change-Id: I192c61b93bd3736fdfe16b6a6906d58997d3eef9\n    Closes-Bug: #1665698\n    Related-Bug: #1649527\n    (cherry picked from commit a41d265a19b7bcb1af8fc179bf864e00023c6cc6)\n    (cherry picked from commit cc495a24656893c94031f491a3fed2bc94fe1850)\n", 
+            "date_created": "2017-04-26 21:29:32.616274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.6 release.", 
+            "date_created": "2017-05-08 22:25:52.317225+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-03-22 01:05:48.149613+00:00"
+}

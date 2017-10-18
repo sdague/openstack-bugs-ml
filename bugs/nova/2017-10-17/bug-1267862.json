@@ -1,0 +1,71 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-07-05 09:45:41.290631+00:00", 
+    "description": "Nova version\uff1aHavana\n\nWe have two compute nodes: Host A and Host B. Each one have 100G disk, 4 cpus and 2G mem for example.\n\nFirst, launch an image-backed instance named vm-1 in Host A using the flavor successfully. The flavor's specs is 60G disk, 2cpus and 1G mem. So, obviously the free resource on Host A is 40G disk, 2 cpus and 1 mem.\n\nSecond, doing live migration with block migation flag from Host A to Host B.Then success. Now, no active instance exist on Host A.\n\nBut, the problem is the free resource on Host A is still 40G disk, 2 cpu and 1G mem. The resource described in compute_nodes table don't add back. \n\nThen adding another new instance named vm-2 to Host A using same flavor as vm-1. We are notified that resource is insuffieint on Host A.(40G<60G disk denied)\n\nNotice that the data would be correct after next priodic task of update_available_resource. Wihin the interval time, it means we can't deploy another instance, but it can be in fact.\n\nI think the resource should be recaculate immediatly on Host A, otherwise it may affects vm delpoyment.", 
+    "tags": [
+        "compute", 
+        "live-migrate"
+    ], 
+    "importance": "Undecided", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1267862", 
+    "owner": "None", 
+    "id": 1267862, 
+    "index": 5726, 
+    "openned": "2014-01-10 14:04:29.270648+00:00", 
+    "created": "2014-01-10 14:04:29.270648+00:00", 
+    "title": "launch a new vm fail in source host after live migration", 
+    "comments": [
+        {
+            "content": "Nova version\uff1aHavana\n\nWe have two compute nodes: Host A and Host B. Each one have 100G disk, 4 cpus and 2G mem for example.\n\nFirst, launch an image-backed instance named vm-1 in Host A using the flavor successfully. The flavor's specs is 60G disk, 2cpus and 1G mem. So, obviously the free resource on Host A is 40G disk, 2 cpus and 1 mem.\n\nSecond, doing live migration with block migation flag from Host A to Host B.Then success. Now, no active instance exist on Host A.\n\nBut, the problem is the free resource on Host A is still 40G disk, 2 cpu and 1G mem. The resource described in compute_nodes table don't add back. \n\nThen adding another new instance named vm-2 to Host A using same flavor as vm-1. We are notified that resource is insuffieint on Host A.(40G<60G disk denied)\n\nNotice that the data would be correct after next priodic task of update_available_resource. Wihin the interval time, it means we can't deploy another instance, but it can be in fact.\n\nI think the resource should be recaculate immediatly on Host A, otherwise it may affects vm delpoyment.", 
+            "date_created": "2014-01-10 14:04:29.270648+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lvhancy"
+        }, 
+        {
+            "content": "I think call update_available_resource function explicitly in _post_live_migration after the vm's host change to dest in DB is the way to solve this bug. ", 
+            "date_created": "2014-01-10 14:12:08.224968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lvhancy"
+        }, 
+        {
+            "content": "Post live migration does not seem to update the available resources after completing the request. I think this should happen after every successful live migration request and not only during periodic task iterations.", 
+            "date_created": "2014-02-08 13:16:29.043685+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rohitk"
+        }, 
+        {
+            "content": "Yes, I also think this should happen after every successful live migration request.  _post_live_migration would be called after successful migration, so I think call update_available_resource explicitly in _post_live_migration is a easy way to fix it.\r\nMeanwhile, we can use same way in dest host to sync dest's resource immedietly(within rpc method at dest in  _post_live_migration).", 
+            "date_created": "2014-02-08 13:32:02.336126+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lvhancy"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/70150\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ab1e48f4683315db631be3f0995be6258edf6997\nSubmitter: Jenkins\nBranch:    master\n\ncommit ab1e48f4683315db631be3f0995be6258edf6997\nAuthor: Tiago Mello <email address hidden>\nDate:   Thu Jan 30 13:47:34 2014 -0200\n\n    Updates available resources after live migration\n    \n    A new VM can't be deployed using resources of the VM that has been migrated\n    to a new host before the periodic task is called after a live migration.\n    \n    This change calls update_available_resource() after live\n    migration is completed even before the next periodic task takes place.\n    \n    Change-Id: I4c879dcfb1e76cfdc95612b6d8010c1081ac45b9\n    Closes-Bug: #1267862\n", 
+            "date_created": "2014-09-01 16:11:22.192370+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This fix didn't address the problem. The instance will still be located on the source node at the time update_available_resource is called (in _post_live_migration), so update_available_resource still removes the resources consumed by this instance from the host resources. The post_live_migration_at_destination RPC will update the location, but it is an async RPC and will not have completed when update_available_resource is run.\n\nCan someone re-open this bug or do I need to file a new one?\n", 
+            "date_created": "2015-03-13 18:12:02.888823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bartwensley"
+        }, 
+        {
+            "content": "I reset the status of this bug to confirmed since I have verified that the problem still exists in kilo (and I assume also in juno).", 
+            "date_created": "2015-03-17 13:44:19.808653+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bartwensley"
+        }, 
+        {
+            "content": "This is not a duplicate bug, since it's talking about freeing up the resources on the source host after a migration, not claiming resources on the destination.", 
+            "date_created": "2016-06-28 16:18:19.513480+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "I'm pretty sure we still have a problem in current master (Newton).  In nova.compute.manager.ComputeManager._post_live_migration() we call self.compute_rpcapi.post_live_migration_at_destination(), which is an RPC cast so we have no idea when it'll actually run.  (That routine is what actually updates instance.host to point to the new destination.)\n\nThen we call self.update_available_resource().  If post_live_migration_at_destination() hasn't run yet, then the instance.host will still be be the source host and we'll account for its resources in nova.compute.resource_tracker.ResourceTracker._update_available_resource() when we call self._update_usage_from_instances().  This basically means that we called self.update_available_resource() for nothing.\n\nThe only sure fix is to make the call to post_live_migration_at_destination() an RPC cast.  Barring that, we could put in a delay before calling self.update_available_resource(), or maybe move it down to the bottom of the function to increase the likelihood that post_live_migration_at_destination() has run by the time we get to it.", 
+            "date_created": "2016-06-30 23:28:53.202548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:45:40.631514+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }
+    ], 
+    "closed": "2016-07-05 09:45:38.538087+00:00"
+}

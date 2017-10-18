@@ -1,0 +1,211 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-10-07 23:45:32.574228+00:00", 
+    "description": "1. create a network in Quantum.  Networks no longer need subnets, so I create a network without one.  (Imagine I'm doing my addressing some other way.\n\n    quantum net-create test\n\n<returns an ID>\n\n2. create a machine with that network attached via nova.\n\nnova boot --image xxx --flavor yyy --nic net-id=e85d5994-7f8e-4024-bde9-c1cdb2b202d0 hasnet\n\nAll good.  The machine boots perfectly well.  However, it comes up without any NICs.\n\nIt turns out that VIF.legacy() is called just before calling driver.spawn() for the virt driver.  This converts the VIF datastructure from the network model to its old form (because the virtualisation layer has not been brought up to date with the new model).  The old form can't be created without, at least, an IPv4 address - so, in the above example where no address has been assigned to the VIF, it is silently omitted from the legacy version of the datastructure, and no NIC is added to the VM as the network_info datastructure is now empty.\n\nSo:\n\n- am I even calling the API correctly?  Since nova-manage network create and quantum net-create both work, and no-one's written up the documentation yet, I can't tell that I'm doing this right (although I got no joy out of the IDs that nova-manage was returning)\n- is this going to last into Folsom RCs or will it be fixed?\n- if it is going to stay with us, perhaps we could throw an error at this point rather than continuing to create the wrong sort of VM?\n\n(I need this functionality so I shall have to find a workaround if it's going to stay missing.)", 
+    "tags": [
+        "neutron", 
+        "nfv"
+    ], 
+    "importance": "Undecided", 
+    "heat": 98, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1039665", 
+    "owner": "None", 
+    "id": 1039665, 
+    "index": 4321, 
+    "openned": "2012-08-21 18:09:08.426529+00:00", 
+    "created": "2012-08-21 18:09:08.426529+00:00", 
+    "title": "Creating Neutron L2 networks (without subnets) doesn't work as expected", 
+    "comments": [
+        {
+            "content": "1. create a network in Quantum.  Networks no longer need subnets, so I create a network without one.  (Imagine I'm doing my addressing some other way.\n\n    quantum net-create test\n\n<returns an ID>\n\n2. create a machine with that network attached via nova.\n\nnova boot --image xxx --flavor yyy --nic net-id=e85d5994-7f8e-4024-bde9-c1cdb2b202d0 hasnet\n\nAll good.  The machine boots perfectly well.  However, it comes up without any NICs.\n\nIt turns out that VIF.legacy() is called just before calling driver.spawn() for the virt driver.  This converts the VIF datastructure from the network model to its old form (because the virtualisation layer has not been brought up to date with the new model).  The old form can't be created without, at least, an IPv4 address - so, in the above example where no address has been assigned to the VIF, it is silently omitted from the legacy version of the datastructure, and no NIC is added to the VM as the network_info datastructure is now empty.\n\nSo:\n\n- am I even calling the API correctly?  Since nova-manage network create and quantum net-create both work, and no-one's written up the documentation yet, I can't tell that I'm doing this right (although I got no joy out of the IDs that nova-manage was returning)\n- is this going to last into Folsom RCs or will it be fixed?\n- if it is going to stay with us, perhaps we could throw an error at this point rather than continuing to create the wrong sort of VM?\n\n(I need this functionality so I shall have to find a workaround if it's going to stay missing.)", 
+            "date_created": "2012-08-21 18:09:08.426529+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Ah, just found the legacy_nwinfo() call on the hypervisor drivers - so it matters that I'm using libvirt, which hasn't yet been updated.", 
+            "date_created": "2012-08-21 18:14:00.546578+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Interestingly, the network_info is always converted to legacy form for the post_live_migration_at_destination call.  I suspect this means that even for the drivers that understand new-form networks, if a machine is migrated and it has a port without an ipv4 address missing, it will unexpectedly lose its interface.", 
+            "date_created": "2012-08-21 18:32:49.170448+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "... ditto driver.rescue().", 
+            "date_created": "2012-08-21 18:34:35.561640+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Argh, sorry, that's wrong - it calls a function called _legacy_nw_info which *maybe* does the conversion.  My bad.", 
+            "date_created": "2012-08-21 18:35:54.569169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "From bug #1039419, it looks like what you're trying to do is expected to work\n\nThanks for all the info, I think there's plenty here to go on for someone familiar with the quantum integration. Marking as Confirmed and targeting to rc1", 
+            "date_created": "2012-08-22 15:01:11.989632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Thanks for the reference.\n\nI'm working on the patches for libvirt to use the new network model as we speak.  (This may not be a complete fix depending on what else uses the legacy models, though.)", 
+            "date_created": "2012-08-22 15:36:46.270614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Ian, can you assign this bug to yourself?   It would be great to see a work-in-progress patch on this soon, so someone from the nova-network team could provide some initial feedback, particularly about the impact of the changes on non-libvirt code. ", 
+            "date_created": "2012-08-24 00:46:20.213996+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Certainly.  I actually have a patch that's working for my purposes, but it fails some white-box libvirt tests where the harness is passing in old-style data structures.  I'll try and get it on Gerrit today.", 
+            "date_created": "2012-08-24 11:53:23.316615+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/11923", 
+            "date_created": "2012-08-24 15:08:08.275071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Ian,\n\nWhen I tried to access the above gerrit link https://review.openstack.org/11923, I got an error message which says \"Application Error  The page you requested was not found, or you do not have permission to view this page.\"\n\nHow can I access the review?\n\n", 
+            "date_created": "2012-08-27 07:06:21.370861+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "Sorry, I only put it up as a draft till I fixed a couple of issues, but apparently Gerrit linked it to the bug anyway.\nI'll fix a couple of things and I'll put it up in a few hours.", 
+            "date_created": "2012-08-27 09:32:57.492650+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Patch only fixes libvirt, but that should be all that's needed:\n\n- You can only have a no-subnets case if you're using Quantum\n- Apparently, only libvirt has VIF drivers for Quantum, so I assume it's the only one with Quantum support.\n\nThus, if the patch is approved, this can be closed (though we probably ought to open bugs against the other drivers for Quantum support...)", 
+            "date_created": "2012-08-29 17:23:29.344127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "xenserver also has vif drivers for quantum: virt/xenapi/vif.py \n\nI haven't looked at this bug in detail, but my guess is that the problem is caused by some vif-drivers assuming they know IP layer information about a VM, which obviously doesn't exist if there is no subnet.  If that's the case, I don't think this issue would apply to the xenserver drivers, based on a quick inspection. ", 
+            "date_created": "2012-08-29 19:27:35.679318+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Ah, possibly my mistake.  It's that there's something specifically Quantum in the libvirt and no mention of Quantum in the XenAPI version.", 
+            "date_created": "2012-08-29 19:41:50.655887+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "/Information for quantum people using devstack/\n\nTo reproduce the bug, we need to use the default libvirt firewall driver (nova.virt.libvirt.firewall.IptablesFirewallDriver).\nPlease clear LIBVIRT_FIREWALL_DRIVER in localrc.\n\nNote that QuantumDevstack wiki pages recommends \"LIBVIRT_FIREWALL_DRIVER=nova.virt.firewall.NoopFirewallDriver\") when using devstack with Quantum v2.", 
+            "date_created": "2012-08-30 06:38:35.885611+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "Akihiro,\n\nYes, it is true that our devstack page recommends using the NoopFirewallDriver, but that is only until we merge a patch currently under review that let's Nova security groups work with Quantum, after which point using the IptablesFirewallDriver is supported (see: https://bugs.launchpad.net/quantum/+bug/1039400).  So I consider this bug valid. ", 
+            "date_created": "2012-08-30 08:18:22.412534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Thanks for the pointer. I consider this bug is valid too\n\nI understand that using NoopFirewallDriver is transient.\nFirst time I tried to reproduce, I could not due to this configuration, so it is worth sharing the information to test Ian's patch.\n\nThanks\n\n", 
+            "date_created": "2012-08-30 09:26:52.851146+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "On Thu, Aug 30, 2012 at 2:26 AM, Akihiro Motoki\n<email address hidden> wrote:\n\n> First time I tried to reproduce, I could not due to this configuration, so it is worth sharing the information to test Ian's patch.\n\ndefinitely agree :)  I guess I misunderstood your original comment.\n", 
+            "date_created": "2012-08-30 10:00:42+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danwent"
+        }, 
+        {
+            "content": "Akihiro, can you confirm you created a subnetless network with NoopFirewallDriver and your machine got an interface on it?  Because that's exactly the situation I was in when I saw this bug in the first place - I don't believe it's specific to the firewall driver in use.", 
+            "date_created": "2012-08-30 10:09:37.591942+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "I investigated the condition this bug can be reproduced. Firewall driver is not related.\n\nWhen using devstack, to reproduce ths bug, we must remove a subnet which created by devstack.\nThis is another bug #1043827. If bug #1043827 is resolved, this bug always happens when an instance is launched with a network without subnet.", 
+            "date_created": "2012-08-30 13:27:00.815863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~amotoki"
+        }, 
+        {
+            "content": "Just for anyone checking the status of this - lots of discussion in https://review.openstack.org/11923", 
+            "date_created": "2012-09-13 20:36:20.804893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I am unconvinced that this can be fixed without also fixing the firewalling, which does not stand up to the unexpected situations Quantum brings (0+ addresses rather than precisely one).  I think we should work out a solution that covers on all the issues.", 
+            "date_created": "2012-10-02 16:51:08.026863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "I've not been doing Grizzly work, but a colleague points out to me that the code seems to have been converted to use new-style VIF types since Folsom.  Does anyone know if this bug still stands in Grizzly?", 
+            "date_created": "2013-02-08 00:44:11.423874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Oops, wrong branch.  I take that back.  And I'll have a look at this in the next week.", 
+            "date_created": "2013-02-08 01:05:05.861966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Lowering the priority on this as it doesn't seem to be a very important  use case. We should get a free fix in havanna from the code here:\n\nhttps://review.openstack.org/#/c/21382", 
+            "date_created": "2013-02-20 22:54:45.319588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "The current approach is dependent on port security extensions in neutron. A complete fix requires changes in both components.", 
+            "date_created": "2014-07-09 20:39:15.023274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~beagles"
+        }, 
+        {
+            "content": "Is this still a valid bug? If so can we get a new consolidated reproduce case?", 
+            "date_created": "2015-03-30 13:51:38.976488+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Been a long while since I tried this and I don't have a suitable cloud handy to test, but if it does exist the following 5 minute test shows it up:\n\n1. create a Neutron network\n2. create a VM attached to that network (NB: Cirros has a default password which makes the following steps easier)\n.. wait for futile DHCP'ing to pass ..\n3. log into the VM on its console\n\nHistorical behaviour is that the VM would come up fine but with 0 interfaces.  With more interfaces on the VM, you'd end up short the interface(s) on the no-subnet network(s) (and automated testing is feasible since not all networks need be no-subnet).  I believe we also went through a phase of 'no valid host' when nova-compute was crashing out, too.\n\nI'm fairly sure this *has* been fixed, though.", 
+            "date_created": "2015-03-30 17:33:11.634882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ijw-ubuntu"
+        }, 
+        {
+            "content": "Ian, do you know if there's an NFV config flag or specific release that I should use to get rid of this message when I try it: \n\nERROR (BadRequest): Network 5ea23e60-a26b-409a-b388-f812177bbf92 requires a subnet in order to boot instances on. (HTTP 400) (Request-ID: req-22141a06-3d0c-480f-9860-5733c759ba9b)\n\nI can create a non immediately working subnet with --disable-dhcp on the no-subnet network, but then iptables filtering will allow traffic only from pre-defined IP/MAC pairs if I don't allow address pairs manually through the API I guess... \n", 
+            "date_created": "2015-03-30 18:39:00.754888+00:00", 
+            "author": "https://api.launchpad.net/1.0/~racha-ben-ali"
+        }, 
+        {
+            "content": "assuming it's fixed, please reopen if still an issue", 
+            "date_created": "2015-04-01 16:13:09.973224+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "From what I'm seeing, with IceHouse / Juno, it is not possible to even start an Instance attached to a Network without a Subnet.\n\nAnd I really need this feature...   :-(\n\nCurrently, I'm patching OpenStack to make this work, here is the code for review:\n\nhttps://review.openstack.org/#/c/59578/\n\nhttps://review.openstack.org/gitweb?p=openstack%2Fnova.git;a=commitdiff;h=a6c9a67723a92f435e0e8eff9eb43b618c7cf0bb", 
+            "date_created": "2015-04-22 14:54:42.871968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~martinx"
+        }, 
+        {
+            "content": "I just found a nice example of this need (L2 Neutron Networks), right here:\n\nhttps://nfv.net/2015/02/network-neutron/\n\nCheers!", 
+            "date_created": "2015-04-22 15:37:19.299045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~martinx"
+        }, 
+        {
+            "content": "I'm reopening (confirming) this, since it is not fixed and Sean allowed that (comment #30).", 
+            "date_created": "2015-04-22 22:16:23.923019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~martinx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/202882", 
+            "date_created": "2015-07-17 05:24:10.664081+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThis is an automated cleanup. This bug report has been closed because it\nis older than 18 months and there is no open code change to fix this.\nAfter this time it is unlikely that the circumstances which lead to\nthe observed issue can be reproduced.\n\nIf you can reproduce the bug, please:\n* reopen the bug report (set to status \"New\")\n* AND add the detailed steps to reproduce the issue (if applicable)\n* AND leave a comment \"CONFIRMED FOR: <RELEASE_NAME>\"\n  Only still supported release names are valid (LIBERTY, MITAKA, OCATA, NEWTON).\n  Valid example: CONFIRMED FOR: LIBERTY\n", 
+            "date_created": "2016-07-05 09:41:20.042967+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/202882\nReason: This code hasn't been updated in a long time, and is in merge conflict. I am going to abandon this review, but feel free to restore it if you're still working on this.", 
+            "date_created": "2016-07-26 20:20:35.702298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Dang I think I need this. :| I'm trying to simulate a failover scenario where i just want to have my backup gateway connected over L2, but without an L3 address until the master goes down.", 
+            "date_created": "2016-10-07 23:45:31.818839+00:00", 
+            "author": "https://api.launchpad.net/1.0/~senterright"
+        }
+    ], 
+    "closed": "2016-07-05 09:41:17.339087+00:00"
+}

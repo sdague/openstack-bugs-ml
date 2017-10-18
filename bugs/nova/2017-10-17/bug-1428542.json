@@ -1,0 +1,45 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-02-29 04:17:22.708107+00:00", 
+    "description": "When live migrating (block_migrate), an instance, cinder volumes based on LVM, that are attached via iscsi to the compute node, are  included within the MigrationPreCheck disk-size calculation. \nBecause the cinder iscsi volume is just attached to the migration target node, these devices need to be skipped.\n\nIn the past only devices with type 'file' got included in that disk_size calculation; But with commit 5fa74bc0b2ab6fe5149a9b684b4beadb67877622 (Adds ephemeral storage encryption for LVM back-end images ), disks with type 'block' got included as well, which also includes iscsi devices.\n\nI experienced that with stable juno.\n\nI worked around that with this additional check:\n\ndiff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py\nindex 0809f09..566b2b2 100644\n--- a/nova/virt/libvirt/driver.py\n+++ b/nova/virt/libvirt/driver.py\n@@ -6000,6 +6000,10 @@ class LibvirtDriver(driver.ComputeDriver):\n                           'volume', {'path': path, 'target': target})\n                 continue\n\n+            if disk_type == 'block' and path.find('iqn.2010-10.org.openstack') > 0:\n+                LOG.debug('skipping disk because it looks like an iscsi volume', path)\n+                continue\n+\n             # get the real disk size or\n             # raise a localized error if image is unavailable\n             if disk_type == 'file':\n\n\nIf this is the right place to exclude that disks, I can submit that little patch for review. Or you can point me to the right location for that and I'll give it a try.\n\nWhat do you think?", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "Medium", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1428542", 
+    "owner": "None", 
+    "id": 1428542, 
+    "index": 4171, 
+    "openned": "2015-03-05 08:35:00.869574+00:00", 
+    "created": "2015-03-05 08:35:00.869574+00:00", 
+    "title": "Live Migration (block_migrate): 'Disk of instance is too large', with cinder LVM based volume", 
+    "comments": [
+        {
+            "content": "When live migrating (block_migrate), an instance, cinder volumes based on LVM, that are attached via iscsi to the compute node, are  included within the MigrationPreCheck disk-size calculation. \nBecause the cinder iscsi volume is just attached to the migration target node, these devices need to be skipped.\n\nIn the past only devices with type 'file' got included in that disk_size calculation; But with commit 5fa74bc0b2ab6fe5149a9b684b4beadb67877622 (Adds ephemeral storage encryption for LVM back-end images ), disks with type 'block' got included as well, which also includes iscsi devices.\n\nI experienced that with stable juno.\n\nI worked around that with this additional check:\n\ndiff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py\nindex 0809f09..566b2b2 100644\n--- a/nova/virt/libvirt/driver.py\n+++ b/nova/virt/libvirt/driver.py\n@@ -6000,6 +6000,10 @@ class LibvirtDriver(driver.ComputeDriver):\n                           'volume', {'path': path, 'target': target})\n                 continue\n\n+            if disk_type == 'block' and path.find('iqn.2010-10.org.openstack') > 0:\n+                LOG.debug('skipping disk because it looks like an iscsi volume', path)\n+                continue\n+\n             # get the real disk size or\n             # raise a localized error if image is unavailable\n             if disk_type == 'file':\n\n\nIf this is the right place to exclude that disks, I can submit that little patch for review. Or you can point me to the right location for that and I'll give it a try.\n\nWhat do you think?", 
+            "date_created": "2015-03-05 08:35:00.869574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tom-patzig"
+        }, 
+        {
+            "content": "Indeed it looks like you are correct in asserting that https://review.openstack.org/40467 caused this regression, because it erroneously assumes that block devices would always be LVM backed only. Not sure about the fix though, maybe there are other volume types affected too?", 
+            "date_created": "2015-03-27 13:32:36.140243+00:00", 
+            "author": "https://api.launchpad.net/1.0/~j-harbott"
+        }, 
+        {
+            "content": "@tdurakov, are you still working on this bug? If no, I'd like to take it, thanks a lot.", 
+            "date_created": "2015-08-17 03:28:46.117582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhenzan-zhou"
+        }, 
+        {
+            "content": "@Tom Patzig\n\nIt looks like Change-Id: Ifb20655c32896b640672917e3840add81b136780 (libvirt: make _get_instance_disk_info conservative) will fix this issue.\n\n-            elif disk_type == 'block':\n+            elif disk_type == 'block' and block_device_info:\n                 dk_size = lvm.get_volume_size(path)\n+            else:\n+                LOG.debug('skipping disk %(path)s (%(target)s) - unable to '\n+                          'determine if volume',\n+                          {'path': path, 'target': target})\n+                continue\n\nI will mark this as incompeleted before you confirm you can reproduce this bug with the commit I pasted.\n\nEli.", 
+            "date_created": "2015-12-30 06:42:25.492125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~taget-9"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2016-02-29 04:17:18.434711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2016-02-29 04:17:20.270462+00:00"
+}

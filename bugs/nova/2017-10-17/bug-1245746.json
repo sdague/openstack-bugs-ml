@@ -1,0 +1,66 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-09-04 17:38:47.302920+00:00", 
+    "description": "In grizzly, there is no user_id in quota_usages table, and the database with quota usages table is like this:\n\nmysql> select * from quota_usages;\n+---------------------+---------------------+------------+----+----------------------------------+-----------+--------+----------+---------------+---------+\n| created_at          | updated_at          | deleted_at | id | project_id                       | resource  | in_use | reserved | until_refresh | deleted |\n+---------------------+---------------------+------------+----+----------------------------------+-----------+--------+----------+---------------+---------+\n| 2013-10-29 03:03:05 | 2013-10-29 03:19:30 | NULL       |  1 | 9cb04bffbe784771bd28fa093d749804 | instances |      1 |        0 |          NULL |       0 |\n| 2013-10-29 03:03:05 | 2013-10-29 03:19:30 | NULL       |  2 | 9cb04bffbe784771bd28fa093d749804 | ram       |    512 |        0 |          NULL |       0 |\n| 2013-10-29 03:03:05 | 2013-10-29 03:19:30 | NULL       |  3 | 9cb04bffbe784771bd28fa093d749804 | cores     |      1 |        0 |          NULL |       0 |\n+---------------------+---------------------+------------+----+----------------------------------+-----------+--------+----------+---------------+---------+\n\nThe problem can be recreated througth the following steps:\n\n1. In upgrade from Grizzly to Havana, migration script 203_make_user_quotas_key_and_value.py adds 'user_id' column to quota_usages table and its shadow table. \n\n2. Migration script 216_sync_quota_usages.py willl delete all the any instances/cores/ram/etc quota_usages without a user_id by delete_null_rows. Since this is a Grizzly to Havana upgrade, and there is no user_id colume in Grizzly ( user_id is added by 203_make_user_quotas_key_and_value.py in Havana), all the instances/cores/ram/etc resources in quota_usages will be deleted. \n\n3. Then  script 216_sync_quota_usages.py will try to add new quota_usages entrance based on a query of resources left on the table. Remember from step 2, they are already deleted, therefore there will be no quota entry inserted or updated. \n\nThe result is the quota_usage entry from Grizzly are wiped out during upgrade to Havana.", 
+    "tags": [
+        "db", 
+        "in-stable-havana"
+    ], 
+    "importance": "High", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1245746", 
+    "owner": "https://api.launchpad.net/1.0/~yuyangbj", 
+    "id": 1245746, 
+    "index": 1290, 
+    "openned": "2013-10-29 04:07:33.651315+00:00", 
+    "created": "2013-10-29 04:07:33.651315+00:00", 
+    "title": "Grizzly to Havana Upgrade wipes out Nova quota_usages table", 
+    "comments": [
+        {
+            "content": "In grizzly, there is no user_id in quota_usages table, and the database with quota usages table is like this:\n\nmysql> select * from quota_usages;\n+---------------------+---------------------+------------+----+----------------------------------+-----------+--------+----------+---------------+---------+\n| created_at          | updated_at          | deleted_at | id | project_id                       | resource  | in_use | reserved | until_refresh | deleted |\n+---------------------+---------------------+------------+----+----------------------------------+-----------+--------+----------+---------------+---------+\n| 2013-10-29 03:03:05 | 2013-10-29 03:19:30 | NULL       |  1 | 9cb04bffbe784771bd28fa093d749804 | instances |      1 |        0 |          NULL |       0 |\n| 2013-10-29 03:03:05 | 2013-10-29 03:19:30 | NULL       |  2 | 9cb04bffbe784771bd28fa093d749804 | ram       |    512 |        0 |          NULL |       0 |\n| 2013-10-29 03:03:05 | 2013-10-29 03:19:30 | NULL       |  3 | 9cb04bffbe784771bd28fa093d749804 | cores     |      1 |        0 |          NULL |       0 |\n+---------------------+---------------------+------------+----+----------------------------------+-----------+--------+----------+---------------+---------+\n\nThe problem can be recreated througth the following steps:\n\n1. In upgrade from Grizzly to Havana, migration script 203_make_user_quotas_key_and_value.py adds 'user_id' column to quota_usages table and its shadow table. \n\n2. Migration script 216_sync_quota_usages.py willl delete all the any instances/cores/ram/etc quota_usages without a user_id by delete_null_rows. Since this is a Grizzly to Havana upgrade, and there is no user_id colume in Grizzly ( user_id is added by 203_make_user_quotas_key_and_value.py in Havana), all the instances/cores/ram/etc resources in quota_usages will be deleted. \n\n3. Then  script 216_sync_quota_usages.py will try to add new quota_usages entrance based on a query of resources left on the table. Remember from step 2, they are already deleted, therefore there will be no quota entry inserted or updated. \n\nThe result is the quota_usage entry from Grizzly are wiped out during upgrade to Havana.", 
+            "date_created": "2013-10-29 04:07:33.651315+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhanp"
+        }, 
+        {
+            "content": "Checking out the commit messages when added this migration script:\n\nMigration 203 added a user_id column to the quota_usages table.  Now\nsome usages are incremented/decremented on a per user basis but there\nare preexisting usages stored with a NULL user, and some usages are\ntracked per project but there are usages stored with a user_id.  These\nquotas are never decremented leading to invalid quota limits being\nenforced.\n\nThis migration performs a full sync of quotas, and removes the incorrect\nrows for each resource type.\n\nI wonder why not just updating the existing resource entries with their user id but removing them and created new entries?", 
+            "date_created": "2013-10-29 05:21:26.285476+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xuhanp"
+        }, 
+        {
+            "content": "It looks like that using the existing rule below this bug can not be fixed easily, because the data has been wiped out. \n\nhttp://lists.openstack.org/pipermail/openstack-dev/2013-October/017997.html", 
+            "date_created": "2013-11-05 09:56:04.791063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yuyangbj"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/55420", 
+            "date_created": "2013-11-06 14:44:09.368977+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Marking this as incomplete since the patch was abandoned awhile ago.", 
+            "date_created": "2014-02-11 22:22:58.828198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "This bug is still affects grizzly -> hanava upgrades.\nProblematic for tenants shared by multiple users. See #1286527", 
+            "date_created": "2014-03-01 12:40:47.721628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~moreira-belmiro-email-lists"
+        }, 
+        {
+            "content": "I've created a new patch with the fix for havana since I wasn't sure how to restore Yang's original change. I'm not sure what change is needed to master since the migration scripts have been consolidated. We've tested this on a migration of our own test clouds and it works.\n\nhttps://review.openstack.org/#/c/81669/1\n\nFor a short-term fix, modify this file with the same changes in review:\n\n/usr/share/pyshared/nova/db/sqlalchemy/migrate_repo/versions/216_sync_quota_usages.py", 
+            "date_created": "2014-03-19 23:31:04.373754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~davidy-n"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/81679", 
+            "date_created": "2014-03-20 01:01:24.165293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/81679\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=44c60c6be51f0de187fe51f7f3d0d3bf6ed57f94\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 44c60c6be51f0de187fe51f7f3d0d3bf6ed57f94\nAuthor: Yang Yu <email address hidden>\nDate:   Wed Nov 6 08:30:33 2013 -0600\n\n    Grizzly to Havana Upgrade wipes out Nova quota_usages\n    \n    Migration script 216 will wipe out all data in quota_usages table\n    when user_id is null. After the upgrade from Grizzly to Havana is\n    completed, the migration script 203 adds a new column user_id, so\n    user_id is null for all data in quota_usages. So the correct\n    behaviour should be sync quota_usages table first and then delete\n    data if user_id is still null.\n    \n    Fixing the existing migrate script is because we can not find\n    the quota_usages data after migration script 216.\n    \n    Closes-bug:1245746\n    \n    Change-Id: I4db62884785a4eb6e1db2c5b114b9c6e1b4882ad\n", 
+            "date_created": "2014-03-23 09:29:55.806322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-09-04 17:38:44.973512+00:00"
+}

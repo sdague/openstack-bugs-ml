@@ -1,0 +1,65 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-19 12:02:30.199886+00:00", 
+    "description": "Note: This is with libvirt < 1.3.0 so may be specific to earlier versions. This has also been verified on mitaka only so far. I haven't had a chance to try on newton/master. It may have something to do with the fact that PFs don't have parent_addrs'\n\nEither with devname or address/vendor/product ids and also with specifying the device_type of type-PF, physical functions are not being included in the PCI stats information. If there are VFs present, they are included, but not the PF itself.\n\n\nI checked this by running code similar to this in an interactive python session:\n\nimport nova.pci.whitelist\nfrom oslo_serialization import jsonutils\n\nfilter = nova.pci.whitelist.Whitelist(['[{\"address\":\"0000:05:00.1\", \"product_id\":\"154d\", \"vendor_id\":\"8086\", \"physical_network\":\"physnet\", \"device_type\":\"type-PF\"}]'])\n\n# the following was extracted from debug logs on compute node where we are seeing the issue\ndev_dict = jsonutils.loads('{\"dev_id\": \"pci_0000_05_00_1\", \"product_id\": \"154d\", \"dev_type\": \"type-PF\", \"numa_node\": 0, \"vendor_id\": \"8086\", \"label\": \"label_8086_154d\", \"address\": \"0000:05:00.1\"}')\n\n\nprint filter.specs[0].address.match(dev_dict['address'], dev_dict.get('parent_addr'))\n\n# returns False\n# for laughs\nprint filter.specs[0].address.match(None, dev_dict.get('address'))\n# returns True", 
+    "tags": [
+        "pci"
+    ], 
+    "importance": "High", 
+    "heat": 24, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1613434", 
+    "owner": "https://api.launchpad.net/1.0/~ludovic-beliveau", 
+    "id": 1613434, 
+    "index": 1973, 
+    "openned": "2016-08-15 20:29:59.110873+00:00", 
+    "created": "2016-08-15 20:29:59.110873+00:00", 
+    "title": "Whitelisted PFs aren't being recognized ", 
+    "comments": [
+        {
+            "content": "Note: This is with libvirt < 1.3.0 so may be specific to earlier versions. This has also been verified on mitaka only so far. I haven't had a chance to try on newton/master. It may have something to do with the fact that PFs don't have parent_addrs'\n\nEither with devname or address/vendor/product ids and also with specifying the device_type of type-PF, physical functions are not being included in the PCI stats information. If there are VFs present, they are included, but not the PF itself.\n\n\nI checked this by running code similar to this in an interactive python session:\n\nimport nova.pci.whitelist\nfrom oslo_serialization import jsonutils\n\nfilter = nova.pci.whitelist.Whitelist(['[{\"address\":\"0000:05:00.1\", \"product_id\":\"154d\", \"vendor_id\":\"8086\", \"physical_network\":\"physnet\", \"device_type\":\"type-PF\"}]'])\n\n# the following was extracted from debug logs on compute node where we are seeing the issue\ndev_dict = jsonutils.loads('{\"dev_id\": \"pci_0000_05_00_1\", \"product_id\": \"154d\", \"dev_type\": \"type-PF\", \"numa_node\": 0, \"vendor_id\": \"8086\", \"label\": \"label_8086_154d\", \"address\": \"0000:05:00.1\"}')\n\n\nprint filter.specs[0].address.match(dev_dict['address'], dev_dict.get('parent_addr'))\n\n# returns False\n# for laughs\nprint filter.specs[0].address.match(None, dev_dict.get('address'))\n# returns True", 
+            "date_created": "2016-08-15 20:29:59.110873+00:00", 
+            "author": "https://api.launchpad.net/1.0/~beagles"
+        }, 
+        {
+            "content": "Can you describe this better? Please follow format proposed for bug reports. Would be great if you could include logs from node.", 
+            "date_created": "2016-08-16 04:22:40.561525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mszankin"
+        }, 
+        {
+            "content": "I'll see about the logs. In the meantime, I'll clarify. I should've indicated that calls mentioned in the bug report are simulations of what actually gets called in the environment. That is:\n\nprint filter.specs[0].address.match(dev_dict['address'], dev_dict.get('parent_addr'))\n\nis the address match part of the PciDeviceSpec::match() method in nova/pci/devspec.py\n\n\ndev_dict = jsonutils.loads('{\"dev_id\": \"pci_0000_05_00_1\", \"product_id\": \"154d\", \"dev_type\": \"type-PF\", \"numa_node\": 0, \"vendor_id\": \"8086\", \"label\": \"label_8086_154d\", \"address\": \"0000:05:00.1\"}')\n\nis just initializing a device dict from an extract from the debug logs of the resource_tracker when it queries the hypervisor for the list of devices\n\nfilter = nova.pci.whitelist.Whitelist(['[{\"address\":\"0000:05:00.1\", \"product_id\":\"154d\", \"vendor_id\":\"8086\", \"physical_network\":\"physnet\", \"device_type\":\"type-PF\"}]'])\n\nIs simply taking the whitelist from the configuration file, and directly instantiating the whitelist object with it. \n\nThis is all to simulate with basically real info from the environment in question what happens when \nResourceTracker::_update_available_resource() instantiates it's pci_tracker member with PciDevTracker. After it instantiates it calls PciDevTracker::update_devices_from_hypervisor_resources() with a complete list of serialized devices obtained by calling libvirt (I included just the relevant one). This in turn calls WhiteList::device_assignable for each device. WhiteList::device_assignable goes through it's list of entries (which I include just one - the one that should match), if there is a match, the PciDevTracker will add it to its list of devices. The example calls and data I provided indicate that the PCI address matching doesn't make sense for PFs. An examination of the call on PciAddress::match() where if the second parameter to match call() representing the parent's physical PCI address is None, and the address is for a physical function - which it is - then False is returned and the device is skipped.\n\nUltimately, the problem might lie elsewhere, but from an examination of the sample data and the code in question, there does seem to be something wrong with how physical functions are being handled by the code in devspec.py.", 
+            "date_created": "2016-08-16 05:05:53.134917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~beagles"
+        }, 
+        {
+            "content": "Duplicate of https://bugs.launchpad.net/nova/+bug/1618984  - patch(es) in progress against the other BZ\n", 
+            "date_created": "2016-11-02 13:37:56.077922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~beagles"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/363884\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d38d5767d15b24df455b1844dfe53ada2ebf9751\nSubmitter: Jenkins\nBranch:    master\n\ncommit d38d5767d15b24df455b1844dfe53ada2ebf9751\nAuthor: Ludovic Beliveau <email address hidden>\nDate:   Wed Aug 31 14:27:43 2016 -0400\n\n    PCI: Fix PCI with fully qualified address\n    \n    Specifying a PF passthrough device in the pci_passthrough_whitelist using its\n    fully qualified PCI address (no wildcard) causes the device to not be\n    properly loaded.  The PCI device is then not available to be assigned to any\n    guest.\n    \n    In this case, the hypervisor reports the PF device without a 'parent_addr'.\n    But in the PciAddress, match() is using it when doing the comparison to its\n    own address.\n    \n    This commit changes the logic of the address matching method in PciDevSpec to\n    only try to match the address with a physical function device when a\n    'parent_addr' is reported by the hypervisor.\n    \n    Change-Id: I5255240871d8ad5c216500f39520339efe46e84b\n    Closes-Bug: #1613434\n", 
+            "date_created": "2016-11-03 17:30:40.810614+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/393752", 
+            "date_created": "2016-11-04 12:38:05.218727+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/393752\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=30deffaca4c0307170bf46cea439dea2c11a8ed9\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 30deffaca4c0307170bf46cea439dea2c11a8ed9\nAuthor: Ludovic Beliveau <email address hidden>\nDate:   Wed Aug 31 14:27:43 2016 -0400\n\n    PCI: Fix PCI with fully qualified address\n    \n    Specifying a PF passthrough device in the pci_passthrough_whitelist using its\n    fully qualified PCI address (no wildcard) causes the device to not be\n    properly loaded.  The PCI device is then not available to be assigned to any\n    guest.\n    \n    In this case, the hypervisor reports the PF device without a 'parent_addr'.\n    But in the PciAddress, match() is using it when doing the comparison to its\n    own address.\n    \n    This commit changes the logic of the address matching method in PciDevSpec to\n    only try to match the address with a physical function device when a\n    'parent_addr' is reported by the hypervisor.\n    \n    Change-Id: I5255240871d8ad5c216500f39520339efe46e84b\n    Closes-Bug: #1613434\n    (cherry picked from commit d38d5767d15b24df455b1844dfe53ada2ebf9751)\n", 
+            "date_created": "2016-11-11 21:38:53.329850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:11:58.283582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.3 release.", 
+            "date_created": "2016-12-19 12:02:29.648880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-11-03 17:30:38.630374+00:00"
+}

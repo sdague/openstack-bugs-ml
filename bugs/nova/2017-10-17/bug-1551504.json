@@ -1,0 +1,79 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-10-13 14:13:36.131060+00:00", 
+    "description": "1. version\nkilo 2015.1.0, liberty\n\nthis bug is base on BP:\nhttps://blueprints.launchpad.net/nova/+spec/input-output-based-numa-scheduling\n\nIn the current implementation scheme:\n\n/nova/pci/stats.py\n################################################################################\n\u00a0def _filter_pools_for_numa_cells(pools, numa_cells):\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# Some systems don't report numa node info for pci devices, in\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# that case None is reported in pci_device.numa_node, by adding None\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# to numa_cells we allow assigning those devices to instances with\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# numa topology\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0numa_cells = [None] + [cell.id for cell in numa_cells]\n#################################################################################\n\nIf some compute nodes don't report numa node info for pci devices.\nThen these pci devices will be regarded as \"belong to all numa node\" to deal with by default.\n\nThis can lead to a problem:\nPci devices is not on the numa node which CPU\\MEM on.\nIn this way, the real purpose of I/O (PCIe) Based NUMA Scheduling is not reached.\nMore serious is that the user will be wrong thought pci devices is on the numa node that CPU\\MEM on.\n\nThe truth is, there are still many systems don't report numa node info for pci devices.\nSo, i think this bug need fixed.", 
+    "tags": [
+        "kilo-backport-potential", 
+        "liberty-backport-potential", 
+        "numa", 
+        "pci", 
+        "scheduler"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1551504", 
+    "owner": "https://api.launchpad.net/1.0/~ni-jinquan", 
+    "id": 1551504, 
+    "index": 4465, 
+    "openned": "2016-03-01 01:53:33.896766+00:00", 
+    "created": "2016-03-01 01:53:33.896766+00:00", 
+    "title": "I/O (PCIe) Based NUMA Scheduling  can't really achieve pci numa binding in some cases.", 
+    "comments": [
+        {
+            "content": "1. version\nkilo 2015.1.0, liberty\n\n\nthis bug is base on BP:\nhttps://blueprints.launchpad.net/nova/+spec/input-output-based-numa-scheduling\n\n\nIn the current implementation scheme:\n\n################################################################################\n def _filter_pools_for_numa_cells(pools, numa_cells):\n        # Some systems don't report numa node info for pci devices, in\n        # that case None is reported in pci_device.numa_node, by adding None\n        # to numa_cells we allow assigning those devices to instances with\n        # numa topology\n        numa_cells = [None] + [cell.id for cell in numa_cells]\n#################################################################################\n\nIf some compute nodes don't report numa node info for pci devices.\nThen these pci devices will be regarded as \"belong to all numa node\" to deal with by default.\n\nThis can lead to a problem:\nPci devices is not on the numa node which CPU\\MEM on.\nIn this way, the real purpose of I/O (PCIe) Based NUMA Scheduling is not reached.\nMore serious is that the user will be wrong thought pci devices is on the numa node that CPU\\MEM on.\n\nThe truth is, there are still many systems don't report numa node info for pci devices.\nSo, i think this bug need fixed.", 
+            "date_created": "2016-03-01 01:53:33.896766+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ni-jinquan"
+        }, 
+        {
+            "content": "Are you able to recreate this on master (mitaka) or liberty to see if this is already fixed?", 
+            "date_created": "2016-03-03 18:45:55.903082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "To  Matt Riedemann (mriedem)\uff1a\n\n    Thank you for your attention\uff0cI had no master's development environment, but have read the code, find bug\u2018s code still exists \u3002\n\n    numa_cells = [None] + [cell.id for cell in numa_cells]  \n\n    As long as you don't add any judgment, directly add \u201c [None]\u201d to numa_cells  will have this problem\n \n", 
+            "date_created": "2016-03-04 04:23:02.069884+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ni-jinquan"
+        }, 
+        {
+            "content": "I'm not sure I understand correctly the issue here.\n\nThe use case that seems to be described is: There is a compute that can't report the numa node information about it's PCI devices.  A user is requesting to launch an instance with some specific PCI resources.  Nova pick this specific compute to schedule the instance.  The scheduler is able to meet the PCI request (in this case it's disregarding the numa node and pick any PCI devices that at least match the vendor and product info - and maybe some other criterias).\n\nHow can nova schedule the instance using the right numa nodes (for numa node affinity) if it doesn't have the numa node information for those PCI devices ?\n\nAre you suggesting that in this case (since we don't have any numa node information) that we should report an error specifying that the instance can't be launch ?\n\nOr are you suggesting that the scheduler should first try to accommodate the request on a compute that *has* PCI numa node information first, then if none are available it should try on those compute that *can't* report PCI numa node information ?\n\nWhat is the desired behavior ?\n\n", 
+            "date_created": "2016-03-07 21:11:19.250200+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ludovic-beliveau"
+        }, 
+        {
+            "content": "to Ludovic Beliveau (ludovic-beliveau) \uff1a\n\n your describe in first section are right\n\nthe ansower of your first question  is  that nova schedule can't  using the right numa nodes if it doesn't have the numa node information for those PCI devices.\n\nmy desired behavior is:\n\n(1) add a  parameter \u201chw\uff1anuma_pci\u201d \uff0cand if hw\uff1anuma_pci = TRUE:\n\nin this case (since we don't have any numa node information) that we should report an error specifying that the instance can't be launch\n\n(2) if don\u2018t   set   hw\uff1anuma_pci \nthe scheduler should first try to accommodate the request on a compute that *has* PCI numa node information first, then if none are available it should try on those compute that *can't* report PCI numa node information\n\n(3) if hw\uff1anuma_pci = False:\npci has no  requirements about numa\n", 
+            "date_created": "2016-03-08 07:07:30.413535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ni-jinquan"
+        }, 
+        {
+            "content": "I don't think we should care about libvirt reporting None for device NUMA node, this is related (AFAIK) to the libvirt version, and is not something we check when scheduling. People who care about this feature are likely to run the newer bits in practice, so I doubt this is an issue in practice. The most we should do is log a warning in the libvirt driver IMHO.\n\nThere is another question here IIUC and that is whether to allow for \"soft PCI device affinity\" - if both NUMA affinity and device passthrough is requested - currently there is no way to allow for device to be on a different NUMA node - instances will simply fail to schedule. I am not convinced that this is a very useful feature, but could be convinced otherwise", 
+            "date_created": "2016-03-08 14:58:55.087517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "to Nikola \u0110ipanov (ndipanov) \uff1a\n    this is not related to libvirt version\uff0c all  compute nodes's  libvirt version is 1.2.21.  in my envrioment.\n   some nodes can report pci numa info ,but other nodes can't report.\n   we found the reason is related  node\u2018s hardware configuration and BIOS version\uff0c\n  but some compute can't  update BIOS version\u3002\n\n  so this is an issue in practice\uff0csometime\uff0cPeople who care about this feature \n  will be wrong thought pci devices is on the numa node that CPU\\MEM on. but in fact\uff0c it does not\u3002\n\n\n And  I agree with you that  nova should care about system  reporting None for device NUMA node\u3002\n\nSo, my  new desired behavior is\uff08@Ludovic Beliveau\uff09:\n\nPci without numa_node will be ignore when launch an instance with some specific PCI resources\u3002\n\nBut these pci devices are available when launch an instance without specific PCI resources\n\n ", 
+            "date_created": "2016-03-09 02:37:18.613617+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ni-jinquan"
+        }, 
+        {
+            "content": "\nsorry\uff0ccomment #6  has  a mistake\uff1a\n\nAnd I agree with you that nova should care about system reporting None for device NUMA node\u3002\n\n------->\n\nAnd I agree with you that nova should  not care about system reporting None for device NUMA node", 
+            "date_created": "2016-03-14 00:42:07.634215+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ni-jinquan"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/298179", 
+            "date_created": "2016-03-28 09:48:51.417514+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Matt Riedemann (<email address hidden>) on branch: master\nReview: https://review.openstack.org/298179", 
+            "date_created": "2016-08-04 18:20:32.993722+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Having discussed this since, it's clear that this isn't a bug but a design decision. nova allows scheduling PCI devices on hosts without an exposed NUMA topology as this satisfies the majority of use cases. It would be possible to make this behavior configurable, but this is a feature request - not a bug - and would require a spec [1].\n\n[1] https://review.openstack.org/#/c/361140/", 
+            "date_created": "2016-10-13 14:13:21.611110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stephenfinucane"
+        }
+    ], 
+    "closed": "2016-10-13 14:13:33.653576+00:00"
+}

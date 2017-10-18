@@ -1,0 +1,60 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-07-27 12:38:54.920692+00:00", 
+    "description": "When booting a nova instance with baremetal flavor, one can not provide a pre-created neutron port to \"nova boot\" command.\n\nThe reason is obvious - to successfully deploy, mac address of the port must be the same as mac address of the ironic port corresponding to the ironic node where provisioning will happen, and although it is possible to specify a mac address during port create, a user can not know to which exactly ironic node provisioning will be assigned to by nova compute (more over, ordinary user has no access to list of ironic ports/macs whatsoever).\n\nThis is most probably a known limitation, but the big problem is that it breaks many sorts of cloud orchestration attempts. For example, the most flexible in terms of usage approach in Heat is to pre-create a port, and create the server with this port provided (actually this is the only way if one needs to assign a floating IP to the instance via Neutron). Some other consumers of Heat extensively use this approach.\n\nSo this limitation precludes Murano or Sahara to provision their instances on bare metal via Nova/Ironic.\n\nThe solution might be to update the mac of the port to correct one (mac address update is possible with admin context) when working with baremetal nodes/Ironic.", 
+    "tags": [
+        "ironic"
+    ], 
+    "importance": "Undecided", 
+    "heat": 22, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1544195", 
+    "owner": "None", 
+    "id": 1544195, 
+    "index": 7300, 
+    "openned": "2016-02-10 17:47:19.382479+00:00", 
+    "created": "2016-02-10 17:47:19.382479+00:00", 
+    "title": "User can not provision ironic node via nova when providing pre-created port", 
+    "comments": [
+        {
+            "content": "When booting a nova instance with baremetal flavor, one can not provide a pre-created neutron port to \"nova boot\" command.\n\nThe reason is obvious - to successfully deploy, mac address of the port must be the same as mac address of the ironic port corresponding to the ironic node where provisioning will happen, and although it is possible to specify a mac address during port create, a user can not know to which exactly ironic node provisioning will be assigned to by nova compute (more over, ordinary user has no access to list of ironic ports/macs whatsoever).\n\nThis is most probably a known limitation, but the big problem is that it breaks many sorts of cloud orchestration attempts. For example, the most flexible in terms of usage approach in Heat is to pre-create a port, and create the server with this port provided (actually this is the only way if one needs to assign a floating IP to the instance via Neutron). Some other consumers of Heat extensively use this approach.\n\nSo this limitation precludes Murano or Sahara to provision their instances on bare metal via Nova/Ironic.\n\nThe solution might be to update the mac of the port to correct one (mac address update is possible with admin context) when working with baremetal nodes/Ironic.", 
+            "date_created": "2016-02-10 17:47:19.382479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pshchelo"
+        }, 
+        {
+            "content": "This is going to be incredibly environment specific in the future, and never work with an Ironic deployment today. I'd prefer to block calls like this for instances destined for an ironic driver, and fix it in heat/magnum.", 
+            "date_created": "2016-02-18 00:18:03.117549+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jim-rollenhagen"
+        }, 
+        {
+            "content": "Adding the release-notes tag as discussed in commit https://review.fuel-infra.org/#/c/17041", 
+            "date_created": "2016-02-18 15:37:22.332788+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ogusarenko"
+        }, 
+        {
+            "content": "I think we may have fixed this now (depending on your neutron back end): https://github.com/openstack/nova/commit/15c583cb7c2d8fbad7c2334971a49ab520d22fa3\n\nCan we see if this can be reproduced using the latest master for Nova?", 
+            "date_created": "2016-07-14 11:24:00.396031+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I just tested this on master. It works now! (at least on DevStack):\n\n- with Ironic set w/o multitenancy support, it works only with ports pre-created in what Ironic treats as provisioning network (by default in DevStack the 'private' one). This is expected for such mode of Ironic deployment\n\n- with Ironic set with multitenancy support (e.g. see the job gate-tempest-dsvm-ironic-multitenant-network-nv for configuration example) it works with any port (I've created a new network with subnet, created a port there and successfully provisioned a Nova instance on Ironic node with this port provided to 'nova boot').\n\nTwo questions to John though:\n\n- what do you mean by 'depending on network backend'? Do you know of any example where it would not work? What are requirements for the network backend for this to work?\n\n- Would it be possible to backport this patch at least to Mitaka?", 
+            "date_created": "2016-08-03 14:57:58.599327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pshchelo"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/464710", 
+            "date_created": "2017-05-15 17:37:38.231644+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "https://github.com/openstack/nova/commit/15c583cb7c2d8fbad7c2334971a49ab520d22fa3 wouldn't be backported to mitaka because mitaka is end of life at this point upstream, but also because that change was part of a larger blueprint refactor series in newton, so it's not a good candidate for a backport. I'm going to mark this as fixed for nova.", 
+            "date_created": "2017-06-27 08:41:05.763292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/464710\nCommitted: https://git.openstack.org/cgit/openstack/magnum/commit/?id=769f0eea41f0703deb6d239293af92feff44eb5c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 769f0eea41f0703deb6d239293af92feff44eb5c\nAuthor: Mark Goddard <email address hidden>\nDate:   Sun May 14 09:02:36 2017 +0100\n\n    Extract kubernetes baremetal ports\n    \n    Previously the master's private IP address was not pushed through to the\n    minion configuration when the load balancer is disabled as the heat\n    templates were not wired up in this case.  This change resolves that\n    issue and makes it possible for security groups to be applied to the\n    master and minion ports.\n    \n    Change-Id: If85a5434f014c5a09b54dda710d13739e9bff928\n    Related-Bug: #1544195\n", 
+            "date_created": "2017-07-27 12:38:54.139542+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2017-06-27 08:41:12.562835+00:00"
+}

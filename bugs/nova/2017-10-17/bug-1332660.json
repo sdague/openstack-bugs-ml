@@ -1,0 +1,66 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-01-05 11:02:03.492273+00:00", 
+    "description": "If we use RBD as the backend for ephemeral drives, compute nodes still calculate their available disk size looking back to the local disks.\nThis is the path how they do it:\n\n* nova/compute/manager.py\n\n    def update_available_resource(self, context):\n        \"\"\"See driver.get_available_resource()\n\n        Periodic process that keeps that the compute host's understanding of\n        resource availability and usage in sync with the underlying hypervisor.\n\n        :param context: security context\n        \"\"\"\n        new_resource_tracker_dict = {}\n        nodenames = set(self.driver.get_available_nodes())\n        for nodename in nodenames:\n            rt = self._get_resource_tracker(nodename)\n            rt.update_available_resource(context)\n            new_resource_tracker_dict[nodename] = rt\n....................\n    def _get_resource_tracker(self, nodename):\n        rt = self._resource_tracker_dict.get(nodename)\n        if not rt:\n            if not self.driver.node_is_available(nodename):\n                raise exception.NovaException(\n                        _(\"%s is not a valid node managed by this \"\n                          \"compute host.\") % nodename)\n\n            rt = resource_tracker.ResourceTracker(self.host,\n                                                  self.driver,\n                                                  nodename)\n            self._resource_tracker_dict[nodename] = rt\n        return rt\n\n* nova/compute/resource_tracker.py\n\n    def update_available_resource(self, context):\n        \"\"\"Override in-memory calculations of compute node resource usage based\n        on data audited from the hypervisor layer.\n\n        Add in resource claims in progress to account for operations that have\n        declared a need for resources, but not necessarily retrieved them from\n        the hypervisor layer yet.\n        \"\"\"\n        LOG.audit(_(\"Auditing locally available compute resources\"))\n        resources = self.driver.get_available_resource(self.nodename)\n\n* nova/virt/libvirt/driver.py\n\n    def get_local_gb_info():\n        \"\"\"Get local storage info of the compute node in GB.\n\n        :returns: A dict containing:\n             :total: How big the overall usable filesystem is (in gigabytes)\n             :free: How much space is free (in gigabytes)\n             :used: How much space is used (in gigabytes)\n        \"\"\"\n\n        if CONF.libvirt_images_type == 'lvm':\n            info = libvirt_utils.get_volume_group_info(\n                                 CONF.libvirt_images_volume_group)\n        else:\n            info = libvirt_utils.get_fs_info(CONF.instances_path)\n\n        for (k, v) in info.iteritems():\n            info[k] = v / (1024 ** 3)\n\n        return info\n\n\nIt would be nice to have something like \"libvirt_utils.get_rbd_info\" which could be used in case CONF.libvirt_images_type == 'rbd'", 
+    "tags": [
+        "ceph", 
+        "nova"
+    ], 
+    "importance": "Undecided", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1332660", 
+    "owner": "https://api.launchpad.net/1.0/~angdraug", 
+    "id": 1332660, 
+    "index": 6205, 
+    "openned": "2014-06-20 18:37:00.986593+00:00", 
+    "created": "2014-06-20 18:14:10.360633+00:00", 
+    "title": "Update statistics from computes if RBD ephemeral is used", 
+    "comments": [
+        {
+            "content": "If we use RBD as the backend for ephemeral drives, compute nodes still calculate their available disk size looking back to the local disks.\nThis is the path how they do it:\n\n* nova/compute/manager.py\n\n    def update_available_resource(self, context):\n        \"\"\"See driver.get_available_resource()\n\n        Periodic process that keeps that the compute host's understanding of\n        resource availability and usage in sync with the underlying hypervisor.\n\n        :param context: security context\n        \"\"\"\n        new_resource_tracker_dict = {}\n        nodenames = set(self.driver.get_available_nodes())\n        for nodename in nodenames:\n            rt = self._get_resource_tracker(nodename)\n            rt.update_available_resource(context)\n            new_resource_tracker_dict[nodename] = rt\n....................\n    def _get_resource_tracker(self, nodename):\n        rt = self._resource_tracker_dict.get(nodename)\n        if not rt:\n            if not self.driver.node_is_available(nodename):\n                raise exception.NovaException(\n                        _(\"%s is not a valid node managed by this \"\n                          \"compute host.\") % nodename)\n\n            rt = resource_tracker.ResourceTracker(self.host,\n                                                  self.driver,\n                                                  nodename)\n            self._resource_tracker_dict[nodename] = rt\n        return rt\n\n* nova/compute/resource_tracker.py\n\n    def update_available_resource(self, context):\n        \"\"\"Override in-memory calculations of compute node resource usage based\n        on data audited from the hypervisor layer.\n\n        Add in resource claims in progress to account for operations that have\n        declared a need for resources, but not necessarily retrieved them from\n        the hypervisor layer yet.\n        \"\"\"\n        LOG.audit(_(\"Auditing locally available compute resources\"))\n        resources = self.driver.get_available_resource(self.nodename)\n\n* nova/virt/libvirt/driver.py\n\n    def get_local_gb_info():\n        \"\"\"Get local storage info of the compute node in GB.\n\n        :returns: A dict containing:\n             :total: How big the overall usable filesystem is (in gigabytes)\n             :free: How much space is free (in gigabytes)\n             :used: How much space is used (in gigabytes)\n        \"\"\"\n\n        if CONF.libvirt_images_type == 'lvm':\n            info = libvirt_utils.get_volume_group_info(\n                                 CONF.libvirt_images_volume_group)\n        else:\n            info = libvirt_utils.get_fs_info(CONF.instances_path)\n\n        for (k, v) in info.iteritems():\n            info[k] = v / (1024 ** 3)\n\n        return info\n\n\nIt would be nice to have something like \"libvirt_utils.get_rbd_info\" which could be used in case CONF.libvirt_images_type == 'rbd'", 
+            "date_created": "2014-06-20 18:14:10.360633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~agrebennikov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/102064", 
+            "date_created": "2014-06-24 00:16:40.115310+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Attached the version of the patch for Havana, based on https://github.com/angdraug/nova/tree/rbd-live-migration-stable-havana", 
+            "date_created": "2014-06-24 00:32:32.263572+00:00", 
+            "author": "https://api.launchpad.net/1.0/~angdraug"
+        }, 
+        {
+            "content": "It does work for me.\n\nPlease check driver.py:\nelif CONF.libvirt.images_type == 'rbd':\nshould be:\nelif CONF.libvirt_images_type == 'rbd':\n\nThanks.", 
+            "date_created": "2014-06-24 05:52:34.921754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~agrebennikov"
+        }, 
+        {
+            "content": "Patch for 4.1.x (havana) based on https://github.com/angdraug/nova/tree/rbd-live-migration-stable-havana", 
+            "date_created": "2014-06-24 17:50:20.867155+00:00", 
+            "author": "https://api.launchpad.net/1.0/~angdraug"
+        }, 
+        {
+            "content": "Patch for 5.x (Icehouse) based on https://github.com/angdraug/nova/tree/rbd-ephemeral-clone-stable-icehouse", 
+            "date_created": "2014-06-24 17:51:07.302292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~angdraug"
+        }, 
+        {
+            "content": "Icehouse patch version from 6/24 was causing a regression (https://bugs.launchpad.net/mos/+bug/1335628), updated patch attached. Github branch already has the updated version of the patch.", 
+            "date_created": "2014-07-07 20:36:20.453494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~angdraug"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/102064\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=9b559c31b781689fb66551f29a0cb8d10c7bac94\nSubmitter: Jenkins\nBranch:    master\n\ncommit 9b559c31b781689fb66551f29a0cb8d10c7bac94\nAuthor: Dmitry Borodaenko <email address hidden>\nDate:   Mon Jun 23 16:12:18 2014 -0700\n\n    Use Ceph cluster stats to report disk info on RBD\n    \n    Local disk statistics on compute nodes are irrelevant when ephemeral\n    disks are stored in RBD. With RBD, local disk space is not consumed when\n    instances are started on a compute node, yet it is possible for\n    scheduler to refuse to schedule an instance when combined disk usage of\n    instances already running on the node exceeds total disk capacity\n    reported by the hypervisor driver.\n    \n    Change-Id: I9718c727db205b6f2191f8435583391584e96e6e\n    Closes-bug: #1332660\n    Signed-off-by: Dmitry Borodaenko <email address hidden>\n", 
+            "date_created": "2014-08-02 21:16:50.028764+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I verified it on mos 5.1.1 - fixed", 
+            "date_created": "2015-01-05 10:17:42.462914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ogubanov"
+        }
+    ], 
+    "closed": "2014-09-05 09:53:38.106704+00:00"
+}

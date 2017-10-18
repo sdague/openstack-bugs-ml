@@ -1,0 +1,83 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-10-12 17:48:07.716865+00:00", 
+    "description": "Since merging upper constraints 1.4.0 into upper-constraints, the multinode grenade jobs are hitting a nearly 1/3 failure rate on boot from volume scenarios around volume setup. This would be on Newton code using Mitaka configs.\n\nRepresentative failures are of the following form: http://logs.openstack.org/71/327971/5/gate/gate-grenade-dsvm-neutron-multinode/f2690e3/logs/new/screen-n-cpu.txt.gz?level=WARNING#_2016-06-13_15_22_59_095\n\nThe 1/3 failure rate is suspicious, and in the past has often hinted towards a race condition interacting between parallel API requests.\n\nThe failure rate increase can be seen here - http://tinyurl.com/zrq35e8", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1592043", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1592043, 
+    "index": 7542, 
+    "openned": "2016-06-15 17:43:58.810638+00:00", 
+    "created": "2016-06-13 15:51:02.014167+00:00", 
+    "title": "os-brick 1.4.0 increases volume setup failure rates", 
+    "comments": [
+        {
+            "content": "Since merging upper constraints 1.4.0 into upper-constraints, the multinode grenade jobs are hitting a nearly 1/3 failure rate on boot from volume scenarios around volume setup. This would be on Newton code using Mitaka configs.\n\nRepresentative failures are of the following form: http://logs.openstack.org/71/327971/5/gate/gate-grenade-dsvm-neutron-multinode/f2690e3/logs/new/screen-n-cpu.txt.gz?level=WARNING#_2016-06-13_15_22_59_095\n\nThe 1/3 failure rate is suspicious, and in the past has often hinted towards a race condition interacting between parallel API requests.", 
+            "date_created": "2016-06-13 15:51:02.014167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "http://logstash.openstack.org/#dashboard/file/logstash.json?query=message%3A%5C%22FailedToDropPrivileges%3A%20privsep%20helper%20command%20exited%20non-zero%20(1)%5C%22%20AND%20tags%3A%5C%22screen-n-cpu.txt%5C%22%20AND%20voting%3A1&from=7d\n\nI'm wondering if https://github.com/openstack/os-brick/commit/80703d3e2070c16a745d75d497dedc5ec1b9e714 is doing something wrong with checking for multipathd with privsep.", 
+            "date_created": "2016-06-13 15:55:10.229842+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Before the failures I'm seeing this:\n\n2016-06-13 15:22:59.079 26206 WARNING oslo.privsep.daemon [-] privsep log: sudo: no tty present and no askpass program specified", 
+            "date_created": "2016-06-13 15:56:27.874449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "It's actually probably this change that's breaking everything:\n\nhttps://github.com/openstack/os-brick/commit/dbf77fba1061cb4e93b3db5f8117d6ccc689f702", 
+            "date_created": "2016-06-13 16:18:17.158889+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/277224/ has several config related dependencies on devstack/cinder/nova to make things work with privsep, which aren't in stable/mitaka, which is probably why things are failing in the grenade job.", 
+            "date_created": "2016-06-13 16:21:45.161254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Affects neutron gate significantly. I see 65-75% failure rate on our 24h window grafana dash: http://grafana.openstack.org/dashboard/db/neutron-failure-rate?panelId=5&fullscreen", 
+            "date_created": "2016-06-13 16:27:22.869139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "We block os-brick 1.4.0 with https://review.openstack.org/#/c/329069/ and https://review.openstack.org/#/q/I67a58123cffcc469ebb51ea2c2f33a7da7559688,n,z", 
+            "date_created": "2016-06-13 16:44:18.684134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "os-brick 1.4 was released over the weekend, and was the first os-brick to include privsep. We got a really odd failure rate in the grenade-multinode jobs (1/3 - 1/2) after wards which was super non obvious why. Hemma looks to have figured it out (this is a summary of what I've seen on IRC to pull it all together)\n\nRemembering the following - https://github.com/openstack-dev/grenade#theory-of-upgrade and https://governance.openstack.org/reference/tags/assert_supports-upgrade.html#requirements - New code must work with N-1 configs. So this is `master` running with `mitaka` configuration.\n\nprivsep requires a sudo rule or rootwrap rule (to get to sudo) to allow the privsep daemon to be spawned for volume actions.\n\nDuring gate testing we have a blanket sudoer rule for the stack user during the run of grenade.sh. It has to do system level modifications broadly to perform the upgrade. This sudoer rule is deleted at the end of the grenade.sh run before Tempest tests are run, so that Tempest tests don't accidentally require root privs on their target environment.\n\nGrenade *also* makes sure that some resources live across the upgrade boundary. This includes a boot from volume guest, which is torn down before testing starts. And this is where things get interesting.\n\nThis means there is a volume teardown needed before grenade ends. But there is only one. In single node grenade this happens about 30 seconds for the end of the script, triggers the privsep daemon start, and then we're done. And the 50_stack_sh sudoers file is removed. In multinode, *if* the boot from volume server is on the upgrade node, then the same thing happens. *However*, if it instead ended up on the subnode, which is not upgraded, then the volume tear down in on the old node. No os-brick calls are made on the upgraded node before grenade finishes. The 50_stack_sh sudoers file is removed, as expected.\n\nAnd now all volume tests on those nodes fail.\n\nWhich is what should happen. The point is that in production no one is going to put a blanket sudoers rule like that in place. It's just we needed it for this activity, and the userid on the services being the same as the shell user (which is not root) let this fallback rule be used.\n\nThe crux of the problem is that os-brick 1.4 and privsep can't be used without a config file change during the upgrade. Which violates our policy, because it breaks rolling upgrades.\n", 
+            "date_created": "2016-06-14 11:49:13.922074+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Change abandoned by Walter A. Boring IV (hemna) (<email address hidden>) on branch: master\nReview: https://review.openstack.org/329586\nReason: This patch tried to fix the initial problem of starting the privsep daemon the first time.  That has been fixed by the new version of privsep adding an init() capability to set the initial helper_command.", 
+            "date_created": "2016-06-21 22:43:47.950901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/329769\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4a8f2b0d44ee10dfac2d3d828cd9dc574d5ddbb2\nSubmitter: Jenkins\nBranch:    master\n\ncommit 4a8f2b0d44ee10dfac2d3d828cd9dc574d5ddbb2\nAuthor: Angus Lees <email address hidden>\nDate:   Wed Jun 15 15:46:38 2016 +1000\n\n    Initialise oslo.privsep early in main\n    \n    Any process using oslo.privsep should now initialise the library before\n    first use with things like the rootwrap command to use.\n    \n    This should be done near the top of main() in any command that expects\n    to make privileged calls via oslo.privsep (eg: nova-compute, and not\n    nova-api).\n    \n    See I3ea73e16b07a870629e7d69e897f2524d7068ae8 for the corresponding\n    change in oslo.privsep.\n    \n    Change-Id: I3a52f762deb176fe9201b2a0f0da363057f8aaec\n    Depends-On: I52259e2023e277e8fd62be5df4fd7f799e9b36d7\n    Closes-Bug: #1592043\n", 
+            "date_created": "2016-08-01 21:13:46.533949+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b3 development milestone.", 
+            "date_created": "2016-09-02 01:15:17.333011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/cinder 9.0.0.0b3 development milestone.", 
+            "date_created": "2016-09-02 07:30:59.936795+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Cinder related change: https://review.openstack.org/#/c/331973/", 
+            "date_created": "2016-10-12 17:47:11.897554+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }
+    ], 
+    "closed": "2016-08-01 21:13:43.657299+00:00"
+}

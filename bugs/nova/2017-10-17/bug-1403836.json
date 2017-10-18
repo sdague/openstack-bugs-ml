@@ -1,0 +1,70 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-06-28 15:15:23.607259+00:00", 
+    "description": "I was trying nova volume attach of a disk with CHAP enabled on Windows(HyperV driver), I notice that the attach volume fails with CHAP authentication enforced and the same works without CHAP authentication set.\n\nMy current setup is Juno based:\n\nI saw a similar bug reported as https://bugs.launchpad.net/nova/+bug/1397549  .  The fix of which is as per \n\nhttps://review.openstack.org/#/c/137623/ and https://review.openstack.org/#/c/134592/ . \n\nEven after incorporating  these changes  things do not work and it needs an additional fix. \n\nIssue: The issue even after having  the code as in the commits mentioned earlier is that \u2013 when we try to do nova volume-attach ,  on Hyperv host we first do a login to portal , then attach the volume to target.\n\nNow, if we login to portal without chap authentication \u2013 it will fail (Authentication failure) and hence the code needs to be changed here  (https://github.com/openstack/nova/blob/master/nova/virt/hyperv/volumeutilsv2.py#L64-65 ) .\n\n\nResoultion: While creating/adding  the new portal we need to add it with the CHAP credentials (as the way it is done on target.connect) . \n\nSample snippet of the fix would be;\nif portal:\n            portal[0].Update()\n        else:\n            # Adding target portal to iscsi initiator. Sending targets\n             LOG.debug(\"Create a new portal\")\n                                           auth = {}\n            if auth_username and auth_password:\n                auth['AuthenticationType'] = self._CHAP_AUTH_TYPE\n                auth['ChapUsername'] = auth_username\n                auth['ChapSecret'] = auth_password\n            LOG.debug(auth)        \n            portal = self._conn_storage.MSFT_iSCSITargetPortal\n            portal.New(TargetPortalAddress=target_address,\n                       TargetPortalPortNumber=target_port, **auth)", 
+    "tags": [
+        "hyper-v"
+    ], 
+    "importance": "Low", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1403836", 
+    "owner": "None", 
+    "id": 1403836, 
+    "index": 1463, 
+    "openned": "2014-12-18 10:39:39.990286+00:00", 
+    "created": "2014-12-18 10:39:39.990286+00:00", 
+    "title": "Nova volume attach fails for a iscsi disk with CHAP enabled.", 
+    "comments": [
+        {
+            "content": "I was trying nova volume attach of a disk with CHAP enabled on Windows(HyperV driver), I notice that the attach volume fails with CHAP authentication enforced and the same works without CHAP authentication set.\n\nMy current setup is Juno based:\n\nI saw a similar bug reported as https://bugs.launchpad.net/nova/+bug/1397549  .  The fix of which is as per \n\nhttps://review.openstack.org/#/c/137623/ and https://review.openstack.org/#/c/134592/ . \n\nEven after incorporating  these changes  things do not work and it needs an additional fix. \n\nIssue: The issue even after having  the code as in the commits mentioned earlier is that \u2013 when we try to do nova volume-attach ,  on Hyperv host we first do a login to portal , then attach the volume to target.\n\nNow, if we login to portal without chap authentication \u2013 it will fail (Authentication failure) and hence the code needs to be changed here  (https://github.com/openstack/nova/blob/master/nova/virt/hyperv/volumeutilsv2.py#L64-65 ) .\n\n\nResoultion: While creating/adding  the new portal we need to add it with the CHAP credentials (as the way it is done on target.connect) . \n\nSample snippet of the fix would be;\nif portal:\n            portal[0].Update()\n        else:\n            # Adding target portal to iscsi initiator. Sending targets\n             LOG.debug(\"Create a new portal\")\n                                           auth = {}\n            if auth_username and auth_password:\n                auth['AuthenticationType'] = self._CHAP_AUTH_TYPE\n                auth['ChapUsername'] = auth_username\n                auth['ChapSecret'] = auth_password\n            LOG.debug(auth)        \n            portal = self._conn_storage.MSFT_iSCSITargetPortal\n            portal.New(TargetPortalAddress=target_address,\n                       TargetPortalPortNumber=target_port, **auth)", 
+            "date_created": "2014-12-18 10:39:39.990286+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kmbharath"
+        }, 
+        {
+            "content": "Hi Barath, what iSCSI target are you using?\n\nWe didn't experience this issue since we fixed it in https://bugs.launchpad.net/nova/+bug/1397549\n\nThanks!\n", 
+            "date_created": "2014-12-18 10:58:18.959007+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexpilotti"
+        }, 
+        {
+            "content": "One additional note:  V1 storage API need to be considered as well (volumeutils.py).", 
+            "date_created": "2014-12-18 11:06:31.465063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexpilotti"
+        }, 
+        {
+            "content": "Hi Alessandro,\n\nI am using HP Left hand network(HP VSA)  - https://github.com/openstack/cinder/blob/master/cinder/volume/drivers/san/hp/hp_lefthand_iscsi.py  . \n\nI had used the fix which you mentioned, and still the issue occures because of the following reason:\nDuring the nova volume attach, we do a login portal and then attach the target. If the portal is CHAP authenticated, we shall not be able to attach the target to the host (I did confirm this  running on wbemtest as well). I had Microsft Windows Server 2012 R2.\n\nThanks & Regards,\nBharath", 
+            "date_created": "2014-12-18 11:18:55.390453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kmbharath"
+        }, 
+        {
+            "content": "Just to add more, neither with the V1 storage API I am able to attach the volume (CHAP authenticated) to an instance.\n\nI tried with the following entry in nova.conf:\n\n[hyperv]\nforce_volumeutils_v1=true\n\nand I see the below error:\n\n2014-07-24 04:32:24.361 1292 TRACE nova.virt.block_device [instance: 29e2654f-e011-4d12-a61a-6db63fab5c1b] ProcessExecutionError: Unexpected error while running command.\n2014-07-24 04:32:24.361 1292 TRACE nova.virt.block_device [instance: 29e2654f-e011-4d12-a61a-6db63fab5c1b] Command: iscsicli.exe AddTargetPortal 10.1.221.22 3260 * * * * * * * * * * * * *\n2014-07-24 04:32:24.361 1292 TRACE nova.virt.block_device [instance: 29e2654f-e011-4d12-a61a-6db63fab5c1b] Exit code: -268500983\n2014-07-24 04:32:24.361 1292 TRACE nova.virt.block_device [instance: 29e2654f-e011-4d12-a61a-6db63fab5c1b] Stdout: u'Microsoft iSCSI Initiator Version 6.3 Build 9600\\n\\nAuthentication Failure. \\n'\n2014-07-24 04:32:24.361 1292 TRACE nova.virt.block_device [instance: 29e2654f-e011-4d12-a61a-6db63fab5c1b] Stderr: u''\n\n\nAnd the Windows System Logs (as seen in Event Viewer) shows the below error:\n\n       Login request failed. The login response packet is given in the dump data.", 
+            "date_created": "2014-12-18 15:52:22.442911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kmbharath"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/145237", 
+            "date_created": "2015-01-06 14:43:50.927487+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/145237\nReason: This patch has been stalled for a long time, so I am abandoning it. Please feel free to restore it when the code is ready for review.", 
+            "date_created": "2015-08-12 07:12:20.316051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/249291\nCommitted: https://git.openstack.org/cgit/openstack/os-win/commit/?id=b72790bacfd356021b2dd870ade6c9c216fd14a0\nSubmitter: Jenkins\nBranch:    master\n\ncommit b72790bacfd356021b2dd870ade6c9c216fd14a0\nAuthor: Lucian Petrut <email address hidden>\nDate:   Fri Nov 20 16:20:40 2015 +0200\n\n    iSCSI initiator refactoring using iscsidsc.dll\n    \n    This patch adds a new iscsi initiator utils class,\n    leveraging iscsidsc.dll functions.\n    \n    The advantages are:\n    * Same error output as iscsicli, without the proccess spawn\n      overhead\n    * Improved overall performance, having finer control over\n      the iSCSI initiator and avoiding unnecessary operations\n    * Fixed bugs related to LUN discovery\n    * Static targets are used instead of having portal discovery\n      sessions. This will let us use backends that require\n      discovery credentials (which may be different than the\n      credentials used when logging in targets)\n    * improved MPIO support (the caller must request logging in the\n      target for each of the available portals. Logging in multiple\n      targets exporting the same LUN is also supported). Also, a\n      specific initiator can be requested when creating sessions.\n    \n    Closes-Bug: #1403836\n    Closes-Bug: #1372823\n    Closes-Bug: #1372827\n    \n    Co-Authored-By: Alin Balutoiu <email address hidden>\n    Change-Id: Ie037cf1712a28e85e5eca445eea3df883c6b6831\n", 
+            "date_created": "2016-02-10 17:42:25.518507+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Cleanup\n=======\n\nThere are no open reviews for this bug report since more than 2 weeks.\nTo signal that to other contributors which might provide patches for\nthis bug, I switch the status from \"In Progress\" to \"Confirmed\" and\nremove the assignee.\nFeel free to add yourself as assignee and to push a review for it.", 
+            "date_created": "2016-03-11 14:47:28.415883+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "This has been fixed in os-win and no longer affects Nova (Mitaka), while still affecting older releases.", 
+            "date_created": "2016-03-11 15:46:26.669099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~petrutlucian94"
+        }
+    ], 
+    "closed": "2016-06-28 15:15:21.227946+00:00"
+}

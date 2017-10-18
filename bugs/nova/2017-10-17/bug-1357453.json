@@ -1,0 +1,142 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2016-05-18 03:56:19.442741+00:00", 
+    "description": "Currently, the resource tracker lazily-creates the compute node record in the database (via a call to the conductor's compute_node_create() API call) during calls to update_available_resource():\n\n```\n    @utils.synchronized(COMPUTE_RESOURCE_SEMAPHORE)\n    def update_available_resource(self, context):\n        \"\"\"Override in-memory calculations of compute node resource usage based\n        on data audited from the hypervisor layer.\n\n        Add in resource claims in progress to account for operations that have\n        declared a need for resources, but not necessarily retrieved them from\n        the hypervisor layer yet.\n        \"\"\"\n        LOG.audit(_(\"Auditing locally available compute resources\"))\n        resources = self.driver.get_available_resource(self.nodename)\n\n        if not resources:\n            # The virt driver does not support this function\n            LOG.audit(_(\"Virt driver does not support \"\n                 \"'get_available_resource'  Compute tracking is disabled.\"))\n            self.compute_node = None\n            return\n        resources['host_ip'] = CONF.my_ip\n\n        self._verify_resources(resources)\n\n        self._report_hypervisor_resource_view(resources)\n\n        if 'pci_passthrough_devices' in resources:\n            if not self.pci_tracker:\n                self.pci_tracker = pci_manager.PciDevTracker()\n            self.pci_tracker.set_hvdevs(jsonutils.loads(resources.pop(\n                'pci_passthrough_devices')))\n\n        # Grab all instances assigned to this node:\n        instances = objects.InstanceList.get_by_host_and_node(\n            context, self.host, self.nodename)\n\n        # Now calculate usage based on instance utilization:\n        self._update_usage_from_instances(resources, instances)\n\n        # Grab all in-progress migrations:\n        capi = self.conductor_api\n        migrations = capi.migration_get_in_progress_by_host_and_node(context,\n                self.host, self.nodename)\n\n        self._update_usage_from_migrations(context, resources, migrations)\n\n        # Detect and account for orphaned instances that may exist on the\n        # hypervisor, but are not in the DB:\n        orphans = self._find_orphaned_instances()\n        self._update_usage_from_orphans(resources, orphans)\n\n        # NOTE(yjiang5): Because pci device tracker status is not cleared in\n        # this periodic task, and also because the resource tracker is not\n        # notified when instances are deleted, we need remove all usages\n        # from deleted instances.\n        if self.pci_tracker:\n            self.pci_tracker.clean_usage(instances, migrations, orphans)\n            resources['pci_stats'] = jsonutils.dumps(self.pci_tracker.stats)\n        else:\n            resources['pci_stats'] = jsonutils.dumps([])\n\n        self._report_final_resource_view(resources)\n\n        metrics = self._get_host_metrics(context, self.nodename)\n        resources['metrics'] = jsonutils.dumps(metrics)\n        self._sync_compute_node(context, resources)\n\n    def _sync_compute_node(self, context, resources):\n        \"\"\"Create or update the compute node DB record.\"\"\"\n        if not self.compute_node:\n            # we need a copy of the ComputeNode record:\n            service = self._get_service(context)\n            if not service:\n                # no service record, disable resource\n                return\n\n            compute_node_refs = service['compute_node']\n            if compute_node_refs:\n                for cn in compute_node_refs:\n                    if cn.get('hypervisor_hostname') == self.nodename:\n                        self.compute_node = cn\n                        if self.pci_tracker:\n                            self.pci_tracker.set_compute_node_id(cn['id'])\n                        break\n\n        if not self.compute_node:\n            # Need to create the ComputeNode record:\n            resources['service_id'] = service['id']\n            self._create(context, resources)\n            if self.pci_tracker:\n                self.pci_tracker.set_compute_node_id(self.compute_node['id'])\n            LOG.info(_('Compute_service record created for %(host)s:%(node)s')\n                    % {'host': self.host, 'node': self.nodename})\n\n        else:\n            # just update the record:\n            self._update(context, resources)\n            LOG.info(_('Compute_service record updated for %(host)s:%(node)s')\n                    % {'host': self.host, 'node': self.nodename})\n\n    def _write_ext_resources(self, resources):\n        resources['stats'] = {}\n        resources['stats'].update(self.stats)\n        self.ext_resources_handler.write_resources(resources)\n\n    def _create(self, context, values):\n        \"\"\"Create the compute node in the DB.\"\"\"\n        # initialize load stats from existing instances:\n        self._write_ext_resources(values)\n        # NOTE(pmurray): the stats field is stored as a json string. The\n        # json conversion will be done automatically by the ComputeNode object\n        # so this can be removed when using ComputeNode.\n        values['stats'] = jsonutils.dumps(values['stats'])\n\n        self.compute_node = self.conductor_api.compute_node_create(context,\n                                                                   values)\n\n    def _get_service(self, context):\n        try:\n            return self.conductor_api.service_get_by_compute_host(context,\n                                                                  self.host)\n        except exception.NotFound:\n            LOG.warn(_(\"No service record for host %s\"), self.host)\n```\n\nThere's really no reason to keep checking for whether self.compute_node exists every time update_available_resource() is called. The compute node record should simply be initialized if not existing in the constructor of the resource tracker.", 
+    "tags": [
+        "low-hanging-fruit", 
+        "resource-tracker", 
+        "scheduler"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1357453", 
+    "owner": "https://api.launchpad.net/1.0/~gstepanov", 
+    "id": 1357453, 
+    "index": 2853, 
+    "openned": "2014-08-15 16:31:09.801327+00:00", 
+    "created": "2014-08-15 16:31:09.801327+00:00", 
+    "title": "Resource tracker should create compute node record in constructor", 
+    "comments": [
+        {
+            "content": "Currently, the resource tracker lazily-creates the compute node record in the database (via a call to the conductor's compute_node_create() API call) during calls to update_available_resource():\n\n```\n    @utils.synchronized(COMPUTE_RESOURCE_SEMAPHORE)\n    def update_available_resource(self, context):\n        \"\"\"Override in-memory calculations of compute node resource usage based\n        on data audited from the hypervisor layer.\n\n        Add in resource claims in progress to account for operations that have\n        declared a need for resources, but not necessarily retrieved them from\n        the hypervisor layer yet.\n        \"\"\"\n        LOG.audit(_(\"Auditing locally available compute resources\"))\n        resources = self.driver.get_available_resource(self.nodename)\n\n        if not resources:\n            # The virt driver does not support this function\n            LOG.audit(_(\"Virt driver does not support \"\n                 \"'get_available_resource'  Compute tracking is disabled.\"))\n            self.compute_node = None\n            return\n        resources['host_ip'] = CONF.my_ip\n\n        self._verify_resources(resources)\n\n        self._report_hypervisor_resource_view(resources)\n\n        if 'pci_passthrough_devices' in resources:\n            if not self.pci_tracker:\n                self.pci_tracker = pci_manager.PciDevTracker()\n            self.pci_tracker.set_hvdevs(jsonutils.loads(resources.pop(\n                'pci_passthrough_devices')))\n\n        # Grab all instances assigned to this node:\n        instances = objects.InstanceList.get_by_host_and_node(\n            context, self.host, self.nodename)\n\n        # Now calculate usage based on instance utilization:\n        self._update_usage_from_instances(resources, instances)\n\n        # Grab all in-progress migrations:\n        capi = self.conductor_api\n        migrations = capi.migration_get_in_progress_by_host_and_node(context,\n                self.host, self.nodename)\n\n        self._update_usage_from_migrations(context, resources, migrations)\n\n        # Detect and account for orphaned instances that may exist on the\n        # hypervisor, but are not in the DB:\n        orphans = self._find_orphaned_instances()\n        self._update_usage_from_orphans(resources, orphans)\n\n        # NOTE(yjiang5): Because pci device tracker status is not cleared in\n        # this periodic task, and also because the resource tracker is not\n        # notified when instances are deleted, we need remove all usages\n        # from deleted instances.\n        if self.pci_tracker:\n            self.pci_tracker.clean_usage(instances, migrations, orphans)\n            resources['pci_stats'] = jsonutils.dumps(self.pci_tracker.stats)\n        else:\n            resources['pci_stats'] = jsonutils.dumps([])\n\n        self._report_final_resource_view(resources)\n\n        metrics = self._get_host_metrics(context, self.nodename)\n        resources['metrics'] = jsonutils.dumps(metrics)\n        self._sync_compute_node(context, resources)\n\n    def _sync_compute_node(self, context, resources):\n        \"\"\"Create or update the compute node DB record.\"\"\"\n        if not self.compute_node:\n            # we need a copy of the ComputeNode record:\n            service = self._get_service(context)\n            if not service:\n                # no service record, disable resource\n                return\n\n            compute_node_refs = service['compute_node']\n            if compute_node_refs:\n                for cn in compute_node_refs:\n                    if cn.get('hypervisor_hostname') == self.nodename:\n                        self.compute_node = cn\n                        if self.pci_tracker:\n                            self.pci_tracker.set_compute_node_id(cn['id'])\n                        break\n\n        if not self.compute_node:\n            # Need to create the ComputeNode record:\n            resources['service_id'] = service['id']\n            self._create(context, resources)\n            if self.pci_tracker:\n                self.pci_tracker.set_compute_node_id(self.compute_node['id'])\n            LOG.info(_('Compute_service record created for %(host)s:%(node)s')\n                    % {'host': self.host, 'node': self.nodename})\n\n        else:\n            # just update the record:\n            self._update(context, resources)\n            LOG.info(_('Compute_service record updated for %(host)s:%(node)s')\n                    % {'host': self.host, 'node': self.nodename})\n\n    def _write_ext_resources(self, resources):\n        resources['stats'] = {}\n        resources['stats'].update(self.stats)\n        self.ext_resources_handler.write_resources(resources)\n\n    def _create(self, context, values):\n        \"\"\"Create the compute node in the DB.\"\"\"\n        # initialize load stats from existing instances:\n        self._write_ext_resources(values)\n        # NOTE(pmurray): the stats field is stored as a json string. The\n        # json conversion will be done automatically by the ComputeNode object\n        # so this can be removed when using ComputeNode.\n        values['stats'] = jsonutils.dumps(values['stats'])\n\n        self.compute_node = self.conductor_api.compute_node_create(context,\n                                                                   values)\n\n    def _get_service(self, context):\n        try:\n            return self.conductor_api.service_get_by_compute_host(context,\n                                                                  self.host)\n        except exception.NotFound:\n            LOG.warn(_(\"No service record for host %s\"), self.host)\n```\n\nThere's really no reason to keep checking for whether self.compute_node exists every time update_available_resource() is called. The compute node record should simply be initialized if not existing in the constructor of the resource tracker.", 
+            "date_created": "2014-08-15 16:31:09.801327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Jay this will not create something like a bottleneck on the main thread? - What I like in the current implementation is that the ResourceTracker's object is returned immediately without to wait for some I/O, does it make sense? ", 
+            "date_created": "2014-08-18 12:36:58.621016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "Hi Sahid,\n\nNo, I'm not worried about the small amount of time that would be needed to determine if the compute node record exists in the database, versus constantly checking to see if the compute node exists on every call to update_available_resource().\n\nBest,\n\n-jay", 
+            "date_created": "2014-08-18 15:22:07.800691+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "It is a boolean condition on the variable 'self.compute_node' - By doing your change you will add latency.", 
+            "date_created": "2014-08-18 17:22:02.692926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sahid-ferdjaoui"
+        }, 
+        {
+            "content": "This is premature optimization at its finest. The appropriate place to check for the existence of the compute node record and create it if it does not exist is the resource tracker constructor. Not update_available_resource. The fact that it is done during update_available_resource() just makes that section of code messier and harder to understand, for no real reason other than \"we don't want to increase the constructor's time by a few microseconds...\" :(", 
+            "date_created": "2014-08-18 17:35:54.758758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Soooo, after a few findings, as the compute_nodes table is requiring some non-nullable fields, we have 2 options :\n - either we provide some fake values (ugly crap to me IMHO)\n - or we change the datamodel to release the fields to be nullable\n\nThat said, it would mean that it could be a performance issue for something really trivial, as the stats are updated anyway at startup (update_available_resources is called when compute is restarting). \n\nYour opinion on that ? ", 
+            "date_created": "2014-08-25 20:05:06.165806+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "As the above comment was written quite late, I maybe was no that clear. So, let me rephrase the above :\n\nAs the current DB model is requiring some fields to be set when creating a new compute node entry, if we want to just create a compute and get an id, then we need to provide an upgrade path. With regards to the DB2 discussion with the uuid change to null and the upgrade time it takes for large DBs, I'm consequently concerned about the opportunity of such as change and if it is a keywin.\n\nAs I mentioned, the update_available_resources is called at compute startup so anyway the DB entry is created right after booting nova-compute. So, I'm just wondering if all of it is worth it.\n\nTo me, the compute_node table probably needs other improvements (remove service FK and add other dependent tables for instances and aggregates) rather than doing such a trivial change. So, please provide other benefits of doing this change and I would be glad to provide the change if those are clear improvements.", 
+            "date_created": "2014-08-26 08:22:26.964416+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/117042", 
+            "date_created": "2014-08-26 22:31:14.169335+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "As commented in the patch, we can't simply create the compute node in the RT constructor, unless we do the initial audit there. Otherwise, we will populate the compute node w/o wrong resource information.", 
+            "date_created": "2014-08-28 18:22:58.920588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Yes, Junhong, and I don't think there's anything wrong with doing that in the constructor :)", 
+            "date_created": "2014-08-28 19:07:42.025768+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "I am handling this as part of making the resource tracker use nova objects. I need the compute_node to be available before running the update_available_resource. However, if it is done in the constructor it is never going to try creating the compute node record again if something temporary is wrong that prevents it working.\n\nSo I propose adding a new method _init_compute_node() and calling near the beginning of update_available_resource(), with a conditional at the start to skip it if not needed. That way it will be tried again if it previously failed for a transient reason and also simplifies the code that deals with updates.\n\nI will use the patch above as the basis for this change  https://review.openstack.org/117042", 
+            "date_created": "2015-01-09 14:34:26.399120+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Hi, Paul, what  \"something temporary is wrong\" in your \"it is never going to try creating the compute node record again if something temporary is wrong that prevents it working\" statements? Can you please give more information? Why do we want to create the compute node again?", 
+            "date_created": "2015-01-12 22:15:04.505777+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Hi Yunhong, being unable to communicate with the database could be an example of \"something temporary is wrong\". In this case the resource tracker would not be able to create a compute node record or determine if one already exists. Ideally it would carry on and eventually succeed when the database comes back on line.", 
+            "date_created": "2015-01-13 18:08:45.016266+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pmurray"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/148904", 
+            "date_created": "2015-01-21 12:05:20.309088+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sylvain Bauza (<email address hidden>) on branch: master\nReview: https://review.openstack.org/117042\nReason: This is patch is being continued under: https://review.openstack.org/#/c/148904/", 
+            "date_created": "2015-01-21 15:47:26.014482+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed is in progress - https://review.openstack.org/#/c/148904/", 
+            "date_created": "2015-02-12 16:24:47.620633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/148904/ has merged.", 
+            "date_created": "2015-08-22 01:00:30.897666+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Dims, that patch put the compute node creation into _init_compute_node(). Unfortunately, that isn't called in the resource tracker's __init__() method. :) So, this is still Triaged. I'm actually working a patch series to finish it up.", 
+            "date_created": "2015-08-22 17:34:34.563479+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Hello, Jay,. Are you still working on this patch?", 
+            "date_created": "2016-03-11 16:25:08.189281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gstepanov"
+        }, 
+        {
+            "content": "@stgleb: No, I am not. Warning: there be many dragons there. :)", 
+            "date_created": "2016-03-11 17:06:08.880730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Jay, given we're working actively towards reducing the number of open bugs, I'd prefer to close that one as Invalid/Wishlist and leave you upload the change directly without adding this bug note.\n\nYou can put the change in https://etherpad.openstack.org/p/newton-nova-priorities-tracking for getting reviews , I'm fine with that.", 
+            "date_created": "2016-04-18 10:09:12.338035+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "It's not Invalid, it's Opinion :)", 
+            "date_created": "2016-04-18 14:45:23.250093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/315043", 
+            "date_created": "2016-05-11 13:45:29.139481+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/315043\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d7cc32b51408aa524a1b765debbba56b5e28b26b\nSubmitter: Jenkins\nBranch:    master\n\ncommit d7cc32b51408aa524a1b765debbba56b5e28b26b\nAuthor: Jay Pipes <email address hidden>\nDate:   Wed May 11 09:13:11 2016 -0400\n\n    pci: create PCI tracker in RT._init_compute_node\n    \n    The end goal is to have the ResourceTracker's constructor be responsible\n    for creating the ComputeNode object/DB record and do all setup of\n    various resource tracking, including PCI device handling, querying the\n    aggregate and associated resource pool inventory information and\n    communication with the virt driver to gather host resources.\n    \n    Before we can do that, however, we need to consolidate the creation of\n    various tracking entities into the ResourceTracker._init_compute_node()\n    method. This patch moves the creation of the\n    nova.pci.manager.PciDevTracker into the _init_compute_node() method and\n    cleans up a number of unit tests that were manually setting the\n    ResourceTracker.compute_node attribute to a fixture value (and in so\n    doing improperly circumventing the initialization process by relying on\n    the ResourceTracker.update_available_resource() to populate resource\n    information in that ComputeNode object.\n    \n    Change-Id: I39a5436ee86e2d9b90f8f3e185353a04b277d434\n    Related-bug: #1357453\n    Related-bug: #1357491\n", 
+            "date_created": "2016-05-18 03:56:18.840778+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-04-18 10:09:29.751932+00:00"
+}

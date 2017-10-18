@@ -1,0 +1,91 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 17:23:42.013605+00:00", 
+    "description": "If API times out on a RPC during the processing of a migrate_server it does not revert the task_state back to NULL before or after sending the error response back to the user. This can prevent further API operations on the VM and leave a good VMs in non-operable state with the exception of perhaps a delete.\n\nThis is one possible reproducer. I'm not sure if this is always true, and I'd appreciate if someone else confirm it.\n\n1. Somehow make RPC requests hang\n2. Issue a live migration request\n3. The call should return an HTTP error (409 perhaps)\n4. Check VM. It should be in a good state but the task_state stuck in 'migrating'", 
+    "tags": [
+        "compute", 
+        "live-migration"
+    ], 
+    "importance": "Medium", 
+    "heat": 42, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1276214", 
+    "owner": "https://api.launchpad.net/1.0/~mszankin", 
+    "id": 1276214, 
+    "index": 3786, 
+    "openned": "2014-02-04 16:00:26.068418+00:00", 
+    "created": "2014-02-04 16:00:26.068418+00:00", 
+    "title": "Live migration failure in API doesn't revert task_state to None", 
+    "comments": [
+        {
+            "content": "If API times out on a RPC during the processing of a migrate_server it does not revert the task_state back to NULL before or after sending the error response back to the user. This can prevent further API operations on the VM and leave a good VMs in non-operable state with the exception of perhaps a delete.\n\nThis is one possible reproducer. I'm not sure if this is always true, and I'd appreciate if someone else confirm it.\n\n1. Somehow make RPC requests hang\n2. Issue a live migration request\n3. The call should return an HTTP error (409 perhaps)\n4. Check VM. It should be in a good state but the task_state stuck in 'migrating'", 
+            "date_created": "2014-02-04 16:00:26.068418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "We should either put the VM into ERROR, if we can't rollback.\n\nOr we should rollback and reset to ACTIVE.\n\nI have recently made sure we now record instance faults, so there is a tiny bit more fault tracking.", 
+            "date_created": "2014-02-07 14:06:44.948963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I have marked this as medium, because this kind of error stops a feature feeling \"solid\".", 
+            "date_created": "2014-02-07 14:07:12.956874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Certain failures to get handled correctly, see here:\nhttps://github.com/openstack/nova/blob/c85a17447e54ebba192c0dcab1222760319cbe46/nova/scheduler/manager.py#L109\n\nNeed to do something similar for when there are RPC timeout issues in other places in the code.", 
+            "date_created": "2014-04-24 11:51:15.708119+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I can look at trapping MessageTimeout. I'm not sure what to do when the timeout is from conductor itself. Trying to set the task_state in this case may not succeed.", 
+            "date_created": "2014-04-25 08:34:52.074405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Hmm, I think this is the bit that needs attention (generally) is in the conductor manager, look at the second except block, it should be more like what we have in the scheduler manager (given above).\n", 
+            "date_created": "2014-04-25 16:05:59.259798+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I've noticed that hanging other files in conductor leads to the same behaviour.\n\nFor example:\n- /nova/conductor/rpcapi.py (server_migrate method)\n- /nova/conductor/manager.py (_live_migrate method)\n- /nova/conductor/tasks/live_migrate.py (execute method)\n\nAs a result of live migration we get instance with attributes:\na) vm_state: active\nb) task_state: migrating", 
+            "date_created": "2015-03-24 14:42:47.915405+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bartosz-fic"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/168916", 
+            "date_created": "2015-03-30 14:00:05.012251+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This bug was reported over 18 months ago, so not a regression in liberty, so marking as liberty-backport-potential so it doesn't block rc1.", 
+            "date_created": "2015-09-23 15:54:18.821362+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/168916\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f2a1f00829e849e78f850a73489864e57cbd86b3\nSubmitter: Jenkins\nBranch:    master\n\ncommit f2a1f00829e849e78f850a73489864e57cbd86b3\nAuthor: Maciej Szankin <email address hidden>\nDate:   Fri Feb 26 11:18:51 2016 +0100\n\n    Live migration failure in API leaves VM in MIGRATING state\n    \n    When nova-api calls nova-conductor a RPC MessagingTimeout might\n    occur. In such case we shouldn't leave VM in MIGRATING state. Possible\n    scenarios are:\n    \n    * nova-conductor received message but failed to respond, no additional\n    exceptions raised - live migration will start, VM will be moved to\n    destination host\n    * nova-conductor received message but failed to respond, additional\n    exception raised (e.g., LibvirtError) - LM will not start\n    * nova-api couldn't reach nova-conductor - LM will not start\n    \n    Because we can't predict in API layer what happened below, this patch\n    writes instance fault to database when MessagingTimeout is caught.\n    \n    Co-Authored-By: Pawel Koniszewski <email address hidden>\n                    Bartosz Fic <email address hidden>\n    Closes-Bug: #1276214\n    Change-Id: Id800e925fbb689d20e7907b698b67c92fd3da979\n", 
+            "date_created": "2016-03-30 19:10:36.534341+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/304746", 
+            "date_created": "2016-04-12 16:19:42.593658+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:34:47.752242+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/304746\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0c4fc7812b349ccdd423168f568fe694325a8e74\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 0c4fc7812b349ccdd423168f568fe694325a8e74\nAuthor: Maciej Szankin <email address hidden>\nDate:   Fri Feb 26 11:18:51 2016 +0100\n\n    Live migration failure in API leaves VM in MIGRATING state\n    \n    When nova-api calls nova-conductor a RPC MessagingTimeout might\n    occur. In such case we shouldn't leave VM in MIGRATING state. Possible\n    scenarios are:\n    \n    * nova-conductor received message but failed to respond, no additional\n    exceptions raised - live migration will start, VM will be moved to\n    destination host\n    * nova-conductor received message but failed to respond, additional\n    exception raised (e.g., LibvirtError) - LM will not start\n    * nova-api couldn't reach nova-conductor - LM will not start\n    \n    Because we can't predict in API layer what happened below, this patch\n    writes instance fault to database when MessagingTimeout is caught.\n    \n    Co-Authored-By: Pawel Koniszewski <email address hidden>\n                    Bartosz Fic <email address hidden>\n    Closes-Bug: #1276214\n    Change-Id: Id800e925fbb689d20e7907b698b67c92fd3da979\n    (cherry picked from commit f2a1f00829e849e78f850a73489864e57cbd86b3)\n", 
+            "date_created": "2016-08-04 19:18:07.114962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.1 release.", 
+            "date_created": "2016-08-09 18:25:34.501385+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ], 
+    "closed": "2016-03-30 19:10:33.586412+00:00"
+}

@@ -1,0 +1,188 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 11:09:12.252659+00:00", 
+    "description": "It looks like when making a large number of simultaneous requests the API fails eventually with the following trace:\n\nhttp://paste.openstack.org/show/1644/\n\nIt looks like there are some performance/timing issues with the Nova RPC ConnectionPool when > FLAGS.rpc_conn_pool_size connections are being attempted. We need to find a way to block and not error. This is a blind guess as to the real problem.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 44, 
+    "link": "https://bugs.launchpad.net/nova/+bug/797770", 
+    "owner": "https://api.launchpad.net/1.0/~cbehrens", 
+    "id": 797770, 
+    "index": 415, 
+    "openned": "2011-06-15 15:15:35.496292+00:00", 
+    "created": "2011-06-15 15:15:35.496292+00:00", 
+    "title": "'Socket closed' during API stress test", 
+    "comments": [
+        {
+            "content": "It looks like when making a large number of simultaneous requests the API fails eventually with the following trace:\n\nhttp://paste.openstack.org/show/1644/\n\nIt looks like there are some performance/timing issues with the Nova RPC ConnectionPool when > FLAGS.rpc_conn_pool_size connections are being attempted. We need to find a way to block and not error. This is a blind guess as to the real problem.", 
+            "date_created": "2011-06-15 15:15:35.496292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~blamar"
+        }, 
+        {
+            "content": "@titan team: are you actually working on that ? If not, maybe unassign you to potentially let someone else have a shot at it ?", 
+            "date_created": "2011-07-25 15:41:28.399774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I've done a lot of thinking about this one.  The only cause can be that the greenthread that has the socket calls to rabbit... is not being scheduled in time to complete the AMQP protocol negotiation.  The only things that could cause *that* would be a bug in eventlet or something blocking.  It really must be the latter.  The only things that could cause *that* would be: too much CPU spinning in python or something else blocking.  We're seeing this in stress testing, and there appears to be plenty of CPU available.  So, something is probably blocking?\n\nLooking at what might be blocking, with help from a discussion with eday, we've determined that sqlalchemy is using a mysql engine that uses a C library to make socket calls.  eventlet cannot wrap this.  This means that all mysql queries block until finished.  If mysql queries take some time for some reason, this can cause delayed greenthread scheduling.\n\nPotential solutions are:\n\n1) Find and use a mysql engine for sqlachemy that uses python sockets.  (Does one exist?)\n2) Re-architect the DB layer to use a pool of threads for DB calls... assuming the C code will unlock the GIL during socket operations.\n\n", 
+            "date_created": "2011-08-01 21:44:27.863793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Is this still a problem?", 
+            "date_created": "2012-01-26 10:00:46.868574+00:00", 
+            "author": "https://api.launchpad.net/1.0/~soren"
+        }, 
+        {
+            "content": "I've managed to reproduce it on current trunk. Affects only impl_carrot.\n\nEasiest setup i found to do it:\n1. Set --volume_driver=nova.volume.driver.FakeISCSIDriver and --rpc_backend=nova.rpc.impl_carrot\n2. Create project \"proj1\" with admin \"admin\"\n3. Run nova-api, nova-scheduler and nova-volume\n4. Burn it with:\necho -n '{\"volume\": {\"snapshot_id\": null, \"display_name\": null, \"display_description\": null, \"size\": 1}}' > create-vol.json\nab -H \"x-auth-project-id: proj1\" -H \"x-auth-token: admin:proj1\" -p create-vol.json -T 'application/json' -c 10 -n 1000 -v 4 http://127.0.0.1:8774/v1.1/proj1/os-volumes\n\nnova-scheduler fails with exactly the same error in no time. May be, we should remove carrot support once and forever?", 
+            "date_created": "2012-03-02 08:13:56.093279+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yorik-sar"
+        }, 
+        {
+            "content": "@Yuriy Taraday, I can't reproduce it on the latest trunk, does this mean it's already fixed?", 
+            "date_created": "2012-03-22 07:17:52.493979+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andycjw"
+        }, 
+        {
+            "content": "I saw this on Friday running the Tempest/stress test create_kill.py. This was using the Ubuntu packages from last week which use kombu, not carrot. Here is the stacktrace:  http://paste.openstack.org/show/12146/\n\n", 
+            "date_created": "2012-03-26 13:23:47.582047+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "It is very important to fix this bug. I am sure there are many more bugs to be found through stress testing nova, but this issue really makes it difficult to do that properly. It requires stress tests to throttle themselves which makes it harder for the stress to penetrate to all the parts of the system that it should in order to find race conditions.", 
+            "date_created": "2012-03-29 15:54:00.056856+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "I also saw that a hack was put into this code to handle some similar issues since this bug was reported. Perhaps there could be a similar hack to deal with this issue. Obviously neither of the ideas in comment #2 would be acceptable for Essex.", 
+            "date_created": "2012-03-29 15:56:44.718036+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "It's unfortunate that 'IOError' is raised instead of a socket.* exception.   I guess what I would try first is to add 'IOError' to the other exceptions we catch for retries.\n\nI'll get a review up in a few that we can try.\n", 
+            "date_created": "2012-03-29 18:39:46.393762+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Also:  I marked carrot as deprecated recently... so that we can remove it post-essex.  Although, i'd be very happy to remove it today if I could. :)", 
+            "date_created": "2012-03-29 18:44:32.299804+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/5967", 
+            "date_created": "2012-03-29 18:57:54.844874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "David:  If it's easy for you to reproduce, are you able to try the patch in the above review to see what kind of affect this has?", 
+            "date_created": "2012-03-29 19:01:01.482176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "I will do it now.", 
+            "date_created": "2012-03-29 19:06:07.552591+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Unfortunately this did not seem to fix the problem. I did a clean baremetal install without this fix and saw the bug. I then did it again but applying the patch to impl_kombu.py, deleting the .pyc file and restarting nova-network and nova-compute. I still saw the bug. ", 
+            "date_created": "2012-03-29 21:05:39.444629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Hmmm.  Same exact traceback?", 
+            "date_created": "2012-03-29 22:35:18.162134+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "David: From what I can tell, the code I changed should definitely fix the issue in your paste above.  I added the catching of IOError in 2 places... 1 of them being around the call to self._connect() which is what ends up getting the IOError exception in your paste here:\n\nhttp://paste.openstack.org/show/12146/\n\nIf you're still seeing something similar, I'd love to see a new trace!   thnx!", 
+            "date_created": "2012-03-30 08:19:49.911043+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "This bug has been around forever, and the week before release is clearly not the best moment to fix it. I think it should be documented as a known (Carrot-specific?) issue.", 
+            "date_created": "2012-03-30 13:08:28.206425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Ugh. Chris, I can't disagree with you but I tried it again and got the same backtrace. I don't see how this could be happening with your fix. The only explanation is that \n\n1. I failed to apply the patch and run the new code (twice)\n2. Something else strange is going on\n\nUnfortunately the patch was after the throw point so the line numbers would not have changed. I am going to try this one\nmore time, but adding more DEBUG output to find out for sure.", 
+            "date_created": "2012-03-30 18:56:30.736918+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Well, I think it is (2). I added a few extra lines before the changed code and put a 'caught' message in the except clause that is now supposed to be catching IOError. And it is.  But the same traceback still shows up (except for the slightly different line number from this file). Beat's me what is going on.\n\n32923eefca3c425f32] Caught Socket closed from (pid=2700) reconnect /usr/lib/python2.7/dist-packages/nova/rpc/impl_kombu.py:452\n2012-03-30 15:32:46 ERROR nova.rpc.common [req-69a7c6c3-8d7e-4077-8ab5-fa3d8fbdd538 123634b20bc14ddf99e98bec730065e7 d1e6bada36404f\\\n32923eefca3c425f32] AMQP server on 172.18.0.146:5672 is unreachable: Socket closed. Trying again in 1 seconds.\n(nova.rpc.common): TRACE: Traceback (most recent call last):\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/nova/rpc/impl_kombu.py\", line 449, in reconnect\n(nova.rpc.common): TRACE:     self._connect()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/nova/rpc/impl_kombu.py\", line 423, in _connect\n(nova.rpc.common): TRACE:     self.connection.connect()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/connection.py\", line 154, in connect\n(nova.rpc.common): TRACE:     return self.connection\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/connection.py\", line 560, in connection\n(nova.rpc.common): TRACE:     self._connection = self._establish_connection()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/connection.py\", line 521, in _establish_connection\n(nova.rpc.common): TRACE:     conn = self.transport.establish_connection()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/transport/pyamqplib.py\", line 255, in establish_connection\n(nova.rpc.common): TRACE:     connect_timeout=conninfo.connect_timeout)\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/transport/pyamqplib.py\", line 52, in __init__\n(nova.rpc.common): TRACE:     super(Connection, self).__init__(*args, **kwargs)\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/connection.py\", line 135, in __init__\n(nova.rpc.common): TRACE:     (10, 10), # start\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/abstract_channel.py\", line 95, in wait\n(nova.rpc.common): TRACE:     self.channel_id, allowed_methods)\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/connection.py\", line 202, in _wait_method\n(nova.rpc.common): TRACE:     self.method_reader.read_method()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/method_framing.py\", line 221, in read_method\n(nova.rpc.common): TRACE:     raise m\n(nova.rpc.common): TRACE: IOError: Socket closed\n(nova.rpc.common): TRACE:\n2012-03-30 15:32:46 DEBUG nova.rpc.common [req-842419d5-6fe6-4e99-b830-ec6112265362 123634b20bc14ddf99e98bec730065e7 d1e6bada36404f\\\n32923eefca3c425f32] Caught Socket closed from (pid=2700) reconnect /usr/lib/python2.7/dist-packages/nova/rpc/impl_kombu.py:452\n2012-03-30 15:32:46 ERROR nova.rpc.common [req-842419d5-6fe6-4e99-b830-ec6112265362 123634b20bc14ddf99e98bec730065e7 d1e6bada36404f\\\n32923eefca3c425f32] AMQP server on 172.18.0.146:5672 is unreachable: Socket closed. Trying again in 1 seconds.\n(nova.rpc.common): TRACE: Traceback (most recent call last):\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/nova/rpc/impl_kombu.py\", line 449, in reconnect\n(nova.rpc.common): TRACE:     self._connect()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/nova/rpc/impl_kombu.py\", line 423, in _connect\n(nova.rpc.common): TRACE:     self.connection.connect()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/connection.py\", line 154, in connect\n(nova.rpc.common): TRACE:     return self.connection\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/connection.py\", line 560, in connection\n(nova.rpc.common): TRACE:     self._connection = self._establish_connection()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/connection.py\", line 521, in _establish_connection\n(nova.rpc.common): TRACE:     conn = self.transport.establish_connection()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/transport/pyamqplib.py\", line 255, in establish_connection\n(nova.rpc.common): TRACE:     connect_timeout=conninfo.connect_timeout)\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/kombu/transport/pyamqplib.py\", line 52, in __init__\n(nova.rpc.common): TRACE:     super(Connection, self).__init__(*args, **kwargs)\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/connection.py\", line 135, in __init__\n(nova.rpc.common): TRACE:     (10, 10), # start\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/abstract_channel.py\", line 95, in wait\n(nova.rpc.common): TRACE:     self.channel_id, allowed_methods)\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/connection.py\", line 202, in _wait_method\n(nova.rpc.common): TRACE:     self.method_reader.read_method()\n(nova.rpc.common): TRACE:   File \"/usr/lib/python2.7/dist-packages/amqplib/client_0_8/method_framing.py\", line 221, in read_method\n(nova.rpc.common): TRACE:     raise m\n(nova.rpc.common): TRACE: IOError: Socket closed\n(nova.rpc.common): TRACE:\n201", 
+            "date_created": "2012-03-30 19:40:17.288267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Attaching whole log in case any one cares.", 
+            "date_created": "2012-03-30 19:41:32.625899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Here is the actual diff:\n\n--- /usr/share/pyshared/nova/rpc/impl_kombu.py  2012-03-20 07:05:43.000000000 -0400\n+++ impl_kombu.py       2012-03-30 15:43:04.821590906 -0400\n@@ -440,12 +440,16 @@\n         \"\"\"\n \n         attempt = 0\n+\n+\n+\n         while True:\n             attempt += 1\n             try:\n                 self._connect()\n                 return\n-            except self.connection_errors, e:\n+            except (self.connection_errors, IOError), e:\n+                LOG.debug(\"Caught %s\" % str(e))\n                 pass\n             except Exception, e:\n                 # NOTE(comstud): Unfortunately it's possible for amqplib\n@@ -488,7 +492,7 @@\n         while True:\n             try:\n                 return method(*args, **kwargs)\n-            except (self.connection_errors, socket.timeout), e:\n+            except (self.connection_errors, socket.timeout, IOError), e:\n                 pass\n             except Exception, e:\n                 # NOTE(comstud): Unfortunately it's possible for amqplib\n", 
+            "date_created": "2012-03-30 19:44:11.121003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "wow, that's weird.  Ok, I'll study this further.", 
+            "date_created": "2012-03-30 20:35:19.514166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Oh.  These exceptions will still get logged.  IOError is definitely being caught.  And it does look like it's attempting to reconnect due to this having been logged:\n\n\"32923eefca3c425f32] AMQP server on 172.18.0.146:5672 is unreachable: Socket closed. Trying again in 1 seconds.\"\n\nI'd like to see the very end of the log... if there's anything more.  Is it possible it finally retried and succeeded despite the logging of exceptions?\n", 
+            "date_created": "2012-03-30 21:23:22.517731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "I attached the whole log. It is of course possible that it eventually succeeded. I won't be able to check until Monday.", 
+            "date_created": "2012-03-30 22:07:05.034364+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/6020", 
+            "date_created": "2012-03-30 23:45:43.887923+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5967\nCommitted: http://github.com/openstack/nova/commit/b893608b77dac11fceb0b0392f8f908de586970b\nSubmitter: Jenkins\nBranch:    master\n\ncommit b893608b77dac11fceb0b0392f8f908de586970b\nAuthor: Chris Behrens <email address hidden>\nDate:   Thu Mar 29 18:44:16 2012 +0000\n\n    Make kombu failures retry on IOError\n    \n    Fixes bug 797770\n    \n    Unfortunately if rabbit decides protocol negotiation is taking too long,\n    it will close the socket on us.  This ends up raising IOError with a\n    'socket closed' message.  This patch will catch IOError and re-try.\n    \n    Change-Id: I9110c845b71118c0fad760d90e91c585e6db46ed\n", 
+            "date_created": "2012-04-01 20:24:56.647911+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/6020\nCommitted: http://github.com/openstack/nova/commit/0d669f107f827e6a227a3ed5d4f3ba338a661a45\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit 0d669f107f827e6a227a3ed5d4f3ba338a661a45\nAuthor: Chris Behrens <email address hidden>\nDate:   Thu Mar 29 18:44:16 2012 +0000\n\n    Make kombu failures retry on IOError\n    \n    Fixes bug 797770\n    \n    Unfortunately if rabbit decides protocol negotiation is taking too long,\n    it will close the socket on us.  This ends up raising IOError with a\n    'socket closed' message.  This patch will catch IOError and re-try.\n    \n    Change-Id: I9110c845b71118c0fad760d90e91c585e6db46ed\n", 
+            "date_created": "2012-04-01 21:56:17.348885+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I am a little confused here. I think the run with this fix did eventually succeed in spite of having logged this error. But I would expect it to be considered a bug if any ERROR and traceback shows up in a log file when that behavior is expected. Do the nova \"powers that be\" disagree with that?", 
+            "date_created": "2012-04-02 12:45:32.325420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "David: I agree.  I wanted to get the retry merged so it could make it into essex, but if you can verify that it does indeed solve the issue, then we should remove the exception traceback and just log a debug or an info saying that rabbit dropped the connection and we are retrying.", 
+            "date_created": "2012-04-02 13:50:34+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "OK. To really test this I need to remove the error and traceback.  How do I do that? I was actually surprised this still showed up even when the exception was being caught.", 
+            "date_created": "2012-04-02 14:10:47.411205+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "I have done a bunch more testing and this issue seems to be resolved. It would be helpful to change the exception to debug log so people don't report this as a bug in the future. I actually tried to change the LOG.exception to LOG.debug and it didn't do anything which confirms the fact that I don't understand where the exception message is coming from. I was also confused since the doc for logging.exception says it should only be used in an exception handler whereis the call in this code is not.", 
+            "date_created": "2012-04-02 20:19:04.598680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~david-kranz"
+        }, 
+        {
+            "content": "The calls are after an 'except:', but they happen to be outside of the except: block, which I suppose can be confusing.  Note that in the case where an exception is not raised, a 'return' is done (line 447) before the logging points.  So, you can only possibly reach the block after the try:/except:  if an exception was raised.\n\nYou can change all occurrences of LOG.exception() to LOG.debug() or LOG.info() in reconnect() (there's 2.. one is around line 466, the other around line 482).\n\n", 
+            "date_created": "2012-04-02 20:41:10.926143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Just a side note:  I think I left the exceptions logged just so we could see exactly what conditions would cause a reconnect.... but it is definitely more appropriate to log them w/ DEBUG if we want to see them.  I can work on a patch for that soon.", 
+            "date_created": "2012-04-02 20:43:39.034034+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }
+    ], 
+    "closed": "2012-04-01 21:56:15.048695+00:00"
+}

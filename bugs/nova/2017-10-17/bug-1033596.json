@@ -1,0 +1,78 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:26:26.697396+00:00", 
+    "description": "Trying to run Folsom version of compute on Windows I got an error due to nova/utils.py depending on fcntl (which is available in Python only on Unix).\n\nThis is a blocking issue for Windows deployments.\n\nTemporary workaround:\n\ncomment the 3 lines in which it is used", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1033596", 
+    "owner": "https://api.launchpad.net/1.0/~p-draigbrady", 
+    "id": 1033596, 
+    "index": 746, 
+    "openned": "2012-08-06 17:49:09.747336+00:00", 
+    "created": "2012-08-06 17:49:09.747336+00:00", 
+    "title": "nova/utils.py depends on fcntl, not available on Windows", 
+    "comments": [
+        {
+            "content": "Trying to run Folsom version of compute on Windows I got an error due to nova/utils.py depending on fcntl (which is available in Python only on Unix).\n\nThis is a blocking issue for Windows deployments.\n\nTemporary workaround:\n\ncomment the 3 lines in which it is used", 
+            "date_created": "2012-08-06 17:49:09.747336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexpilotti"
+        }, 
+        {
+            "content": "Ouch.\r\nOK I think we can still use explicit OS locking primitives for this,\r\nto avoid the messy issue of cleaning up stale logs by using msvcrt.locking\r\nI'll post a test patch here, since I won't be able to test myself.", 
+            "date_created": "2012-08-06 22:44:51.366156+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "My bad, it's not an environment I can test in :(\n\nmsvcrt could work if it's a conditional choice on platform.system == 'Windows'. I couldn't find a clear answer whether it drops the lock when the process crashes though. The code does an explicit unlock, so file close should be handled fine either way, but unexpected closes may be an issue.", 
+            "date_created": "2012-08-06 23:38:11.462441+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Tx guys, I'm available for testing on Windows and for proving Windows code if you need it.", 
+            "date_created": "2012-08-06 23:48:50.029174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexpilotti"
+        }, 
+        {
+            "content": "Attached a patch with a potential solution. It's not formatted properly or verified - it's just a random stab at some possibility.\n\nIf you could validate it against nova.tests.test_utils and post what works/fails, that would be great! It still works on linux in this state.\n(patch against master)", 
+            "date_created": "2012-08-07 00:03:33.783522+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "For future reference: msvcrt returns some IOError when the file cannot be locked, but the details cannot be found in the cpython source (msvcrtmodule.c):\n\n    err = _locking(fd, mode, nbytes);\n    Py_END_ALLOW_THREADS\n    if (err != 0)\n        return PyErr_SetFromErrno(PyExc_IOError);\n\nnot sure what errno-s are possible here. (patch above ignores all values for windows)", 
+            "date_created": "2012-08-07 00:07:40.105715+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stanislaw-pitucha"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/10933", 
+            "date_created": "2012-08-07 01:03:55.568731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Just checking back on this now. \nStanislaw, your patch is very similar to my proposed one. Good :)\n\nAlessandro, it would be great if you could test the latest attached patch.\nCheers.", 
+            "date_created": "2012-08-07 01:10:29.201822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "I checked the patch. It's missing only the removal of: \n\nimport fcntl\n\nat line 25.\n\n\nThanks!", 
+            "date_created": "2012-08-07 01:26:27.540505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alexpilotti"
+        }, 
+        {
+            "content": "Stanislaw here are the errno's\nhttp://msdn.microsoft.com/en-us/library/8054ew2f.aspx\n\nI don't actually need EDEADLOCK, as we're not blocking,\nbut I thought it safer to include just in case someone used blocking locks.\nThough from the description of EDEADLOCK at the above link,\nthe windows implementation seems laughable (10 attempts\u203d)", 
+            "date_created": "2012-08-07 01:35:31.334693+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Alessandro. Oops. It's too late here :)\nI was also missing an fcntl replacement in the __exit__()\n\nAnyway hopefully the latest patch works for you.\n\ncheers", 
+            "date_created": "2012-08-07 01:53:05.384116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/10933\nCommitted: http://github.com/openstack/nova/commit/3f0ef8e28fd0ec5102a58be8d0013900194869fe\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3f0ef8e28fd0ec5102a58be8d0013900194869fe\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Tue Aug 7 01:51:58 2012 +0100\n\n    Improve external locking on Windows\n    \n    commit 2c15248 improved external locking for POSIX.\n    See that commit for advantages of the technique used.\n    This implements the same technique for Windows systems.\n    \n    Fixes bug: 1033596\n    Change-Id: I298309bb1c84499f2060c172213d355aa7ce54e5\n", 
+            "date_created": "2012-08-07 08:27:17.736083+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-08-16 07:34:15.821591+00:00"
+}

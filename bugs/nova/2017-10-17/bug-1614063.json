@@ -1,0 +1,86 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-12-19 12:02:09.109652+00:00", 
+    "description": "My compute nodes are attached to several networks (storage, admin,\netc). For each network I have a real or a virtual interface with an IP\nassigned. The DNS is properly configured, so I can `ping node1`, or\n`ping storage.node1`, and is resolving to the correct IP.\n\nI want to use the second network to transfer the data so:\n\n* Setup libvirtd to listen into the correct interface (checked with netstat)\n\n* Configure nova.conf live_migration_uri\n\n* Monitor interfaces and do nova live-migration\n\nThe migration works correctly, is doing what I think is a PEER2PEER\nmigration type, but the data is transfered via the normal interface.\n\nI can replicate it doing a live migration via virsh.\n\nAfter more checks I discover that if I do not use the --migrate-uri\nparameter, libvirt will ask to the other node the hostname to build\nthis migrage_uri parameter. The hostname resolve via the slow\ninterface.\n\nUsing the --migrate-uri and the --listen-address (for the -incoming\nparameter) works at libvirt level. So we need somehow inject this\nparamer in migrateToURIx in the libvirt nova driver.\n\nI have a patch (attached - WIP) that address this issue.", 
+    "tags": [
+        "in-stable-newton", 
+        "live-migration"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1614063", 
+    "owner": "https://api.launchpad.net/1.0/~pawel-koniszewski", 
+    "id": 1614063, 
+    "index": 4602, 
+    "openned": "2016-08-17 11:31:49.727740+00:00", 
+    "created": "2016-08-17 11:31:49.727740+00:00", 
+    "title": "live migration doesn't use the correct interface to transfer the data", 
+    "comments": [
+        {
+            "content": "My compute nodes are attached to several networks (storage, admin,\netc). For each network I have a real or a virtual interface with an IP\nassigned. The DNS is properly configured, so I can `ping node1`, or\n`ping storage.node1`, and is resolving to the correct IP.\n\nI want to use the second network to transfer the data so:\n\n* Setup libvirtd to listen into the correct interface (checked with netstat)\n\n* Configure nova.conf live_migration_uri\n\n* Monitor interfaces and do nova live-migration\n\nThe migration works correctly, is doing what I think is a PEER2PEER\nmigration type, but the data is transfered via the normal interface.\n\nI can replicate it doing a live migration via virsh.\n\nAfter more checks I discover that if I do not use the --migrate-uri\nparameter, libvirt will ask to the other node the hostname to build\nthis migrage_uri parameter. The hostname resolve via the slow\ninterface.\n\nUsing the --migrate-uri and the --listen-address (for the -incoming\nparameter) works at libvirt level. So we need somehow inject this\nparamer in migrateToURIx in the libvirt nova driver.\n\nI have a patch (attached - WIP) that address this issue.", 
+            "date_created": "2016-08-17 11:31:49.727740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aplanas"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-08-17 11:31:49.727740+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aplanas"
+        }, 
+        {
+            "content": "A proposal for master: https://review.openstack.org/#/c/356558/", 
+            "date_created": "2016-08-17 15:49:33.992051+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aplanas"
+        }, 
+        {
+            "content": "It is already possible to get nova to use a different interface for live migration. Just set\n\nlive_migration_inbound_addr=IP-ADDR-OF-FASTER-NIC\n\non the compute nodes.\n", 
+            "date_created": "2016-08-18 08:00:50.004796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "@berrange this is not correct! Reading the documentation [1] and checking the source code [2] is very clear to me that the purpose is specify the IP where `dest` is going to resolve. After that this `dest` is applied to the template that is specified in `live_migration_uri`\n\nBasically if I set the variable that you propose with something like this:\n\nlive_migrate_uri='qemu+tcp://%s/system'\nlive_migrate_inbound_addr='192.168.10.10'\n\nThis will generate a dest=\"qemu+tcp://192.168.10.10/system\", that is ok of the address where libvirtd is listening.\n\nAlso this break completely when:\n\nlive_migrate_uri='qemu+tcp://network1.%s/system'\nlive_migrate_inbound_addr='192.168.10.10'\n\nBecause produces the deeply wrong dest=\"qemu+tcp://network1.192.168.10.10/system\", that do not resolve to anywhere.\n\nAlso this is no the problem described in the bug report, that is about the second connection between hypervisors. This is a direct connection [3], where one side is using -incoming to specify the interface where in the target of the migration is listening, and `migrate` that indicate where to make the connection.\n\nThis `migrate` default to the hostname of the other side, that is wrong. --migrate-uri is used to specify a different network here, and there is no code in Nova that set migrate_uri parameter.\n\nCan you please reevaluate the status of the bug?\n\n\n[1] http://docs.openstack.org/mitaka/config-reference/tables/conf-changes/nova.html\n[2] https://git.openstack.org/cgit/openstack/nova/tree/nova/virt/libvirt/driver.py#n5833\n[3] http://www.linux-kvm.org/page/Migration", 
+            "date_created": "2016-08-18 08:52:20.051728+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aplanas"
+        }, 
+        {
+            "content": "Confirmed that it is a bug. Libvirt correctly uses live_migration_inbound_addr, but QEMU still defaults to the hostname of the other side instead of provided IP address.", 
+            "date_created": "2016-08-25 07:55:46.129704+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "If the patch is finally not accepted, I found an external workaround:\n\n    # in nova.conf\n    live_migrate_uri = 'qemu+tcp://network1.%s/system'\n\n    # in /etc/libvirt/libvirtd.cong:\n    listen_addr = \"network1.HOSTNAME\"\n\n    # in /etc/libvirt/qemu.conf update:\n    migration_address = \"network1.HOSTNAME\"\n    migration_host = \"network1.HOSTNAME\"\n\nThis will partially ignore the live_migration_uri parameter from Nova, and set a fixed parameter uri_in libvirtd.\n\nI still do not like this workaround: this bypass the Nova configuration, and make this feature a bit difficult to orchestrate.\n", 
+            "date_created": "2016-08-25 15:31:14.805707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~aplanas"
+        }, 
+        {
+            "content": "@Alberto: I added you as assignee so others know you are working on it", 
+            "date_created": "2016-09-12 18:46:37.882687+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sarafraj-singh"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/356558\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=94f89e96f86c1d1bb258da754d3d368856637a0a\nSubmitter: Jenkins\nBranch:    master\n\ncommit 94f89e96f86c1d1bb258da754d3d368856637a0a\nAuthor: Alberto Planas <email address hidden>\nDate:   Wed Aug 17 17:37:48 2016 +0200\n\n    Add migrate_uri for invoking the migration\n    \n    Add migrate_uri parameter in Guest.migrate method, to indicate\n    the URI where we want to stablish the connection in a non-tunneled\n    migration.\n    \n    Change-Id: I6c2ad0170d90560d7d710b578c45287e78c682d1\n    Closes-Bug: #1614063\n", 
+            "date_created": "2016-10-20 20:53:35.611628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/389554", 
+            "date_created": "2016-10-21 06:53:54.373282+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:12:26.976472+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/389554\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=1372c1fc8ff7f81995293312023bb989855aee6e\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit 1372c1fc8ff7f81995293312023bb989855aee6e\nAuthor: Alberto Planas <email address hidden>\nDate:   Wed Aug 17 17:37:48 2016 +0200\n\n    Add migrate_uri for invoking the migration\n    \n    Add migrate_uri parameter in Guest.migrate method, to indicate\n    the URI where we want to stablish the connection in a non-tunneled\n    migration.\n    \n    Conflicts:\n    \tnova/tests/unit/virt/libvirt/test_driver.py\n    \n    Closes-Bug: #1614063\n    Change-Id: I6c2ad0170d90560d7d710b578c45287e78c682d1\n    (cherry picked from commit 94f89e96f86c1d1bb258da754d3d368856637a0a)\n", 
+            "date_created": "2016-12-02 08:41:07.596094+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.3 release.", 
+            "date_created": "2016-12-19 12:02:08.124418+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-10-20 20:53:31.515383+00:00"
+}

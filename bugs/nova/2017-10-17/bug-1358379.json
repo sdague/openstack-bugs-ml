@@ -1,0 +1,80 @@
+{
+    "status": "Expired", 
+    "last_updated": "2015-11-21 04:19:29.289311+00:00", 
+    "description": "Currently the resize resource claim is achieved through resize_claim() and drop_resize_claim() pair. In theory, the claim should be released after the drop_resize_claim() be called. However, there is a small window that this release will not happen.\n\nCurrently RT tracker resource usage by two category: the instances hosted on the node (the  _update_usage_from_instances())  and the migration in/out of the node (the _update_usage_from_migrations()). \nA instance hosted in the node is sure to have resource claim, an in/out migration that the instance is not hosted in the node will also have a resource claim. If a resize happens to the same host, then one claim will be tracked in the instance side and another is in the migration side. Such audit happens in the update_vailable_resources() periodic task.\n\n\nCurrent drop_resize_claim() implementation always assume the related resource is in the tracked migration, however, this is not true if the drop_resize_claim() happens before the audit periodic task. Considering the audit happens in time t1 and (t1 + 60s) assuming the audit periodic is 60s. And between these two audit time, a instance in this node is resized to another node, and user confirm the resize() too (i.e. this node is the source node).\n\nBecause the resize happend between the audit periodic task, the RT has no idea and no migration tracked. Thus when drop_resize_claim(prefix='old_') happens, it has no resource claim to release. The release will happen till next audit cycle, which will find the host is not hosted in the node.\n\nI'm not sure if this is really a  issue. I think a) the result purely depends on the periodic task lengthy. If the periodic task lengthy is very long, it will cause resource waste, or in worst situation, a potential DoS issue. But it should be ok if the periodic task is short. b)From an implementation point of view, drop_resize_claim(prefix='old_') return successfully w/o release the resource is bogus.", 
+    "tags": [
+        "compute"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1358379", 
+    "owner": "None", 
+    "id": 1358379, 
+    "index": 3990, 
+    "openned": "2014-08-18 16:01:26.106065+00:00", 
+    "created": "2014-08-18 16:01:26.106065+00:00", 
+    "title": "drop_resize_claim() can't release the resource in some small window", 
+    "comments": [
+        {
+            "content": "Currently the resize resource claim is achieved through resize_claim() and drop_resize_claim() pair. In theory, the claim should be released after the drop_resize_claim() be called. However, there is a small window that this release will not happen.\n\nCurrently RT tracker resource usage by two category: the instances hosted on the node (the  _update_usage_from_instances())  and the migration in/out of the node (the _update_usage_from_migrations()). \nA instance hosted in the node is sure to have resource claim, an in/out migration that the instance is not hosted in the node will also have a resource claim. If a resize happens to the same host, then one claim will be tracked in the instance side and another is in the migration side. Such audit happens in the update_vailable_resources() periodic task.\n\n\nCurrent drop_resize_claim() implementation always assume the related resource is in the tracked migration, however, this is not true if the drop_resize_claim() happens before the audit periodic task. Considering the audit happens in time t1 and (t1 + 60s) assuming the audit periodic is 60s. And between these two audit time, a instance in this node is resized to another node, and user confirm the resize() too (i.e. this node is the source node).\n\nBecause the resize happend between the audit periodic task, the RT has no idea and no migration tracked. Thus when drop_resize_claim(prefix='old_') happens, it has no resource claim to release. The release will happen till next audit cycle, which will find the host is not hosted in the node.\n\nI'm not sure if this is really a  issue. I think a) the result purely depends on the periodic task lengthy. If the periodic task lengthy is very long, it will cause resource waste, or in worst situation, a potential DoS issue. But it should be ok if the periodic task is short. b)From an implementation point of view, drop_resize_claim(prefix='old_') return successfully w/o release the resource is bogus.", 
+            "date_created": "2014-08-18 16:01:26.106065+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/115176/ is created to test this scenerio.", 
+            "date_created": "2014-08-19 06:04:01.922744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/115448", 
+            "date_created": "2014-08-20 00:50:02.459958+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "A clarification, it's the test_resource_confirm_resize() in https://review.openstack.org/#/c/115176/  used to test the scenario.", 
+            "date_created": "2014-08-27 21:58:47.545828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Unfortunately this process isn't the easiest to trace.  It looks to me like things will be fine here because during the resize_claim the usage is updated in the same way that it is during the periodic task.  So I don't think we're relying on the periodic task to add the migration to the RT.  I think the _update_usage_from_migration() being called in resize_claim means this isn't an issue.", 
+            "date_created": "2014-08-28 22:12:35.019935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "I think the reason is, the resize_claim() happens in the target host. The source host will have no idea of this migration object till  next audit periodic. \n\nSorry for poor writing in the bug description.", 
+            "date_created": "2014-08-28 23:27:12.276329+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Okay, I understand it now.  The resize claim happens on the destination host so the source doesn't have a migration record in it's resource tracker.  So the drop_resize_claim call will do nothing, unless the update_available_resource task has run and added the migration record in the interval.\n\nThis seems like a minor issue, because it causes a temporary loss of resources, but something that may be easily fixed.", 
+            "date_created": "2014-08-29 05:34:37.571169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Andrew, thanks for check.\n\nThanks\n--jyh", 
+            "date_created": "2014-08-29 18:15:34.468034+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/115448\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2014-11-20 15:24:54.812589+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I took a look at this bug again and I am no longer convinced that there is an issue here.   The reported issue was that a move claim (formerly called resize claim) would claim resources on the destination host but the migration resources wouldn't be tracked on the source host until a periodic had run.  This could lead to a problem when the claim was dropped on the source host because the migration isn't yet tracked there.\n\nHowever after tracing this path again I noticed that though the claim won't be dropped on the source if the migration isn't tracked there it also means that the resources aren't claimed for the migration either.  So dropping a claim for an untracked migration should be equivalent for tracking the migration and then dropping it.\n\nIf there's something more going on here or I've misunderstood something please add more detail here.", 
+            "date_created": "2015-09-21 15:09:33.087904+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Hi, Andrew\n    Thanks for recheck this bug. As I'm not working on openstack anymore, I didn't track this issue.\n    I tried to have a look on the code and seems I'm not in the context now. So please feel free to mark this bug as invalid if you think so.\n\nThanks\n--jyh", 
+            "date_created": "2015-09-21 21:36:54.339078+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunhong-jiang"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2015-11-21 04:19:25.961641+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2015-11-21 04:19:26.635238+00:00"
+}

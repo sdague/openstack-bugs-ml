@@ -1,0 +1,495 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-01-21 23:14:02.377779+00:00", 
+    "description": "Currently reproduced  on Juno milestone 2. but this issue should be reproducible in all releases since its inception.\n\nIt is possible to choke OpenStack API controller services using wsgi+eventlet library by simply not closing the client socket connection. Whenever a request is received by any OpenStack API service for example nova api service, eventlet library creates a green thread from the pool and starts processing the request. Even after the response is sent to the caller, the green thread is not returned back  to the pool until the client socket connection is closed. This way, any malicious user can send many API requests to the API controller node and determine the wsgi pool size configured for the given service and then send those many requests to the service and after receiving the response, wait there infinitely doing nothing leading to disrupting services for other tenants. Even when service providers have enabled rate limiting feature, it is possible to choke the API services with a group (many tenants) attack.\n\nFollowing program illustrates choking of nova-api services (but this problem is omnipresent in all other OpenStack API Services using wsgi+eventlet)\n\nNote: I have explicitly set the wsi_default_pool_size default value to 10 in order to reproduce this problem in nova/wsgi.py.\nAfter you run the below program, you should try to invoke API\n============================================================================================\nimport time\nimport requests\nfrom multiprocessing import Process\n\ndef request(number):\n   #Port is important here\n   path = 'http://127.0.0.1:8774/servers'\n    try:\n        response = requests.get(path)\n        print \"RESPONSE %s-%d\" % (response.status_code, number)\n        #during this sleep time, check if the client socket connection is released or not on the API controller node.\n        time.sleep(1000)\n        print \u201cThread %d complete\" % number\n    except requests.exceptions.RequestException as ex:\n        print \u201cException occurred %d-%s\" % (number, str(ex))\n\nif __name__ == '__main__':\n    processes = []\n    for number in range(40):\n        p = Process(target=request, args=(number,))\n        p.start()\n        processes.append(p)\n    for p in processes:\n        p.join()\n\n================================================================================================\n\nPresently, the wsgi server allows persist connections if you configure keepalive to True which is default.\nIn order to close the client socket connection explicitly after the response is sent and read successfully by the client, you simply have to set keepalive to False when you create a wsgi server.\n\nAdditional information: By default eventlet passes \u201cConnection: keepalive\u201d if keepalive is set to True when a response is sent to the client. But it doesn\u2019t have capability to set the timeout and max parameter.\nFor example.\nKeep-Alive: timeout=10, max=5\n\nNote: After we have disabled keepalive in all the OpenStack API service using wsgi library, then it might impact all existing applications built with the assumptions that OpenStack API services uses persistent connections. They might need to modify their applications if reconnection logic is not in place and also they might experience the performance has slowed down as it will need to reestablish the http connection for every request.", 
+    "tags": [
+        "security"
+    ], 
+    "importance": "High", 
+    "heat": 76, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1361360", 
+    "owner": "https://api.launchpad.net/1.0/~abhishek-kekane", 
+    "id": 1361360, 
+    "index": 1583, 
+    "openned": "2014-08-25 20:32:31.316090+00:00", 
+    "created": "2014-08-25 20:32:31.316090+00:00", 
+    "title": "Eventlet green threads not released back to the pool leading to choking of new requests", 
+    "comments": [
+        {
+            "content": "Currently reproduced  on Juno milestone 2. but this issue should be reproducible in all releases since its inception.\n\nIt is possible to choke OpenStack API controller services using wsgi+eventlet library by simply not closing the client socket connection. Whenever a request is received by any OpenStack API service for example nova api service, eventlet library creates a green thread from the pool and starts processing the request. Even after the response is sent to the caller, the green thread is not returned back  to the pool until the client socket connection is closed. This way, any malicious user can send many API requests to the API controller node and determine the wsgi pool size configured for the given service and then send those many requests to the service and after receiving the response, wait there infinitely doing nothing leading to disrupting services for other tenants. Even when service providers have enabled rate limiting feature, it is possible to choke the API services with a group (many tenants) attack.\n\nFollowing program illustrates choking of nova-api services (but this problem is omnipresent in all other OpenStack API Services using wsgi+eventlet)\n\nNote: I have explicitly set the wsi_default_pool_size default value to 10 in order to reproduce this problem in nova/wsgi.py.\nAfter you run the below program, you should try to invoke API\n============================================================================================\nimport time\nimport requests\nfrom multiprocessing import Process\n\ndef request(number):\n   #Port is important here\n   path = 'http://127.0.0.1:8774/servers'\n    try:\n        response = requests.get(path)\n        print \"RESPONSE %s-%d\" % (response.status_code, number)\n        #during this sleep time, check if the client socket connection is released or not on the API controller node.\n        time.sleep(1000)\n        print \u201cThread %d complete\" % number\n    except requests.exceptions.RequestException as ex:\n        print \u201cException occurred %d-%s\" % (number, str(ex))\n\nif __name__ == '__main__':\n    processes = []\n    for number in range(40):\n        p = Process(target=request, args=(number,))\n        p.start()\n        processes.append(p)\n    for p in processes:\n        p.join()\n\n================================================================================================\n\nPresently, the wsgi server allows persist connections if you configure keepalive to True which is default.\nIn order to close the client socket connection explicitly after the response is sent and read successfully by the client, you simply have to set keepalive to False when you create a wsgi server.\n\nAdditional information: By default eventlet passes \u201cConnection: keepalive\u201d if keepalive is set to True when a response is sent to the client. But it doesn\u2019t have capability to set the timeout and max parameter.\nFor example.\nKeep-Alive: timeout=10, max=5\n\nNote: After we have disabled keepalive in all the OpenStack API service using wsgi library, then it might impact all existing applications built with the assumptions that OpenStack API services uses persistent connections. They might need to modify their applications if reconnection logic is not in place and also they might experience the performance has slowed down as it will need to reestablish the http connection for every request.", 
+            "date_created": "2014-08-25 20:32:31.316090+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-08-25 20:32:31.316090+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "Thanks for the report! The OSSA task is set to incomplete pending additional details from nova-coresec.\n\nIt sounds like a slowloris DoS like scenario... What are the side effect of disabling keepalive ?", 
+            "date_created": "2014-08-25 20:52:13.562928+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Presently, we are trying to fix on one issue in Glance [1] and during running functional tests, we have found out some of the tests were failing because greenthreads are not released back to the eventlet green pool (client socket connection is not closed) due to which the glance api service doesn't shutdown gracefully.  Fixing functional tests in glance without fixing this issue would be temporary solution (we will need to pass \u201cconnection: close\u201d to the header for every request made in the functional tests). \n\nCould you please suggest how to go about this security issue and the glance patch?\n\n[1] (glance Patch) https://review.openstack.org/#/c/110012/\n", 
+            "date_created": "2014-08-25 23:01:25.346192+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "So the trick here is, I'm not sure disabling keepalive is an acceptable patch, as it breaks backward compatibility for existing users of the API. It also affects all OpenStack services. So I expect this patch to take a bit of discussion before we agree on the way forward.\n\nSo my suggestion would be to fix the test with a temporary solution, if possible silently enough so that we don't reveal this issue while doing so.", 
+            "date_created": "2014-08-28 14:00:01.945217+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Hi Mark Washenberger:\n\nWould you please suggest what should be done with this patch https://review.openstack.org/#/c/117191/?\nPresently, glance doesn't handle SIGHUP signal properly (glance process exits) and because of it, it is not possible to reload the config changes. We really want this patch to land in Juno-3 and are ready to do whatever you suggest.\n\nNote: Please ignore https://review.openstack.org/#/c/110012/ patch as my team member wanted to set dependency and he couldn't do it correctly.", 
+            "date_created": "2014-08-29 20:40:22.495284+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "@ttx how do you see disabling keepalive breaking backwards compat? Keepalive should just be an optimization, not impact the application semantics.", 
+            "date_created": "2014-09-03 12:51:38.640849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I based that comment on the \"Note\" in the bug description: \"it might impact all existing applications built with the assumptions that OpenStack API services uses persistent connections\" -- do you think it's a non-existant concern?", 
+            "date_created": "2014-09-08 15:16:42.074170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I think it's a non existant concern. HTTP keep alive exists below the application level. It's a pretty standard scaling technique in Apache configuration to disable HTTP keep alive because it means slow clients take proportionally more resource than fast clients (basically inverts your ability to service max throughput).\n\nI think blanket disable of keepalive is probably the sane thing to do.", 
+            "date_created": "2014-09-10 12:01:33.903884+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Hi,\n\nWe have done some testing using python-clients, httplib and requests api and haven't seen any issue.\nWith the same connection, its processing multiple api's, one after another.\n", 
+            "date_created": "2014-09-11 10:57:41.768893+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "OK, that sounds like a sane move then.\n\nI'm still on the fence on the need for an advisory here, though, as this makes DoS harder but not impossible... so it sounds like a good strengthening move, but it's not really closing a vulnerability, just mitigating one we have to live with anyway ?", 
+            "date_created": "2014-09-11 12:51:19.406830+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Realistically, all the service launch code has been refactored into Oslo code now, so there is probably a common fix there. This actually isn't familiar enough to me any more to be able to propose the fix.", 
+            "date_created": "2014-09-11 23:52:56.866676+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Never mind, this isn't in the common service layer, here would be the Nova patch. Probably would make it configurable by the operator.", 
+            "date_created": "2014-09-12 00:02:21.943256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Hi Sean,\n\nIMO, there is no need to keep this keepalive as a configurable parameter. Because if someone has configured the keepalive as True then probably he will end-up with this issue.", 
+            "date_created": "2014-09-12 07:04:37.767999+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is a cinder patch to fix this issue.", 
+            "date_created": "2014-09-12 07:48:04.086474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is a glance patch to fix this issue.", 
+            "date_created": "2014-09-12 07:49:46.729730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is a keystone patch to fix this issue.", 
+            "date_created": "2014-09-12 07:51:14.660869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is a neutron patch to fix this issue.", 
+            "date_created": "2014-09-12 07:52:51.419197+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Abhishek, for internal well defined clouds, keepalive could be a useful optimization. So config option would probably be fine.\n\nIt would be good if someone who has working tests for this sees if the eventlet change fixes things.", 
+            "date_created": "2014-09-15 15:08:39.606101+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Adding OSSG-coresec to get a wider perspective on this.\n\nThis is one of those bugs where it's difficult to backport the fix, since it changes established behavior and is therefore not really acceptable as a stable branch patch. If there is a workaround for icehouse/havana, then we can document it in a security note. If there isn't a workaround, we might want to backport the option, and default it to current behavior, and then issue an OSSN about the issue and how you can manually switch that option on.", 
+            "date_created": "2014-09-16 14:47:49.869645+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "This is the cinder patch with configurable keepalive option.", 
+            "date_created": "2014-09-17 09:03:19.880678+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is the glance patch with configurable keepalive option.", 
+            "date_created": "2014-09-17 09:04:51.408711+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is the keystone patch with configurable keepalive option.", 
+            "date_created": "2014-09-17 09:05:21.871371+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is the neutron patch with configurable keepalive option.", 
+            "date_created": "2014-09-17 09:06:02.922532+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "This is the nova patch with configurable keepalive option.", 
+            "date_created": "2014-09-17 09:07:05.204247+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "So my preference would be to backport the fix as this seems like a pretty trivial DoS.  If that is deemed unacceptable, then I would support the solution that Thierry proposed in msg #19.  Specifically:\n\n\"we might want to backport the option, and default it to current behavior, and then issue an OSSN about the issue and how you can manually switch that option on.\"", 
+            "date_created": "2014-09-17 20:49:06.152722+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bdpayne"
+        }, 
+        {
+            "content": "Adding Ihar, Alan and Adam to get the pulse on the stable side of things.\nThe question is: would you consider it OK to disable keepalive as part of a stable update ?", 
+            "date_created": "2014-09-24 14:46:27.379387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "General rule states that 'Incompatible config file changes' are forbidden. It's not clear what *incompatible* config file changes are though. If keepalive is considered to be speed optimization and does not change the way clouds behave on API level (I guess the answer to both assumptions is 'yes'?), then I think we won't introduce any incompatibilities in existing deployments by disabling it. So I'm in favour of flipping the default value to avoid shipping code that is insecure by default.\n\nThat said, the change will probably require explicit notice in release notes, and there should be a way to re-enable keepalive for those who know what they are doing.\n\nAlso, Havana was mentioned in the comments. The thing is that the last Havana release was tagged this Monday, so there is no way for us to deliver the fix to users, and since Monday we don't consider Havana as a supported branch anyway. So in terms of backports, we should be interested in Icehouse only.\n\nStill, I think it's worth to mention Havana in CVE, so that affected distributions are explicitly notified to backport those patches to their downstream repositories.", 
+            "date_created": "2014-09-24 15:27:17.128205+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "I'm personally fine with the proposed patches going to stable/icehouse (keep it enabled by default, provide a config option and notes in release notes for operators to consider)   That is, assuming we are okay with adding the new config option to stable (I am)  I dont' have an example off the top of my head, but we've done similar in the past. We need to provide the toggle, but whether we keep it enabled by default is where it gets sticky.  We can either keep it enabled by default and reference the bug as we normally do, or change behavior + disable it and be more vocal about it in the release notes.  TBH I could go either way if people feel strongly, but the patches propose LGTM as-is.\n\n", 
+            "date_created": "2014-09-24 18:18:31.224333+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "OK, let's just backport this, and try to get it all out in time for Juno release.\nWe need an impact desc, and we need coresec reviews on proposed patches.", 
+            "date_created": "2014-09-26 09:46:56.455812+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Is there a second aspect to this?\n\nA client can currently open a connection and do nothing with it.\n\nThe socket will never be closed (even with the above keepalive change in place).\n\n(This can be alleviated to some degree by timing out such idle client sockets https://review.openstack.org/#/c/119365/)", 
+            "date_created": "2014-09-26 09:57:33.911294+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stuart-mclaren"
+        }, 
+        {
+            "content": "Hi,\n\nShould I need to resubmit the patches by setting default value for keepalive as False?\n\nPlease advise.", 
+            "date_created": "2014-09-29 06:36:22.559788+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "@Abhishek: no, master patches look good. We'll need the same patches for the stable/icehouse branches, and get them reviewed by core reviewers here on this bug, before we can coordinate their publication.", 
+            "date_created": "2014-09-29 08:06:36.635878+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx what do you think of the second aspect to this? Namely that a client can choke the system by opening connections to the server and doing nothing with them. Unlike the keepalive case this doesn't require authentication.", 
+            "date_created": "2014-09-29 09:07:41.489490+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stuart-mclaren"
+        }, 
+        {
+            "content": "@Stuart: If I understand correctly, you're describing a Slowloris attack, for which there is no great solution, only mitigation... But then, why close a keepalive-based hole if we keep a simpler one open ? If we require security proxies on open API ports anyway, why close the keepalive hole ? I'll discuss this with the Vulnerability Management Team today.", 
+            "date_created": "2014-09-29 10:00:00.084387+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "In general I think we should be striving to create a system that's secure by default. An open-source project that's only secure when you buy x,y,z to put in front of it is less than ideal. Though I accept that in cases like this Sloworis style attacks can potentially be mitigated by some open-source proxies too.\n\nMaybe an OSSN or even a chapter on the Security Guide directly address this sort of setup might make sense ? - I'm considering only the aspects discussed by @ttx and @stuart directly above...", 
+            "date_created": "2014-09-29 12:56:01.607259+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "So just to confirm... we have a potential for a denial of service condition here. The proposed patch mitigates it for authenticated sessions, but does nothing to solve the more general issue which also can be triggered without authentication and for which we can't reasonably backport a solution.\n\nThis sounds more like something we need to document and hope it can be solved more completely in the future.", 
+            "date_created": "2014-09-29 14:22:52.961237+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "If you pass socket_timeout parameter to the wsgi server, then the telnet client connection is closed automatically by the server when the specified timeout elapses.\n\nStuart Mclaren has proposed this patch for the cinder project.\nhttps://review.openstack.org/#/c/119365/\n", 
+            "date_created": "2014-09-29 16:59:34.107471+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tpatil"
+        }, 
+        {
+            "content": "So to recap, considering both keep-alive disabling and eventlet socket timeout, it now boils down to how effective these changes are:\n* Can a single user still reserve all the resource as shown in this bug description ?\n* Is the default timeout proposed (900 seconds) enough to prevent trivial attacks as shown in this bug description ?\n\nCombined together these patches might warrant an embargoed advisory if they makes this type of attack really more difficult,\nelse we should consider marking this public security and focus on a good documentation (OSSN and/or security guide).\n\nAlso, for what it worth, as long as the relationship between the client side resources and server side resources is a linear one, I guess we should not consider an OSSA, especially an embargoed OSSA that will make the coordination much more difficult...", 
+            "date_created": "2014-09-29 20:11:37.207849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Just a datapoint for ceilometer WRT the proposed approach of setting the eventlet.wsgi.server keep-alive to false in order to mitigate this issue.\n\nCeilometer does not currently use eventlet.wsgi.server ... instead we use wsgiref.simple_server with pecan, and AFAICS an analogous means of disabling keep-alive is not surfaced in that case.", 
+            "date_created": "2014-09-30 11:45:14.603567+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eglynn"
+        }, 
+        {
+            "content": "Hi Thierry,\n\nShould I submit the patches with socket_timeout parameter as well?\n\nPlease advise. ", 
+            "date_created": "2014-10-07 07:22:26.801755+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "@Abishek: I think we need to decide first if it makes sense to fix a specific case when the general case is left open. It will probably be solved after Juno release, since this is hard to coordinate one week away from release.", 
+            "date_created": "2014-10-07 10:04:53.225005+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Still no clear way forward on this one. Does it make sense to close the authenticated thread exhaustion through keepalive while unauthenticated users can just get the same effect as easily using slowloris to starve connections ?", 
+            "date_created": "2014-10-16 09:22:41.633524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx\nI think it makes sense to address the 'authenticated thread exhaustion' issue regardless.  Even from a non-security standpoint, it could help to prevent an accidental DoS by a poorly written client.", 
+            "date_created": "2014-10-16 14:46:51.865284+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }, 
+        {
+            "content": "@Nathan: Oh, we should definitely fix this, there is no question about that. The question is, do we consider it a vulnerability (and issue an OSSA for it), do we need to keep this embargoed (while opening it up would hugely facilitate the fix), and do we need to backport it to previous releases (and bend our stable rules to do so).\n\nIf we consider it a security enhancement rather than a vulnerability, then the answer to those 3 above questions is \"no\". Since there are more convenient ways to achieve the same effect (DoS on endpoints) and we wouldn't patch those, it feels like considering this one a specific vulnerability that this fix would \"close\" is at best misleading. So my vote goes to considering it a security enhancement.", 
+            "date_created": "2014-10-17 09:20:12.307917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx\nI'm in agreement with you that this should be considered a security enhancement and not treated as an embargoed vulnerability.   I do think that this is a case where backporting to stable releases would be ideal.", 
+            "date_created": "2014-10-17 15:09:59.205908+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nkinder"
+        }, 
+        {
+            "content": "OK, so unless someone complains, we'll switch this to public bug and start pushing patches publicly on Thursday to harden the future releases.", 
+            "date_created": "2014-10-20 14:16:24.383401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/130821", 
+            "date_created": "2014-10-24 15:17:48.253046+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/130824", 
+            "date_created": "2014-10-24 15:24:32.115935+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/130834", 
+            "date_created": "2014-10-24 15:48:37.063166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/130839", 
+            "date_created": "2014-10-24 15:59:20.874311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/130843", 
+            "date_created": "2014-10-24 16:18:35.000730+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "It is recommended Keystone is deployed under mod_wsgi, not eventlet, this still does affect Keystone's eventlet deployment model.", 
+            "date_created": "2014-10-24 18:43:57.310886+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/130821\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=fc87da7eeb3451e139ee71b31095d0b9093332ce\nSubmitter: Jenkins\nBranch:    master\n\ncommit fc87da7eeb3451e139ee71b31095d0b9093332ce\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 02:31:15 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    In order to maintain the backward compatibility, setting wsgi_keep_alive\n    as True by default. Recommended is set it to False.\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: Ic57b2aceb136e8626388cfe4df72b2f47cb0661c\n", 
+            "date_created": "2014-10-26 16:21:03.592919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/131987", 
+            "date_created": "2014-10-30 10:12:18.448152+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/131987\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=b57c024bfb5f542e0412f268038f38bf52e06456\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit b57c024bfb5f542e0412f268038f38bf52e06456\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 02:31:15 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    In order to maintain the backward compatibility, setting wsgi_keep_alive\n    as True by default. Recommended is set it to False.\n    \n    Conflicts:\n            cinder/wsgi.py\n            etc/cinder/cinder.conf.sample\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: Ic57b2aceb136e8626388cfe4df72b2f47cb0661c\n    (cherry picked from commit fc87da7eeb3451e139ee71b31095d0b9093332ce)\n", 
+            "date_created": "2014-11-27 03:51:01.993441+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/130843\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=04d7a724fdf80db51e73f12c5b8c982db9310742\nSubmitter: Jenkins\nBranch:    master\n\ncommit 04d7a724fdf80db51e73f12c5b8c982db9310742\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 01:37:42 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I399b812f6d452226fd306c423de8dcea8520d2aa\n", 
+            "date_created": "2014-12-02 13:04:39.201823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/138365", 
+            "date_created": "2014-12-02 13:36:57.196640+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/138368", 
+            "date_created": "2014-12-02 13:43:50.723663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/138811", 
+            "date_created": "2014-12-03 18:13:20.559809+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/138365\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=4041d30611baa476d33627f5078d5bcc12ef50eb\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 4041d30611baa476d33627f5078d5bcc12ef50eb\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 02:31:15 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    In order to maintain the backward compatibility, setting wsgi_keep_alive\n    as True by default. Recommended is set it to False.\n    \n    Conflicts:\n            cinder/wsgi.py\n            etc/cinder/cinder.conf.sample\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: Ic57b2aceb136e8626388cfe4df72b2f47cb0661c\n    (cherry picked from commit fc87da7eeb3451e139ee71b31095d0b9093332ce)\n", 
+            "date_created": "2014-12-07 17:37:00.314091+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/140304", 
+            "date_created": "2014-12-09 11:43:07.105469+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/144074", 
+            "date_created": "2014-12-26 03:07:46.398171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/130834\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=8e7a0dbb12082f6159d98a4628fb8a6fcd05e95a\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8e7a0dbb12082f6159d98a4628fb8a6fcd05e95a\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:15:15 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections. Hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection. Because of this problem, the green thread is not released\n    back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Added a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I3a361d6590d1800b85791f23ac1cdfd79815341b\n", 
+            "date_created": "2014-12-30 08:28:57.850712+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/144708", 
+            "date_created": "2015-01-02 05:42:00.209202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/144714", 
+            "date_created": "2015-01-02 06:35:52.360173+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/144708\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=a89ae1bd93dea2dd1902c1d49572329f6646abcc\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit a89ae1bd93dea2dd1902c1d49572329f6646abcc\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:15:15 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections. Hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection. Because of this problem, the green thread is not released\n    back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Added a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I3a361d6590d1800b85791f23ac1cdfd79815341b\n    (cherry picked from commit 8e7a0dbb12082f6159d98a4628fb8a6fcd05e95a)\n", 
+            "date_created": "2015-01-21 18:25:06.994397+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/140304\nCommitted: https://git.openstack.org/cgit/openstack/cinder/commit/?id=f88dc8495f7ec5dc7f1b01c43f0237141af6b98f\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit f88dc8495f7ec5dc7f1b01c43f0237141af6b98f\nAuthor: Stuart McLaren <email address hidden>\nDate:   Fri Sep 5 12:48:04 2014 +0000\n\n    Add client_socket_timeout option\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour.  Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added client_socket_timeout option (default=0).\n    \n    Conflicts:\n            cinder/wsgi.py\n            etc/cinder/cinder.conf.sample\n    \n    Note: This patch is not 1:1 cherry-pick, I have changed the default value\n    of client_socket_timeout to 0.\n    \n    Change-Id: If492810a2f10fa5954f8c8bb708b14be0b77fb90\n    Closes-bug: #1361360\n    Closes-bug: #1371022\n    (cherry picked from commit 08bfa77aeccb8ca589e3fb5cf9771879818f59de)\n", 
+            "date_created": "2015-01-22 17:34:34.556006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/138368\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=965fd3059eff0fdc7228754742042bbff3abf705\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 965fd3059eff0fdc7228754742042bbff3abf705\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 01:37:42 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=0).\n    \n    Conflicts:\n            nova/tests/unit/test_wsgi.py\n    \n    Note: The required unit-tests are manually added to the below path,\n    as new path for unit-tests is not present in stable/juno release.\n    nova/tests/compute/test_host_api.py\n    \n    This patch is not 1:1 cherry-pick, I have changed the default value\n    of client_socket_timeout to 0, as per the policy for changes to\n    stable branches.\n    (https://wiki.openstack.org/wiki/StableBranch#Appropriate_Fixes)\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I399b812f6d452226fd306c423de8dcea8520d2aa\n    (cherry picked from commit 04d7a724fdf80db51e73f12c5b8c982db9310742)\n", 
+            "date_created": "2015-01-30 06:37:17.767637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/138811\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=a657582c5cd8a39580c44ad401fd3e69870068b1\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit a657582c5cd8a39580c44ad401fd3e69870068b1\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 01:37:42 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=0).\n    \n    Conflicts:\n            nova/tests/unit/test_wsgi.py\n    \n    Note: The required unit-tests are manually added to the below path,\n    as new path for unit-tests is not present in stable/icehouse release.\n    nova/tests/compute/test_host_api.py\n    \n    This patch is not 1:1 cherry-pick, I have changed the default value\n    of client_socket_timeout to 0, as per the policy for changes to\n    stable branches.\n    (https://wiki.openstack.org/wiki/StableBranch#Appropriate_Fixes)\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I399b812f6d452226fd306c423de8dcea8520d2aa\n    (cherry picked from commit 04d7a724fdf80db51e73f12c5b8c982db9310742)\n", 
+            "date_created": "2015-03-05 01:06:18.101316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/130839\nCommitted: https://git.openstack.org/cgit/openstack/glance/commit/?id=16a821e00d15520d2f6e940e184bd289b8782620\nSubmitter: Jenkins\nBranch:    master\n\ncommit 16a821e00d15520d2f6e940e184bd289b8782620\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:39:59 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections. Hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection. Because of this problem, the green thread is not released\n    back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    DocImpact:\n    Added http_keepalive option (default=True).\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I93aaca24935a4f3096210233097dd6b8c5440176\n", 
+            "date_created": "2015-03-09 22:35:31.341586+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This should not be committed to icehouse branches.  It is incompatible with the minimum eventlet version described in icehouse's globall-requirements.txt ", 
+            "date_created": "2015-03-09 22:38:46.258048+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gandelman-a"
+        }, 
+        {
+            "content": "@Adam, we have Cinder patch applied. Does it mean we should revert it?", 
+            "date_created": "2015-03-10 10:24:13.093324+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ihar-hrachyshka"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/162964", 
+            "date_created": "2015-03-10 11:10:16.866381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Adam, Ihar,\n\nIn global-requirements.txt eventlet version is mentioned as 'eventlet>=0.13.0,<0.16.0' and keepalive option is availabe in version 0.13.2 but socket_timeout is not available in the same version.\n\nThe patch which was backported to stable/icehouse for cinder [1] does not include 'socket_timeout' applied to wsgi server, so there is no need to revert this patch.\n\n[1] https://review.openstack.org/#/c/138365/\n\n", 
+            "date_created": "2015-03-10 11:17:49.689361+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "If keepalive is enough to fix this bug, nova/neutron Icehouse backports could be amended to drop socket_timeout part.\nIf not, Cinder Icehouse fix is incomplete.", 
+            "date_created": "2015-03-10 16:14:06.958582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~apevec"
+        }, 
+        {
+            "content": "Hi Alan,\n\nkeepalive is enough to fix this bug.", 
+            "date_created": "2015-03-10 17:34:30.626748+00:00", 
+            "author": "https://api.launchpad.net/1.0/~abhishek-kekane"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/144714\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=4cdbefc202acc2499c253da625db48d6165b7c84\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 4cdbefc202acc2499c253da625db48d6165b7c84\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:15:15 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections. Hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection. Because of this problem, the green thread is not released\n    back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Icehouse backport note: socket_timeout was dropped, it was introduced\n    in 0.14[*] and Icehouse eventlet lower bound is 0.13\n    \n    [*] https://github.com/eventlet/eventlet/commit/7d4916f01462de09cb58853d9de2e85777c2ad5b\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I3a361d6590d1800b85791f23ac1cdfd79815341b\n    (cherry picked from commit 8e7a0dbb12082f6159d98a4628fb8a6fcd05e95a)\n", 
+            "date_created": "2015-03-12 18:18:53.903504+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/164643", 
+            "date_created": "2015-03-16 10:37:04.890800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Eventlet is deprecated for keystone and not the primary deployment method. For many reasons it is recommended that keystone not be deployed under event let ", 
+            "date_created": "2015-04-07 15:06:19.406880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdrnstm"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/130824\nCommitted: https://git.openstack.org/cgit/openstack/keystone/commit/?id=3b08644eb9cf4c5aca51a36250ae93105c17f6c4\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3b08644eb9cf4c5aca51a36250ae93105c17f6c4\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:10:57 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I03b9c5c64f4bd8bca78dfc83199ef17d9a7ea5b7\n", 
+            "date_created": "2015-04-24 21:37:10.941663+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/177670", 
+            "date_created": "2015-04-27 07:13:44.811739+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/177686", 
+            "date_created": "2015-04-27 09:19:35.945106+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/177670\nCommitted: https://git.openstack.org/cgit/openstack/keystone/commit/?id=67cda0ccae04471340bcada099d945d90979e64d\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 67cda0ccae04471340bcada099d945d90979e64d\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:10:57 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I03b9c5c64f4bd8bca78dfc83199ef17d9a7ea5b7\n    (cherry picked from commit 3b08644eb9cf4c5aca51a36250ae93105c17f6c4)\n", 
+            "date_created": "2015-05-28 13:36:58.551155+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/164643\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=392dc228034bbd8968f4c65ddfce6343bff938ea\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 392dc228034bbd8968f4c65ddfce6343bff938ea\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 01:37:42 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Icehouse backport note: socket_timeout was dropped, it was introduced\n    in 0.14[*] and Icehouse eventlet lower bound is 0.13\n    \n    [*] https://github.com/eventlet/eventlet/commit/7d4916f01462de09cb58853d9de2e85777c2ad5b\n    \n    Note: The required unit-tests are manually added to the below path,\n    as new path for unit-tests is not present in stable/icehouse release.\n    nova/tests/test_wsgi.py\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    \n    SecurityImpact\n    \n    Conflicts:\n            nova/tests/unit/test_wsgi.py\n    \n    Closes-Bug: #1361360\n    (cherry picked from commit 04d7a724fdf80db51e73f12c5b8c982db9310742)\n    \n    Change-Id: I3b14a37edbe4bdc5db31ff4f08f78e78b60077ff\n", 
+            "date_created": "2015-06-01 16:26:36.997272+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/144074\nCommitted: https://git.openstack.org/cgit/openstack/heat/commit/?id=2be72f42f9debf9c2f186212dd27cb4f860d3399\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2be72f42f9debf9c2f186212dd27cb4f860d3399\nAuthor: yangxurong <email address hidden>\nDate:   Mon Mar 30 14:39:17 2015 +1000\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    SecurityImpact\n    \n    Change-Id: I303d87addeed8b103eeb26dbcc48e3acce06ee6a\n    Closes-Bug: #1361360\n", 
+            "date_created": "2015-06-03 01:12:31.242642+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/162964\nCommitted: https://git.openstack.org/cgit/openstack/glance/commit/?id=d569ed9db9dc1941ef74d38f85f8f67a85ff10b0\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit d569ed9db9dc1941ef74d38f85f8f67a85ff10b0\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:39:59 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections. Hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection. Because of this problem, the green thread is not released\n    back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    DocImpact:\n    Added http_keepalive option (default=True).\n    \n    Conflicts:\n            doc/source/configuring.rst\n            etc/glance-api.conf\n            glance/common/wsgi.py\n            glance/tests/unit/test_opts.py\n    \n    SecurityImpact\n    \n    Closes-Bug: #1361360\n    Change-Id: I93aaca24935a4f3096210233097dd6b8c5440176\n    (cherry picked from commit 16a821e00d15520d2f6e940e184bd289b8782620)\n", 
+            "date_created": "2015-06-12 10:06:54.385012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/204705", 
+            "date_created": "2015-07-22 17:36:16.557073+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Since there is unlikely to ever be a patch for the slowloris side of this, I'm opening an OSSN task.", 
+            "date_created": "2015-07-22 19:30:41.266212+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/204705\nCommitted: https://git.openstack.org/cgit/openstack/manila/commit/?id=accb273c7aa369f624e8062137b356dc3e5589cf\nSubmitter: Jenkins\nBranch:    master\n\ncommit accb273c7aa369f624e8062137b356dc3e5589cf\nAuthor: Valeriy Ponomaryov <email address hidden>\nDate:   Wed Jul 22 20:30:42 2015 +0300\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after the\n    response is sent to the client, it doesn't close the client socket connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    In order to maintain the backward compatibility, setting wsgi_keep_alive\n    as True by default. Recommended is set it to False.\n    \n    This is port of Cinder change - [1]\n    \n    [1] Ic57b2aceb136e8626388cfe4df72b2f47cb0661c\n    \n    SecurityImpact\n    Closes-Bug: #1361360\n    \n    Change-Id: If9241e6f6ba10592a64ca312cb479e8cea929913\n", 
+            "date_created": "2015-07-28 15:12:27.031276+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/177686\nCommitted: https://git.openstack.org/cgit/openstack/keystone/commit/?id=d2d6aba069ea3101dfbc3363689eb6142ffb6d1f\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit d2d6aba069ea3101dfbc3363689eb6142ffb6d1f\nAuthor: abhishekkekane <email address hidden>\nDate:   Tue Oct 21 04:10:57 2014 -0700\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    \n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    \n    SecurityImpact\n    \n    Conflicts:\n            keystone/common/config.py\n            keystone/common/environment/eventlet_server.py\n    \n    NOTE: This is not 1:1 cherry-pick because 'eventlet_server' config\n    group is not present in juno.\n    \n    Closes-Bug: #1361360\n    Change-Id: I03b9c5c64f4bd8bca78dfc83199ef17d9a7ea5b7\n    (cherry picked from commit 3b08644eb9cf4c5aca51a36250ae93105c17f6c4)\n    (cherry picked from commit 67cda0ccae04471340bcada099d945d90979e64d)\n", 
+            "date_created": "2015-08-21 23:57:03.014906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There isn't anything specific to OpenStack about this.  Since we don't really have any good advice other than limiting connections, I'm closing the OSSN for this.  Anybody interested should look into \"slowloris attacks\".", 
+            "date_created": "2015-09-02 22:46:16.393531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/224941", 
+            "date_created": "2015-09-18 00:47:30.589774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/224941\nCommitted: https://git.openstack.org/cgit/openstack/heat/commit/?id=5f86d05c50e02a895093d4cb6e4285dce4ba93a2\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 5f86d05c50e02a895093d4cb6e4285dce4ba93a2\nAuthor: yangxurong <email address hidden>\nDate:   Mon Mar 30 14:39:17 2015 +1000\n\n    Eventlet green threads not released back to pool\n    \n    Presently, the wsgi server allows persist connections hence even after\n    the response is sent to the client, it doesn't close the client socket\n    connection.\n    Because of this problem, the green thread is not released back to the pool.\n    \n    In order to close the client socket connection explicitly after the\n    response is sent and read successfully by the client, you simply have to\n    set keepalive to False when you create a wsgi server.\n    \n    Add a parameter to take advantage of the new(ish) eventlet socket timeout\n    behaviour. Allows closing idle client connections after a period of\n    time, eg:\n    \n    $ time nc localhost 8776\n    real    1m0.063s\n    Setting 'client_socket_timeout = 0' means do not timeout.\n    \n    DocImpact:\n    Added wsgi_keep_alive option (default=True).\n    Added client_socket_timeout option (default=900).\n    SecurityImpact\n    \n    Change-Id: I303d87addeed8b103eeb26dbcc48e3acce06ee6a\n    Closes-Bug: #1361360\n    (cherry picked from commit 2be72f42f9debf9c2f186212dd27cb4f860d3399)\n", 
+            "date_created": "2015-09-18 15:28:53.024550+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/231989\nCommitted: https://git.openstack.org/cgit/openstack/sahara/commit/?id=64583e4b839d96e2cbe7dcba7d0f08852b40bcca\nSubmitter: Jenkins\nBranch:    master\n\ncommit 64583e4b839d96e2cbe7dcba7d0f08852b40bcca\nAuthor: Sergey Reshetnyak <email address hidden>\nDate:   Wed Oct 7 16:24:35 2015 +0300\n\n    Use api-paste.ini for loading middleware\n    \n    Changes:\n    * use api-paste.ini config for loading middleware\n    * refactoring middlewares to support loading via pastedeploy\n    * use debug middleware from oslo_middleware library instead log_exchange\n      middleware\n    \n    Closes-bug: #1503983\n    Closes-bug: #1361360\n    \n    Change-Id: I444c1799ef53dbb19a601e51dd95cd8509fb1c0c\n", 
+            "date_created": "2015-10-16 17:20:19.542363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-12-18 19:58:43.134005+00:00"
+}

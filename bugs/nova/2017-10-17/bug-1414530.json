@@ -1,0 +1,53 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-09-05 00:25:25.372770+00:00", 
+    "description": "CWD might be set incorrectly when exceptions are thrown\n\nThe call to utils.execute ends up in /opt/stack/nova/nova/utils.py which\nultimately calls processutils.execute() in the oslo_concurrency module.\nIf there's an error when executing the command which calls an bash script\nthen an exception ProcessExecutionError will be raised at #1. This means that\nthe code at #2 will never be reached resulting in the Exception being propagated\nup to the call-stack but now one is still stuck with the wrong working\ndirectory which can lead to problems. One should catch the Exception and make sure\nthat in all cases the working directory is reset to the original one. \n\n/opt/stack/nova/nova/crypto.py\n\ndef ensure_ca_filesystem():\n    \"\"\"Ensure the CA filesystem exists.\"\"\"\n    ca_dir = ca_folder()\n    if not os.path.exists(ca_path()):\n        genrootca_sh_path = os.path.abspath(\n                os.path.join(os.path.dirname(__file__), 'CA',\n                'genrootca.sh'))\n\n        start = os.getcwd()\n        fileutils.ensure_tree(ca_dir)\n        os.chdir(ca_dir)\n        utils.execute(\"sh\", genrootca_sh_path) <--- #1\n        os.chdir(start)                        <--- #2\n\n\nOne can see in\nhttps://github.com/openstack/oslo.concurrency/blob/master/oslo_concurrency/processutils.py\nthat this Exception can indeed be thrown.\n\nAnalogously there's a similar issue also in the aforementioned file in\n_ensure_project_folder.\n\ndef _ensure_project_folder(project_id):\n    if not os.path.exists(ca_path(project_id)):\n        geninter_sh_path = os.path.abspath(\n                os.path.join(os.path.dirname(__file__), 'CA',\n                'geninter.sh'))\n        start = os.getcwd()\n        os.chdir(ca_folder())\n        utils.execute('sh', geninter_sh_path, project_id,\n                      _project_cert_subject(project_id))\n        os.chdir(start)\n\n\nI'm not sure whether this has a potential security vulnerability impact or not. The potential risk is definitely there but it remains to be seen whether an attacker can actually reliably trigger this and then possibly gain something else by having a different working directory. That's why I didn't tag it as a security bug.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1414530", 
+    "owner": "https://api.launchpad.net/1.0/~jichenjc", 
+    "id": 1414530, 
+    "index": 4139, 
+    "openned": "2015-01-26 04:05:22.694131+00:00", 
+    "created": "2015-01-26 04:05:22.694131+00:00", 
+    "title": "cwd might be set incorrectly when exceptions are thrown", 
+    "comments": [
+        {
+            "content": "CWD might be set incorrectly when exceptions are thrown\n\nThe call to utils.execute ends up in /opt/stack/nova/nova/utils.py which\nultimately calls processutils.execute() in the oslo_concurrency module.\nIf there's an error when executing the command which calls an bash script\nthen an exception ProcessExecutionError will be raised at #1. This means that\nthe code at #2 will never be reached resulting in the Exception being propagated\nup to the call-stack but now one is still stuck with the wrong working\ndirectory which can lead to problems. One should catch the Exception and make sure\nthat in all cases the working directory is reset to the original one. \n\n/opt/stack/nova/nova/crypto.py\n\ndef ensure_ca_filesystem():\n    \"\"\"Ensure the CA filesystem exists.\"\"\"\n    ca_dir = ca_folder()\n    if not os.path.exists(ca_path()):\n        genrootca_sh_path = os.path.abspath(\n                os.path.join(os.path.dirname(__file__), 'CA',\n                'genrootca.sh'))\n\n        start = os.getcwd()\n        fileutils.ensure_tree(ca_dir)\n        os.chdir(ca_dir)\n        utils.execute(\"sh\", genrootca_sh_path) <--- #1\n        os.chdir(start)                        <--- #2\n\n\nOne can see in\nhttps://github.com/openstack/oslo.concurrency/blob/master/oslo_concurrency/processutils.py\nthat this Exception can indeed be thrown.\n\nAnalogously there's a similar issue also in the aforementioned file in\n_ensure_project_folder.\n\ndef _ensure_project_folder(project_id):\n    if not os.path.exists(ca_path(project_id)):\n        geninter_sh_path = os.path.abspath(\n                os.path.join(os.path.dirname(__file__), 'CA',\n                'geninter.sh'))\n        start = os.getcwd()\n        os.chdir(ca_folder())\n        utils.execute('sh', geninter_sh_path, project_id,\n                      _project_cert_subject(project_id))\n        os.chdir(start)\n\n\nI'm not sure whether this has a potential security vulnerability impact or not. The potential risk is definitely there but it remains to be seen whether an attacker can actually reliably trigger this and then possibly gain something else by having a different working directory. That's why I didn't tag it as a security bug.", 
+            "date_created": "2015-01-26 04:05:22.694131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gvb-2"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/153527", 
+            "date_created": "2015-02-06 11:52:55.130153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Patch looks good to me.", 
+            "date_created": "2015-02-06 12:45:59.221819+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gvb-2"
+        }, 
+        {
+            "content": "There's a oslo.concurrency review here - https://review.openstack.org/#/c/151942/", 
+            "date_created": "2015-02-09 03:14:15.933655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/153527\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=767c461a7f977b910cc8779687dcef4412f57ff8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 767c461a7f977b910cc8779687dcef4412f57ff8\nAuthor: jichenjc <email address hidden>\nDate:   Fri Feb 6 02:59:48 2015 +0800\n\n    CWD is incorrectly set if exceptions are thrown\n    \n    The call to utils.execute ends up in /opt/stack/nova/nova/utils.py which\n    ultimately calls processutils.execute() in the oslo_concurrency module.\n    If there's an error when executing the command which calls an bash script\n    then an exception ProcessExecutionError will be raised.\n    This patch adds a finally statement to ensure the dir will be switched back\n    to its original one.\n    \n    Closes-Bug: #1414530\n    \n    Change-Id: Ie4e95999795d349a5897f7a180e34187485bd8f1\n", 
+            "date_created": "2015-03-03 21:45:16.684502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fixed in:\nhttps://review.openstack.org/#/c/155847/", 
+            "date_created": "2015-06-15 01:09:30.514228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/191604\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b64cebe2eb71a6c2275f6af76839a0b36cf56cbd\nSubmitter: Jenkins\nBranch:    master\n\ncommit b64cebe2eb71a6c2275f6af76839a0b36cf56cbd\nAuthor: Davanum Srinivas <email address hidden>\nDate:   Sun Jun 14 21:21:03 2015 -0400\n\n    Specify current directory using new cwd param in processutils.execute\n    \n    For example in:\n    Ie4e95999795d349a5897f7a180e34187485bd8f1\n    \n    we added a try/finally to switch current directory to execute a command\n    and switch back to original directory. With the new cwd parameter\n    added in processutils.execute we can just use the cwd parameter and\n    not have to do the extra explicit steps to switch directories. This\n    cwd just delegates to subprocess.Popen's cwd param.\n    \n    Related-Bug: 1414530\n    Change-Id: I808f51f8ac750b5c07a2988ff0ed2f40a68e1ee1\n", 
+            "date_created": "2015-09-05 00:25:24.823347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-03-20 07:38:35.659684+00:00"
+}

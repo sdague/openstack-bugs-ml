@@ -1,0 +1,72 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-06-23 15:07:01.342288+00:00", 
+    "description": "\nWhen booting an instance with a port specified, if the instance spawn faild for libvit error, the instance will be rescheduled, and will raise a \"PortInUse\" exception.\n\nTo reproduce, we can add \"raise Exception\" after spawn in _build_instance() and restart nova-compute.\n\nmore details plz see:\nTraceback (most recent call last):\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1043, in _build_instance\n\u00a0\u00a0\u00a0\u00a0set_access_ip=set_access_ip)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1426, in _spawn\n\u00a0\u00a0\u00a0\u00a0LOG.exception(_('Instance failed to spawn'), instance=instance)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1423, in _spawn\n\u00a0\u00a0\u00a0\u00a0block_device_info)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/virt/libvirt/driver.py\", line 2083, in spawn\n\u00a0\u00a0\u00a0\u00a0admin_pass=admin_password)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/virt/libvirt/driver.py\", line 2480, in _create_image\n\u00a0\u00a0\u00a0\u00a0net = netutils.get_injected_network_template(network_info)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/virt/netutils.py\", line 74, in get_injected_network_\n\u00a0\u00a0\u00a0\u00a0if not (network_info and template):\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/network/model.py\", line 379, in __len__\n\u00a0\u00a0\u00a0\u00a0return self._sync_wrapper(fn, *args, **kwargs)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/network/model.py\", line 366, in _sync_wrapper\n\u00a0\u00a0\u00a0\u00a0self.wait()\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/network/model.py\", line 398, in wait\n\u00a0\u00a0\u00a0\u00a0self[:] = self._gt.wait()\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/eventlet/greenthread.py\", line 168, in wait\n\u00a0\u00a0\u00a0\u00a0return self._exit_event.wait()\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/eventlet/event.py\", line 120, in wait\n\u00a0\u00a0\u00a0\u00a0current.throw(*self._exc)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/eventlet/greenthread.py\", line 194, in main\n\u00a0\u00a0\u00a0\u00a0result = function(*args, **kwargs)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1244, in _allocate_network\n\u00a0\u00a0\u00a0\u00a0dhcp_options=dhcp_options)\n\u00a0\u00a0File \"/usr/lib64/python2.6/site-packages/nova/network/neutronv2/api.py\", line 243, in allocate_for\n\u00a0\u00a0\u00a0\u00a0raise exception.PortInUse(port_id=port_id)\nPortInUse: Port faf3aa64-11f8-4fc7-81bc-084098014f4a is still in use.", 
+    "tags": [
+        "havana-backport-potential", 
+        "icehouse-backport-potential", 
+        "network"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1308405", 
+    "owner": "https://api.launchpad.net/1.0/~liusheng", 
+    "id": 1308405, 
+    "index": 1478, 
+    "openned": "2014-04-16 08:50:10.405523+00:00", 
+    "created": "2014-04-16 08:50:10.405523+00:00", 
+    "title": "reschedule failed because port still in use", 
+    "comments": [
+        {
+            "content": "consider a scenario, we have more than 1 compute node in our environment. in some cases, when booting a instance failed because a libvirt error cause spawning failed, \naccording the implementation of of _build_instance(), the exceptions will be accepted as \"Exception\", and then, reschedule the instance or set it to error state. the related code is:\n\n        except Exception:\n            exc_info = sys.exc_info()\n            # try to re-schedule instance:\n            # Make sure the async call finishes\n            if network_info is not None:\n                network_info.wait(do_raise=False)\n            rescheduled = self._reschedule_or_error(context, instance,\n                    exc_info, requested_networks, admin_password,\n                    injected_files_orig, is_first_time, request_spec,\n                    filter_properties, bdms, legacy_bdm_in_spec)\nif we have specified a port when booting the instance, the port['device_id'] is the uuid of the this instance. a \"PortInUse\" exception will be raised after rescheduling successfully and trying to build on another node.\n\nTo reproduce, we can add \"raise Exception\" after spawn in _build_instance().\n\nmore details see:\nTraceback (most recent call last):\n  File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1043, in _build_instance\n    set_access_ip=set_access_ip)\n  File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1426, in _spawn\n    LOG.exception(_('Instance failed to spawn'), instance=instance)\n  File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1423, in _spawn\n    block_device_info)\n  File \"/usr/lib64/python2.6/site-packages/nova/virt/libvirt/driver.py\", line 2083, in spawn\n    admin_pass=admin_password)\n  File \"/usr/lib64/python2.6/site-packages/nova/virt/libvirt/driver.py\", line 2480, in _create_image\n    net = netutils.get_injected_network_template(network_info)\n  File \"/usr/lib64/python2.6/site-packages/nova/virt/netutils.py\", line 74, in get_injected_network_\n    if not (network_info and template):\n  File \"/usr/lib64/python2.6/site-packages/nova/network/model.py\", line 379, in __len__\n    return self._sync_wrapper(fn, *args, **kwargs)\n  File \"/usr/lib64/python2.6/site-packages/nova/network/model.py\", line 366, in _sync_wrapper\n    self.wait()\n  File \"/usr/lib64/python2.6/site-packages/nova/network/model.py\", line 398, in wait\n    self[:] = self._gt.wait()\n  File \"/usr/lib64/python2.6/site-packages/eventlet/greenthread.py\", line 168, in wait\n    return self._exit_event.wait()\n  File \"/usr/lib64/python2.6/site-packages/eventlet/event.py\", line 120, in wait\n    current.throw(*self._exc)\n  File \"/usr/lib64/python2.6/site-packages/eventlet/greenthread.py\", line 194, in main\n    result = function(*args, **kwargs)\n  File \"/usr/lib64/python2.6/site-packages/nova/compute/manager.py\", line 1244, in _allocate_network\n    dhcp_options=dhcp_options)\n  File \"/usr/lib64/python2.6/site-packages/nova/network/neutronv2/api.py\", line 243, in allocate_for\n    raise exception.PortInUse(port_id=port_id)\nPortInUse: Port faf3aa64-11f8-4fc7-81bc-084098014f4a is still in use.", 
+            "date_created": "2014-04-16 08:50:10.405523+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liusheng"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/87915", 
+            "date_created": "2014-04-16 10:27:48.617855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/havana\nReview: https://review.openstack.org/89505", 
+            "date_created": "2014-04-22 08:38:32.316991+00:00", 
+            "author": "https://api.launchpad.net/1.0/~openstack-gerrit"
+        }, 
+        {
+            "content": "actually, this bug may no longer be valid... because I think the build process doesn't deallocate and attempt to reallocate on reschedules anymore (unless the driver is baremetal/ironic)...   Can you check the latest code from master to see if this is still a problem?", 
+            "date_created": "2014-06-23 03:25:41.341970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Ignore that last comment.", 
+            "date_created": "2014-06-23 04:14:08.128948+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "So I think the real problem here is that the device_id was never unassigned before the instance rescheduled.  I suspect this review that landed 5 days ago happens to fix this bug also:\n\nhttps://review.openstack.org/#/c/99400/\n\n", 
+            "date_created": "2014-06-23 04:21:13.001692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Change abandoned by liusheng (<email address hidden>) on branch: master\nReview: https://review.openstack.org/87915\nReason: abandon, the https://review.openstack.org/#/c/99400/ has fixed this bug :(", 
+            "date_created": "2014-06-23 04:54:43.016770+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Chris Behrens: thanks, it is.  this bug has been fixed in https://review.openstack.org/#/c/99400/.", 
+            "date_created": "2014-06-23 04:57:08.543009+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liusheng"
+        }, 
+        {
+            "content": "Confirmed that review above does fix this problem too.  Marking this as duplicate as 1321381 and closing.", 
+            "date_created": "2014-06-23 15:06:05.933112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "nevermind...  was changed to invalid already.", 
+            "date_created": "2014-06-23 15:07:00.462846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }
+    ], 
+    "closed": "2014-06-23 04:57:28.682330+00:00"
+}

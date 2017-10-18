@@ -1,0 +1,45 @@
+{
+    "status": "Triaged", 
+    "last_updated": "2016-11-08 10:57:41.499821+00:00", 
+    "description": "Hi,\nWe use virtio-scsi by adding into our glance image properties hw_scsi_model=virtio-scsi and hw_disk_bus=scsi\n\nIt works well most of the times, but when the instance got more than six disks attached, additional disk doesn't have virtio-scsi enabled.\n\nI have dig into the issue, nova seems generated a correct xml with \"one\" virtio-scsi and attached disks to it but libvirt transforms the xml. It adds another scsi controller (that use 53c895a driver instead of virtio-scsi) and attach some disks to\nthis controllers.\n\nExtract of the bugged libvirt xml built by libvirt:\n\n<controller type='scsi' index='0' model='virtio-scsi'>\n\u00a0\u00a0<address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>\n</controller>\n<controller type='scsi' index='1'>\n\u00a0\u00a0<address type='pci' domain='0x0000' bus='0x00' slot='0x05' function='0x0'/>\n</controller>\n\nInside the vm, with lspci I see these controllers:\n\n00:04.0 SCSI storage controller: Red Hat, Inc Virtio SCSI\n00:05.0 SCSI storage controller: LSI Logic / Symbios Logic 53c895a\n\nSome disks are attached to pci-00:04.0 and some other to pci-00:05.0 .\n\nOur current workaround is:\n\n --- nova/virt/libvirt/driver.py.orig    2015-12-09 12:18:49.016279849 +0100\n +++ nova/virt/libvirt/driver.py 2015-12-09 12:19:47.042987865 +0100\n @@ -3247,10 +3269,12 @@\n \u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if (image_meta and\n \u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0image_meta.get('properties', {}).get('hw_scsi_model')):\n \u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0hw_scsi_model = image_meta['properties']['hw_scsi_model']\n -            scsi_controller = vconfig.LibvirtConfigGuestController()\n -            scsi_controller.type = 'scsi'\n -            scsi_controller.model = hw_scsi_model\n -            devices.append(scsi_controller)\n +            for i in range(0, 3):\n +                scsi_controller = vconfig.LibvirtConfigGuestController()\n +                scsi_controller.type = 'scsi'\n +                scsi_controller.index = i\n +                scsi_controller.model = hw_scsi_model\n +                devices.append(scsi_controller)\n\nCheers,", 
+    "tags": [
+        "libvirt", 
+        "ops"
+    ], 
+    "importance": "Medium", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1524301", 
+    "owner": "None", 
+    "id": 1524301, 
+    "index": 4406, 
+    "openned": "2015-12-09 11:24:09.532901+00:00", 
+    "created": "2015-12-09 11:24:09.532901+00:00", 
+    "title": "image_meta scsi model ignored ", 
+    "comments": [
+        {
+            "content": "Hi,\nWe use virtio-scsi by adding into our glance image properties hw_scsi_model=virtio-scsi and hw_disk_bus=scsi\n\nIt works well most of the times, but when the instance got more than six disks attached, additional disk doesn't have virtio-scsi enabled. \n\nI have dig into the issue, nova seems generated a correct xml with \"one\" virtio-scsi and attached disks to it but libvirt transforms the xml. It adds another scsi controller (that use 53c895a driver instead of virtio-scsi) and attach some disks to \nthis controllers.\n\nExtract of the bugged libvirt xml built by libvirt:\n\n<controller type='scsi' index='0' model='virtio-scsi'>\n  <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>\n</controller>\n<controller type='scsi' index='1'>\n  <address type='pci' domain='0x0000' bus='0x00' slot='0x05' function='0x0'/>\n</controller>\n\nInside the vm, with lspci I see these controllers:\n\n00:04.0 SCSI storage controller: Red Hat, Inc Virtio SCSI \n00:05.0 SCSI storage controller: LSI Logic / Symbios Logic 53c895a\n\nSome disks are attached to pci-00:04.0 and some other to pci-00:05.0 .\n\nOur current workaround is:\n\n--- nova/virt/libvirt/driver.py.orig    2015-12-09 12:18:49.016279849 +0100\n+++ nova/virt/libvirt/driver.py 2015-12-09 12:19:47.042987865 +0100\n@@ -3247,10 +3269,12 @@\n         if (image_meta and\n                 image_meta.get('properties', {}).get('hw_scsi_model')):\n             hw_scsi_model = image_meta['properties']['hw_scsi_model']\n-            scsi_controller = vconfig.LibvirtConfigGuestController()\n-            scsi_controller.type = 'scsi'\n-            scsi_controller.model = hw_scsi_model\n-            devices.append(scsi_controller)\n+            for i in range(0, 3):\n+                scsi_controller = vconfig.LibvirtConfigGuestController()\n+                scsi_controller.type = 'scsi'\n+                scsi_controller.index = i\n+                scsi_controller.model = hw_scsi_model\n+                devices.append(scsi_controller)\n\n\nCheers,", 
+            "date_created": "2015-12-09 11:24:09.532901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sileht"
+        }, 
+        {
+            "content": "Hi Mehdi, can you provide more information so we can attempt to reproduce your issue?\n\n1) Can you clarify what is the behavior you are seeing and what is the behavior you expect? If you are getting specific error messages, what are they?\n\n2) What version of OpenStack Nova and Glance are you running? (Kilo, Liberty, Mitaka, master, etc)\n\n3) Can you provide steps to reproduce this issue so that we can attempt to reproduce it and identify where the error may be happening?\n\nThanks!\n", 
+            "date_created": "2016-03-29 23:57:39.414823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "All your ask are already in my bug report..., so let's me just rephrase.\n\nThe issue occurs when the image have the properties hw_scsi_model=virtio-scsi and hw_disk_bus=scsi.\n\n1) When the instance have more that 6 volumes attached I see inside the instance one \"Virtio SCSI\" controller and one \"LSI Logic\" controller, When it should be two \"Virtio SCSI\" controllers.\n\n2) I run into that issue with Kilo and liberty. Mikita and master branch are still impacted because nova continue to insert only one \"Virtio SCSI\" card: https://github.com/openstack/nova/blob/4261013c830a6bb67844fe0371328c5b3d0add2b/nova/virt/libvirt/driver.py#L3656\n\n3) Steps are:\n* put properties hw_scsi_model=virtio-scsi and hw_disk_bus=scsi on a glance image\n* attach more than 6 volumes on it\n* All created scsi controllers should be type \"Virtio SCSI\", but currently only the first card is correct.", 
+            "date_created": "2016-03-30 05:42:22.875959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sileht"
+        }, 
+        {
+            "content": "Setting to In-Progress because zhaolh picked it up.  Zhaolh if you change your mind please unassign yourself and set back to New.", 
+            "date_created": "2016-04-18 17:20:32.945587+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Hello,\n\nas of today, this bug still exists. And its still the same way Mehdi described it. So if you're lucky to have in image which uses virtio-scsi, at least the first 6 disks are visible to the instance, the other ones are attached to the lsi controller.\n\nI'd like to discuss Mehdis workaround, as it simply creates 4 controllers, which might be okay, but in case you attach 25 or more disks, it would end up on the next lsi controller. So how can this be fixed in a good way? Ideas? Pointers?\n\nCheers,\nSven", 
+            "date_created": "2016-10-12 10:59:22.783164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smichels"
+        }
+    ]
+}

@@ -1,0 +1,40 @@
+{
+    "status": "Expired", 
+    "last_updated": "2017-09-27 04:17:40.116781+00:00", 
+    "description": "We ran into an issue using a March ocata build. We have some system_metadata that we need to save very early in a VM's life. Previously we did this during scheduling. After the switch to cells v2, we now listen for the compute.instance.create.start and add the key to the instance's system_metadata then. The problem is that because of how nova.objects.Instance.save() works when saving metadata there is a race condition that causes some of the system_metadata to be lost.\n\n\nBasic setup of the instance.save() problem:\ntest_uuid = <uuid>\ninst_ref_1 = nova.objects.Instance.get_by_uuid(context, test_uuid)\ninst_ref_2 = nova.objects.Instance.get_by_uuid(context, test_uuid)\n\ninst_ref_1.system_metadata.update({'key1': 'val1'})\ninst_ref_2.system_metadata.update({'key2': 'val2'})\n(Note: You need to read or update inst_ref_2.system_metadata at least once before calling inst_ref_1.save() the first time otherwise the lazy load on inst_ref_2.system_metadata will pick up inst_ref_1's change and hide the issue.)\ninst_ref_1.save()\n(Note: can check db before the next save to confirm the first save worked)\ninst_ref_2.save()\n\nAfterward, nova.objects.Instance.get_by_uuid(context, test_uuid).system_metadata returns {'key2': 'val2'} instead of the desired {'key1': 'val1', 'key2': 'val2'}\nWatching the db also reflects that the key1 was present after inst_ref_1.save() but was then removed and replaced with key2 after inst_ref_2.save().\n\nThe issue is the flow of Instance.save(). It eventually calls nova.db.sqlalchemy.api._instance_metadata_update_in_place(). That method assumes if a key is found in the db but is not in the passed metadata dict, that it should delete the key from the db.\nSo in the example above, because the inst_ref_2.system_metadata dictionary does not have the key added by inst_ref_1.save(), the inst_ref2.save() is deleting the entry added by inst_ref_1.save().\n\n\nIssue this creates:\nnova.compute.manager._build_and_run_instance() starts by sending the compute.instance.create.start notification. Immediately after that a recent unrelated change (https://github.com/openstack/nova/commit/6d8b58dc6f1cbda8d664b3487674f87049491c74) calls instance.system_metadata.update({'boot_roles': ','.join(context.roles)}). The first instance.save() in _build_and_run_instance() is called as a side effect of 'with rt.instance_claim(context, instance, node, limits)'. (FWIW it's also called again very shortly after that in _build_and_run_instance() itself when vm_state and task_state are set).\n\nThis creates the race condition mentioned at the top. Our listener gets the compute.instance.create.start notification is also attempting to update the instance's system_metadata. The listener has to create it's own reference to the same instance so depending on which instance reference's save() is called first (the one in our listener or the one from _build_and_run_instance()) one of the updates to system_metadata gets lost.\n\nExpected result:\nIndependent Instance.save() calls containing don't wipe out non-conflicting key changes.\n\nActual result:\nThey do.", 
+    "tags": [
+        "openstack-version.ocata"
+    ], 
+    "importance": "Undecided", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1674003", 
+    "owner": "None", 
+    "id": 1674003, 
+    "index": 8009, 
+    "openned": "2017-03-18 17:56:52.499063+00:00", 
+    "created": "2017-03-18 17:56:52.499063+00:00", 
+    "title": "Race condition cause instance system_updates to be lost", 
+    "comments": [
+        {
+            "content": "We ran into an issue using a March ocata build. We have some system_metadata that we need to save very early in a VM's life. Previously we did this during scheduling. After the switch to cells v2, we now listen for the compute.instance.create.start and add the key to the instance's system_metadata then. The problem is that because of how nova.objects.Instance.save() works when saving metadata there is a race condition that causes some of the system_metadata to be lost.\n\n\nBasic setup of the instance.save() problem:\ntest_uuid = <uuid>\ninst_ref_1 = nova.objects.Instance.get_by_uuid(context, test_uuid)\ninst_ref_2 = nova.objects.Instance.get_by_uuid(context, test_uuid)\n\ninst_ref_1.system_metadata.update({'key1': 'val1'})\ninst_ref_2.system_metadata.update({'key2': 'val2'})\n(Note: You need to read or update inst_ref_2.system_metadata at least once before calling inst_ref_1.save() the first time otherwise the lazy load on inst_ref_2.system_metadata will pick up inst_ref_1's change and hide the issue.)\ninst_ref_1.save()\n(Note: can check db before the next save to confirm the first save worked)\ninst_ref_2.save()\n\nAfterward, nova.objects.Instance.get_by_uuid(context, test_uuid).system_metadata returns {'key2': 'val2'} instead of the desired {'key1': 'val1', 'key2': 'val2'}\nWatching the db also reflects that the key1 was present after inst_ref_1.save() but was then removed and replaced with key2 after inst_ref_2.save().\n\nThe issue is the flow of Instance.save(). It eventually calls nova.db.sqlalchemy.api._instance_metadata_update_in_place(). That method assumes if a key is found in the db but is not in the passed metadata dict, that it should delete the key from the db.\nSo in the example above, because the inst_ref_2.system_metadata dictionary does not have the key added by inst_ref_1.save(), the inst_ref2.save() is deleting the entry added by inst_ref_1.save().\n\n\nIssue this creates:\nnova.compute.manager._build_and_run_instance() starts by sending the compute.instance.create.start notification. Immediately after that a recent unrelated change (https://github.com/openstack/nova/commit/6d8b58dc6f1cbda8d664b3487674f87049491c74) calls instance.system_metadata.update({'boot_roles': ','.join(context.roles)}). The first instance.save() in _build_and_run_instance() is called as a side effect of 'with rt.instance_claim(context, instance, node, limits)'. (FWIW it's also called again very shortly after that in _build_and_run_instance() itself when vm_state and task_state are set).\n\nThis creates the race condition mentioned at the top. Our listener gets the compute.instance.create.start notification is also attempting to update the instance's system_metadata. The listener has to create it's own reference to the same instance so depending on which instance reference's save() is called first (the one in our listener or the one from _build_and_run_instance()) one of the updates to system_metadata gets lost.\n\nExpected result:\nIndependent Instance.save() calls containing don't wipe out non-conflicting key changes.\n\nActual result:\nThey do.", 
+            "date_created": "2017-03-18 17:56:52.499063+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cjvolzka"
+        }, 
+        {
+            "content": "Automatically discovered version ocata in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:56:40.874685+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "What is the system metadata you are injecting? Is this something that can be in the upstream path instead?\n\nMaybe going deeper into the problem you are solving would help the Nova team figure out if there is a more stable way to support that.", 
+            "date_created": "2017-07-28 12:26:01.880772+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2017-09-27 04:17:37.024870+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2017-09-27 04:17:38.111573+00:00"
+}

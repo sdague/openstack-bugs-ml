@@ -1,0 +1,83 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-06-16 17:19:49.428136+00:00", 
+    "description": "Instance snapshots of instances sourced from, e.g., QCOW2 images will be created in the image service as \"qcow2\" and then switched to \"raw\" in an update step.\n\nUse case:\n\nWe decided to drop QCOW2 support from certain product configurations, as force_raw_images is enabled by default, and the conversion overhead made for a sub-wonderful customer experience.\n\nAfter dropping QCOW2 from the acceptable list of image formats from Glance, clients could no longer make instance snapshots from instances that were spawned from QCOW2 images, despite the fact that the backing store was not QCOW2.\n\nSteps to Reproduce:\n\n1. Upload a QCOW2 image into Glance\n2. Update Nova/Glance configs to disable QCOW2 images and enable force_raw_images\n3. Boot an instance against the QCOW2 image\n4. Create a snapshot of the instance\n\nExpected behavior:\n\nA snapshot of the instance\n\nActual results:\n    ERROR (BadRequest): <html>\n     <head>\n      <title>400 Bad Request</title>\n     </head>\n     <body>\n      <h1>400 Bad Request</h1>\n      Invalid disk format 'qcow2' for image.<br /><br />\n    \n     </body>\n    </html> (HTTP 400) (HTTP 400) (Request-ID: req-8e8d8d51-8e0c-4033-bb84-774d2ed1f90a)", 
+    "tags": [
+        "config", 
+        "images", 
+        "liberty-backport-potential", 
+        "snapshot"
+    ], 
+    "importance": "Medium", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1497484", 
+    "owner": "https://api.launchpad.net/1.0/~nicolas.simonds", 
+    "id": 1497484, 
+    "index": 4355, 
+    "openned": "2015-09-19 00:30:40.408153+00:00", 
+    "created": "2015-09-19 00:30:40.408153+00:00", 
+    "title": "image-create does not respect the force_raw_images setting", 
+    "comments": [
+        {
+            "content": "Instance snapshots of instances sourced from, e.g., QCOW2 images will be created in the image service as \"qcow2\" and then switched to \"raw\" in an update step.\n\nUse case:\n\nWe decided to drop QCOW2 support from certain product configurations, as force_raw_images is enabled by default, and the conversion overhead made for a sub-wonderful customer experience.\n\nAfter dropping QCOW2 from the acceptable list of image formats from Glance, clients could no longer make instance snapshots from instances that were spawned from QCOW2 images, despite the fact that the backing store was not QCOW2.\n\nSteps to Reproduce:\n\n1. Upload a QCOW2 image into Glance\n2. Update Nova/Glance configs to disable QCOW2 images and enable force_raw_images\n3. Boot an instance against the QCOW2 image\n4. Create a snapshot of the instance\n\nExpected behavior:\n\nA snapshot of the instance\n\nActual results:\n    ERROR (BadRequest): <html>\n     <head>\n      <title>400 Bad Request</title>\n     </head>\n     <body>\n      <h1>400 Bad Request</h1>\n      Invalid disk format 'qcow2' for image.<br /><br />\n    \n     </body>\n    </html> (HTTP 400) (HTTP 400) (Request-ID: req-8e8d8d51-8e0c-4033-bb84-774d2ed1f90a)", 
+            "date_created": "2015-09-19 00:30:40.408153+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "Addendum on the reproduction steps:\n\nStep 2 involves configuring Nova as:\n\n    [DEFAULT]\n    force_raw_images = True\n    use_cow_images = False\n\n...and Glance as:\n\n    [DEFAULT]\n    disk_formats = ami,ari,aki,raw,iso", 
+            "date_created": "2015-09-21 18:48:50.715849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/226069", 
+            "date_created": "2015-09-21 21:51:44.362845+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The reported error appears to originate from glance. Without logs it's hard to be 100% certain, but my supposition is that it's raised when nova tries to push the created snapshot to glance, and glance rejects it because it's qcow2.\n\nThe question then becomes: why is nova creating a qcow2 snapshot image? The reasons would be appear to be either that the existing disk is qcow2 (or was mis-detected as such, see bug 1524274), or that the config variable snapshot_image_format is set to qcow2. Or alternatively some other tortured reason in this organic heap of code.\n\nThis does suggest a solution, though. If you set 'snapshot_image_format' to 'raw' in nova.conf, it should always convert to raw before uploading to glance. If my original supposition is correct, this should fix your problem without any code changes.", 
+            "date_created": "2016-01-13 15:12:46.502124+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mbooth-9"
+        }, 
+        {
+            "content": "Nova is not creating a QCOW2 snapshot; it's creating a RAW snapshot, and telling Glance that it created a QCOW2 snapshot.  Glance actually detects the mismatch, and updates the disk_format after ingest.  So the whole \"Nova lies to Glance\" family of bugs is known about on their side, and has been worked around already.\n\nUnless, of course, you tell Glance not to accept QCOW2 images for ingest.  Then it does a full-stop and the whole thing flies apart.", 
+            "date_created": "2016-01-13 17:28:42.297275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "I was able to reproduce the bug quite easily given the recommended configuration; the error occurs in the Nova API, and none of the other services seem to log anything untoward happening at all:\n\n    2016-01-14 22:23:55.831 DEBUG nova.api.openstack.wsgi [req-1ad0dc6d-5021-4d6c-8f92-b4333e61849e admin admin] Action: 'action', calling method: <bound method ServersController._action_create_image of <nova.api.openstack.compute.servers.ServersController object at 0x7fd2a9c5b450>>, body: {\"createImage\": {\"name\": \"zomg\", \"metadata\": {}}} from (pid=15657) _process_stack /opt/stack/nova/nova/api/openstack/wsgi.py:795\n    2016-01-14 22:23:55.979 DEBUG nova.compute.api [req-1ad0dc6d-5021-4d6c-8f92-b4333e61849e admin admin] [instance: c3a69c63-e0e7-4b58-aadc-51e53ba2478d] Fetching instance by UUID from (pid=15657) get /opt/stack/nova/nova/compute/api.py:1946\n    2016-01-14 22:23:56.086 INFO nova.api.openstack.wsgi [req-1ad0dc6d-5021-4d6c-8f92-b4333e61849e admin admin] HTTP exception thrown: 400 Bad Request: Invalid disk format 'qcow2' for image. (HTTP 400)\n    2016-01-14 22:23:56.087 DEBUG nova.api.openstack.wsgi [req-1ad0dc6d-5021-4d6c-8f92-b4333e61849e admin admin] Returning 400 to user: 400 Bad Request: Invalid disk format 'qcow2' for image. (HTTP 400) from (pid=15657) __call__ /opt/stack/nova/nova/api/openstack/wsgi.py:1180\n    2016-01-14 22:23:56.090 INFO nova.osapi_compute.wsgi.server [req-1ad0dc6d-5021-4d6c-8f92-b4333e61849e admin admin] 10.0.2.15 \"POST /v2.1/1b03f2f440e74a8191d8d62027c1e460/servers/c3a69c63-e0e7-4b58-aadc-51e53ba2478d/action HTTP/1.1\" status: 400 len: 402 time: 0.2918901", 
+            "date_created": "2016-01-14 22:27:45.089765+00:00", 
+            "author": "https://api.launchpad.net/1.0/~nicolas.simonds"
+        }, 
+        {
+            "content": "Tagged with an official tag.", 
+            "date_created": "2016-03-07 08:33:40.701338+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/226069\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=8cfc8a837592c9494608d68db2bac1954c573a4b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8cfc8a837592c9494608d68db2bac1954c573a4b\nAuthor: Nicolas Simonds <email address hidden>\nDate:   Mon Sep 21 11:17:43 2015 -0700\n\n    Compute API: omit disk/container formats when creating images of snapshots\n    \n    If making a snapshot, omit the disk and container formats from the\n    image API request, since the image may have been converted to another\n    format than what the base image uses.  The driver will correctly\n    populate these values later when uploading the image data.\n    \n    Closes-Bug: 1497484\n    Change-Id: I69522977631be2ae42ac504740c04247c75022eb\n", 
+            "date_created": "2016-05-12 22:10:16.580906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/322084", 
+            "date_created": "2016-05-27 11:15:18.137228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:33:38.938363+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/322084\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0c21aff7e1624b6877b2e4289d8d19700adc9b8d\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 0c21aff7e1624b6877b2e4289d8d19700adc9b8d\nAuthor: Nicolas Simonds <email address hidden>\nDate:   Mon Sep 21 11:17:43 2015 -0700\n\n    Compute API: omit disk/container formats when creating images of snapshots\n    \n    If making a snapshot, omit the disk and container formats from the\n    image API request, since the image may have been converted to another\n    format than what the base image uses.  The driver will correctly\n    populate these values later when uploading the image data.\n    \n    Closes-Bug: 1497484\n    Change-Id: I69522977631be2ae42ac504740c04247c75022eb\n    (cherry picked from commit 8cfc8a837592c9494608d68db2bac1954c573a4b)\n", 
+            "date_created": "2016-06-07 22:49:45.696685+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.0 release.", 
+            "date_created": "2016-06-14 15:41:43.191133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~doug-hellmann"
+        }
+    ], 
+    "closed": "2016-05-12 22:10:14.113326+00:00"
+}

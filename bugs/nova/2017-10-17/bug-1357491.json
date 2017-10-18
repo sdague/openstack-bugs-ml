@@ -1,0 +1,91 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-05-18 03:56:18.185661+00:00", 
+    "description": "AFAICT, there's no good reason to have a foreign key relation between compute_nodes and services. In fact, I see no reason why compute_nodes needs to have a service_id column at all.\n\nThe service is the representation of the message bus between the nova-conductor and the nova-compute worker processes. The compute node is merely the collection of resources for a provider of compute resources. There's really no reason to relate the two with each other.\n\nThe fact that they are related to each other means that the resource tracker ends up needing to \"find\" its compute node record by first looking up the service record for the 'compute' topic and the host for the resource tracker, and then grabs the first compute_node record that is related to the service record that matches that query. There is no reason to do this in the resource tracker ... other than the fact that right now the compute_node table has a service_id field and a relation to the services table. But this relationship is contrived and is not needed AFAICT.\n\nThe solution to this is to remove the service_id column from the compute_nodes table and model, remove the foreign key relation to the services table from the compute_nodes table, and then simply look up a compute_node record directly from the host and nodename fields instead of looking up a service record first.", 
+    "tags": [
+        "resource-tracker", 
+        "scheduler"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1357491", 
+    "owner": "https://api.launchpad.net/1.0/~sylvain-bauza", 
+    "id": 1357491, 
+    "index": 2854, 
+    "openned": "2014-08-15 17:56:35.693990+00:00", 
+    "created": "2014-08-15 17:56:35.693990+00:00", 
+    "title": "Detach service from compute_node", 
+    "comments": [
+        {
+            "content": "AFAICT, there's no good reason to have a foreign key relation between compute_nodes and services. In fact, I see no reason why compute_nodes needs to have a service_id column at all.\n\nThe service is the representation of the message bus between the nova-conductor and the nova-compute worker processes. The compute node is merely the collection of resources for a provider of compute resources. There's really no reason to relate the two with each other.\n\nThe fact that they are related to each other means that the resource tracker ends up needing to \"find\" its compute node record by first looking up the service record for the 'compute' topic and the host for the resource tracker, and then grabs the first compute_node record that is related to the service record that matches that query. There is no reason to do this in the resource tracker ... other than the fact that right now the compute_node table has a service_id field and a relation to the services table. But this relationship is contrived and is not needed AFAICT.\n\nThe solution to this is to remove the service_id column from the compute_nodes table and model, remove the foreign key relation to the services table from the compute_nodes table, and then simply look up a compute_node record directly from the host and nodename fields instead of looking up a service record first.", 
+            "date_created": "2014-08-15 17:56:35.693990+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "After further looking into the code, it seems that, weirdly, the compute_nodes table does not have a host column, but instead only has the hypervisor_hostname column. This is a hack. A solution that removes the relationship between services and compute_nodes must first bring in the host column from services and then detach the relationship.", 
+            "date_created": "2014-08-15 22:16:35.113541+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "Unfortunately, that's not that simple: we can have one host with multiple nodenames (eg. for Baremetal driver)\n\nHypervisor_hostname is the single source of truth for nodename, while host is referring to service.host\n\nSo, we can get rid of that dependency (and I truly say YES!) but we need to carry on a certain representation of the mapping 1:N host, nodename)\n", 
+            "date_created": "2014-08-22 15:58:44.350657+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Just a quick check on service_get_by_compute_host() calls shows me that this method is also called by API directly (and proxied also by cells API) to get the details for the computes and also for nova-manage.\n\nThere is also another call for live migrate in order to get the stats too, plus of course the RT call.\n\n So the strategy I'll take will be :\n - remove the FK \n - remove the service_id field on compute_nodes table\n - rewrite service_get_by_compute_host() in order to do a join on service.host == compute_nodes.hypervisor_hostname\n - remove the RT call and only look at compute_nodes only in RT\n\nThat said, removing the FK will prevent autodeletion of computes when services are deleted, so we'll probably need to remove the computes by hand when calling the service deletion.", 
+            "date_created": "2014-08-25 21:48:19.363185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/119807", 
+            "date_created": "2014-09-08 16:40:35.712429+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/126372", 
+            "date_created": "2014-10-06 17:47:13.648623+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/126558", 
+            "date_created": "2014-10-07 13:57:56.880863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/126573", 
+            "date_created": "2014-10-07 14:47:47.349929+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sylvain Bauza (<email address hidden>) on branch: master\nReview: https://review.openstack.org/119807\nReason: Splitting the change into a series starting with https://review.openstack.org/#/c/126372/", 
+            "date_created": "2014-10-07 15:08:46.496190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/126745", 
+            "date_created": "2014-10-07 22:35:19.967066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/126883", 
+            "date_created": "2014-10-08 12:17:50.601517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This change requires a spec as it involves DB migrations", 
+            "date_created": "2014-10-08 16:28:21.771172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/315043", 
+            "date_created": "2016-05-11 13:45:27.693287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/315043\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d7cc32b51408aa524a1b765debbba56b5e28b26b\nSubmitter: Jenkins\nBranch:    master\n\ncommit d7cc32b51408aa524a1b765debbba56b5e28b26b\nAuthor: Jay Pipes <email address hidden>\nDate:   Wed May 11 09:13:11 2016 -0400\n\n    pci: create PCI tracker in RT._init_compute_node\n    \n    The end goal is to have the ResourceTracker's constructor be responsible\n    for creating the ComputeNode object/DB record and do all setup of\n    various resource tracking, including PCI device handling, querying the\n    aggregate and associated resource pool inventory information and\n    communication with the virt driver to gather host resources.\n    \n    Before we can do that, however, we need to consolidate the creation of\n    various tracking entities into the ResourceTracker._init_compute_node()\n    method. This patch moves the creation of the\n    nova.pci.manager.PciDevTracker into the _init_compute_node() method and\n    cleans up a number of unit tests that were manually setting the\n    ResourceTracker.compute_node attribute to a fixture value (and in so\n    doing improperly circumventing the initialization process by relying on\n    the ResourceTracker.update_available_resource() to populate resource\n    information in that ComputeNode object.\n    \n    Change-Id: I39a5436ee86e2d9b90f8f3e185353a04b277d434\n    Related-bug: #1357453\n    Related-bug: #1357491\n", 
+            "date_created": "2016-05-18 03:56:17.694348+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-10-08 16:27:57.763862+00:00"
+}

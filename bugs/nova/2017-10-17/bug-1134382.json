@@ -1,0 +1,63 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-08-06 14:49:30.739377+00:00", 
+    "description": "It came to my attention that when trying to list the instances of an specific tenant, the --tenant argument provided for the list function is ignored.\n\nThe default tenant for this action is OS_TENANT_NAME.\n\nSteps to reproduce:\n\n1. Create one or more instances in different tenants, e.g. demo and demo2\n2. Use nova list with --tenant argument initiated with demo's tenant id\n3. Use nova list with --tenant argument initiated with demo2's tenant id\n4. Check that the output is the same for 2. and 3.\n\nExpected result: Instance list for each tenant\n\nActual result:\n\nTenant: demo - Instances: Cirros1.1 and Cirros1.2\nTenant: demo2 - Instances: Cirros2.1 and Cirros 2.2\n\nOS_TENANT_NAME = demo\n\n[vkmc@thermalx2 ~]$ keystone tenant-list\n+----------------------------------+--------------------+---------+\n|                id                |        name        | enabled |\n+----------------------------------+--------------------+---------+\n| 96776baee20e49c49af03967eb23e9b6 |       admin        |   True  |\n| fa7880aa16d349fbb925ece6da58e93e |      alt_demo      |   True  |\n| e449b529f202419994051578e3e639a9 |        demo        |   True  |\n| 186b554e5b344cc5b0fa2f644d4e73c2 |       demo2        |   True  |\n| 9d862590f7ec4d0a993e44f715008fad | invisible_to_admin |   True  |\n| 6e1525e829754ef29c8cabbde9a7566b |      service       |   True  |\n+----------------------------------+--------------------+---------+\n[vkmc@thermalx2 ~]$ nova list --all-tenants 1\n+--------------------------------------+-----------+--------+------------------+\n| ID                                   | Name      | Status | Networks         |\n+--------------------------------------+-----------+--------+------------------+\n| 4f3e08b5-4fb3-405d-a682-41e8840d9227 | Cirros1.1 | ACTIVE | private=10.0.0.3 |\n| e74a88c5-de2d-4e9a-893a-d095b6318f61 | Cirros1.2 | ACTIVE | private=10.0.0.4 |\n| 5c9c77f8-b272-43b1-80dd-69a26b2890c2 | Cirros2.1 | ACTIVE | net2=192.168.0.3 |\n| 2c6ad73b-3dc5-4761-a17f-f544776a86f3 | Cirros2.2 | ACTIVE | net2=192.168.0.4 |\n+--------------------------------------+-----------+--------+------------------+\n[vkmc@thermalx2 ~]$ nova list --tenant e449b529f202419994051578e3e639a9 (demo)\n+--------------------------------------+-----------+--------+------------------+\n| ID                                   | Name      | Status | Networks         |\n+--------------------------------------+-----------+--------+------------------+\n| 4f3e08b5-4fb3-405d-a682-41e8840d9227 | Cirros1.1 | ACTIVE | private=10.0.0.3 |\n| e74a88c5-de2d-4e9a-893a-d095b6318f61 | Cirros1.2 | ACTIVE | private=10.0.0.4 |\n+--------------------------------------+-----------+--------+------------------+\n[vkmc@thermalx2 ~]$ nova list --tenant 186b554e5b344cc5b0fa2f644d4e73c2 (demo2)\n+--------------------------------------+-----------+--------+------------------+\n| ID                                   | Name      | Status | Networks         |\n+--------------------------------------+-----------+--------+------------------+\n| 4f3e08b5-4fb3-405d-a682-41e8840d9227 | Cirros1.1 | ACTIVE | private=10.0.0.3 |\n| e74a88c5-de2d-4e9a-893a-d095b6318f61 | Cirros1.2 | ACTIVE | private=10.0.0.4 |\n+--------------------------------------+-----------+--------+------------------+", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1134382", 
+    "owner": "https://api.launchpad.net/1.0/~rpodolyaka", 
+    "id": 1134382, 
+    "index": 4716, 
+    "openned": "2013-03-27 12:57:26.452556+00:00", 
+    "created": "2013-02-27 14:17:51.878660+00:00", 
+    "title": "nova list ignores --tenant argument", 
+    "comments": [
+        {
+            "content": "It came to my attention that when trying to list the instances of an specific tenant, the --tenant argument provided for the list function is ignored.\n\nThe default tenant for this action is OS_TENANT_NAME.\n\nSteps to reproduce:\n\n1. Create one or more instances in different tenants, e.g. demo and demo2\n2. Use nova list without arguments\n3. Use nova list with --tenant argument initiated with demo's tenant id\n4. Use nova list with --tenant argument initiated with demo2's tenant id\n5. Check that the output is the same for 2. 3. and 4.\n\nHere is the output I got http://paste.openstack.org/show/32476/", 
+            "date_created": "2013-02-27 14:17:51.878660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vkmc"
+        }, 
+        {
+            "content": "I've been investigating this bug for a few hours and have found this:\n\n1. --tenant argument is not ignored, novaclient actually does following HTTP query to Nova API:\n     GET /v2/43a00152945842f0b2363acc8d7cd41b/servers/detail?project_id=5bafd111e97040d28f48e51f774c5a6f HTTP/1.1\n\n     (where 43a00152945842f0b2363acc8d7cd41b is an admin tenant id, 5bafd111e97040d28f48e51f774c5a6f is a tenant id)\n\n2. Compute API v2 spec (http://docs.openstack.org/api/openstack-compute/2/content/List_Servers-d1e2078.html) for endpoint \n     GET /{version}/{tenant_id}/servers/detail doesn't seem to provide the \"project_id\" filter used by novaclient.\n\n3. Nova code doesn't seem to provide filtering of instances by project_id (nova/nova/api/openstack/compute.py Controller._get_servers()).\n\nFiltering by tenant was added to novaclient by this patch https://review.openstack.org/#/c/16318/2. From what I see the corresponding Nova feature has never been implemented. So I attach Nova as a project affected by this bug.\n\n\n", 
+            "date_created": "2013-03-27 13:16:01.377966+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Update:\n\n1. novaclient uses the wrong filter name: \"project_id\" instead of \"tenant_id\".\n\n2. Nova actually has the code to filter instances by tenant id, but it doesn't work properly (nova/nova/compute/api.py):\n       filters = {}\n       ... \n       # search_option to filter_name mapping.\n        filter_mapping = {\n                'image': 'image_ref',\n                'name': 'display_name',\n                'tenant_id': 'project_id',\n                'flavor': _remap_flavor_filter,\n                'fixed_ip': _remap_fixed_ip_filter}\n\n        # copy from search_opts, doing various remappings as necessary\n        for opt, value in search_opts.iteritems():\n            ... \n            (remapping is done here, i. e. filters are put into the \"filters\" dict under correct names)\n\nThe problem is that \"search_opts\" dict has  \"project_id\" key (which is equal to the id of a tenant that\nmakes a request, i. e. admin) and the \"tenant_id\" key (which is used to filter instances by tenant id) and\nboth of them map to the same entry (\"project_id\") in the \"filters\" dict. So one of them will be eventually\noverwritten.\n\nquery:\nGET /v2/43a00152945842f0b2363acc8d7cd41b/servers/detail?tenant_id=5bafd111e97040d28f48e51f774c5a6f \n\npdb:\n   > /opt/stack/nova/nova/compute/api.py(1400)get_all()\n   -> for opt, value in search_opts.iteritems():\n   (Pdb) search_opts.items()\n    [('deleted', False), (u'tenant_id', u'5bafd111e97040d28f48e51f774c5a6f'), ('project_id', u'43a00152945842f0b2363acc8d7cd41b')]\n\n  ", 
+            "date_created": "2013-03-27 14:39:31.372150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/25535", 
+            "date_created": "2013-03-27 16:15:13.254298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/25541", 
+            "date_created": "2013-03-27 16:56:35.520755+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "All \"list\" call with admin context have the format:\n\nnova list --all-tenant --{filter}\n\nso --tenant filter that will work is:\n\nnova list --all-tenant --tenant xxxxxx\n\neg:\n\n nova list --all-tenant --tenant 8e94857c14df41bba01a8f246526fd0a\n+--------------------------------------+-------+--------+----------+\n| ID                                   | Name  | Status | Networks |\n+--------------------------------------+-------+--------+----------+\n| 040ac3a9-3756-4ec3-a9cf-1c7a1133ede9 | test1 | ERROR  |          |\n+--------------------------------------+-------+--------+----------+\nSearching by: {'deleted': False, u'project_id': u'8e94857c14df41bba01a8f246526fd0a', u'all_tenants': u'1'}\n\n\nnova list --all-tenant --tenant 2fb142a94c1e40b28cee175fee10aa9f\n+--------------------------------------+---------------+--------+----------+\n| ID                                   | Name          | Status | Networks |\n+--------------------------------------+---------------+--------+----------+\n| 908ed5f6-a0cb-455f-a09a-84f48ad6299c | alt_demo_test | ERROR  |          |\n+--------------------------------------+---------------+--------+----------+\nSearching by: {'deleted': False, u'project_id': u'2fb142a94c1e40b28cee175fee10aa9f', u'all_tenants': u'1'}\n\nThe same applies if you want to search by ip,host etc.\n\nLooking at the call, it wont look for project id in search_opts if you dont specify all-tenant.", 
+            "date_created": "2013-04-01 20:11:32.196150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sulochan-acharya"
+        }, 
+        {
+            "content": "Yep, that's right. But I'm not sure this is a way it should be (looking at Nova code and unit tests).", 
+            "date_created": "2013-04-01 20:44:01.337453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/25535\nCommitted: http://github.com/openstack/python-novaclient/commit/94173a3f989c87d0dce1ecdc0ad733b4621fea44\nSubmitter: Jenkins\nBranch:    master\n\ncommit 94173a3f989c87d0dce1ecdc0ad733b4621fea44\nAuthor: Roman Podolyaka <email address hidden>\nDate:   Wed Mar 27 16:48:02 2013 +0200\n\n    Use correct filter name for listing of instances\n    \n    nova list --tenant tenant_id leads to the following query to Nova API:\n    \n      GET /v2/{admin_tenant_id}/servers/detail?project_id={tenant_id}\n    \n    While Nova actually expects:\n    \n      GET /v2/{admin_tenant_id}/servers/detail?tenant_id={tenant_id}\n    \n    Fixes bug 1134382.\n    \n    Change-Id: I222208bcc9aaf547cd0b1c52dc8856123a823b8e\n", 
+            "date_created": "2013-04-02 16:10:35.168716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Current Nova behavior is considered to be right. Marked bug as invalid.", 
+            "date_created": "2013-04-08 08:10:04.247339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }
+    ], 
+    "closed": "2013-04-08 08:05:33.694051+00:00"
+}

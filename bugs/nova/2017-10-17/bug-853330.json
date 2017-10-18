@@ -1,0 +1,123 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2011-10-04 11:38:37.619321+00:00", 
+    "description": "I've only just thought of this issue, and have not investigated further.  There may be a security issue in enabling qcow images that could be exploited like this:\n\n\u00a0* user creates an image with 'qemu-img create -f qcow2 -b <FILE> mytest.img' .  Here, FILE could be anything thing (/etc/shadow, /var/lib/libvirt/qemu/isntance-0000030/disk.local).\n\u00a0* user uploads images: cloud-publish-image x86_64 mytest.img mybucket\n\u00a0* user runs instance\n\nThings that may make this less severe:\n\u00a0* i believe in ubuntu that the user libvirt-qemu user is used to run kvm, so that the file access might be limited to what that user can access.\n\u00a0* in ubuntu apparmor profiles for libvirt *may* improve this, although I don't know that they were written to protect against this.\n\u00a0* the instance wont' actually boot.  (However, I think it may be possible using block-device-mapping to attach a bootable snapshot or volume to this instance that *would* boot, and then access the root disk that way).\n * this only affects installs where 'use_cow_images' is True.  If it is false, then libvirt wills specify to kvm that the disk is 'raw' and kvm will not invoke the qemu code path which would read the backing store.\n\nI believe this could be fixed by simply refusing to run a qcow2 formated image (or any disk image) whose original image contained a backing store reference .  Ie, if 'qemu-img info <disk>' showed a 'backing file:' entry.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 274, 
+    "link": "https://bugs.launchpad.net/nova/+bug/853330", 
+    "owner": "https://api.launchpad.net/1.0/~smoser", 
+    "id": 853330, 
+    "index": 490, 
+    "openned": "2011-09-18 16:31:02.612847+00:00", 
+    "created": "2011-09-18 16:31:02.612847+00:00", 
+    "title": "qcow format could expose host filesystem information", 
+    "comments": [
+        {
+            "content": "I've only just thought of this issue, and have not investigated further.  There may be a security issue in enabling qcow images that could be exploited like this:\n\n * user creates an image with 'qemu-img create -f qcow2 -b <FILE> mytest.img' .  Here, FILE could be anything thing (/etc/shadow, /var/lib/libvirt/qemu/isntance-0000030/disk.local).\n * user uploads images: cloud-publish-image x86_64 mytest.img mybucket\n * user runs instance\n\nThings that may make this less severe:\n * i believe in ubuntu that the user libvirt-qemu user is used to run kvm, so that the file access might be limited to what that user can access.\n * in ubuntu apparmor profiles for libvirt *may* improve this, although I don't know that they were written to protect against this.\n * the instance wont' actually boot.  (However, I think it may be possible using block-device-mapping to attach a bootable snapshot to this instance that *would* boot, and then access the root disk that way).\n\nI believe this could be fixed by simply refusing to run a qcow2 formated image (or any disk image) whose original image contained a backing store reference .  Ie, if 'qemu-img info <disk>' showed a 'backing file:' entry.", 
+            "date_created": "2011-09-18 16:31:02.612847+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "OK.  So I'm almost 100% certain that this is a valid attack at this point, but still have not tested.  See if you can tell me why the following *wouldn't* work.  \nBelow:\n  * FILE is a path to something that you should not be able to read. '/dev/sda' or '/path/to/another/instances/i-0000002/disk' or possibly /etc/shadow.\n  * $KERNEL is probably a normal kernel possibly a distro built one\n  * $RAMDISK is a fully functional OS in a ramdisk (with an ssh server to reach it), but you probably don't even need this if you have vnc console access (to interactively 'fix' possibly failed initramfs boot).\n  * FILE=/dev/sda (or /path/to/likely/other/users/instance/disk)\n    \nSo, to attack:\n * qemu-img create -f qcow2 -b $FILE my-attack.img\n * cloud-publish-image --kernel-file $KERNEL --ramdisk-file $RAMDISK x86_64 $FILE my-attack-bucket\n * euca-run-instances ami-abcdefg\n * ssh to new (initramfs based rootfs), and start reading from $FILE\n\n", 
+            "date_created": "2011-09-19 12:32:24.500169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "This is precisely the issue that http://www.ubuntu.com/usn/usn-1008-1/ addressed in libvirt. qemu can use anything as a backing store, so if a guest used a raw image, it could modify the data structures of the disk to look like a qemu qcow2 file and point somewhere else. On the next guest boot after a shutdown (not reboot), libvirt would examine all the backing stores and update the apparmor dynamic profile. Running as the libvirt-qemu user helps here, cause DAC would prevent access (but when running as root, like in Lucid, this was more of a problem). libvirt was updated in the aforementioned security update to require that the domain xml match the disk. Eg, in order to use a qemu image with backing store, the domain xml must have \"<driver name='qemu' type='qcow2'>\". This makes it was that if a machine with \"<driver name='qemu' type='raw'>\" changes its on-disk format, it will fail to start because the disk (which is now a qcow2) does not match the domain xml. Guests that are already using qcow2 images are not able to change their on disk format (and if they are, qemu-kvm would get a CVE allocated for this). Finally, if using the AppArmor driver, there are paths that the guest is not allowed to access on the host (see valid_path() in virt-aa-helper.c), eg files in /etc, /proc and /sys. The blacklist is incomplete (it must be, since users need to be allowed to put their disks, etc almost anywhere on the system), but it does prevent a lot of access.\n\nAs for qemu-kvm itself, normal DAC is in effect. If the user invoking qemu-kvm has privilege, then that user can use qemu-kvm to have privileged access to files via qemu's backing store mechanism. Keep in mind, that user must already have the privileged access in the first place, so there is no privilege escalation or crossing of privilege boundaries.\n\nOne thing to keep in mind is that all members of the libvirtd group should be considered privileged (ie 'root', because of access to disks), as discussing in /usr/share/doc/libvirt-bin/README.Debian. Also keep in mind that libvirt and its AppArmor driver are not protecting the administrator (ie, a person in the libvirtd group) from herself or guests from the host, but instead protecting guests from each other and the host from the guests.\n\nKeeping all of the above in mind, within the context of Ubuntu, libvirt and qemu, there is no privilege escalation or crossing of privilege boundaries.\n\nWithin the context of nova, the cloud-publish-image should either enforce raw disks only, or do rigorous input validation on the disk file and reject files with a backing store at all or enforce that backing stores be within a particular path. The qemu-img command can aid in this:\n$ qemu-img info ./disk0.qcow2 \nimage: ./disk0.qcow2\nfile format: qcow2\nvirtual size: 8.0G (8589934592 bytes)\ndisk size: 14M\ncluster_size: 65536\nbacking file: <path>/disk0.pristine.qcow2 (actual path: <path>/disk0.pristine.qcow2)", 
+            "date_created": "2011-09-19 13:48:06.181261+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "\"Keeping all of the above in mind, within the context of Ubuntu, libvirt and qemu, there is no privilege escalation or crossing of privilege boundaries.\"\n\nI disagree.  At very least the launcher of one instance can potentially access data from another user's instance.  I see nothing above stopping them from getting raw read access to the hosts root disk.\n\nNova has a setting 'use_cow_images' which defaults to true.  If that is set, then on instance creation, nova does: qemu-img create -f qcow2 -b /path/to/pristine-disk-image /path/to/instance/cow/disk.  It passes appropriate xml to libvirt to say \"this is a qcow disk\" and thus kvm gets that as well.  Essentially the user does not need to change the disk format.  It is, as written by nova, 'qcow2'.\n\nIf the user uploads a qcow image that contains in it a backing store reference to '/dev/sda' or to /var/lib/nova/instances/i-000003/disk (a suspected path to another user's disk), then nova will launch a libvirt/kvm instance with a qcow disk image that has 2 levels of backing store.  The first merely references the second (which is what the user uploaded) and the second references a secret file on disk.\n\nUnless apparmor/ubuntu/kvm explicitly disallow 2 level qcow images, then this is valid.", 
+            "date_created": "2011-09-19 14:25:53.322436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Originally I thought it would be enough to simply:\n  * check if image had a backing store, if not, convert it to raw\n  * use the raw image\n\nHowever, this shows that that is insufficient, as the attacker could put inside the first level qcow image a second level qcow image that.  That one would survive.\n\nSo, my revised solution would be to:\n * check if image has backing store, if so, convert it to raw\n * check file format of 'raw' image, if it is not raw, raise error\n * use raw image", 
+            "date_created": "2011-09-19 14:30:10.576248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "So that comment was not as clear as it should have been. At first I was thinking this was a problem with ec2, and then realized it was a bug with nova but didn't update the comment accordingly. As such, I was trying to say 'in Ubuntu, there is no problem with libvirt and qemu-kvm on their own'. In other words, libvirt and qemu-kvm cannot be modified to enforce behavior around poor/non-existent input validation by tools which use it and down below ('within the context of nova'), you see I actually do agree with you regarding nova. \n\nIf nova is using 'use_cow_images' as true by default, it *must* do input validation on the qcow2 images, otherwise the attack you describe will work. An easy approach is simply to say it is not allowed to have a backing store file. If it does, reject it. A harder approach would be to say it is ok to have a backing store file, but it must be in this directory with a unique filename. You have to be careful here because you don't want to just say \"this directory\" otherwise the qcow2 could point to another guest's file within that directory, thus breaking privilege boundaries. nova must be the one doing this input validation (apart from it being best practice) because if it is in the libvirtd group, it is privileged and must handle allocation of VM disks and files properly (see previous comment).\n\nScott, should the security contact for nova be subscribed to this bug?", 
+            "date_created": "2011-09-19 14:36:56.883516+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "i believe that 'nova-core' is the security contact.  I opened this as a security bug against 'nova', so i would have thought that would be the default behavior of launchpad.\n", 
+            "date_created": "2011-09-19 14:39:17.867117+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "I have assigned CVE-2011-3147 to this issue in nova. Please specify this CVE number when discussing this issue.", 
+            "date_created": "2011-09-19 16:59:10.306459+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mdeslaur"
+        }, 
+        {
+            "content": "I'm attaching a proposed patch that seems to work for me, and passes tests.", 
+            "date_created": "2011-09-19 17:15:53.603317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Targeted to diablo to get this on everybody's radar. ", 
+            "date_created": "2011-09-19 17:40:31.816922+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "scott, can you branch off of rdp and propose into trunk and milestone_proposed?  We need to get this in.", 
+            "date_created": "2011-09-19 20:04:59.656362+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "This should be proposed as a bugfix branch, like \"do not use backing store in qcow files, LP: #853330\" -- that way the fix looks innocent enough for the 5 minutes it will be exposed to the public before it gets reviewed and applied. Having pre-approval of the patch here would help, though, in reducing the window.", 
+            "date_created": "2011-09-19 20:37:40.515465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "in the interest of pre-approval, please don't import the exception directly and use:\n\nfrom nova import exception\nraise exception.ImageUncacceptable(...)\n\nthx\n", 
+            "date_created": "2011-09-19 20:48:54.570712+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "ok. so i've not been able to actually exploit this on my oneiric development system which is running trunk with 'novascript'.\n\nWhat I was trying was:\n * upload a kernel $AKI\n * create ramdisk $ARI that functions as a root device with ssh (i was able to re-use the root filesystem from ttylinux.tar.gz image, I just had to create a symlink to /sbin/init from /init and bundle it as a initramfs friendly cpio archive).\n\nAfter that, I can boot an instance with that kernel and intiramfs and have access to the disk that I upload.\n\nThen, i had a running instance that has access /dev/vda.\n\nHowever, when i create a image like 'qemu-img create -f qcow2 -b /home/ubuntu/src/nova/instances/instance-00000054/disk backed-by-i054.img' and upload that with the given AKI and ARI from above, I get permission denied errors in the log.  This is obviously good, but i'm not quite sure why i'm getting them.\n\nSo, to be fair, at this point i have not actually been able to exploit this.\n\n", 
+            "date_created": "2011-09-19 20:49:24.284072+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "locally i fixed the import format suggestion from comment 12.  I'm ready to push this to a branch both trunk and milestone whenver.\n", 
+            "date_created": "2011-09-19 21:03:30.601786+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "revised patch addresses 'import' of exception, and uses '_(' for exception reasons.", 
+            "date_created": "2011-09-19 21:15:36.552022+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "+                reason=_(\"Dangerous! fmt=%s with backing file: %s\") %\n+                (fmt, data['backing file']))\n\nneeds to use dictionary format when there are multiple replacements\n", 
+            "date_created": "2011-09-19 21:32:43.889425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "OK. i have that fixed in local branch, and tests run against both milestone and trunk. and i've tested the changes do what i want with trunk.  I'll attach both patches.", 
+            "date_created": "2011-09-20 01:50:18.055944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2011-09-20 01:51:47.609696+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2011-09-20 01:52:29.511822+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "The fix for this bug is committed to\n * trunk at revision 1604 [1]\n * diablo milestone branch at revision 1192 [2]\n\n[1] http://bazaar.launchpad.net/~hudson-openstack/nova/trunk/revision/1604\n[2] http://bazaar.launchpad.net/~hudson-openstack/nova/milestone-proposed/revision/1192", 
+            "date_created": "2011-09-20 10:49:53.798701+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }
+    ], 
+    "closed": "2011-09-26 08:42:39.043157+00:00"
+}

@@ -1,0 +1,166 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-08-27 15:33:01.962822+00:00", 
+    "description": "I'm running nova in a virtualenv with a checkout of stable/juno:\n\nroot@compute1:/opt/openstack/src/nova# git branch\n  stable/icehouse\n* stable/juno\nroot@compute1:/opt/openstack/src/nova# git rev-list stable/juno | head -n 1\n54330ce33ee31bbd84162f0af3a6c74003d57329\n\nSince upgrading from icehouse, our iscsi backed instances are no longer able to live migrate, throwing exceptions like:\n\nTraceback (most recent call last):\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/oslo/messaging/rpc/dispatcher.py\", line 134, in _dispatch_and_reply\n    incoming.message))\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/oslo/messaging/rpc/dispatcher.py\", line 177, in _dispatch\n    return self._do_dispatch(endpoint, method, ctxt, args)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/oslo/messaging/rpc/dispatcher.py\", line 123, in _do_dispatch\n    result = getattr(endpoint, method)(ctxt, **new_args)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/exception.py\", line 88, in wrapped\n    payload)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/openstack/common/excutils.py\", line 82, in __exit__\n    six.reraise(self.type_, self.value, self.tb)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/exception.py\", line 71, in wrapped\n    return f(self, context, *args, **kw)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\", line 326, in decorated_function\n    kwargs['instance'], e, sys.exc_info())\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/openstack/common/excutils.py\", line 82, in __exit__\n    six.reraise(self.type_, self.value, self.tb)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\", line 314, in decorated_function\n    return function(self, context, *args, **kwargs)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\", line 4882, in check_can_live_migrate_source\n    dest_check_data)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 5040, in check_can_live_migrate_source\n    raise exception.InvalidSharedStorage(reason=reason, path=source)\nInvalidSharedStorage: compute2 is not on shared storage: Live migration can not be used without shared storage.\n\nLooking back through the code, given dest_check_data like this:\n\n{u'disk_over_commit': False, u'disk_available_mb': None, u'image_type': u'default', u'filename': u'tmpyrUUg1', u'block_migration': False, 'is_volume_backed': True}\n\nIn Icehouse the code to validate the request skipped this[0]:\n     elif not shared and (not is_volume_backed or has_local_disks):\n\nIn Juno, it matches this[1]:\n\n if (dest_check_data.get('is_volume_backed') and\n  not bool(jsonutils.loads(\n    self.get_instance_disk_info(instance['name'])))):\n\nIn Juno at least, get_instance_disk_info returns something like this:\n\n[{u'disk_size': 10737418240, u'type': u'raw', u'virt_disk_size': 10737418240, u'path': u'/dev/disk/by-path/ip-10.0.0.1:3260-iscsi-iqn.2010-10.org.openstack:volume-10f2302c-26b6-44e0-a3ea-7033d1091470-lun-1', u'backing_file': u'', u'over_committed_disk_size': 0}]\n\nI wonder if that was previously an empty return value in Icehouse, I'm unable to test right now, but if it returned the same then I'm not sure how it ever worked before.\n\nThis is a lab environment, the volume storage is an LVM+ISCSI cinder service. nova.conf and cinder.conf here[2]\n\n[0]: https://github.com/openstack/nova/blob/stable/icehouse/nova/virt/libvirt/driver.py#L4299\n[1]: https://github.com/openstack/nova/blob/stable/juno/nova/virt/libvirt/driver.py#L5073\n[2]: https://gist.github.com/DazWorrall/b1b1e906a6dc2338f6c1", 
+    "tags": [
+        "juno-backport-potential", 
+        "live-migrate"
+    ], 
+    "importance": "Critical", 
+    "heat": 56, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1392773", 
+    "owner": "https://api.launchpad.net/1.0/~daniel-genin", 
+    "id": 1392773, 
+    "index": 223, 
+    "openned": "2014-11-14 15:55:06.789970+00:00", 
+    "created": "2014-11-14 15:55:06.789970+00:00", 
+    "title": "Live migration of volume backed instances broken after upgrade to Juno", 
+    "comments": [
+        {
+            "content": "I'm running nova in a virtualenv with a checkout of stable/juno:\n\nroot@compute1:/opt/openstack/src/nova# git branch\n  stable/icehouse\n* stable/juno\nroot@compute1:/opt/openstack/src/nova# git rev-list stable/juno | head -n 1\n54330ce33ee31bbd84162f0af3a6c74003d57329\n\nSince upgrading from icehouse, our iscsi backed instances are no longer able to live migrate, throwing exceptions like:\n\nTraceback (most recent call last):\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/oslo/messaging/rpc/dispatcher.py\", line 134, in _dispatch_and_reply\n    incoming.message))\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/oslo/messaging/rpc/dispatcher.py\", line 177, in _dispatch\n    return self._do_dispatch(endpoint, method, ctxt, args)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/oslo/messaging/rpc/dispatcher.py\", line 123, in _do_dispatch\n    result = getattr(endpoint, method)(ctxt, **new_args)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/exception.py\", line 88, in wrapped\n    payload)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/openstack/common/excutils.py\", line 82, in __exit__\n    six.reraise(self.type_, self.value, self.tb)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/exception.py\", line 71, in wrapped\n    return f(self, context, *args, **kw)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\", line 326, in decorated_function\n    kwargs['instance'], e, sys.exc_info())\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/openstack/common/excutils.py\", line 82, in __exit__\n    six.reraise(self.type_, self.value, self.tb)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\", line 314, in decorated_function\n    return function(self, context, *args, **kwargs)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/compute/manager.py\", line 4882, in check_can_live_migrate_source\n    dest_check_data)\n  File \"/opt/openstack/venv/nova/local/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 5040, in check_can_live_migrate_source\n    raise exception.InvalidSharedStorage(reason=reason, path=source)\nInvalidSharedStorage: compute2 is not on shared storage: Live migration can not be used without shared storage.\n\nLooking back through the code, given dest_check_data like this:\n\n{u'disk_over_commit': False, u'disk_available_mb': None, u'image_type': u'default', u'filename': u'tmpyrUUg1', u'block_migration': False, 'is_volume_backed': True}\n\nIn Icehouse the code to validate the request skipped this[0]:\n     elif not shared and (not is_volume_backed or has_local_disks):\n\nIn Juno, it matches this[1]:\n\n if (dest_check_data.get('is_volume_backed') and\n  not bool(jsonutils.loads(\n    self.get_instance_disk_info(instance['name'])))):\n\nIn Juno at least, get_instance_disk_info returns something like this:\n\n[{u'disk_size': 10737418240, u'type': u'raw', u'virt_disk_size': 10737418240, u'path': u'/dev/disk/by-path/ip-10.0.0.1:3260-iscsi-iqn.2010-10.org.openstack:volume-10f2302c-26b6-44e0-a3ea-7033d1091470-lun-1', u'backing_file': u'', u'over_committed_disk_size': 0}]\n\nI wonder if that was previously an empty return value in Icehouse, I'm unable to test right now, but if it returned the same then I'm not sure how it ever worked before.\n\nThis is a lab environment, the volume storage is an LVM+ISCSI cinder service. nova.conf and cinder.conf here[2]\n\n[0]: https://github.com/openstack/nova/blob/stable/icehouse/nova/virt/libvirt/driver.py#L4299\n[1]: https://github.com/openstack/nova/blob/stable/juno/nova/virt/libvirt/driver.py#L5073\n[2]: https://gist.github.com/DazWorrall/b1b1e906a6dc2338f6c1", 
+            "date_created": "2014-11-14 15:55:06.789970+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "Ok, I rolled the whole thing back to icehouse, and confirmed that get_instance_disk_info returns an empty list for a volume backed image, whereas in Juno it does not.", 
+            "date_created": "2014-11-14 17:13:15.960846+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "Created a short test case in this gist:\n\nhttps://gist.github.com/DazWorrall/790bb41dbbbee2c24eef", 
+            "date_created": "2014-11-14 17:38:13.007494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "To also confirm, if I drop a hack in to emulate the old behaviour I am able to migrate instances successfully again.", 
+            "date_created": "2014-11-14 19:54:32.774137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "This is the commit that changed the behaviour:\n\nhttps://github.com/openstack/nova/commit/5fa74bc0b2ab6fe5149a9b684b4beadb67877622#diff-f4019782d93a196a0d026479e6aa61b1R5313\n\nSpecifically:\n\n- path = path_node.get('file')\n+ path = path_node.get('file') or path_node.get('dev')", 
+            "date_created": "2014-11-15 10:13:34.728930+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "I subscribed the commit author, I hope that's ok.", 
+            "date_created": "2014-11-15 10:37:46.550491+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "I think the problem is that the get_instance_disk_info() call is not passing the block_device_info that is used to filter out volume backed disks.", 
+            "date_created": "2014-11-17 17:32:26.359937+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/135074", 
+            "date_created": "2014-11-17 20:42:05.732760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Darren, can you please try this patch https://review.openstack.org/#/c/135074/. There is no Tempest testing for migration and I could never get live migration to work in my DevStack.", 
+            "date_created": "2014-11-17 20:44:55.523813+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "The patch applies but is incomplete on stable/juno [0], the missing bits are on master but I cant even start instances on master at the moment (unrelated to this patch I'm sure, nova-compute is incorrectly looking up endpoints as being on 127.0.0.1 for some reason). Does the patch need to change for stable/juno or will that branch just merge with master at some point?\n\n[0]: http://pastebin.com/0x4ERypG", 
+            "date_created": "2014-11-18 10:24:42.778003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "The patch is slightly different for stable/juno. Try this http://pastebin.com/95tk0NcL.", 
+            "date_created": "2014-11-18 14:27:14.105361+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "Applies but incomplete again I think: http://pastebin.com/ByUCgFzJ", 
+            "date_created": "2014-11-18 15:00:58.651359+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "My bad. Take 2: http://pastebin.com/n5a8DV1H", 
+            "date_created": "2014-11-18 15:26:02.127600+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "Yeah I just had time to look more closely and spotted the typo :)\n\nIt's gotten me past the validation step ok, I'm now getting a cinder problem but I dont think it's related (the second compute note is having issues authenticating with the target).", 
+            "date_created": "2014-11-18 16:09:31.599851+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "OK, we'll count this as progress. Thank you for the quick turn around on testing.", 
+            "date_created": "2014-11-18 16:17:55.156177+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "Ok, I rolled the whole thing back to icehouse again to collect some debug data while it was working, rolled forward to Juno and applied the patch and everything is working fine - the other problems must have been self inflicted while I was hacking around trying to figure out the initial problem. \n\nSo to clarify, on a fresh checkout and install of stable/juno, this patch fixes the issue.", 
+            "date_created": "2014-11-19 10:32:28.084655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "Sweeeet! Will work up a patch for master that will hopefully get backported.", 
+            "date_created": "2014-11-19 15:36:45.929017+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "The pastebin seems to be inop; I worked up a quick *almost* complete version if  Dan wants to submit it, otherwise I'm happy to finish it up and submit with him listed as Author.\n\nThe patch works, but needs updates to Xen and HyperV as well as some unit testing.\n\n", 
+            "date_created": "2014-12-07 05:48:34.745906+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Thank you, John! Your help is much appreciated. Please, feel free to submit this patch with me as an author or otherwise. I have little experience with Xen and HyperV, so I am not sure how much help I can be in adding unit tests for these drivers.", 
+            "date_created": "2014-12-08 16:55:10.424194+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "Besides this bug, I may find another problem in code.\n\nThe methon  _get_instance_disk_info (nova/nova/virt/libvirt/driver.py) in Juno has piece of code as \n\n\"\n        for cnt, path_node in enumerate(path_nodes):\n            disk_type = disk_nodes[cnt].get('type')\n            path = path_node.get('file') or path_node.get('dev')\n            target = target_nodes[cnt].attrib['dev']\n\n            if not path:\n                LOG.debug('skipping disk for %s as it does not have a path',\n                          instance_name)\n                continue\n\n            if disk_type not in ['file', 'block']:\n                LOG.debug('skipping disk because it looks like a volume', path)\n                continue\n\n            if target in volume_devices:\n                LOG.debug('skipping disk %(path)s (%(target)s) as it is a '\n                          'volume', {'path': path, 'target': target})\n                continue\n\"\n\nHowever, in Icehouse, the code looks like as \n\n\"\n        for cnt, path_node in enumerate(path_nodes):\n            disk_type = disk_nodes[cnt].get('type')\n            path = path_node.get('file')\n            target = target_nodes[cnt].attrib['dev']\n\n            if not path:\n                LOG.debug(_('skipping disk for %s as it does not have a path'),\n                          instance_name)\n                continue\n\n            if disk_type != 'file':\n                LOG.debug(_('skipping %s since it looks like volume'), path)\n                continue\n\n            if target in volume_devices:\n                LOG.debug(_('skipping disk %(path)s (%(target)s) as it is a '\n                            'volume'), {'path': path, 'target': target})\n                continue\n\"\n\nSince both in Juno and Icehouse, the variable 'volume_devices' are None, so it should step into the code\n\n\"\n            if disk_type != 'file':\n                LOG.debug(_('skipping %s since it looks like volume'), path)\n                continue\n\"\nto prevent copy volume device.\n\nBut, in Juno, this code was changed to \n''\n            if disk_type not in ['file', 'block']:\n                LOG.debug('skipping disk because it looks like a volume', path)\n                continue\n\"\nI wander volume device will be copied in this code which is definitely wrong.", 
+            "date_created": "2014-12-10 08:43:37.453396+00:00", 
+            "author": "https://api.launchpad.net/1.0/~luogangyi"
+        }, 
+        {
+            "content": "Luo, I modified  that line in Juno to make get_instance_disk_info() return correct information for LVM backed disks, which have type 'block'. However, as long as the caller provides correct block_device_info parameter, the volume devices will be filtered out. The volume_devices variable is set based on block_device_info.", 
+            "date_created": "2014-12-10 14:32:47.026088+00:00", 
+            "author": "https://api.launchpad.net/1.0/~daniel-genin"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/135074\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6ad7e17e19b9809306b0b96ae7aa9cdfda91fcbb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 6ad7e17e19b9809306b0b96ae7aa9cdfda91fcbb\nAuthor: Daniel Genin <email address hidden>\nDate:   Mon Nov 17 15:16:14 2014 -0500\n\n    libvirt: Fixes live migration for volume backed instances\n    \n    Live migration fails for volume backed instances in LibvirtDriver\n    because _is_shared_block_storage() incorrectly identifies volume\n    backed disks as local. This is fixed by passing the block_device_info\n    parameter to get_instance_disk_info, which allows for correct\n    filtering of volume backed disks.\n    \n    Change-Id: I1437b2a7d5a62615b0099114ed1b5b1110f56de2\n    Closes-bug: 1392773\n", 
+            "date_created": "2014-12-10 16:32:16.532139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/141124", 
+            "date_created": "2014-12-11 18:43:14.990360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by John Griffith (<email address hidden>) on branch: stable/juno\nReview: https://review.openstack.org/141124", 
+            "date_created": "2015-02-28 15:06:48.064026+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is marked as Fix Released but is still broken in stable/juno. I got an email saying the change had been abandoned?", 
+            "date_created": "2015-03-09 21:33:35.133019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }, 
+        {
+            "content": "Change abandoned by John Griffith (<email address hidden>) on branch: stable/juno\nReview: https://review.openstack.org/141124\nReason: Looks like this is all done actually.", 
+            "date_created": "2015-03-10 22:04:23.943088+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Looks like this is fixed for master in https://review.openstack.org/#/c/135074/", 
+            "date_created": "2015-03-23 11:33:08.681439+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/141124\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=5a0711dbffe3d68ee9be39c85307b19ea5efee7a\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 5a0711dbffe3d68ee9be39c85307b19ea5efee7a\nAuthor: Daniel Genin <email address hidden>\nDate:   Mon Nov 17 15:16:14 2014 -0500\n\n    libvirt: Fixes live migration for volume backed instances\n    \n    Live migration fails for volume backed instances in LibvirtDriver\n    because _is_shared_block_storage() incorrectly identifies volume\n    backed disks as local. This is fixed by passing the block_device_info\n    parameter to get_instance_disk_info, which allows for correct\n    filtering of volume backed disks.\n    \n    (cherry picked from commit 6ad7e17e19b9809306b0b96ae7aa9cdfda91fcbb)\n    \n    Conflicts:\n    \tnova/tests/unit/virt/libvirt/test_driver.py\n    \n    Tests moved to tests/unit and 1 other minor conflict.\n    \n    objects.Instance(**self.test_instance) replaced with\n    self.create_instance_obj(self.context) to handle PciDeviceList.\n    \n    Use explicit field name in format() for 2.6 compatibility.\n    \n    Change-Id: I1437b2a7d5a62615b0099114ed1b5b1110f56de2\n    Closes-bug: 1392773\n", 
+            "date_created": "2015-03-24 13:34:59.757895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Just updated our stable/juno install and this issue has been fixed, thanks all.", 
+            "date_created": "2015-03-24 13:56:34.470136+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dazworrall"
+        }
+    ], 
+    "closed": "2015-04-09 10:09:28.098713+00:00"
+}

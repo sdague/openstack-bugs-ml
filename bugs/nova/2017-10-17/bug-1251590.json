@@ -1,0 +1,318 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:05:01.251173+00:00", 
+    "description": "During pre-live-migration required disks are created along with their backing files (if they don't already exist). However, the ephemeral backing file is created from a glance downloaded root disk.\n\n# If the required ephemeral backing file is present then there's no issue.\n\n# If the required ephemeral backing file is not already present, then the root disk is downloaded and saved as the ephemeral backing file. This will result in the following situations:\n\n## The disk.local transferred during live-migration will be rebased on the ephemeral backing file so regardless of the content, the end result will be identical to the source disk.local.\n## However, if a new instance of the same flavor is spawned on this compute node, then it will have an ephemeral storage that exposes a root disk.\n\nSecurity concerns:\n\nIf the migrated VM was spawned off a snapshot, now it's possible for any instances of the correct flavor to see the snapshot contents of another user via the ephemeral storage.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 276, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1251590", 
+    "owner": "https://api.launchpad.net/1.0/~ndipanov", 
+    "id": 1251590, 
+    "index": 1313, 
+    "openned": "2013-11-15 11:09:28.840231+00:00", 
+    "created": "2013-11-15 11:09:28.840231+00:00", 
+    "title": "[OSSA 2014-003] Live migration can leak root disk into ephemeral storage (CVE-2013-7130)", 
+    "comments": [
+        {
+            "content": "During pre-live-migration required disks are created along with their backing files (if they don't already exist). However, the root disk is used even for ephemeral backing file.\n\n1. If the required ephemeral backing file is present then there's no issue.\n\n2. If the required ephemeral backing file is not already present, then the root disk is downloaded and saved as the ephemeral backing file. This will result in the following situations:\n\n2.1 The disk.local transferred during live-migration will be rebased on the ephemeral backing file so regardless of the content, the end result will be identical to the source disk.local.\n2.2 However, if a new instance of the same flavor is spawned on this compute node, then it will have an ephemeral storage that exposes a root disk.\n\nSecurity concerns:\n\nIf the migrated VM was spawned off a snapshot, now it's possible for any instances of the correct flavor to see the snapshot contents via the ephemeral storage.", 
+            "date_created": "2013-11-15 11:09:28.840231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "One possible solution that seems to work:\n\ndiff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py\nindex bb3c312..68f68e6 100644\n--- a/nova/virt/libvirt/driver.py\n+++ b/nova/virt/libvirt/driver.py\n@@ -4290,13 +4290,22 @@ class LibvirtDriver(driver.ComputeDriver):\n                 image = self.image_backend.image(instance,\n                                                  instance_disk,\n                                                  CONF.libvirt_images_type)\n-                image.cache(fetch_func=libvirt_utils.fetch_image,\n-                            context=context,\n-                            filename=cache_name,\n-                            image_id=instance['image_ref'],\n-                            user_id=instance['user_id'],\n-                            project_id=instance['project_id'],\n-                            size=info['virt_disk_size'])\n+\n+                if cache_name.startswith('ephemeral'):\n+                    image.cache(fetch_func=self._create_ephemeral,\n+                                fs_label='ephemeral0',\n+                                os_type=instance[\"os_type\"],\n+                                filename=cache_name,\n+                                size=info['virt_disk_size'],\n+                                ephemeral_size=instance['ephemeral_gb'])\n+                else:\n+                    image.cache(fetch_func=libvirt_utils.fetch_image,\n+                                context=context,\n+                                filename=cache_name,\n+                                image_id=instance['image_ref'],\n+                                user_id=instance['user_id'],\n+                                project_id=instance['project_id'],\n+                                size=info['virt_disk_size'])\n \n", 
+            "date_created": "2013-11-15 16:13:58.372613+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "This sounds fairly serious to me at first pass. Any idea which releases are affected?\n\nNova security reviewers, any input on the proposed patch above?", 
+            "date_created": "2013-11-15 16:27:41.725206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "The fix seems sane to me, but I am not familiar with libvirt so I would like to see someone more knowledgeable confirm.  It just appears that root disks won't be downloaded for ephemeral backing files, and empty images will be created.\n\nBut this fix does seem to just address instances migrated after the patch, is there anyway to retroactively address this in cases that a root disk has already been downloaded?", 
+            "date_created": "2013-11-15 19:41:31.700808+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "The following is suitable for deployments where it's possible to just put together a script and execute.\n\n1. Delete all ephemeral backing files not currently being referred to by a disk.local cow layer. It's better to delete all such unused ephemeral files since step 2 below can be unreliable.\n2. Identify the ephemeral files that are root disk images. This is quite straightforward if all the root disks have a partition table and all we do is look at the file signature to determine if there's a partitionless image with ext3 fs on it. But on a system with user uploaded glance files or where there are single partition root disks with kernel, there could be several false negatives. Anyway, assuming we managed to determine if a compute node has a bad ephemeral backing file then we should first disable the service to prevent any more instance scheduling on that node.\n3. Then we could isolate all the VMs using the bad ephemeral file(s) to a set of fresh nodes using live-migration and delete the now unused bad ephemeral files and enable scheduling again.\n\nIf one doesn't want to take the chance with step 2 above, a more deterministic approach would be to migrate all the VMs at least once to a node known to contain none or new correct ephemeral disks.\n\nWhat this gives us is that all ephemeral backing files will be corrected and new instances will see the expected block device with an ext3 fs. All existing VMs will continue to run including those that had already seen the exposed data. However, they all would be backed on good ephemeral backing files.", 
+            "date_created": "2013-11-16 01:44:59.899349+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "So IIUC the issue can only happen when the block migration is used, as this code path is only hit if there is no shared storage - this is a limited use case, and the bug does not affect all live migration setups. I am saying this just for clarity - we should definitely fix the issue asap.\n\nThe fix looks like a good start, however I think that we should special-case the swap as well. For inspiration see nova.virt.libvirt.driver _create_image method that does these things on instance boot.\n", 
+            "date_created": "2013-11-18 09:36:13.069149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "{code}\ndiff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py\nindex 440fe72..db7c6e6 100644\n--- a/nova/virt/libvirt/driver.py\n+++ b/nova/virt/libvirt/driver.py\n@@ -4381,7 +4381,22 @@ class LibvirtDriver(driver.ComputeDriver):\n                 image = self.image_backend.image(instance,\n                                                  instance_disk,\n                                                  CONF.libvirt.images_type)\n-                image.cache(fetch_func=libvirt_utils.fetch_image,\n+                if cache_name.startswith('ephemeral'):\n+                     image.cache(fetch_func=self._create_ephemeral,\n+                                 fs_label='ephemeral0',\n+                                 os_type=instance[\"os_type\"],\n+                                 filename=cache_name,\n+                                 size=info['virt_disk_size'],\n+                                 ephemeral_size=instance['ephemeral_gb'])\n+                elif cache_name.startswith('swap'):\n+                    inst_type = flavors.extract_flavor(instance)\n+                    swap_mb = inst_type['swap']\n+                    image.cache(fetch_func=self._create_swap,\n+                                 filename=\"swap_%s\" % swap_mb,\n+                                 size=info['virt_disk_size'],\n+                                 swap_mb=swap_mb)\n+                else:\n+                    image.cache(fetch_func=libvirt_utils.fetch_image,\n                             context=context,\n                             filename=cache_name,\n                             image_id=instance['image_ref'],\n{code}", 
+            "date_created": "2013-11-27 14:17:05.531210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "{{{code}}}\ndiff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py\nindex 440fe72..db7c6e6 100644\n--- a/nova/virt/libvirt/driver.py\n+++ b/nova/virt/libvirt/driver.py\n@@ -4381,7 +4381,22 @@ class LibvirtDriver(driver.ComputeDriver):\n                 image = self.image_backend.image(instance,\n                                                  instance_disk,\n                                                  CONF.libvirt.images_type)\n-                image.cache(fetch_func=libvirt_utils.fetch_image,\n+                if cache_name.startswith('ephemeral'):\n+                     image.cache(fetch_func=self._create_ephemeral,\n+                                 fs_label='ephemeral0',\n+                                 os_type=instance[\"os_type\"],\n+                                 filename=cache_name,\n+                                 size=info['virt_disk_size'],\n+                                 ephemeral_size=instance['ephemeral_gb'])\n+                elif cache_name.startswith('swap'):\n+                    inst_type = flavors.extract_flavor(instance)\n+                    swap_mb = inst_type['swap']\n+                    image.cache(fetch_func=self._create_swap,\n+                                 filename=\"swap_%s\" % swap_mb,\n+                                 size=info['virt_disk_size'],\n+                                 swap_mb=swap_mb)\n+                else:\n+                    image.cache(fetch_func=libvirt_utils.fetch_image,\n                             context=context,\n                             filename=cache_name,\n                             image_id=instance['image_ref'],\n{{{code}}}", 
+            "date_created": "2013-11-27 14:21:23.754632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Sorry for multiple posts, don't know how to display code here. :(", 
+            "date_created": "2013-11-27 14:23:06.266850+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Ok so this looks much better now. Launchpad is horrible for commenting on patches, but several issues with ephemerals that I can see:\n  + fs_label='ephemeral0',\nThis should be cache_name since there can be more than one ephemeral disk\n  + ephemeral_size=instance['ephemeral_gb'])\nThis is not always true - we are able to specify the size of ephemerals too through block device mapping. This is tricky since we don't have that info in the xml. I am not sure how to handle this - I need to look into this a bit more.\n", 
+            "date_created": "2013-11-27 15:17:58.698689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Having the correct size on an ephemeral backing file is important IMHO only on new instance spawning, since it may expects a filesystem with the size promised by the flavor. During migration it's going to be rebased anyway with the existing information from the qcow2 layer.\n\nSo to understand the second issue a bit more, are we going to have a backing file of some name ephemeral_SIZE_OS_TYPE but not of size SIZE?", 
+            "date_created": "2013-11-27 15:47:42.441411+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Hey, so - agreed on the size point. The fs_label should be ephemeral0, ephemeral1 etc. Not a huge deal imho. \n\nConsider the patch +2 from my side.\n\nAnd a huge thank you for fixing this so quickly.", 
+            "date_created": "2013-11-27 16:07:21.044627+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "I'll try to fix the fs_label now. Could you please take a look at the swap handling?", 
+            "date_created": "2013-11-27 16:37:40.961293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "I'm a bit confused on the multiple ephemeral disk code. It appears that regardless of the number of disks created, the backing file is the same. ie fname = \"ephemeral_%s_%s\" % (eph['size'], os_type_with_default) is not dependent on idx. So I'm wondering if only ephemeral0 will be used in the backing file and the rest used in the qcow2 layers. If that's the case we hardcoding 'ephemeral0' for fs_label won't break anything.", 
+            "date_created": "2013-11-27 16:56:11.232181+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "So can we use the patch in https://bugs.launchpad.net/nova/+bug/1251590/comments/6 and move this bug along? Let me know if I need to do anything further on this. Thanks.", 
+            "date_created": "2013-11-29 01:20:15.720190+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Maybe I misread, but,\n    size=info['virt_disk_size'],\nfor swap should it be \n    size = swap_mb * unit.Mi\nbased on code further down the file?", 
+            "date_created": "2013-11-29 10:18:42.830233+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tom-hancock"
+        }, 
+        {
+            "content": ">I'm a bit confused on the multiple ephemeral disk code. It appears that regardless of the number of disks created, the backing file is the same. ie fname = \"ephemeral_%s_%s\" % (eph['size'], os_type_with_default) is not dependent on idx. So I'm wondering if only ephemeral0 will be used in the backing file and the rest used in the qcow2 layers. If that's the case we hardcoding 'ephemeral0' for fs_label won't break anything.\n\nso - we go back to the size issue - each ephemeral drive will have a backing file (assuming qcow Images are used by Nova) that is named\n  fname = \"ephemeral_%s_%s\" % (eph['size'], os_type_with_default)\nthe sizes however can vary from device to device, so if we have for example an instances that allows ephemeral to be 100G we could have a disk of 50 and two disks of 25 - this will result in two backing files ephemeral_25_blah and ephemeral_50_blah and 3 qcow overlays - two that have the 25 one as base and one that has 50.\n\nThe fs_label is applied to the original file when created and it makes no sense for it to be ephemeral0,1 etc... or we should be formatting the newly created overlay which kind of defeats the purpose of having backing files. I will likely file a separate bug for this\n\nAlso Tom is right wrt size. The thing is - we will not be getting the real size here, as the user could have overriden it through block device mapping, and we do not save that in the xml.\n\nIn the long run - we should really be using the db data to do this and not only the xml, but that is definitely outside of the scope of the bugfix - so as soon as you fix the swap issue - I am +2 on this.", 
+            "date_created": "2013-12-03 18:15:05.549651+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "diff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py\nindex bf7609f..6a1591c 100644\n--- a/nova/virt/libvirt/driver.py\n+++ b/nova/virt/libvirt/driver.py\n@@ -4381,7 +4381,22 @@ class LibvirtDriver(driver.ComputeDriver):\n                 image = self.image_backend.image(instance,\n                                                  instance_disk,\n                                                  CONF.libvirt.images_type)\n-                image.cache(fetch_func=libvirt_utils.fetch_image,\n+                if cache_name.startswith('ephemeral'):\n+                    image.cache(fetch_func=self._create_ephemeral,\n+                            fs_label=cache_name,\n+                            os_type=instance[\"os_type\"],\n+                            filename=cache_name,\n+                            size=info['virt_disk_size'],\n+                            ephemeral_size=instance['ephemeral_gb'])\n+                elif cache_name.startswith('swap'):\n+                    inst_type = flavors.extract_flavor(instance)\n+                    swap_mb = inst_type['swap']\n+                    image.cache(fetch_func=self._create_swap,\n+                            filename=\"swap_%s\" % swap_mb,\n+                            size = swap_mb * unit.Mi\n+                            swap_mb=swap_mb)\n+                else:\n+                    image.cache(fetch_func=libvirt_utils.fetch_image,\n                             context=context,\n                             filename=cache_name,\n                             image_id=instance['image_ref'],\n", 
+            "date_created": "2013-12-03 18:28:51.769848+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Hi all, is the code above ok? Let me know if you need anything else to fix this issue.", 
+            "date_created": "2013-12-09 22:30:44.061139+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "Nova core security contacts: could you review the proposed patches ?", 
+            "date_created": "2013-12-10 09:49:46.045817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "launchpad has destroyed the formatting in the patch it seems ... can you add the patch as an attachment?", 
+            "date_created": "2013-12-10 14:05:00.294131+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "The good lgtm based on me indenting it the way I would expect, but I would also like to see it as an attachment to be sure.  All comments within the scope of this change have been addressed as far as I can tell.", 
+            "date_created": "2013-12-10 16:25:10.044188+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "s/good/change/", 
+            "date_created": "2013-12-10 16:25:19.883953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Here's the patch,\n\ntests pass - but we need more tests for this - I was working on adding them today but didn't manage.\n\nWe can post a fix and add tests later too actually.", 
+            "date_created": "2013-12-10 16:45:22.202031+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Thanks Nikola.  The patch looks good to me, but tests would certainly be good to help prevent regressions.", 
+            "date_created": "2013-12-10 17:31:20.804963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Draft impact description - \n\nTitle :   Live migration can leak root disk into ephemeral storage\nReporter: Loganathan Parthipan   \nProducts  : nova\nAffects  : grizzly, havana, icehouse\n\nDescription : Loganathan Parthipan reported a vulnerability in the nova libvirt driver. By live migrating a snapshotted virtual machine the contents of the snapshot could potentially be leaked via ephemeral storage.  Only setups using KVM live block migration are affected. \n", 
+            "date_created": "2013-12-12 09:52:10.766185+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Grant, a few remarks:\n- We usually credit the company the reporter works for, if he provides one.\n- We capitalize \"Nova\"\n- For the affects line, we now use \"All supported versions\" which is a bit more accurate than an enumartion of versions. This may or may not affect Folsom, but we don't care because it's no longer supported... \n- I would precise the attack scenario a bit more, in this case what type of attacker, and how they would get access to the leak. Is it local user ? Another cloud user ? In this case, I would add \"An authenticated user could potentially access snapshot content by spawning new servers from the right flavor\" or something like it\n- We do not have space before colons (header-style)\n- We usually add a newline after \"Description:\"", 
+            "date_created": "2013-12-12 13:54:23.685026+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thanks ttx. Great feedback. \n\nSo is HP right for the company? I couldn't tell from the launchpad page..\n\nAttempt #2  \n----\n\nTitle: Live migration can leak root disk into ephemeral storage\nReporter: Loganathan Parthipan\nProducts: Nova\nAffects: All supported versions\n\nDescription:\nLoganathan Parthipan from Hewlett Packard reported a vulnerability in the Nova libvirt driver.  By spawning a server with the same flavor as another users migrated virtual machine an authenticated user can potentially access that users snapshot content resulting in information leakage. Only setups using KVM live block migration are affected. \n\n\n\n\n", 
+            "date_created": "2013-12-13 01:22:56.779254+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Yes, HP is correct.", 
+            "date_created": "2013-12-13 03:46:43.142670+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parthipan"
+        }, 
+        {
+            "content": "@Grant: looks good. I would just add \" (HP)\" at the end of the Reporter: line and add a comma between \"machine\" and \"an\" in the description.", 
+            "date_created": "2013-12-13 12:49:58.706757+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Also, should be \"user's\" in two places (possessive form). Otherwise, with Thierry's recommendations in mind, the impact description text in comment #27 looks fine to me.", 
+            "date_created": "2013-12-13 20:32:31.172716+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Title: Live migration can leak root disk into ephemeral storage\nReporter: Loganathan Parthipan (HP)\nProducts: Nova\nAffects: All supported versions\n\nDescription:\nLoganathan Parthipan from Hewlett Packard reported a vulnerability in the Nova libvirt driver. By spawning a server with the same flavor as another user's migrated virtual machine, an authenticated user can potentially access that user's snapshot content resulting in information leakage. Only setups using KVM live block migration are affected.", 
+            "date_created": "2013-12-15 22:10:05.882736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Thanks Grant! That impact description should suffice.", 
+            "date_created": "2013-12-15 22:26:19.420896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "All - here's the patch with tests for master - please review and make sure the test is valid as well.", 
+            "date_created": "2013-12-16 17:04:21.156364+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Here's the Havana patch. Am I correct to assume that we will want to fix this in Grizzly as well?", 
+            "date_created": "2013-12-16 17:09:01.735304+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "All,\n\nWondering if we should open this up because of https://bugs.launchpad.net/nova/+bug/1237683 comment #1 (basically mentioning the crux of the security issue publicly), or move it along quickly.\n\nI've found several more issues while fixing this that would be good to report and start fixing.", 
+            "date_created": "2013-12-17 13:40:07.800631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "I think the comment in bug 1237683 is vague enough as to not point out the security risks involved, so there may still be some benefit to keeping this embargoed while your patches are reviewed here.", 
+            "date_created": "2013-12-18 01:22:45.285128+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "@Nikola: if Grizzly is affected we'll want this patch for Grizzly as well.", 
+            "date_created": "2014-01-06 13:25:33.577908+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@Nova core: another round of review/test on the master and havana patches would be awesome.", 
+            "date_created": "2014-01-06 13:27:07.872272+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Here is the rebased master patch", 
+            "date_created": "2014-01-14 15:25:40.618824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "The rebased havana patch", 
+            "date_created": "2014-01-14 15:26:44.095778+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Here is the grizzly patch - please test them.\n\nThanks a lot!", 
+            "date_created": "2014-01-14 15:32:10.850787+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "@Nova-core: please review proposed patches and backports !", 
+            "date_created": "2014-01-15 13:15:07.599535+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "patches look good to me", 
+            "date_created": "2014-01-15 13:53:19.426502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Except for the spurious i in i_create_images_and_backing method in the commit message they look good to me.", 
+            "date_created": "2014-01-16 16:43:12.054336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "pre-OSSA sent\n\nProposed public disclosure date/time: Thursday, January 23, 1500UTC.", 
+            "date_created": "2014-01-20 07:08:24.686298+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Just noticed that the unit tests for the havana patch aren't working for me. (Probably my setup). \n\n./run_tests.sh test_create_images_and_backing_ephemeral_gets_created\n\n...\n\nFAIL: nova.tests.virt.libvirt.test_libvirt.LibvirtConnTestCase.test_create_images_and_backing_ephemeral_gets_created\n\nTraceback (most recent call last):\n  File \"/home/gm/devel/github/openstack/nova/nova/tests/virt/libvirt/test_libvirt.py\", line 3066, in test_create_images_and_backing_ephemeral_gets_created\n    CONF.image_cache_subdirectory_name)\n  File \"/home/gm/devel/github/openstack/nova/.venv/lib/python2.7/site-packages/oslo/config/cfg.py\", line 1648, in __getattr__\n    raise NoSuchOptError(name)\nNoSuchOptError: no such option: image_cache_subdirectory_name\n", 
+            "date_created": "2014-01-23 07:48:13.801159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "nope - that's a bug.\n\nI'll update ASAP", 
+            "date_created": "2014-01-23 09:23:11.716034+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Updated the havana patch to fix the failing tests.", 
+            "date_created": "2014-01-23 11:08:02.405143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "@Nikola: The new patch for havana looks like the same from the previous one ( 0001-libvirt-Fix-root-disk-leak-in-live-mig_havana.patch ) \n\n", 
+            "date_created": "2014-01-23 12:01:52.306583+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@Tristan - you are right - my bad. The real patch is coming up.\n\nBoth master and grizzly seem to be OK so no need to update those.", 
+            "date_created": "2014-01-23 12:34:36.544731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-01-23 12:34:54.244594+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Thank you Nikola, this last patch fix the test_create_images_and_backing_ephemeral_gets_created!", 
+            "date_created": "2014-01-23 12:39:23.842267+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Sadly, flake8 reported another error afterward (on the last havana patch):\n\n./nova/virt/libvirt/driver.py:4225:1: F821 undefined name 'unit'\n", 
+            "date_created": "2014-01-23 13:22:10.591691+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Yep - seems that that module does not exist on havana yet - it's just a numeric constant tho.\n\nPatch updated.", 
+            "date_created": "2014-01-23 13:34:51.098210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "gerrit review: \n\nmaster https://review.openstack.org/#/c/68658/\nhavana https://review.openstack.org/#/c/68659\ngrizzly https://review.openstack.org/#/c/68660/", 
+            "date_created": "2014-01-23 15:42:31.783220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "[OSSA 2014-003]", 
+            "date_created": "2014-01-23 16:42:29.211446+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/68658\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b0d36683fe064b32cbef013e1c0c46bd018ab9a1\nSubmitter: Jenkins\nBranch:    master\n\ncommit b0d36683fe064b32cbef013e1c0c46bd018ab9a1\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Dec 10 17:43:17 2013 +0100\n\n    libvirt: Fix root disk leak in live mig\n    \n    This patch makes sure that i_create_images_and_backing method of the\n    libvirt driver (called in several places, but most problematic one is\n    the call in the pre_live_migration method) creates all the files the\n    instance needs that are not present.\n    \n    Prioir to this patch - the method would only attempt to download the\n    image, and if it did so with the path of the ephemeral drives, it could\n    expose the image to other users as an ephemeral devices. See the related\n    bug for more detaiis.\n    \n    After this patch - we properly distinguish between image, ephemeral and\n    swap files, and make sure that the imagebackend does the correct thing.\n    \n    Closes-bug: #1251590\n    \n    Co-authored-by: Loganathan Parthipan <email address hidden>\n    \n    Change-Id: I78aa2f4243899db4f4941e77014a7e18e27fc63e\n", 
+            "date_created": "2014-01-25 12:19:05.716289+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/68660\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cbeb5e51886b0296349fc476305bfe3d63c627c3\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit cbeb5e51886b0296349fc476305bfe3d63c627c3\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Dec 10 17:43:17 2013 +0100\n\n    libvirt: Fix root disk leak in live mig\n    \n    This patch makes sure that _create_images_and_backing method of the\n    libvirt driver (called in several places, but most problematic one is\n    the call in the pre_live_migration method) creates all the files the\n    instance needs that are not present.\n    \n    Prioir to this patch - the method would only attempt to download the\n    image, and if it did so with the path of the ephemeral drives, it could\n    expose the image to other users as an ephemeral devices. See the related\n    bug for more detaiis.\n    \n    After this patch - we properly distinguish between image, ephemeral and\n    swap files, and make sure that the imagebackend does the correct thing.\n    \n    Closes-bug: #1251590\n    \n    Co-authored-by: Loganathan Parthipan <email address hidden>\n    \n    This patch also includes part of commit\n    65386c91910ee03d947c2b8bcc226a53c30e060a, not cherry-picked as a whole\n    due to the fact that it is a trivial change, and to avoud the\n    proliferation of patches needed to fix this bug.\n    \n    (cherry picked from commit c69a619668b5f44e94a8fe1a23f3d887ba2834d7)\n    \n    Conflicts:\n    \tnova/tests/test_libvirt.py\n    \tnova/virt/libvirt/driver.py\n    \n    Change-Id: I78aa2f4243899db4f4941e77014a7e18e27fc63e\n", 
+            "date_created": "2014-01-27 21:33:27.364396+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/68659\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=15ee7e17f63f5583307a546ecf28952c364c88f9\nSubmitter: Jenkins\nBranch:    stable/havana\n\ncommit 15ee7e17f63f5583307a546ecf28952c364c88f9\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Dec 10 17:43:17 2013 +0100\n\n    libvirt: Fix root disk leak in live mig\n    \n    This patch makes sure that _create_images_and_backing method of the\n    libvirt driver (called in several places, but most problematic one is\n    the call in the pre_live_migration method) creates all the files the\n    instance needs that are not present.\n    \n    Prioir to this patch - the method would only attempt to download the\n    image, and if it did so with the path of the ephemeral drives, it could\n    expose the image to other users as an ephemeral devices. See the related\n    bug for more detaiis.\n    \n    After this patch - we properly distinguish between image, ephemeral and\n    swap files, and make sure that the imagebackend does the correct thing.\n    \n    Closes-bug: #1251590\n    \n    Co-authored-by: Loganathan Parthipan <email address hidden>\n    \n    (cherry picked from commit c69a619668b5f44e94a8fe1a23f3d887ba2834d7)\n    \n    Conflicts:\n    \tnova/virt/libvirt/driver.py\n    Change-Id: I78aa2f4243899db4f4941e77014a7e18e27fc63e\n", 
+            "date_created": "2014-01-30 14:24:17.341941+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-03-05 13:07:46.837180+00:00"
+}

@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-11-19 21:49:08.848476+00:00", 
+    "description": "NUMA cell overcommit can leave NUMA cells unused\n\nWhen no NUMA configuration is defined for the guest (no flavor extra specs),\nnova identifies the NUMA topology of the host and tries to match the cpu \nplacement to a NUMA cell (\"cpuset\"). \n\nThe cpuset is selected randomly.\npin_cpuset = random.choice(viable_cells_cpus) #nova/virt/libvirt/driver.py\n\nHowever, this can lead to NUMA cells not being used.\nThis is particular noticeable when the flavor as the same number of vcpus \nas the host NUMA cells and in the host CPUs are not overcommit (cpu_allocation_ratio = 1)\n\n###\nParticular use case:\n\nCompute nodes with the NUMA topology:\n<VirtNUMAHostTopology: {'cells': [{'mem': {'total': 12279, 'used': 0}, 'cpu_usage': 0, 'cpus': '0,1,2,3,8,9,10,11', 'id': 0}, {'mem': {'total': 12288, 'used': 0}, 'cpu_usage': 0, 'cpus': '4,5,6,7,12,13,14,15', 'id': 1}]}>\n\nNo CPU overcommit: cpu_allocation_ratio = 1\nBoot instances using a flavor with 8 vcpus. \n(No NUMA topology defined for the guest in the flavor)\n\nIn this particular case the host can have 2 instances. (no cpu overcommit)\nBoth instances can be allocated (random) with the same cpuset from the 2 options:\n<vcpu placement='static' cpuset='4-7,12-15'>8</vcpu>\n<vcpu placement='static' cpuset='0-3,8-11'>8</vcpu>\n\nAs consequence half of the host CPUs are not used.\n\n\n###\nHow to reproduce:\n\nUsing: nova 2014.2.2\n(not tested in trunk however the code path looks similar)\n\n1. set cpu_allocation_ratio = 1\n2. Identify the NUMA topology of the compute node\n3. Using a flavor with a number of vcpus that matches a NUMA cell in the compute node,\nboot instances until fill the compute node.\n4. Check the cpu placement \"cpuset\" used by the each instance.\n\nNotes: \n- at this point instances can use the same \"cpuset\" leaving NUMA cells unused.\n- the selection of the cpuset is random. Different tries may be needed.", 
+    "tags": [
+        "in-stable-kilo", 
+        "juno-backport-potential", 
+        "kilo-backport-potential", 
+        "libvirt"
+    ], 
+    "importance": "Medium", 
+    "heat": 32, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1461777", 
+    "owner": "https://api.launchpad.net/1.0/~ndipanov", 
+    "id": 1461777, 
+    "index": 4269, 
+    "openned": "2015-06-04 06:35:01.601636+00:00", 
+    "created": "2015-06-04 06:35:01.601636+00:00", 
+    "title": "Random NUMA cell selection can leave NUMA cells unused", 
+    "comments": [
+        {
+            "content": "NUMA cell overcommit can leave NUMA cells unused\n\nWhen no NUMA configuration is defined for the guest (no flavor extra specs),\nnova identifies the NUMA topology of the host and tries to match the cpu \nplacement to a NUMA cell (\"cpuset\"). \n\nThe cpuset is selected randomly.\npin_cpuset = random.choice(viable_cells_cpus) #nova/virt/libvirt/driver.py\n\nHowever, this can lead to NUMA cells not being used.\nThis is particular noticeable when the flavor as the same number of vcpus \nas the host NUMA cells and in the host CPUs are not overcommit (cpu_allocation_ratio = 1)\n\n###\nParticular use case:\n\nCompute nodes with the NUMA topology:\n<VirtNUMAHostTopology: {'cells': [{'mem': {'total': 12279, 'used': 0}, 'cpu_usage': 0, 'cpus': '0,1,2,3,8,9,10,11', 'id': 0}, {'mem': {'total': 12288, 'used': 0}, 'cpu_usage': 0, 'cpus': '4,5,6,7,12,13,14,15', 'id': 1}]}>\n\nNo CPU overcommit: cpu_allocation_ratio = 1\nBoot instances using a flavor with 8 vcpus. \n(No NUMA topology defined for the guest in the flavor)\n\nIn this particular case the host can have 2 instances. (no cpu overcommit)\nBoth instances can be allocated (random) with the same cpuset from the 2 options:\n<vcpu placement='static' cpuset='4-7,12-15'>8</vcpu>\n<vcpu placement='static' cpuset='0-3,8-11'>8</vcpu>\n\nAs consequence half of the host CPUs are not used.\n\n\n###\nHow to reproduce:\n\nUsing: nova 2014.2.2\n(not tested in trunk however the code path looks similar)\n\n1. set cpu_allocation_ratio = 1\n2. Identify the NUMA topology of the compute node\n3. Using a flavor with a number of vcpus that matches a NUMA cell in the compute node,\nboot instances until fill the compute node.\n4. Check the cpu placement \"cpuset\" used by the each instance.\n\nNotes: \n- at this point instances can use the same \"cpuset\" leaving NUMA cells unused.\n- the selection of the cpuset is random. Different tries may be needed.", 
+            "date_created": "2015-06-04 06:35:01.601636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~moreira-belmiro-email-lists"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/188468", 
+            "date_created": "2015-06-04 16:13:04.985179+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/188468\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=eb253255d74cbe6e630225080c463f1eb16b9932\nSubmitter: Jenkins\nBranch:    master\n\ncommit eb253255d74cbe6e630225080c463f1eb16b9932\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Thu Jun 4 17:09:13 2015 +0100\n\n    libvirt: Don't try to confine a non-NUMA instance\n    \n    Even though it seemed like a good idea at the time, it turns out that\n    choosing a NUMA node at random can lead to placements that are\n    suboptimal.\n    \n    Since the benefit of the current approach is unclear, and the downside\n    is actually hurting users - it is best to remove it (we would be no\n    worse off than before Nova was even NUMA aware), and think about\n    optimizitaions going forward, if any.\n    \n    Change-Id: Idd4d5c236067fc40ed3a5049f3c1a58b75f9b5e5\n    Closes-bug: #1461777\n", 
+            "date_created": "2015-06-10 20:58:20.075125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/kilo\nReview: https://review.openstack.org/191594", 
+            "date_created": "2015-06-15 00:17:16.736385+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/194486", 
+            "date_created": "2015-06-23 04:18:06.693174+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/191594\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=41ba203ca0b526e91aea335bc3f3c17845ac6c91\nSubmitter: Jenkins\nBranch:    stable/kilo\n\ncommit 41ba203ca0b526e91aea335bc3f3c17845ac6c91\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Thu Jun 4 17:09:13 2015 +0100\n\n    libvirt: Don't try to confine a non-NUMA instance\n    \n    Even though it seemed like a good idea at the time, it turns out that\n    choosing a NUMA node at random can lead to placements that are\n    suboptimal.\n    \n    Since the benefit of the current approach is unclear, and the downside\n    is actually hurting users - it is best to remove it (we would be no\n    worse off than before Nova was even NUMA aware), and think about\n    optimizitaions going forward, if any.\n    \n    Change-Id: Idd4d5c236067fc40ed3a5049f3c1a58b75f9b5e5\n    Closes-bug: #1461777\n    (cherry picked from commit eb253255d74cbe6e630225080c463f1eb16b9932)\n", 
+            "date_created": "2015-06-30 19:13:34.171502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/194486\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=624345b4962ca96dc0a009397bcee14b0e4fbf6b\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 624345b4962ca96dc0a009397bcee14b0e4fbf6b\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Thu Jun 4 17:09:13 2015 +0100\n\n    libvirt: Don't try to confine a non-NUMA instance\n    \n    Even though it seemed like a good idea at the time, it turns out that\n    choosing a NUMA node at random can lead to placements that are\n    suboptimal.\n    \n    Since the benefit of the current approach is unclear, and the downside\n    is actually hurting users - it is best to remove it (we would be no\n    worse off than before Nova was even NUMA aware), and think about\n    optimizitaions going forward, if any.\n    \n    Change-Id: Idd4d5c236067fc40ed3a5049f3c1a58b75f9b5e5\n    Closes-bug: #1461777\n    (cherry picked from commit eb253255d74cbe6e630225080c463f1eb16b9932)\n    Conflicts:\n    \tnova/tests/unit/virt/libvirt/test_driver.py\n    \tnova/virt/libvirt/driver.py\n", 
+            "date_created": "2015-08-13 06:05:56.102150+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-06-24 12:19:22.791134+00:00"
+}

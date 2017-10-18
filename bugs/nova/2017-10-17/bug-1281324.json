@@ -1,0 +1,73 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-03-12 22:04:54.194990+00:00", 
+    "description": "We had a neutron failure in our cloud, which lead to a bunch of VM's in state ERROR.. we've repaired neutron but now we can't delete:\n\nERROR: Cannot 'forceDelete' while instance is in vm_state error (HTTP 409) (Request-ID:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0req-1c4a88c3-4ea1-45a8-b987-629a69b4af06)\n\nor stop/start\nnova stop 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1\nERROR: Instance 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1 in task_state deleting. Cannot stop while the instance is in this state. (HTTP 400) (Request-ID: req-18d58b8d-b360-4b37-b671-34624a6dade4)\n(ci-overcloud)robertc@lifelesshp:~/work$ nova start 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1\nERROR: Instance 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1 in vm_state error. Cannot start while the instance is in this state. (HTTP 400) (Request-ID: req-b46c0ee6-8ed8-41c3-b400-72f76429209a)\n\nnormal 'delete' doesn't error.. but doesn't delete the VM either.\n\nThe problem is that nothing is cancelling the task state, so the VMs are staying stuck indefinitely.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 32, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1281324", 
+    "owner": "https://api.launchpad.net/1.0/~timello", 
+    "id": 1281324, 
+    "index": 3802, 
+    "openned": "2014-02-17 22:49:26.678982+00:00", 
+    "created": "2014-02-17 22:49:26.678982+00:00", 
+    "title": "vm_state ERROR vm undeletable if first delete attempt does not succeed.", 
+    "comments": [
+        {
+            "content": "We had a neutron failure in our cloud, which lead to a bunch of VM's in state ERROR.. we've repaired neutron but now we can't delete:\n\nERROR: Cannot 'forceDelete' while instance is in vm_state error (HTTP 409) (Request-ID: \n                  req-1c4a88c3-4ea1-45a8-b987-629a69b4af06)\n\nor stop/start\nnova stop 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1\nERROR: Instance 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1 in task_state deleting. Cannot stop while the instance is in this state. (HTTP 400) (Request-ID: req-18d58b8d-b360-4b37-b671-34624a6dade4)\n(ci-overcloud)robertc@lifelesshp:~/work$ nova start 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1\nERROR: Instance 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1 in vm_state error. Cannot start while the instance is in this state. (HTTP 400) (Request-ID: req-b46c0ee6-8ed8-41c3-b400-72f76429209a)\n\nnormal 'delete' doesn't error.. but doesn't delete the VM either.", 
+            "date_created": "2014-02-17 22:49:26.678982+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lifeless"
+        }, 
+        {
+            "content": "I can't see anything in the logs for nova-api or nova-compute w.r.t. ", 
+            "date_created": "2014-02-18 02:13:39.275692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lifeless"
+        }, 
+        {
+            "content": "Ok, so it hits this:\n                        LOG.info(_('Instance is already in deleting state, '\n                                   'ignoring this request'), instance=instance)\n\n\nbut - the nova compute process for that VM has been restarted and the VM isn't being deleted, Also that message level of info is wrong - default logging won't show this, and this is IMO an usual situation where admins will be scratching their head.", 
+            "date_created": "2014-02-18 02:40:21.524505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lifeless"
+        }, 
+        {
+            "content": "AHHA, and so here's how the problem happened in the first place:\n - the compute node wasn't reachable from the api when the delete was submitted: so when the API calls delete, task_state=deleting is set.\n - but the compute node never got the message from rabbit, so task_state=None is never set.\n\n", 
+            "date_created": "2014-02-18 02:59:40.378138+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lifeless"
+        }, 
+        {
+            "content": "| 01199ed9-b3c3-4ee9-a482-bdfdc7347ce1 | tripleo-fedora-1391918949.template.openstack.org               | ERROR  | deleting   | Running     | default-net=10.0.14.73; tripleo-bm-test=192.168.1.247                |\n\n^ example vm. Note the STATUS ERROR power state = RUNNING", 
+            "date_created": "2014-02-18 03:01:29.615202+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lifeless"
+        }, 
+        {
+            "content": "And this if block -\n\n         if (instance.vm_state == vm_states.SOFT_DELETED or\n            (instance.vm_state == vm_states.ERROR and\n            instance.task_state != task_states.RESIZE_MIGRATING)):\n            LOG.debug(_(\"Instance is in %s state.\"),\n                      instance.vm_state, instance=instance)\n\nis the one that fails to delete these on startup - because they are in ERROR + != RESIZE_MIGRATING", 
+            "date_created": "2014-02-18 03:02:19.866407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lifeless"
+        }, 
+        {
+            "content": "The code below in the same _init_instance function is suppose to handle the case where task_state is in 'DELETING'... but as you pointed out, the first 'if' block stops the process...", 
+            "date_created": "2014-02-19 20:48:58.567162+00:00", 
+            "author": "https://api.launchpad.net/1.0/~timello"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/75047", 
+            "date_created": "2014-02-20 14:15:14.002336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/74240/ pre-dates your change, but I'm not certain why the bot did not update this bug.", 
+            "date_created": "2014-02-24 00:07:22.049697+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevenk"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/74240\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=556ab844c823dd364032d59ab1b61780243cbfd1\nSubmitter: Jenkins\nBranch:    master\n\ncommit 556ab844c823dd364032d59ab1b61780243cbfd1\nAuthor: Robert Collins <email address hidden>\nDate:   Tue Feb 18 16:03:23 2014 +1300\n\n    Delete ERROR+DELETING VMs during compute startup.\n    \n    We should perhaps do this check during message bus reconnection as\n    well.. Anyhow, if a compute node is offline during a nova API call\n    to delete an instance, and the rabbit message is lost for some\n    reason (or alternatively if the delete method throws an error)\n    then the task state is not cleared and won't be cleared on compute\n    restart, leaving it wedged forever.\n    \n    Change-Id: Ie0a47958eb0fb58307902437a95634d5f54f74f3\n    Fixes-bug: #1281324\n    Co-Authored-By: Steve Kowalik <email address hidden>\n", 
+            "date_created": "2014-03-11 15:32:00.418157+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Is there any update on this? I have a similar problem. Even though I don't want to delete the instance, but turn it on.\nThis is my instance state:\n[_ID_] | [_Name_] | ACTIVE  | -           | Shutdown    | admin_net=10.10.0.13, 10.222.221.6  |\nWhen I try to start it from the cli, this is what I get:\nERROR (Conflict): Instance [_ID_] in vm_state active. Cannot start while the instance is in this state. (HTTP 409)\nCan I save my instance?", 
+            "date_created": "2015-03-12 22:04:53.570938+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sacha-m"
+        }
+    ], 
+    "closed": "2014-03-31 19:07:24.984648+00:00"
+}

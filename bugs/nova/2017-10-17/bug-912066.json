@@ -1,0 +1,68 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 10:17:38.509372+00:00", 
+    "description": "On OpenStack using a flavor with no ephemeral storage, but with swap space, cloud-init creates an invalid /etc/fstab\n\nGiven this favor (Note: \"Storage: 0GB\" and \"Swap: 2048MB\"): \n\n> p1.small: Memory: 3072MB, VCPUS: 4, Storage: 0GB, FlavorID: 15, Swap: 2048MB, RXTX Quota: 0GB, RXTX Cap: 0MB\n\nThe fstab is generated as:\n\n> # /etc/fstab: static file system information.\n> # <file system>                                 <mount point>   <type>  <options>       <dump>  <pass>\n> proc                                            /proc           proc    nodev,noexec,nosuid 0       0\n> LABEL=cloudimg-rootfs              /               ext4    defaults        0       0\n> /dev/vdc        none    swap    sw,comment=cloudconfig  0       0\n\nWhile the devices are (/dev/vdb is the swap):\n\n> # ls /dev/vd*\n> /dev/vda  /dev/vda1  /dev/vdb", 
+    "tags": [], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/912066", 
+    "owner": "https://api.launchpad.net/1.0/~vishvananda", 
+    "id": 912066, 
+    "index": 395, 
+    "openned": "2012-01-17 15:14:16.004709+00:00", 
+    "created": "2012-01-05 00:11:08.420016+00:00", 
+    "title": "/etc/fstab contains incorrect device for swap partition when no ephemeral disk present.", 
+    "comments": [
+        {
+            "content": "On OpenStack using a flavor with no ephemeral storage, but with swap space, cloud-init creates an invalid /etc/fstab\n\nGiven this favor (Note: \"Storage: 0GB\" and \"Swap: 2048MB\"): \n\n> p1.small: Memory: 3072MB, VCPUS: 4, Storage: 0GB, FlavorID: 15, Swap: 2048MB, RXTX Quota: 0GB, RXTX Cap: 0MB\n\nThe fstab is generated as:\n\n> # /etc/fstab: static file system information.\n> # <file system>                                 <mount point>   <type>  <options>       <dump>  <pass>\n> proc                                            /proc           proc    nodev,noexec,nosuid 0       0\n> LABEL=cloudimg-rootfs              /               ext4    defaults        0       0\n> /dev/vdc        none    swap    sw,comment=cloudconfig  0       0\n\nWhile the devices are (/dev/vdb is the swap):\n\n> # ls /dev/vd*\n> /dev/vda  /dev/vda1  /dev/vdb", 
+            "date_created": "2012-01-05 00:11:08.420016+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "Also, This is on the Oneiric cloud-image.", 
+            "date_created": "2012-01-05 00:12:10.793718+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "Kiall, could you collect the ec2 metadata from inside such an instance?\n\npython -c 'import boto.utils, pprint; pprint.pprint(boto.utils.get_instance_metadata())'\n\nBasically, i suspect that the metadata is stating that swap is at /dev/vdc, so cloud-init is trusting it.\n\nif that is the case, we either have to :\n a.) go searching for swap\n b.) fix nova metadata service\n\nand 'b' seems like the right fix, as the MD is clearly wrong. ", 
+            "date_created": "2012-01-05 21:15:56.694696+00:00", 
+            "author": "https://api.launchpad.net/1.0/~smoser"
+        }, 
+        {
+            "content": "Libvirt XML: http://paste.ubuntu.com/807484/\nInstance metadata:  http://paste.ubuntu.com/807485/\n\n> $ ls /dev/vd*\n> /dev/vda  /dev/vda1  /dev/vdb\n\n> $ cat /etc/fstab\n> # /etc/fstab: static file system information.\n> # <file system>                                 <mount point>   <type>  <options>       <dump>  <pass>\n> proc                                            /proc           proc    nodev,noexec,nosuid 0       0\n> LABEL=cloudimg-rootfs              /               ext4    defaults        0       0\n> /dev/vdc        none    swap    sw,comment=cloudconfig  0       0\n", 
+            "date_created": "2012-01-17 15:21:18.687939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "> $ sudo blkid /dev/vdb\n> /dev/vdb: UUID=\"3447f2ad-9c81-4b95-ab3d-d5ff7aacbfa6\" TYPE=\"swap\"", 
+            "date_created": "2012-01-17 15:26:19.616899+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "So...I'm going to depend on you two to help me with this. Did you determine whether this is a bug we need to fix in Nova, or is it elsewhere?", 
+            "date_created": "2012-01-27 17:33:41.494860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "This is a nova bug all right,  supplies the incorrect device name in the ec2 metadata.\n\nNova supplies the following:\n\n> 'block-device-mapping': {'ami': 'vda',\n>                          'root': '/dev/vda',\n>                          'swap': '/dev/vdc'},\n\nWhen it should supply this:\n\n> 'block-device-mapping': {'ami': 'vda',\n>                          'root': '/dev/vda',\n>                          'swap': '/dev/vdb'},\n\nIt seems to nova asks libvirt to attach the swap device at /dev/vdc, but since libvirt+kvm simply uses the supplied device name as an ordering hint, the device is actually attached at /dev/vdb", 
+            "date_created": "2012-01-27 17:45:06.228434+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "I should mention, I believe the fix is for nova to ask for the device to be attached at /dev/vdb when there is no ephemeral disk.", 
+            "date_created": "2012-01-27 17:46:20.188563+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kiall"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/3726", 
+            "date_created": "2012-02-03 00:37:02.494787+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/3726\nCommitted: http://github.com/openstack/nova/commit/8f7bc2ee6c14fe6dc16d27353869a7a35f4931f0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 8f7bc2ee6c14fe6dc16d27353869a7a35f4931f0\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Thu Feb 2 16:35:49 2012 -0800\n\n    Make swap default to vdb if there is no ephemeral\n    \n     * Fixes bug 912066\n    \n    Change-Id: Ie463a8953fd0ac07a9def0dd86379d06d9259bc5\n", 
+            "date_created": "2012-02-07 23:43:29.808255+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-02-29 10:31:57.124985+00:00"
+}

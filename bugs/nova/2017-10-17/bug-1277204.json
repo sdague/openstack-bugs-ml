@@ -1,0 +1,93 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-02-21 14:34:20.578630+00:00", 
+    "description": "The recent change to oslo messaging seems to have removed the ability to specify a list of topics for notifications.   This is a critical feature for systems which provide multiple message streams for billing and monitoring.\n\n\nTo reproduce:\n\n1) Create a devstack system\n\n2) Add the following lines to the [DEFAULT] section of nova.conf:\nnotification_driver = nova.openstack.common.notifier.rpc_notifier\nnotification_topics = notifications,monitor\nnotify_on_state_change = vm_and_task_state\nnotify_on_any_change = True\ninstance_usage_audit = True\ninstance_usage_audit_period = hour\n\n3) Restart all the n-* services\n\n4) Look at the info queues in rabbit\nsudo rabbitmqctl list_queues | grep info\nnotifications.info      15\n\n5) Create an instance\nubuntu@devstack-net-cache:/mnt/devstack$ nova boot --image cirros-0.3.1-x86_64-uec --flavor 1 phil2\n\n6) Look at the info queues in rabbit\nsudo rabbitmqctl list_queues | grep info\nnotifications.info      17\n\n\n\nMessages are being added to the \"notifications\" queue, but not to the monitor queue", 
+    "tags": [], 
+    "importance": "Critical", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1277204", 
+    "owner": "None", 
+    "id": 1277204, 
+    "index": 174, 
+    "openned": "2014-02-06 18:37:17.929675+00:00", 
+    "created": "2014-02-06 18:37:17.929675+00:00", 
+    "title": "notifications no longer available in Nova", 
+    "comments": [
+        {
+            "content": "The recent change to oslo messaging seems to have removed the ability to specify a list of topics for notifications.   This is a critical feature for systems which provide multiple message streams for billing and monitoring.\n\n\nTo reproduce:\n\n1) Create a devstack system\n\n2) Add the following lines to the [DEFAULT] section of nova.conf:\nnotification_driver = nova.openstack.common.notifier.rpc_notifier\nnotification_topics = notifications,monitor\nnotify_on_state_change = vm_and_task_state\nnotify_on_any_change = True\ninstance_usage_audit = True\ninstance_usage_audit_period = hour\n\n3) Restart all the n-* services\n\n4) Look at the info queues in rabbit\nsudo rabbitmqctl list_queues | grep info\nnotifications.info      15\n\n5) Create an instance\nubuntu@devstack-net-cache:/mnt/devstack$ nova boot --image cirros-0.3.1-x86_64-uec --flavor 1 phil2\n\n6) Look at the info queues in rabbit\nsudo rabbitmqctl list_queues | grep info\nnotifications.info      17\n\n\n\nMessages are being added to the \"notifications\" queue, but not to the monitor queue", 
+            "date_created": "2014-02-06 18:37:17.929675+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "I added a simple consumer to check what messages were being generated on notifications.info (since the volume of messages looked too small for nova) - and they are comming from Neutron, so this isn't just as topic issue - it looks as if Nova isn't publishing notifications at all now", 
+            "date_created": "2014-02-07 09:48:45.312720+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "I confirm that nova doesn't publish notifications at all, it seems that nova is not loading the plugin correctly.\n\nI did a small test I added an non-existing notification_driver in nova.conf:\n\nnotification_driver = oslo.messaging.notify._impl_messaging:MessagingDriverFALSE\n\nThen I restarted nova-api and I can see that the new param is there but not used at all as nova-api is not complaining:\n2014-02-07 12:06:51.719 DEBUG nova.openstack.common.service [-] notification_driver            = ['oslo.messaging.notify._impl_messaging:MessagingDriverFALSE'] from (pid=7229) log_opt_values /opt/stack/oslo.config/oslo\n/config/cfg.py:1911\n\n", 
+            "date_created": "2014-02-07 12:09:26.082425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "At least part of the problem is that the backwards compatibility values in setup.cfg have been mis-spelt:\n\n\"nova.openstack.common.notififier.rpc_notifier\n\ninstead of\n\n\"nova.openstack.common.notifier.rpc_notifier\"\n\nHowever configuring for the misspelt value now produces an exception in the API layer:\n\n2014-02-07 11:03:51.557 DEBUG oslo.messaging._drivers.amqp [-] UNIQUE_ID is fe1eb0016f3b4c3a856dd782ce990e09. from (pid=30234) _add_unique_id /mnt/stack/oslo.messaging/oslo/messaging/_drivers/amqp.py:333\n2014-02-07 11:03:51.558 ERROR oslo.messaging.notify._impl_messaging [-] Could not send notification to monitor. Payload={'priority': 'INFO', '_unique_id': 'fe1eb0016f3b4c3a856dd782ce990e09', 'event_type': 'compute.instance.update', 'timestamp': '2014-02-07 11:03:51.557402', 'publisher_id': 'None.devstack-net-cache', 'payload': {'node': u'devstack-net-cache', 'state_description': 'deleting', 'ramdisk_id': u'50f5d917-91c7-4ffe-8126-9bbb7de2fceb', 'created_at': '2014-02-07 09:44:42', 'access_ip_v6': None, 'disk_gb': 1L, 'availability_zone': None, 'terminated_at': '', 'ephemeral_gb': 0L, 'instance_type_id': 2L, 'instance_flavor_id': '1', 'audit_period_ending': datetime.datetime(2014, 2, 7, 11, 3, 51, 552808), 'host': u'devstack-net-cache', 'user_id': u'd053d4cd7cec4279b740488e53ef7f00', 'deleted_at': '', 'reservation_id': u'r-oggomnqk', 'image_ref_url': u'http://10.2.197.166:9292/images/4f51bf3b-2ca5-4401-8c16-ea6225a24600', 'memory_mb': 512L, 'root_gb': 1L, 'display_name': u'foo', 'bandwidth': {}, 'instance_type': 'm1.tiny', 'tenant_id': u'2db8d9b4711240328b8a6c2735c3a520', 'access_ip_v4': None, 'hostname': u'foo', 'vcpus': 1L, 'old_task_state': None, 'instance_id': u'fa59ad82-91a3-4773-8f33-c18b30a788e3', 'kernel_id': u'ebbaae92-2583-4bb1-a899-46f396b1680b', 'state': u'active', 'image_meta': {u'kernel_id': u'ebbaae92-2583-4bb1-a899-46f396b1680b', u'container_format': u'ami', u'min_ram': u'0', u'ramdisk_id': u'50f5d917-91c7-4ffe-8126-9bbb7de2fceb', u'disk_format': u'ami', u'min_disk': u'1', u'base_image_ref': u'4f51bf3b-2ca5-4401-8c16-ea6225a24600'}, 'architecture': None, 'new_task_state': u'deleting', 'audit_period_beginning': datetime.datetime(2014, 2, 1, 0, 0), 'old_state': u'active', 'os_type': None, 'launched_at': '2014-02-07T09:44:47.000000', 'metadata': {}}, 'message_id': '03392b37-325e-4960-8a13-0367f9223e51'}\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging Traceback (most recent call last):\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging   File \"/mnt/stack/oslo.messaging/oslo/messaging/notify/_impl_messaging.py\", line 47, in notify\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging     version=self.version)\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging   File \"/mnt/stack/oslo.messaging/oslo/messaging/transport.py\", line 93, in _send_notification\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging     self._driver.send_notification(target, ctxt, message, version)\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging   File \"/mnt/stack/oslo.messaging/oslo/messaging/_drivers/amqpdriver.py\", line 393, in send_notification\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging     return self._send(target, ctxt, message, envelope=(version == 2.0))\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging   File \"/mnt/stack/oslo.messaging/oslo/messaging/_drivers/amqpdriver.py\", line 362, in _send\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging     rpc_amqp.pack_context(msg, context)\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging   File \"/mnt/stack/oslo.messaging/oslo/messaging/_drivers/amqp.py\", line 299, in pack_context\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging     context_d = six.iteritems(context.to_dict())\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging   File \"/usr/local/lib/python2.7/dist-packages/six.py\", line 484, in iteritems\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging     return iter(getattr(d, _iteritems)(**kw))\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging AttributeError: 'RequestContext' object has no attribute 'iteritems'\n2014-02-07 11:03:51.558 TRACE oslo.messaging.notify._impl_messaging \n2014-02-07 11:03:51.559 DEBUG oslo.messaging._drivers.amqp [-] UNIQUE_ID is e543c2f91dda4a66aa48a99ea7799e09. from (pid=30234) _add_unique_id /mnt/stack/oslo.messaging/oslo/messaging/_drivers/amqp.py:333", 
+            "date_created": "2014-02-07 12:27:25.763381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Setting this to critical as at the moment it looks like notifications in Nova are just broken since this change to oslo", 
+            "date_created": "2014-02-07 12:29:31.673528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Thanks Andera,\r\n\r\nI've added what I found so far to the bug report.  I think there are at least two issues here:\r\n\r\nSetup.cfg has mis-spelt the backwards compatibility names\r\n\r\nBut even using the mis-spelt name produces a stack trace when Nova tries to send a message\r\n\r\n\r\n> -----Original Message-----\r\n> From: <email address hidden> [mailto:<email address hidden>] On Behalf\r\n> Of Andrea Rosa\r\n> Sent: 07 February 2014 12:09\r\n> To: Day, Phil\r\n> Subject: [Bug 1277204] Re: notification topics no longer configurable\r\n> \r\n> I confirm that nova doesn't publish notifications at all, it seems that nova is\r\n> not loading the plugin correctly.\r\n> \r\n> I did a small test I added an non-existing notification_driver in\r\n> nova.conf:\r\n> \r\n> notification_driver =\r\n> oslo.messaging.notify._impl_messaging:MessagingDriverFALSE\r\n> \r\n> Then I restarted nova-api and I can see that the new param is there but not\r\n> used at all as nova-api is not complaining:\r\n> 2014-02-07 12:06:51.719 DEBUG nova.openstack.common.service [-]\r\n> notification_driver            =\r\n> ['oslo.messaging.notify._impl_messaging:MessagingDriverFALSE'] from\r\n> (pid=7229) log_opt_values /opt/stack/oslo.config/oslo\r\n> /config/cfg.py:1911\r\n> \r\n> --\r\n> You received this bug notification because you are subscribed to the bug\r\n> report.\r\n> https://bugs.launchpad.net/bugs/1277204\r\n> \r\n> Title:\r\n>   notification topics no longer configurable\r\n> \r\n> Status in OpenStack Compute (Nova):\r\n>   New\r\n> Status in Messaging API for OpenStack:\r\n>   New\r\n> \r\n> Bug description:\r\n>   The recent change to oslo messaging seems to have removed the ability\r\n>   to specify a list of topics for notifications.   This is a critical\r\n>   feature for systems which provide multiple message streams for billing\r\n>   and monitoring.\r\n> \r\n> \r\n>   To reproduce:\r\n> \r\n>   1) Create a devstack system\r\n> \r\n>   2) Add the following lines to the [DEFAULT] section of nova.conf:\r\n>   notification_driver = nova.openstack.common.notifier.rpc_notifier\r\n>   notification_topics = notifications,monitor\r\n>   notify_on_state_change = vm_and_task_state\r\n>   notify_on_any_change = True\r\n>   instance_usage_audit = True\r\n>   instance_usage_audit_period = hour\r\n> \r\n>   3) Restart all the n-* services\r\n> \r\n>   4) Look at the info queues in rabbit\r\n>   sudo rabbitmqctl list_queues | grep info\r\n>   notifications.info      15\r\n> \r\n>   5) Create an instance\r\n>   ubuntu@devstack-net-cache:/mnt/devstack$ nova boot --image cirros-\r\n> 0.3.1-x86_64-uec --flavor 1 phil2\r\n> \r\n>   6) Look at the info queues in rabbit\r\n>   sudo rabbitmqctl list_queues | grep info\r\n>   notifications.info      17\r\n> \r\n> \r\n>   Messages are being added to the \"notifications\" queue, but not to the\r\n>   monitor queue\r\n> \r\n> To manage notifications about this bug go to:\r\n> https://bugs.launchpad.net/nova/+bug/1277204/+subscriptions\r\n", 
+            "date_created": "2014-02-07 12:32:30+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/71532/1  fixes the stack trace above, and https://review.openstack.org/#/c/71888/1 fixes the typo - but still can't get Nova in devstack to send a notification message into MQ.", 
+            "date_created": "2014-02-07 13:52:54.549140+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Did some more debugging in Devstack after the two above were merged, but flumxed as to why notifications still don't work.\n\nI can see the notification message reaching published_send() method in oslo/messaging/_drivers/_impl_rabbit.py with a topic of \"notifications.info\",   and can see from the same set of tracing normal Nova messages being sent to a topic of \"conductor\"\n\nBut while the conductor messages clearly get there, the notification ones just never seem to make it to the queue, even though Neutron (which hasn't yet moved to oslo messaging) are going into the notification.info queue (so the queue itself exists)", 
+            "date_created": "2014-02-07 19:08:44.296021+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Not sure if this is a helpful clue or not, but from the logs it looks lije each notification message alwways results in making a new connection\n\n2014-02-07 20:06:28.557 INFO oslo.messaging._drivers.impl_rabbit [-] Connected to AMQP server on localhost:5672\n\nwhereas the rpc messages don't seem do this.\n\n", 
+            "date_created": "2014-02-07 20:16:41.261880+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Setting to critical since as far as I can see notifications are broken following the switch to oslo, not juts no longer configurable ", 
+            "date_created": "2014-02-10 17:07:08.274342+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Phil - I haven't tried with devstack yet, but tried this test:\n\nhttps://gist.github.com/markmc/8953856\n\nBasically this shows some old and new nova code sending the same notifications and a server to receive them - I'm not seeing any change in behaviour", 
+            "date_created": "2014-02-12 11:30:16.323281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Ok, I've tried with devstack now and I'm happily receiving notifications\n\nThis is the listener I'm using : https://gist.github.com/markmc/8955322\n\nTo test this, I just put:\n\n  notification_driver = nova.openstack.common.notifier.rpc_notifier\n  notification_topics = notifications\n\nin nova.conf and restarted nova-api, then did:\n\n  $> nova  keypair-add foo\n\nand I see:\n\n {...,  u'event_type': u'keypair.create.start', ... payload': {u'tenant_id': u'e441da12bb4a4b6999db3bf10e1940e3', u'user_id': u'400c71997c7a4622a6135d5cd9d6d357', u'key_name': u'foo'}, }\n", 
+            "date_created": "2014-02-12 13:14:49.298568+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Oh, for reference, I'm testing with  nova commit 93b0fc1\n\nMarking as Incomplete until we figure out what's different about your setup that's causing the problem", 
+            "date_created": "2014-02-12 13:17:40.258208+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Thanks Mark - good to know that it might just be my set-up.   I'll rebuild a new devstack and re-test. ", 
+            "date_created": "2014-02-12 14:27:03.723060+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Build a new devstack and confirmed that notifications are now working - so closing this issue.\n\nThe one outstanding difference seems to be that if you configure additional notification topics then the queues don't exist until something has listened on them at least once - I *think* the code used to always create the notification queues, but I'll dig into that separately and raise a new bug if i can prove that.", 
+            "date_created": "2014-02-12 17:19:37.608317+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }
+    ], 
+    "closed": "2014-02-12 16:27:59.061416+00:00"
+}

@@ -1,0 +1,115 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2013-07-21 05:00:47.450348+00:00", 
+    "description": "When deleting volumes in Nova, it will fill the entire file with zeros. This can take a long time, and may be considered unnecessary in some deployment environments. On the other hand it may also be considered insufficiently paranoid. There ought to be a configurable policy for wiping data, allowing for no wiping, zeroing, or one of the scrub command algorithms. See also this thread.\n\nhttps://lists.launchpad.net/openstack/msg14333.html", 
+    "tags": [
+        "volume"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1022511", 
+    "owner": "https://api.launchpad.net/1.0/~p-draigbrady", 
+    "id": 1022511, 
+    "index": 2530, 
+    "openned": "2012-07-09 18:40:18.049397+00:00", 
+    "created": "2012-07-09 09:44:31.836545+00:00", 
+    "title": "Allow for configurable policy for wiping data when deleting volumes", 
+    "comments": [
+        {
+            "content": "When deleting volumes in Nova, it will fill the entire file with zeros. This can take a long time, and may be considered unnecessary in some deployment environments. On the other hand it may also be considered insufficiently paranoid. There ought to be a configurable policy for wiping data, allowing for no wiping, zeroing, or one of the scrub command algorithms. See also this thread.\n\nhttps://lists.launchpad.net/openstack/msg14333.html", 
+            "date_created": "2012-07-09 09:44:31.836545+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "I was intending to look at this at some stage.\nConfiguration is a good thing here to support various devices and security standards.\nSome notes I have for various options:\n\nnone\n  Don't bother, or leave to lower layers (see discard)\nzero\n  dd bs=1M if=/dev/zero\nshred\n  # doesn't use /dev/urandom by default as very slow and overkill\n  # uses 3 passes by default\n  # does not yet support DoD 5220 rules\n  # does not yet support ATA secure erase\ndiscard\n  # benefits on SSDs to return blocks to pool and efficiently erase\n  # some devices don's zero on discard. See /sys/block/$dev/queue/discard_zeroes_data\n  # lvm supports directly since 2.02.85 (04/2011) with issue_discards=1 in /etc/lvm/lvm.conf\n  # manual trim call with hdparm --trim-sector-ranges. That's a bit awkward though...\n  # ... must look into adding simple support to some command (fstrim, truncate,shred?)\n  # Note mkfs.* generally do a trim of the device first anyway\n\nI'd not considered a partial overwrite of the start of the device,\nas discussed in the referenced email thread. Does that provide\nany functional benefit?", 
+            "date_created": "2012-07-09 11:32:19.872312+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "I don't think you want to incorporate 'discard' in this.  IMHO, that is a separate logical operation, that you may choose to use /in conjunction with/ one of the data-wiping operations, not instead of.\n\nWhether wiping the start of the device is useful depends somewhat of what the guest OS has used it for.  If the guest used it for a plain filesystem, then wiping will scramble much fo the filesystem metadat, but not the real data. So it is at best \"Security through obscurity\". If, however, the guest had put something like LUKS encryption on the volume, then wiping the start will blow away all the decryption key sots, so this will be as secure as any other method.", 
+            "date_created": "2012-07-09 11:54:43.391629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~berrange"
+        }, 
+        {
+            "content": "++ for making this a configurable option in Nova/Cinder", 
+            "date_created": "2012-07-09 12:18:15.289426+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jaypipes"
+        }, 
+        {
+            "content": "HP's block store solution does scrubbing asynchronously on the the back end, so we'd certainly like to be able to tell nova/cinder not to do it itself....", 
+            "date_created": "2012-07-11 14:57:53.706316+00:00", 
+            "author": "https://api.launchpad.net/1.0/~duncan-thomas"
+        }, 
+        {
+            "content": "I'll add a \"volume_clear\" option with the default value of \"zero\" but can be any of:\r\n\r\nnone\r\nzero           # shred -n0 -z # or dd if faster\r\nzero_size  # shred -n0 -z -s$size\r\nshred         # shred default of 3 passes\r\nshred_n    # shred -n$n", 
+            "date_created": "2012-07-11 15:31:26.442263+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "On Wed, Jul 11, 2012 at 9:57 AM, Duncan Thomas\n<email address hidden> wrote:\n> HP's block store solution does scrubbing asynchronously on the the back\n> end, so we'd certainly like to be able to tell nova/cinder not to do it\n> itself....\n>\n>\n\nI think the policy would be an option for the ISCSIDrver, surly the\nmanager will continue to just call\nself.driver.delete_volume(volume_id).\n\n-clayg\n", 
+            "date_created": "2012-07-11 15:40:53+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clay-gerrard"
+        }, 
+        {
+            "content": "On 11 July 2012 16:40, clayg <email address hidden> wrote:\n> On Wed, Jul 11, 2012 at 9:57 AM, Duncan Thomas\n> <email address hidden> wrote:\n>> HP's block store solution does scrubbing asynchronously on the the back\n>> end, so we'd certainly like to be able to tell nova/cinder not to do it\n>> itself....\n>>\n>>\n>\n> I think the policy would be an option for the ISCSIDrver, surly the\n> manager will continue to just call\n> self.driver.delete_volume(volume_id).\n\nIt's highly likely tahn some none-iscsi setups might want it as well\nthough... even if they don't know they want it until they get it...\nseems an idea for ti to be at cinder level rather than driver level,\nbut optional, no?\n\n-- \nDuncan Thomas\n", 
+            "date_created": "2012-07-11 16:13:29+00:00", 
+            "author": "https://api.launchpad.net/1.0/~duncan-thomas"
+        }, 
+        {
+            "content": "Also related is bug 937694", 
+            "date_created": "2012-07-12 15:09:54.775376+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "p-draigbrady... any updates on this?  Haven't seen anything hit for Nova ,  were you planning to submit this week to make RC-1?", 
+            "date_created": "2012-09-04 19:59:38.426563+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "What's the final cutoff for this.\nI've a little time freeing up over the next few days,\nso I could get it done for Thursday I think.\n", 
+            "date_created": "2012-09-04 22:08:36.415037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Thursday would work so long as it's tested and we're confident it works well and there's minimal risk of breaking anything else that's in place.  \n\nTo clarify I think the driver is the right level to have this.  Not sure what Duncan was envisioning when he stated \"cinder level\" but the driver level gives everybody the flexibility that's needed.\n\nI'm actually most interested in something \"faster\" like an \"unsecure-delete\" option.  The dd method implemented today is pretty effective, but for those truly paranoid implementing an option to specify \"shred\" might be worthwhile.\n\nOne other thing to consider, would it be better to leave this out of flags and just have an optional delete-type as an arg to the delete command?  This way an end user can choose what's appropriate and what's not, and a service provider admin can use flags to enable/disable this ability for their end-users?  At this point maybe we're getting out of the scope of Folsom.... thoughts?", 
+            "date_created": "2012-09-04 22:46:25.852295+00:00", 
+            "author": "https://api.launchpad.net/1.0/~john-griffith"
+        }, 
+        {
+            "content": "Yes I aggree that the driver level is the place. I was considering having a clear() method that could be specialised if required.\n\nThe faster method currently is specifying a small size that would clear out partition tables/encryption keys.\nAlso people may specify \"none\" and have separate async scrubber as described in comment #4 for example\n\nAs for having the clear method specified with the delete command,\ni.e. overriding the default clear method, that is further functionality\nI think which is less pressing (if needed at all), and could be pused to Grizzly I think.", 
+            "date_created": "2012-09-04 23:40:57.049358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/12507", 
+            "date_created": "2012-09-06 16:00:32.924526+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/12521", 
+            "date_created": "2012-09-06 19:47:09.107141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Ignore my comment about moving it up and out of the driver - after a bit of discussion on IRC I was convinced that it is trivial enough to implement in the driver for the simple case and the complex case is, by its nature, volume specific.", 
+            "date_created": "2012-09-07 10:49:01.964110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~duncan-thomas"
+        }, 
+        {
+            "content": "volume support has been completely removed to cinder now", 
+            "date_created": "2012-11-06 13:40:50.383963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/12521\nCommitted: http://github.com/openstack/cinder/commit/bb06ebd0f6a75a6ba55a7c022de96a91e3750d20\nSubmitter: Jenkins\nBranch:    master\n\ncommit bb06ebd0f6a75a6ba55a7c022de96a91e3750d20\nAuthor: P\u00e1draig Brady <email address hidden>\nDate:   Thu Sep 6 16:36:50 2012 +0100\n\n    support a configurable volume wiping method\n    \n    Add a clear_volume() method that is called from delete_method().\n    This is only implemented at present for the base LVM driver.\n    This new clear_volume() method now supports these config vars:\n    \n      volume_clear = none, zero, shred\n      volume_clear_size = size_in_MiB\n    \n    'zero' is the default method and unchanged from previously.\n    'none' is used if security isn't a concern, or there is\n      independent volume scrubbing.\n    'shred' is for more security conscious situations where\n    an overwrite count is required. Currently this defaults to 3 passes.\n    \n    size_in_MiB can be used to limit the cleared area to the first\n    part of the volume, which can greatly speed up the operation,\n    and can be useful with encrypted volumes for example where\n    overwritting the encryption keys at the start is sufficient.\n    \n    Fixes bug: 1022511\n    Change-Id: I7312678ff5d66156578501483a1b74e2a69e19a0\n", 
+            "date_created": "2013-01-16 06:34:19.060679+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "http://zerrod.com/ylujvzgf/tjprknq.ppshtkkigamkdcodfcua\n", 
+            "date_created": "2013-07-21 04:35:08+00:00", 
+            "author": "https://api.launchpad.net/1.0/~clay-gerrard"
+        }
+    ], 
+    "closed": "2012-11-06 13:40:52.524064+00:00"
+}

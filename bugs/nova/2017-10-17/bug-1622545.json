@@ -1,0 +1,117 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-11-17 13:13:30.464970+00:00", 
+    "description": "Running \"nova-manage archive_deleted_rows ...\" clears out little or none of the deleted nova instances\n\nfor example running the command several times\n\n$ nova-manage --debug db archive_deleted_rows --max_rows 100000 --verbose\n\nI get\n+--------------------------+-------------------------+\n| Table                    | Number of Rows Archived |\n+--------------------------+-------------------------+\n| block_device_mapping     | 10108                   |\n| instance_actions         | 31838                   |\n| instance_actions_events  | 2                       |\n| instance_extra           | 10108                   |\n| instance_faults          | 459                     |\n| instance_info_caches     | 10108                   |\n| instance_metadata        | 6037                    |\n| instance_system_metadata | 17883                   |\n| reservations             | 9                       |\n+--------------------------+-------------------------+\n\nthe only way I've been able to get an instances archived is to lower the --max-rows parameter, but this only deletes a small number of the instances and sometimes doesn't archive any at all\n\nIn my nova-mange.log I have the following error\n\n2016-09-12 09:22:21.658 17603 WARNING nova.db.sqlalchemy.api [-] IntegrityError detected when archiving table instances: (pymysql.err.IntegrityError) (1451, u'Cannot delete or update a parent row: a foreign key constraint fails (`nova`.`instance_extra`, CONSTRAINT `instance_extra_instance_uuid_fkey` FOREIGN KEY (`instance_uuid`) REFERENCES `instances` (`uuid`))') [SQL: u'DELETE FROM instances WHERE instances.id in (SELECT T1.id FROM (SELECT instances.id \\nFROM instances \\nWHERE instances.deleted != %s ORDER BY instances.id \\n LIMIT %s) as T1)'] [parameters: (0, 787)]\n\n\nmysql -e 'select count(*) from instances where deleted_at is not NULL;' nova\n+----------+\n| count(*) |\n+----------+\n|    70829 |\n+----------+\n\nI'm running mitaka with this patch installed\nhttps://review.openstack.org/#/c/326730/1", 
+    "tags": [
+        "db", 
+        "in-stable-mitaka", 
+        "in-stable-newton"
+    ], 
+    "importance": "Medium", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1622545", 
+    "owner": "https://api.launchpad.net/1.0/~danms", 
+    "id": 1622545, 
+    "index": 4626, 
+    "openned": "2016-09-12 10:07:24.607455+00:00", 
+    "created": "2016-09-12 10:07:24.607455+00:00", 
+    "title": "archive_deleted_rows isn't archiving instances", 
+    "comments": [
+        {
+            "content": "Running \"nova-manage archive_deleted_rows ...\" clears out little or none of the deleted nova instances\n\nfor example running the command several times\n\n$ nova-manage --debug db archive_deleted_rows --max_rows 100000 --verbose\n\nI get\n+--------------------------+-------------------------+\n| Table                    | Number of Rows Archived |\n+--------------------------+-------------------------+\n| block_device_mapping     | 10108                   |\n| instance_actions         | 31838                   |\n| instance_actions_events  | 2                       |\n| instance_extra           | 10108                   |\n| instance_faults          | 459                     |\n| instance_info_caches     | 10108                   |\n| instance_metadata        | 6037                    |\n| instance_system_metadata | 17883                   |\n| reservations             | 9                       |\n+--------------------------+-------------------------+\n\nthe only way I've been able to get an instances archived is to lower the --max-rows parameter, but this only deletes a small number of the instances and sometimes doesn't archive any at all\n\nIn my nova-mange.log I have the following error\n\n2016-09-12 09:22:21.658 17603 WARNING nova.db.sqlalchemy.api [-] IntegrityError detected when archiving table instances: (pymysql.err.IntegrityError) (1451, u'Cannot delete or update a parent row: a foreign key constraint fails (`nova`.`instance_extra`, CONSTRAINT `instance_extra_instance_uuid_fkey` FOREIGN KEY (`instance_uuid`) REFERENCES `instances` (`uuid`))') [SQL: u'DELETE FROM instances WHERE instances.id in (SELECT T1.id FROM (SELECT instances.id \\nFROM instances \\nWHERE instances.deleted != %s ORDER BY instances.id \\n LIMIT %s) as T1)'] [parameters: (0, 787)]\n\n\nmysql -e 'select count(*) from instances where deleted_at is not NULL;' nova\n+----------+\n| count(*) |\n+----------+\n|    70829 |\n+----------+\n\nI'm running mitaka with this patch installed\nhttps://review.openstack.org/#/c/326730/1", 
+            "date_created": "2016-09-12 10:07:24.607455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "I checked this on devstack master and rows are soft-deleted / archived properly:\n\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L1838-L1840 (InstanceExtra  row is soft-deleted on soft-deletion of an instance)\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L6392 (tables are processed in reverse order based on FKs, so that we delete referencing tables first)\n\nhttp://paste.openstack.org/show/572335/\n\nIt's not clear to me, how you can run into this problem, given the fact creation / soft-deletion of InstanceExtra rows was added at the same time in https://review.openstack.org/#/c/108097", 
+            "date_created": "2016-09-12 13:59:45.580622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "feli5, sorry, I assigned this to myself by accident.", 
+            "date_created": "2016-09-12 14:01:08.421137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Do you have instances that existed in the database before upgrading to mitaka and the archive is failing on those? Otherwise I agree with Roman and I'm not sure how you're hitting issues with instance_extra foreign keys.\n\nMaybe check something like:\n\nselect flavor from nova.instance_extra where instance_uuid in (select uuid from nova.instances where deleted != 0);", 
+            "date_created": "2016-09-12 17:34:58.181037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Also, can you confirm that you have this fix? https://review.openstack.org/#/c/246635/", 
+            "date_created": "2016-09-12 17:37:17.050055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "@Matt this was a fresh mitaka install there was no upgrade\n\nAlso I checked and I have the patch\nhttps://review.openstack.org/#/c/246635/\n\nI'll see if I can get a dump of the sql to help debug the problem.", 
+            "date_created": "2016-09-13 11:28:16.275559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "I've uploaded a dump of the nova database here\nhttp://goodsquishy.com/downloads/nova.sql.gz", 
+            "date_created": "2016-09-16 09:07:23.129683+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "So the reason this is happening is that we have some residue laying around in the database from failed cleanups. This would be things like instances that are deleted, but that have undeleted instance_extra or instance_fault records for them. The archive process is too naive to handle this, and thus those instances can never get purged. Patch coming for discussion shortly.", 
+            "date_created": "2016-09-27 17:06:44.866159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/377933", 
+            "date_created": "2016-09-27 17:29:04.329222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "FYI, using Derek's database dump:\n\ndan@guaranine:~$ mysql -u root -pfoo nova < nova.sql\ndan@guaranine:~$ nova-manage db sync >/dev/null 2>&1\ndan@guaranine:~$ nova-manage db archive_deleted_rows --verbose --max_rows 100000\n+-------------------------+-------------------------+\n| Table                   | Number of Rows Archived |\n+-------------------------+-------------------------+\n| instance_actions_events | 39153                   |\n| reservations            | 60847                   |\n+-------------------------+-------------------------+\ndan@guaranine:~$ nova-manage db archive_deleted_rows --verbose --max_rows 100000\n+--------------------------+-------------------------+\n| Table                    | Number of Rows Archived |\n+--------------------------+-------------------------+\n| instance_info_caches     | 7210                    |\n| instance_metadata        | 7314                    |\n| instance_system_metadata | 71278                   |\n| reservations             | 14198                   |\n+--------------------------+-------------------------+\ndan@guaranine:~$ nova-manage db archive_deleted_rows --verbose --max_rows 100000\n+----------------------+-------------------------+\n| Table                | Number of Rows Archived |\n+----------------------+-------------------------+\n| block_device_mapping | 8838                    |\n| instance_actions     | 38991                   |\n| instance_extra       | 12747                   |\n| instance_faults      | 37                      |\n| instance_info_caches | 1631                    |\n| instances            | 37756                   |\n+----------------------+-------------------------+\ndan@guaranine:~$ nova-manage db archive_deleted_rows --verbose --max_rows 100000\n+-----------+-------------------------+\n| Table     | Number of Rows Archived |\n+-----------+-------------------------+\n| instances | 41919                   |\n+-----------+-------------------------+\ndan@guaranine:~$ nova-manage db archive_deleted_rows --verbose --max_rows 100000\nNothing was archived.\ndan@guaranine:~$ echo \"SELECT COUNT(1) FROM instances WHERE deleted!=0\" | mysql -uroot -pfoo nova\nCOUNT(1)\n0", 
+            "date_created": "2016-09-27 18:07:18.261707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/377933\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=ceaf853894352b6d0ae12efe85ba5eb4e651e58a\nSubmitter: Jenkins\nBranch:    master\n\ncommit ceaf853894352b6d0ae12efe85ba5eb4e651e58a\nAuthor: Dan Smith <email address hidden>\nDate:   Tue Sep 27 10:17:00 2016 -0700\n\n    Archive instance-related rows when the parent instance is deleted\n    \n    This is something I expect has been very broken for a long time. We\n    have rows in tables such as instance_extra, instance_faults, etc that\n    pertain to a single instance, and thus have a foreign key on their\n    instance_uuid column that points to the instance. If any of those\n    records exist, an instance can not be archived out of the main\n    instances table.\n    \n    The archive routine currently \"handles\" this by skipping over said\n    instances, and eventually iterating over all the tables to pull out\n    any records that point to that instance, thus freeing up the instance\n    itself for archival. The problem is, this only happens if those extra\n    records are actually marked as deleted themselves. If we fail during\n    a cleanup routine and leave some of them not marked as deleted, but\n    where the instance they reference *is* marked as deleted, we will\n    never archive them.\n    \n    This patch adds another phase of the archival process for any table\n    that has an \"instance_uuid\" column, which attempts to archive records\n    that point to these deleted instances. With this, using a very large\n    real world sample database, I was able to archive my way down to\n    zero deleted, un-archivable instances (from north of 100k).\n    \n    Closes-Bug: #1622545\n    Change-Id: I77255c77780f0c2b99d59a9c20adecc85335bb18\n", 
+            "date_created": "2016-09-27 21:27:17.553069+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/newton\nReview: https://review.openstack.org/378055", 
+            "date_created": "2016-09-27 21:52:36.995071+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/378650", 
+            "date_created": "2016-09-28 14:04:35.121647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/378650\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=76d1b24c00a4dc24c9bc3290fca513b5ece7247a\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 76d1b24c00a4dc24c9bc3290fca513b5ece7247a\nAuthor: Dan Smith <email address hidden>\nDate:   Tue Sep 27 10:17:00 2016 -0700\n\n    Archive instance-related rows when the parent instance is deleted\n    \n    This is something I expect has been very broken for a long time. We\n    have rows in tables such as instance_extra, instance_faults, etc that\n    pertain to a single instance, and thus have a foreign key on their\n    instance_uuid column that points to the instance. If any of those\n    records exist, an instance can not be archived out of the main\n    instances table.\n    \n    The archive routine currently \"handles\" this by skipping over said\n    instances, and eventually iterating over all the tables to pull out\n    any records that point to that instance, thus freeing up the instance\n    itself for archival. The problem is, this only happens if those extra\n    records are actually marked as deleted themselves. If we fail during\n    a cleanup routine and leave some of them not marked as deleted, but\n    where the instance they reference *is* marked as deleted, we will\n    never archive them.\n    \n    This patch adds another phase of the archival process for any table\n    that has an \"instance_uuid\" column, which attempts to archive records\n    that point to these deleted instances. With this, using a very large\n    real world sample database, I was able to archive my way down to\n    zero deleted, un-archivable instances (from north of 100k).\n    \n    Conflicts:\n    \tnova/db/sqlalchemy/api.py (indentation change)\n    \n    Closes-Bug: #1622545\n    Change-Id: I77255c77780f0c2b99d59a9c20adecc85335bb18\n    (cherry picked from commit ceaf853894352b6d0ae12efe85ba5eb4e651e58a)\n", 
+            "date_created": "2016-10-05 01:36:50.344903+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/378055\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=f15561b60957cb67a40c51b1f636a37b26c0205a\nSubmitter: Jenkins\nBranch:    stable/newton\n\ncommit f15561b60957cb67a40c51b1f636a37b26c0205a\nAuthor: Dan Smith <email address hidden>\nDate:   Tue Sep 27 10:17:00 2016 -0700\n\n    Archive instance-related rows when the parent instance is deleted\n    \n    This is something I expect has been very broken for a long time. We\n    have rows in tables such as instance_extra, instance_faults, etc that\n    pertain to a single instance, and thus have a foreign key on their\n    instance_uuid column that points to the instance. If any of those\n    records exist, an instance can not be archived out of the main\n    instances table.\n    \n    The archive routine currently \"handles\" this by skipping over said\n    instances, and eventually iterating over all the tables to pull out\n    any records that point to that instance, thus freeing up the instance\n    itself for archival. The problem is, this only happens if those extra\n    records are actually marked as deleted themselves. If we fail during\n    a cleanup routine and leave some of them not marked as deleted, but\n    where the instance they reference *is* marked as deleted, we will\n    never archive them.\n    \n    This patch adds another phase of the archival process for any table\n    that has an \"instance_uuid\" column, which attempts to archive records\n    that point to these deleted instances. With this, using a very large\n    real world sample database, I was able to archive my way down to\n    zero deleted, un-archivable instances (from north of 100k).\n    \n    Closes-Bug: #1622545\n    Change-Id: I77255c77780f0c2b99d59a9c20adecc85335bb18\n    (cherry picked from commit ceaf853894352b6d0ae12efe85ba5eb4e651e58a)\n", 
+            "date_created": "2016-10-10 03:47:31.838797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-10-10 13:19:12.710347+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.1 release.", 
+            "date_created": "2016-10-12 03:48:30.054852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-11-10 02:05:47.904396+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:13:29.007066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-09-27 21:27:14.866371+00:00"
+}

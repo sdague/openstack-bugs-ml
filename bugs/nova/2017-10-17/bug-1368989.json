@@ -1,0 +1,62 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 09:12:42.422021+00:00", 
+    "description": "nova.servicegroup.drivers.db.DbDriver._report_state() is called every service.report_interval seconds from a timer in order to periodically report the service state.  It calls self.conductor_api.service_update().\n\nIf this ends up calling nova.conductor.rpcapi.ConductorAPI.service_update(), it will do an RPC call() to nova-conductor.\n\nIf anything happens to the RPC server (failover, switchover, etc.) by default the RPC code will wait 60 seconds for a response (blocking the timer-based calling of _report_state() in the meantime).  This is long enough to cause the status in the database to get old enough that other services consider this service to be \"down\".\n\nArguably, since we're going to call service_update( ) again in service.report_interval seconds there's no reason to wait the full 60 seconds.  Instead, it would make sense to set the RPC timeout for the service_update() call to to something slightly less than service.report_interval seconds.\n\nI've also submitted a related bug report (https://bugs.launchpad.net/bugs/1368917) to improve RPC loss of connection in general, but I expect that'll take a while to deal with while this particular case can be handled much more easily.", 
+    "tags": [
+        "compute", 
+        "in-stable-juno", 
+        "juno-backport-potential"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1368989", 
+    "owner": "https://api.launchpad.net/1.0/~jichenjc", 
+    "id": 1368989, 
+    "index": 4032, 
+    "openned": "2014-09-12 23:02:23.355195+00:00", 
+    "created": "2014-09-12 23:02:23.355195+00:00", 
+    "title": "service_update() should not set an RPC timeout longer than service.report_interval", 
+    "comments": [
+        {
+            "content": "nova.servicegroup.drivers.db.DbDriver._report_state() is called every service.report_interval seconds from a timer in order to periodically report the service state.  It calls self.conductor_api.service_update().\n\nIf this ends up calling nova.conductor.rpcapi.ConductorAPI.service_update(), it will do an RPC call() to nova-conductor.\n\nIf anything happens to the RPC server (failover, switchover, etc.) by default the RPC code will wait 60 seconds for a response (blocking the timer-based calling of _report_state() in the meantime).  This is long enough to cause the status in the database to get old enough that other services consider this service to be \"down\".\n\nArguably, since we're going to call service_update( ) again in service.report_interval seconds there's no reason to wait the full 60 seconds.  Instead, it would make sense to set the RPC timeout for the service_update() call to to something slightly less than service.report_interval seconds.\n\nI've also submitted a related bug report (https://bugs.launchpad.net/bugs/1368917) to improve RPC loss of connection in general, but I expect that'll take a while to deal with while this particular case can be handled much more easily.", 
+            "date_created": "2014-09-12 23:02:23.355195+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "how about the rpc_reponse_timeout is smaller than report_interval?\nthat means we can use rpc_response_timeout?\n\nAnd, can we import rpc_response_timeout in nova code? should we add some code to return from oslo? \n", 
+            "date_created": "2014-09-24 10:22:27.453169+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Yes, if rpc_reponse_timeout is smaller than report_interval then we could use the existing RPC timeout.  (Though I don't think it would really hurt to make it longer.  Past a certain point it doesn't make much difference, it's probably not going to get a reply.\n\nIf you did want to use it, could you just grab it via CONF.import_opt('rpc_response_timeout')?\n\nAnyways, here's what I have in a private patch (against Havana, so it might not apply cleanly to current master).\n\ndiff --git a/nova/conductor/rpcapi.py b/nova/conductor/rpcapi.py\nindex e15aee1..ce2288c 100644\n--- a/nova/conductor/rpcapi.py\n+++ b/nova/conductor/rpcapi.py\n@@ -391,8 +391,13 @@ class ConductorAPI(rpcclient.RpcProxy):\n         return cctxt.call(context, 'compute_node_delete', node=node_p)\n \n     def service_update(self, context, service, values):\n+        # If we're calling this periodically, it makes no sense for the RPC\n+        # timeout to be more than the service report interval.\n+        timeout = service.get('report_interval')\n+        if timeout and timeout > 5:\n+            timeout -= 1\n         service_p = jsonutils.to_primitive(service)\n-        cctxt = self.client.prepare(version='1.34')\n+        cctxt = self.client.prepare(version='1.34', timeout=timeout)\n         return cctxt.call(context, 'service_update',\n                           service=service_p, values=values)\n \ndiff --git a/nova/servicegroup/drivers/db.py b/nova/servicegroup/drivers/db.py\nindex 31bd6f2..fb50d31 100644\n--- a/nova/servicegroup/drivers/db.py\n+++ b/nova/servicegroup/drivers/db.py\n@@ -103,6 +103,9 @@ class DbDriver(api.ServiceGroupDriver):\n             report_count = service.service_ref['report_count'] + 1\n             state_catalog['report_count'] = report_count\n \n+            # we'll make use of this in the RPC call to set the timeout\n+            service.service_ref['report_interval'] = service.report_interval\n+\n             service.service_ref = self.conductor_api.service_update(ctxt,\n                     service.service_ref, state_catalog)\n", 
+            "date_created": "2014-09-24 15:03:56.175400+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "ok, thanks a lot for you let me know this \n\nmy thought is similar to your patch except the rpc_timeout_stuff\nI will think about it more and submit a patch, thanks ", 
+            "date_created": "2014-09-25 07:29:11.664622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jichenjc"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/124359", 
+            "date_created": "2014-09-26 11:01:19.303290+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/124359\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=197bb467c0fa33700e5397c934fa10d8c16f1fbc\nSubmitter: Jenkins\nBranch:    master\n\ncommit 197bb467c0fa33700e5397c934fa10d8c16f1fbc\nAuthor: jichenjc <email address hidden>\nDate:   Sun Sep 21 05:19:49 2014 +0800\n\n    Use reasonable timeout for rpc service_update()\n    \n    nova.servicegroup.drivers.db.DbDriver._report_state() is called every\n    service.report_interval seconds from a timer in order to periodically\n    report the service state. It calls self.conductor_api.service_update().\n    \n    If this ends up calling nova.conductor.rpcapi.ConductorAPI.service_update(),\n    it will do an RPC call() to nova-conductor.\n    \n    If anything happens which causes the RPC reply to be lost or\n    never sent in the first place, by default the RPC code will\n    wait 60 seconds for a response (blocking the timer-based\n    calling of _report_state() in the meantime).\n    This is long enough to cause the status in the database to get old\n    enough that other services consider this service to be \"down\".\n    \n    if rpc_reponse_timeout is smaller than report_interval then we could\n    use the existing RPC timeout, but wait longer won't hurt. So the patch\n    didn't check it and only use report_interval.\n    \n    Change-Id: I88743183bce1a534812cfe6110c3fc2892058c53\n    Closes-Bug: #1368989\n", 
+            "date_created": "2014-10-22 01:58:13.176048+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/154107", 
+            "date_created": "2015-02-09 16:26:22.814172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/154107\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7a30e354fe34510ce38b5fd8c79d6312b75cd367\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 7a30e354fe34510ce38b5fd8c79d6312b75cd367\nAuthor: jichenjc <email address hidden>\nDate:   Sun Sep 21 05:19:49 2014 +0800\n\n    Use reasonable timeout for rpc service_update()\n    \n    nova.servicegroup.drivers.db.DbDriver._report_state() is called every\n    service.report_interval seconds from a timer in order to periodically\n    report the service state. It calls self.conductor_api.service_update().\n    \n    If this ends up calling nova.conductor.rpcapi.ConductorAPI.service_update(),\n    it will do an RPC call() to nova-conductor.\n    \n    If anything happens which causes the RPC reply to be lost or\n    never sent in the first place, by default the RPC code will\n    wait 60 seconds for a response (blocking the timer-based\n    calling of _report_state() in the meantime).\n    This is long enough to cause the status in the database to get old\n    enough that other services consider this service to be \"down\".\n    \n    if rpc_reponse_timeout is smaller than report_interval then we could\n    use the existing RPC timeout, but wait longer won't hurt. So the patch\n    didn't check it and only use report_interval.\n    \n    Change-Id: I88743183bce1a534812cfe6110c3fc2892058c53\n    Closes-Bug: #1368989\n    (cherry picked from commit 197bb467c0fa33700e5397c934fa10d8c16f1fbc)\n", 
+            "date_created": "2015-03-19 02:21:17.917234+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-12-18 20:02:24.636131+00:00"
+}

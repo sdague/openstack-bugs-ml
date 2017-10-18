@@ -1,0 +1,185 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-02-04 19:09:25.210476+00:00", 
+    "description": "Overview:\nOn Icehouse(2014.1.2) with \"iscsi_use_multipath=true\", detaching iSCSI \nmultipath volume doesn't work properly. When we use different targets(IQNs) \nassociated with same portal for each different multipath device, all of \nthe targets will be deleted via disconnect_volume().\n\nThis problem is not yet fixed in upstream. However, the attached patch\nfixes this problem.\n\nSteps to Reproduce:\n\nWe can easily reproduce this issue without any special storage\nsystem in the following Steps:\n\n  1. configure \"iscsi_use_multipath=True\" in nova.conf on compute node.\n  2. configure \"volume_driver=cinder.volume.drivers.lvm.LVMISCSIDriver\"\n     in cinder.conf on cinder node.\n  2. create an instance.\n  3. create 3 volumes and attach them to the instance.\n  4. detach one of these volumes.\n  5. check \"multipath -ll\" and \"iscsiadm --mode session\".\n\nDetail:\n\nThis problem was introduced with the following patch which modified\nattaching and detaching volume operations for different targets\nassociated with different portals for the same multipath device.\n\n  commit 429ac4dedd617f8c1f7c88dd8ece6b7d2f2accd0\n  Author: Xing Yang <email address hidden>\n  Date:   Date: Mon Jan 6 17:27:28 2014 -0500\n\n    Fixed a problem in iSCSI multipath\n\nWe found out that:\n\n>         # Do a discovery to find all targets.\n>         # Targets for multiple paths for the same multipath device\n>         # may not be the same.\n>         out = self._run_iscsiadm_bare(['-m',\n>                                       'discovery',\n>                                       '-t',\n>                                       'sendtargets',\n>                                       '-p',\n>                                       iscsi_properties['target_portal']],\n>                                       check_exit_code=[0, 255])[0] \\\n>             or \"\"\n>\n>         ips_iqns = self._get_target_portals_from_iscsiadm_output(out)\n...\n>         # If no other multipath device attached has the same iqn\n>         # as the current device\n>         if not in_use:\n>             # disconnect if no other multipath devices with same iqn\n>             self._disconnect_mpath(iscsi_properties, ips_iqns)\n>             return\n>         elif multipath_device not in devices:\n>             # delete the devices associated w/ the unused multipath\n>             self._delete_mpath(iscsi_properties, multipath_device, ips_iqns)\n\nWhen we use different targets(IQNs) associated with same portal for each different\nmultipath device, the ips_iqns has all targets in compute node from the result of\n\"iscsiadm -m discovery -t sendtargets -p <the same portal>\".\nThen, the _delete_mpath() deletes all of the targets in the ips_iqns\nvia /sys/block/sdX/device/delete.\n\nFor example, we create an instance and attach 3 volumes to the instance:\n\n  # iscsiadm --mode session\n  tcp: [17] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-5c526ffa-ba88-4fe2-a570-9e35c4880d12\n  tcp: [18] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b4495e7e-b611-4406-8cce-4681ac1e36de\n  tcp: [19] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b2c01f6a-5723-40e7-9f21-f6b728021b0e\n  # multipath -ll\n  33000000300000001 dm-7 IET,VIRTUAL-DISK\n  size=4.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=1 status=active\n     `- 23:0:0:1 sdd 8:48 active ready running\n  33000000100000001 dm-5 IET,VIRTUAL-DISK\n  size=2.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=1 status=active\n     `- 21:0:0:1 sdb 8:16 active ready running\n  33000000200000001 dm-6 IET,VIRTUAL-DISK\n  size=3.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=1 status=active\n     `- 22:0:0:1 sdc 8:32 active ready running\n\nThen we detach one of these volumes:\n\n  # nova volume-detach 95f959cd-d180-4063-ae03-9d21dbd7cc50 5c526ffa-ba88-4fe2-a570-9e35c4880d12\n\nAs a result of detaching the volume, the compute node remains 3 iSCSI sessions\nand the instance fails to access the attached multipath devices:\n\n  # iscsiadm --mode session\n  tcp: [17] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-5c526ffa-ba88-4fe2-a570-9e35c4880d12\n  tcp: [18] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b4495e7e-b611-4406-8cce-4681ac1e36de\n  tcp: [19] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b2c01f6a-5723-40e7-9f21-f6b728021b0e\n  # multipath -ll\n  33000000300000001 dm-7 ,\n  size=4.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=0 status=enabled\n     `- #:#:#:# -   #:# failed faulty running\n  33000000200000001 dm-6 ,\n  size=3.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=0 status=enabled\n     `- #:#:#:# -   #:# failed faulty running", 
+    "tags": [
+        "volumes"
+    ], 
+    "importance": "High", 
+    "heat": 18, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1382440", 
+    "owner": "https://api.launchpad.net/1.0/~h-eguchi", 
+    "id": 1382440, 
+    "index": 1640, 
+    "openned": "2014-10-17 09:01:21.909672+00:00", 
+    "created": "2014-10-17 09:01:21.909672+00:00", 
+    "title": "Detaching multipath volume doesn't work properly when using different targets with same portal for each multipath device", 
+    "comments": [
+        {
+            "content": "Overview:\nOn Icehouse(2014.1.2) with \"iscsi_use_multipath=true\", detaching iSCSI \nmultipath volume doesn't work properly. When we use different targets(IQNs) \nassociated with same portal for each different multipath device, all of \nthe targets will be deleted via disconnect_volume().\n\nThis problem is not yet fixed in upstream. However, the attached patch\nfixes this problem.\n\nSteps to Reproduce:\n\nWe can easily reproduce this issue without any special storage\nsystem in the following Steps:\n\n  1. configure \"iscsi_use_multipath=True\" in nova.conf on compute node.\n  2. configure \"volume_driver=cinder.volume.drivers.lvm.LVMISCSIDriver\"\n     in cinder.conf on cinder node.\n  2. create an instance.\n  3. create 3 volumes and attach them to the instance.\n  4. detach one of these volumes.\n  5. check \"multipath -ll\" and \"iscsiadm --mode session\".\n\nDetail:\n\nThis problem was introduced with the following patch which modified\nattaching and detaching volume operations for different targets\nassociated with different portals for the same multipath device.\n\n  commit 429ac4dedd617f8c1f7c88dd8ece6b7d2f2accd0\n  Author: Xing Yang <email address hidden>\n  Date:   Date: Mon Jan 6 17:27:28 2014 -0500\n\n    Fixed a problem in iSCSI multipath\n\nWe found out that:\n\n>         # Do a discovery to find all targets.\n>         # Targets for multiple paths for the same multipath device\n>         # may not be the same.\n>         out = self._run_iscsiadm_bare(['-m',\n>                                       'discovery',\n>                                       '-t',\n>                                       'sendtargets',\n>                                       '-p',\n>                                       iscsi_properties['target_portal']],\n>                                       check_exit_code=[0, 255])[0] \\\n>             or \"\"\n>\n>         ips_iqns = self._get_target_portals_from_iscsiadm_output(out)\n...\n>         # If no other multipath device attached has the same iqn\n>         # as the current device\n>         if not in_use:\n>             # disconnect if no other multipath devices with same iqn\n>             self._disconnect_mpath(iscsi_properties, ips_iqns)\n>             return\n>         elif multipath_device not in devices:\n>             # delete the devices associated w/ the unused multipath\n>             self._delete_mpath(iscsi_properties, multipath_device, ips_iqns)\n\nWhen we use different targets(IQNs) associated with same portal for each different\nmultipath device, the ips_iqns has all targets in compute node from the result of\n\"iscsiadm -m discovery -t sendtargets -p <the same portal>\".\nThen, the _delete_mpath() deletes all of the targets in the ips_iqns\nvia /sys/block/sdX/device/delete.\n\nFor example, we create an instance and attach 3 volumes to the instance:\n\n  # iscsiadm --mode session\n  tcp: [17] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-5c526ffa-ba88-4fe2-a570-9e35c4880d12\n  tcp: [18] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b4495e7e-b611-4406-8cce-4681ac1e36de\n  tcp: [19] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b2c01f6a-5723-40e7-9f21-f6b728021b0e\n  # multipath -ll\n  33000000300000001 dm-7 IET,VIRTUAL-DISK\n  size=4.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=1 status=active\n     `- 23:0:0:1 sdd 8:48 active ready running\n  33000000100000001 dm-5 IET,VIRTUAL-DISK\n  size=2.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=1 status=active\n     `- 21:0:0:1 sdb 8:16 active ready running\n  33000000200000001 dm-6 IET,VIRTUAL-DISK\n  size=3.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=1 status=active\n     `- 22:0:0:1 sdc 8:32 active ready running\n\nThen we detach one of these volumes:\n\n  # nova volume-detach 95f959cd-d180-4063-ae03-9d21dbd7cc50 5c526ffa-ba88-4fe2-a570-9e35c4880d12\n\nAs a result of detaching the volume, the compute node remains 3 iSCSI sessions\nand the instance fails to access the attached multipath devices:\n\n  # iscsiadm --mode session\n  tcp: [17] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-5c526ffa-ba88-4fe2-a570-9e35c4880d12\n  tcp: [18] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b4495e7e-b611-4406-8cce-4681ac1e36de\n  tcp: [19] 192.168.0.55:3260,1 iqn.2010-10.org.openstack:volume-b2c01f6a-5723-40e7-9f21-f6b728021b0e\n  # multipath -ll\n  33000000300000001 dm-7 ,\n  size=4.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=0 status=enabled\n     `- #:#:#:# -   #:# failed faulty running\n  33000000200000001 dm-6 ,\n  size=3.0G features='0' hwhandler='0' wp=rw\n  `-+- policy='round-robin 0' prio=0 status=enabled\n     `- #:#:#:# -   #:# failed faulty running", 
+            "date_created": "2014-10-17 09:01:21.909672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~k-keiichi"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2014-10-17 09:01:21.909672+00:00", 
+            "author": "https://api.launchpad.net/1.0/~k-keiichi"
+        }, 
+        {
+            "content": "We need to push a patch on the gerrit.\nCould you check https://wiki.openstack.org/wiki/How_To_Contribute ?", 
+            "date_created": "2014-10-27 05:08:51.529322+00:00", 
+            "author": "https://api.launchpad.net/1.0/~oomichi"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/132490", 
+            "date_created": "2014-11-03 00:54:56.318823+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/135812", 
+            "date_created": "2014-11-20 01:49:18.061339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/135812\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=fb0de106f2f15604750bafc318ba06c41070cc35\nSubmitter: Jenkins\nBranch:    master\n\ncommit fb0de106f2f15604750bafc318ba06c41070cc35\nAuthor: Hiroyuki Eguchi <email address hidden>\nDate:   Thu Nov 20 10:41:36 2014 +0900\n\n    Fix connecting unnecessary iSCSI sessions issue\n    \n    In Icehouse with \"iscsi_use_multipath=true\", attaching a multipath\n    iSCSI volume may create unnecessary iSCSI sessions.\n    \n    The iscsiadm discovery command in connect_volume() returns all of the\n    targets in the Cinder node, not just the ones related to the multipath\n    volume which is specified by iqn.  If the storage has many targets,\n    connecting to all these volumes will also result in many unnecessary\n    connections.\n    \n    There are two types of iSCSI multipath devices.  One which shares\n    the same iqn between multiple portals, and the other which use\n    different iqns on different portals. connect_volume() needs to\n    identify the type by checking iscsiadm the output if the iqn is\n    used by multiple portals.\n    \n    This patch changes the behavior of attaching volume:\n    \n       1. Identify the type by checking the iscsiadm output.\n       2. Connect to the correct targets by connect_to_iscsi_portal().\n    \n    Closes-Bug: #1382440\n    \n    Change-Id: I488ad0c09bf26a609e27d67b9ef60b65bb45e0ad\n", 
+            "date_created": "2014-11-24 07:21:22.275573+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/132490\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=36aeedfd5eeb0345d66fa8456ed6a9447a6514a0\nSubmitter: Jenkins\nBranch:    master\n\ncommit 36aeedfd5eeb0345d66fa8456ed6a9447a6514a0\nAuthor: Hiroyuki Eguchi <email address hidden>\nDate:   Thu Dec 4 15:12:11 2014 +0900\n\n    Fix disconnecting necessary iSCSI sessions issue\n    \n    In Icehouse with \"iscsi_use_multipath=true\", detaching a multipath\n    iSCSI volume kills all iSCSI volumes visible from the nova compute node.\n    When we use different targets(IQNs) associated with same portal for\n    each different multipath device, all of the targets will be deleted\n    via disconnect_volume().\n    \n    This patch fixes the behavior of detaching volume:\n    \n      1. Extract the targets for the detached multipath device.\n      2. Delete/disconnect the targets for the detached multipath device.\n    \n    Closes-Bug: #1382440\n    \n    Change-Id: I38eafdaee03d136282cfde1fd013e322a4256cc4\n", 
+            "date_created": "2014-12-05 11:33:07.109366+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/141682", 
+            "date_created": "2014-12-15 01:31:49.541907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/141684", 
+            "date_created": "2014-12-15 01:35:08.361849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/141685", 
+            "date_created": "2014-12-15 01:41:47.765084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/141687", 
+            "date_created": "2014-12-15 01:44:54.285505+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/144064", 
+            "date_created": "2014-12-26 00:37:52.165660+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/144065", 
+            "date_created": "2014-12-26 00:40:57.603835+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/juno\nReview: https://review.openstack.org/144066", 
+            "date_created": "2014-12-26 00:45:14.493163+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/icehouse\nReview: https://review.openstack.org/144067", 
+            "date_created": "2014-12-26 00:48:51.564590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Hiroyuki Eguchi (<email address hidden>) on branch: stable/juno\nReview: https://review.openstack.org/141685\nReason: Abandoned because ChangeID is different from the commit on master. \nPlease refer to new review page, \nReview: https://review.openstack.org/144064", 
+            "date_created": "2014-12-26 06:54:37.272719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Hiroyuki Eguchi (<email address hidden>) on branch: stable/juno\nReview: https://review.openstack.org/141687\nReason: Abandoned because ChangeID is different from the commit on master. \nPlease refer to new review page, \nReview: https://review.openstack.org/144066", 
+            "date_created": "2014-12-26 06:55:01.735771+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Hiroyuki Eguchi (<email address hidden>) on branch: stable/icehouse\nReview: https://review.openstack.org/141682\nReason: Abandoned because ChangeID is different from the commit on master. \nPlease refer to new review page, \nReview: https://review.openstack.org/144065", 
+            "date_created": "2014-12-26 06:55:27.391181+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Hiroyuki Eguchi (<email address hidden>) on branch: stable/icehouse\nReview: https://review.openstack.org/141684\nReason: Abandoned because ChangeID is different from the commit on master. \nPlease refer to new review page, \nReview: https://review.openstack.org/144067", 
+            "date_created": "2014-12-26 06:55:45.834099+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/144065\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cca94d032b7ee72a5ff98aa664353ef50e877454\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit cca94d032b7ee72a5ff98aa664353ef50e877454\nAuthor: Hiroyuki Eguchi <email address hidden>\nDate:   Thu Nov 20 10:41:36 2014 +0900\n\n    Fix connecting unnecessary iSCSI sessions issue\n    \n    In Icehouse with \"iscsi_use_multipath=true\", attaching a multipath\n    iSCSI volume may create unnecessary iSCSI sessions.\n    \n    The iscsiadm discovery command in connect_volume() returns all of the\n    targets in the Cinder node, not just the ones related to the multipath\n    volume which is specified by iqn. If the storage has many targets,\n    connecting to all these volumes will also result in many unnecessary\n    connections.\n    \n    There are two types of iSCSI multipath devices. One which shares\n    the same iqn between multiple portals, and the other which use\n    different iqns on different portals. connect_volume() needs to\n    identify the type by checking iscsiadm the output if the iqn is\n    used by multiple portals.\n    \n    This patch changes the behavior of attaching volume:\n    \n       1. Identify the type by checking the iscsiadm output.\n       2. Connect to the correct targets by connect_to_iscsi_portal().\n    \n    Closes-Bug: #1382440\n    \n    (cherry picked from commit fb0de106f2f15604750bafc318ba06c41070cc35)\n    \n    Conflicts:\n            nova/tests/unit/virt/libvirt/test_volume.py\n    \n    Change-Id: I488ad0c09bf26a609e27d67b9ef60b65bb45e0ad\n", 
+            "date_created": "2015-01-19 10:18:27.676727+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/144066\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7307dbaf6b9734ddd456c7b0c1d2c85e053ce61f\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 7307dbaf6b9734ddd456c7b0c1d2c85e053ce61f\nAuthor: Hiroyuki Eguchi <email address hidden>\nDate:   Thu Dec 4 15:12:11 2014 +0900\n\n    Fix disconnecting necessary iSCSI sessions issue\n    \n    In Icehouse with \"iscsi_use_multipath=true\", detaching a multipath\n    iSCSI volume kills all iSCSI volumes visible from the nova compute node.\n    When we use different targets(IQNs) associated with same portal for\n    each different multipath device, all of the targets will be deleted\n    via disconnect_volume().\n    \n    This patch fixes the behavior of detaching volume:\n    \n      1. Extract the targets for the detached multipath device.\n      2. Delete/disconnect the targets for the detached multipath device.\n    \n    Closes-Bug: #1382440\n    \n    (cherry picked from commit 36aeedfd5eeb0345d66fa8456ed6a9447a6514a0)\n    \n    Conflicts:\n            nova/tests/unit/virt/libvirt/test_volume.py\n    \n    Change-Id: I38eafdaee03d136282cfde1fd013e322a4256cc4\n", 
+            "date_created": "2015-01-19 10:37:23.459564+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/144067\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=52103be3e152b53ea0ec542173305cfe3bb1a08d\nSubmitter: Jenkins\nBranch:    stable/icehouse\n\ncommit 52103be3e152b53ea0ec542173305cfe3bb1a08d\nAuthor: Hiroyuki Eguchi <email address hidden>\nDate:   Thu Dec 4 15:12:11 2014 +0900\n\n    Fix disconnecting necessary iSCSI sessions issue\n    \n    In Icehouse with \"iscsi_use_multipath=true\", detaching a multipath\n    iSCSI volume kills all iSCSI volumes visible from the nova compute node.\n    When we use different targets(IQNs) associated with same portal for\n    each different multipath device, all of the targets will be deleted\n    via disconnect_volume().\n    \n    This patch fixes the behavior of detaching volume:\n    \n      1. Extract the targets for the detached multipath device.\n      2. Delete/disconnect the targets for the detached multipath device.\n    \n    Closes-Bug: #1382440\n    \n    (cherry picked from commit 36aeedfd5eeb0345d66fa8456ed6a9447a6514a0)\n    \n    Conflicts:\n            nova/tests/unit/virt/libvirt/test_volume.py\n    \n    Change-Id: I38eafdaee03d136282cfde1fd013e322a4256cc4\n", 
+            "date_created": "2015-01-22 12:03:26.148346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/144064\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=4c1f28a0f467d749ebf406f970b3cea4888ff1b0\nSubmitter: Jenkins\nBranch:    stable/juno\n\ncommit 4c1f28a0f467d749ebf406f970b3cea4888ff1b0\nAuthor: Hiroyuki Eguchi <email address hidden>\nDate:   Thu Nov 20 10:41:36 2014 +0900\n\n    Fix connecting unnecessary iSCSI sessions issue\n    \n    In Icehouse with \"iscsi_use_multipath=true\", attaching a multipath\n    iSCSI volume may create unnecessary iSCSI sessions.\n    \n    The iscsiadm discovery command in connect_volume() returns all of the\n    targets in the Cinder node, not just the ones related to the multipath\n    volume which is specified by iqn. If the storage has many targets,\n    connecting to all these volumes will also result in many unnecessary\n    connections.\n    \n    There are two types of iSCSI multipath devices. One which shares\n    the same iqn between multiple portals, and the other which use\n    different iqns on different portals. connect_volume() needs to\n    identify the type by checking iscsiadm the output if the iqn is\n    used by multiple portals.\n    \n    This patch changes the behavior of attaching volume:\n    \n       1. Identify the type by checking the iscsiadm output.\n       2. Connect to the correct targets by connect_to_iscsi_portal().\n    \n    Closes-Bug: #1382440\n    \n    (cherry picked from commit fb0de106f2f15604750bafc318ba06c41070cc35)\n    \n    Conflicts:\n            nova/tests/unit/virt/libvirt/test_volume.py\n    \n    Change-Id: I488ad0c09bf26a609e27d67b9ef60b65bb45e0ad\n", 
+            "date_created": "2015-01-26 09:02:20.076590+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Looks like this is fixed (https://review.openstack.org/#/c/132490/)", 
+            "date_created": "2015-02-12 15:12:48.967028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/165370", 
+            "date_created": "2015-03-18 11:29:19.400849+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/165373", 
+            "date_created": "2015-03-18 11:32:27.694001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": ">>>instance fails to access the attached multipath devices\n\nCould you clarify how to access volume from instance in test reasons? \nShould i make filesystem on attached blockdevice and mount it to instance VM? ", 
+            "date_created": "2015-05-28 14:16:56.332199+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kromanenko"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/188158", 
+            "date_created": "2015-06-03 19:39:27.613214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/188158\nCommitted: https://git.openstack.org/cgit/openstack/os-brick/commit/?id=531398504fcdcffb37e73a254f5a3da1854ef41e\nSubmitter: Jenkins\nBranch:    master\n\ncommit 531398504fcdcffb37e73a254f5a3da1854ef41e\nAuthor: Tomoki Sekiyama <email address hidden>\nDate:   Tue Jun 2 18:38:34 2015 -0400\n\n    Fix disconnecting necessary iSCSI sessions issue\n    \n    With \"iscsi_use_multipath=true\", detaching a multipath iSCSI\n    volume kills all iSCSI volumes visible from the attached node.\n    When we use different targets(IQNs) associated with same portal\n    for each different multipath device, all of the targets will\n    be deleted via disconnect_volume().\n    \n    This patch fixes the behavior of detaching volume:\n    \n      1. Extract the targets for the detached multipath device.\n      2. Delete/disconnect the targets for the detached multipath\n         device.\n    \n    (Ported from I38eafdaee03d136282cfde1fd013e322a4256cc4)\n    \n    Co-Authored-By: Hiroyuki Eguchi <email address hidden>\n    Closes-Bug: #1382440\n    Change-Id: I5fdbb5765642bac7263ff616ae4b006d9504547a\n", 
+            "date_created": "2015-06-12 17:44:29.428633+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/188159\nCommitted: https://git.openstack.org/cgit/openstack/os-brick/commit/?id=a8386d5cbe732a4e3f4daf836a6efdf69ee6e11f\nSubmitter: Jenkins\nBranch:    master\n\ncommit a8386d5cbe732a4e3f4daf836a6efdf69ee6e11f\nAuthor: Tomoki Sekiyama <email address hidden>\nDate:   Wed Jun 3 13:42:34 2015 -0400\n\n    Fix connecting unnecessary iSCSI sessions issue\n    \n    With \"iscsi_use_multipath=true\", attaching a multipath\n    iSCSI volume may create unnecessary iSCSI sessions.\n    The iscsiadm discovery command in connect_volume() returns all of\n    the targets in the Cinder node, not just the ones related to\n    the multipath volume which is specified by iqn. If the storage\n    has many targets, connecting to all these volumes will also\n    result in many unnecessary connections.\n    \n    There are two types of iSCSI multipath devices.\n    One which shares the same iqn between multiple portals,\n    and the other which use different iqns on different portals.\n    connect_volume() needs to identify the type by checking iscsiadm\n    the output if the iqn is used by multiple portals.\n    \n    This patch changes the behavior of attaching volume:\n    \n       1. Identify the type by checking the iscsiadm output.\n       2. Connect to the correct targets by connect_to_iscsi_portal().\n    \n    (Ported from I488ad0c09bf26a609e27d67b9ef60b65bb45e0ad)\n    \n    Co-Authored-By: Hiroyuki Eguchi <email address hidden>\n    Related-Bug: #1382440\n    Change-Id: I4c9b173cfab387a55772709242eed69c10168c0f\n", 
+            "date_created": "2015-06-12 18:09:49.986806+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Keiichi KII (<email address hidden>) on branch: master\nReview: https://review.openstack.org/165370\nReason: This patch is not needed because of switching to os-brick https://review.openstack.org/#/c/175569/32", 
+            "date_created": "2015-07-29 05:24:37.474954+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Keiichi KII (<email address hidden>) on branch: master\nReview: https://review.openstack.org/165373\nReason: This patch is not needed because of switching to os-brick https://review.openstack.org/#/c/175569/32", 
+            "date_created": "2015-07-29 05:25:06.129111+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Cinder stable/kilo: https://review.openstack.org/232849", 
+            "date_created": "2016-02-04 19:08:56.489902+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eharney"
+        }
+    ], 
+    "closed": "2015-04-30 09:33:31.031050+00:00"
+}

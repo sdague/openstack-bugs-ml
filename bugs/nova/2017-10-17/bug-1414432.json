@@ -1,0 +1,79 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-23 16:59:55.751014+00:00", 
+    "description": "While using ceph as backend , each compute node reports its disk usage with  total backend pool disk usage,  this makes sense to caculate incoming resource request like  booting a new instance or migrating instance to this compute node.\n\nSEE https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L4334\n\nbut while get  hypervisor-stats,  we sum all the compute nodes's disk usage, that doesn't make sense for ceph backend.\nThat will show that disk usage  =  {actual disk usage} *  {number of compuet node}\n\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L648\n\n\nwhat will handle this case ?\n\n take average value of   disk usage of each compute node instead while using ceph ?", 
+    "tags": [
+        "ceph"
+    ], 
+    "importance": "Low", 
+    "heat": 26, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1414432", 
+    "owner": "None", 
+    "id": 1414432, 
+    "index": 1500, 
+    "openned": "2015-01-25 12:28:20.772302+00:00", 
+    "created": "2015-01-25 12:28:20.772302+00:00", 
+    "title": "nova hypervisor-stats shows wrong  disk usage with shared storage", 
+    "comments": [
+        {
+            "content": "While using ceph as backend , each compute node reports its disk usage with  total backend pool disk usage,  this makes sense to caculate incoming resource request like  booting a new instance or migrating instance to this compute node.\n\nSEE https://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L4334\n\nbut while get  hypervisor-stats,  we sum all the compute nodes's disk usage, that doesn't make sense for ceph backend.\nThat will show that disk usage  =  {actual disk usage} *  {number of compuet node}\n\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L648\n\n\nwhat will handle this case ?\n\n take average value of   disk usage of each compute node instead while using ceph ?", 
+            "date_created": "2015-01-25 12:28:20.772302+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "I think  this also hit on other shared storage like NFS", 
+            "date_created": "2015-01-25 12:56:35.912453+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/149878", 
+            "date_created": "2015-01-25 13:05:05.199588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "IMHO\uff0cwhether it's a bug is up to how 'local_gb' is defined and interpreted.  If 'local_gb' is defined as the local non-shared storage on each compute node, then the statistics is wrong. But in this case, the problem is not caused by the  stats calculation, but the wrong usage of rbd backend.  If 'local_gb' is interpreted as the available storage space seen by each compute node, including the cases of shared and non-shared. Then there's no bug in Nova code and the client should not add up 'local_gb' to get the total space if it's shared storage. Actually,  it makes more sense to collect total usage of shared storage from storage specific administration software.", 
+            "date_created": "2015-01-26 07:10:07.472180+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wudx05"
+        }, 
+        {
+            "content": "Hi Mark, \nI think 'local_gb' should be  interpreted as the available storage space seen by each compute node,   that makes sense for scheduling,  nova-client doesn'st add up 'local_gb'  , but Nova add up 'local_gb'  see \nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L648\nso we need change Nova code :-)\n\nMore thougts: \n\n Do we support  some compute nodes with shared_storage, and others doesn't in one OpenStack development  ?\n If yes,  we face more complicated case,  maybe we need admin point out  the deployment and pass the information \nto Nova.\n", 
+            "date_created": "2015-01-26 14:51:27.485171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "What about this? https://review.openstack.org/#/c/102064/\n", 
+            "date_created": "2015-01-27 16:11:58.108597+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sebastien-han"
+        }, 
+        {
+            "content": "This is an example:\nWe have 19 compute nodes  using ceph in test ,   the hypervisor-stats show  wrong usages of disk .\n# nova hypervisor-stats\n+----------------------+---------+\n| Property             | Value   |\n+----------------------+---------+\n| count                | 19      |\n| current_workload     | 2       |\n| disk_available_least | 984873  | -------------------------------> stats value\n| free_disk_gb         | 987045  |\n| free_ram_mb          | 2417935 |\n| local_gb             | 987725  |\n| local_gb_used        | 680     |\n| memory_mb            | 2451215 |\n| memory_mb_used       | 33280   |\n| running_vms          | 34      |\n| vcpus                | 152     |\n| vcpus_used           | 46      |\n+----------------------+---------+\n# rados df\npool name       category                 KB      objects       clones     degraded      unfound           rd        rd KB           wr        wr KB\nbackups         -                          0            0            0            0           0            0            0            0            0\ncompute         -                   13551959         2022           18            0           0      5097899     58466364      7653287     55951741\ndata            -                          0            0            0            0           0            0            0            0            0\nimages          -                          0            0            0            0           0         8244     33705999        16442     33636361\nmetadata        -                          0            0            0            0           0            0            0            0            0\nrbd             -                          0            0            0            0           0            0            0            0            0\nvolumes         -                          1            5            0            0           0           66           50           14            2\n  total used       152963616         2027\n  total avail    54091224296             ------------------------------> actual  value \n  total space    54244187912\n# python\nPython 2.6.6 (r266:84292, Jan 22 2014, 09:42:36)\n[GCC 4.4.7 20120313 (Red Hat 4.4.7-4)] on linux2\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> avail = 54091224296/(1024*1024)*19                  -------------------------->   stats value  =    actual  value * 19 \n>>> avail\n980115\n>>> \n\n\n", 
+            "date_created": "2015-01-28 02:02:00.818275+00:00", 
+            "author": "https://api.launchpad.net/1.0/~glongwave"
+        }, 
+        {
+            "content": "I think I've read too fast :). Sorry the noise, this makes perfect sense!", 
+            "date_created": "2015-01-28 09:12:47.046252+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sebastien-han"
+        }, 
+        {
+            "content": "Change abandoned by ChangBo Guo(gcb) (<email address hidden>) on branch: master\nReview: https://review.openstack.org/149878", 
+            "date_created": "2015-02-28 08:47:37.470690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@hudson-openstack, I think it may not work if we use multi backends, or some nodes use shared storage, but others not.", 
+            "date_created": "2016-06-07 11:00:34.809945+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fuguangping"
+        }, 
+        {
+            "content": "Is this bug fixed ?  I see it kilo.\n\n\"nova hypervisor-stats\" reports that there is ~401 TB disk space on the compute nodes when there is actually just 1 TB storage space on the compute nodes.\n\n]# nova hypervisor-stats | grep disk\n| disk_available_least | 401542 |\n| free_disk_gb         | 401846 |", 
+            "date_created": "2016-06-08 19:52:22.284350+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vhosakot"
+        }, 
+        {
+            "content": "There are no open reviews for this bug report since a long time.\nTo signal that to other contributors which might provide patches for\nthis bug, I'm removing the assignee.\n\nFeel free to add yourself as assignee and push a review for it.", 
+            "date_created": "2016-07-08 16:50:23.076286+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sujitha-neti"
+        }
+    ]
+}

@@ -1,0 +1,205 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-09-15 15:38:09.320982+00:00", 
+    "description": "Using the following Ruby sample script I can increase the size of the Nova API log file 128M per POST:\n\nrequire 'rubygems'\nrequire 'openstack/compute'\n\nUSERNAME=ENV['NOVA_USERNAME']\nAPI_KEY=ENV['NOVA_API_KEY']\nAPI_URL=ENV['NOVA_URL']\n\nbigboy = \"0\" * 22222222\n\nconn=OpenStack::Compute::Connection.new(:username => USERNAME, :api_key => API_KEY, :auth_url => API_URL, :service_type => 'compute', :retry_auth => false)\nconn.create_server(:name => bigboy, :imageRef => \"8da06b6a-1ddd-4d4f-aa54-579e95b5e8b1\", :flavorRef => 1)\n\n------\n\nSimilarly I can do the same thing with a PUT (server name update):\n\nconn=OpenStack::Compute::Connection.new(:username => USERNAME, :api_key => API_KEY, :auth_url => API_URL, :service_type => 'compute', :retry_auth => false)\nserver=conn.server(\"695e8b03-aed1-40ab-81bc-8e7456c36215\")\nserver.update(:name => bigboy)\n\n---\n\nEach of these requests will increase the Nova API log file size by 128M per request:\n\n[root@nova1 ~]# du -hs /var/log/nova/api.log\n128M\t/var/log/nova/api.log\n\n---\n\nThe root cause of the issue is that we rely on the Nova database column size to limit the size of the instance name. We should put in an API check on the instance name size/length before sending it off to the database.\n\nAdditionally, as part of this fix I would also like to incorporate a simple request size limiting middleware into our API pipeline so that really large requests are invalid to begin with.\n\n---\n\nThis exploit could allow an authenticated user to run the Nova API server out of disk space.\n\nNova's rate limiting middleware will help guard the number of POST and PUT requests a given user can make. The default POST limit to /servers is 50 per day. The PUT limit is however much higher at 10 per minute. Either of these could provide opportunities to run API servers out of disk space.", 
+    "tags": [
+        "in-stable-diablo"
+    ], 
+    "importance": "High", 
+    "heat": 264, 
+    "link": "https://bugs.launchpad.net/nova/+bug/962515", 
+    "owner": "https://api.launchpad.net/1.0/~dan-prince", 
+    "id": 962515, 
+    "index": 641, 
+    "openned": "2012-03-22 20:46:45.304409+00:00", 
+    "created": "2012-03-22 20:46:45.304409+00:00", 
+    "title": "PUT/POST of large server name's can increase nova API log file size massively", 
+    "comments": [
+        {
+            "content": "Using the following Ruby sample script I can increase the size of the Nova API log file 128M per POST:\n\nrequire 'rubygems'\nrequire 'openstack/compute'\n\nUSERNAME=ENV['NOVA_USERNAME']\nAPI_KEY=ENV['NOVA_API_KEY']\nAPI_URL=ENV['NOVA_URL']\n\nbigboy = \"0\" * 22222222\n\nconn=OpenStack::Compute::Connection.new(:username => USERNAME, :api_key => API_KEY, :auth_url => API_URL, :service_type => 'compute', :retry_auth => false)\nconn.create_server(:name => bigboy, :imageRef => \"8da06b6a-1ddd-4d4f-aa54-579e95b5e8b1\", :flavorRef => 1)\n\n------\n\nSimilarly I can do the same thing with a PUT (server name update):\n\nconn=OpenStack::Compute::Connection.new(:username => USERNAME, :api_key => API_KEY, :auth_url => API_URL, :service_type => 'compute', :retry_auth => false)\nserver=conn.server(\"695e8b03-aed1-40ab-81bc-8e7456c36215\")\nserver.update(:name => bigboy)\n\n---\n\nEach of these requests will increase the Nova API log file size by 128M per request:\n\n[root@nova1 ~]# du -hs /var/log/nova/api.log\n128M\t/var/log/nova/api.log\n\n---\n\nThe root cause of the issue is that we rely on the Nova database column size to limit the size of the instance name. We should put in an API check on the instance name size/length before sending it off to the database.\n\nAdditionally, as part of this fix I would also like to incorporate a simple request size limiting middleware into our API pipeline so that really large requests are invalid to begin with.\n\n---\n\nThis exploit could allow an authenticated user to run the Nova API server out of disk space.\n\nNova's rate limiting middleware will help guard the number of POST and PUT requests a given user can make. The default POST limit to /servers is 50 per day. The PUT limit is however much higher at 10 per minute. Either of these could provide opportunities to run API servers out of disk space.", 
+            "date_created": "2012-03-22 20:46:45.304409+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "even if the log is not at DEBUG level ?", 
+            "date_created": "2012-03-22 21:06:46.033944+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Adding PTL", 
+            "date_created": "2012-03-22 21:07:46.273112+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "ttx: This happens when running without DEBUG (I'm not using the --verbose flag etc.).", 
+            "date_created": "2012-03-22 22:17:19.145064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "nasty.  Is it also stored in the db that large?", 
+            "date_created": "2012-03-23 01:12:18.462166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "vish: it doesn't get store in the DB that large. Just the nova api.log file.", 
+            "date_created": "2012-03-23 14:01:55.225738+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Using MySQL...", 
+            "date_created": "2012-03-23 14:02:57.613291+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "I suspect this affects Diablo as well ?\nLike for the Keystone issue, we don't really want the coordinated disclosure to interfere with our RC publication or final release...\n\nIf the request size limiting middleware works around the issue completely, would merging it innocently in Nova RC2 and working on disclosure asynchronously be an option ?", 
+            "date_created": "2012-03-23 15:01:01.505346+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "So...\n\nThe fix for the instance name issue is pretty simple:\n\n+++ b/nova/api/openstack/compute/servers.py\n@@ -505,6 +505,10 @@ class Controller(wsgi.Controller):\n             msg = _(\"Server name is an empty string\")\n             raise exc.HTTPBadRequest(explanation=msg)\n \n+        if not len(value) < 256:\n+            msg = _(\"Server name must be less than 255 characters.\")\n+            raise exc.HTTPBadRequest(explanation=msg)\n\n----\n\nI am however concerned that this same problem could occur in other places as well. We don't appear to validate the size of image snapshot names either for example. I haven't tested to see what Glance actually does with a 128M image name but it could cause problems...\n\n---\n\nPutting in middleware to limit the request size is fairly straightforward and shouldn't affect anything that I know of in the OSAPI (it would potentially affect the EC2 API but we can ignore it for this anyway). And it would globally guard against really large requests attacks.\n\nI'm not sure it really belongs in nova's code base long term however. Both Apache and Nginx are quite capable of doing this already and most production deployments are probably using something similar for SSL or load balancing already.\n\nIn summary maybe it is a good short term solution... and long term we can move towards better validation in the OSAPI. We recently added some Validator middleware to EC2's API. Perhaps something similar would help with the OSAPI requests as well.\n", 
+            "date_created": "2012-03-23 15:50:40.052342+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "We could push a public fix for an innocent-looking \"long server names trigger 500 error instead of 400\" bug that would also silently fix this.\n\nThe issue being, as you mentioned, that it doesn't really address potential other affected areas.", 
+            "date_created": "2012-03-23 16:29:13.749353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "(fixing it silently in the RC allows us to embargo/coordinate with downstream on the diablo fix)", 
+            "date_created": "2012-03-23 16:30:03.508407+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Are we really in that much of a time crunch to get this into an RC?  Pushing out security patches disguised as something else is a bad habit for us to get into ...", 
+            "date_created": "2012-03-23 17:03:58.865907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "ttx: So... what I told you on IRC about 257 char server names was incorrect. It appears that a request to set the server name to a value larger than 255 will silently truncate it... that is until it gets really large (Megs) and that is when SQL exceptions start getting thrown thus causing this issue.\n\nBottom line is to expose this the requests need to be really large.", 
+            "date_created": "2012-03-23 17:19:11.209652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "@Russell: I don't like it either. The trick is that RC2 for Nova is likely to be ready on Thursday next week... and I would hate to delay it or re-roll it. I just don't see how we can make the coordinated release date align on such short notice. Or can we ?", 
+            "date_created": "2012-03-23 17:44:14.431248+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "If the notification went out today, Thursday seems ok.  Otherwise, I think that's cutting it too close.", 
+            "date_created": "2012-03-23 17:56:52.064477+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "... or maybe Monday.  I guess that's still a few days notice.", 
+            "date_created": "2012-03-23 18:04:57.106692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Patch that adds a validation for OSAPI server name length.", 
+            "date_created": "2012-03-23 20:01:19.010636+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Request body size limiting middleware patch.", 
+            "date_created": "2012-03-23 20:02:18.149098+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Attached are patches that should fix this issue. I'll wait to hear back from Thierry about how to proceed.", 
+            "date_created": "2012-03-23 20:04:24.244637+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "We have three options:\n1- File a public \"server names over size should return 400\" bug and fix it openly in RC2, then calmly do a CRD for stable/diablo\n2- Propose the OSAPI server name length patch for coordinated disclosure and complete it just in time for RC2\n3- Propose the server name patch AND the sizelimit middleware for coordinated disclosure and complete them just in time for RC2\n\nMy issue with solution (3) is that we would push all requests through the new sizelimiting middleware as the very last thing before RC2 publication... which sounds extremely risky to me, that late in the cycle, for the potential benefit of catching unknown other ways of abusing large requests. I'll let Vish decide, but with my release manager hat on, I'd -1 this.\n\nIf we don't push the sizelimit middleware in Essex anyway, then I'd rather do option (1) than option (2).\nOther opinions ?", 
+            "date_created": "2012-03-26 10:00:01.344721+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposed impact description:\n\nTitle: Long server names grow nova-api log files significantly\nImpact: High\nReporter: Dan Prince\nProducts: Nova\nAffects: All versions\n\nDescription:\nDan Prince reported a vulnerability in OpenStack Compute (Nova) API servers. By PUTing or POSTing extremely long server names to the OpenStack API, any authenticated user may grow nova-api log files significantly, potentially resulting in disk space exhaustion and denial of service to the affected nova-api nodes. Only setups running the OpenStack API are affected.", 
+            "date_created": "2012-03-26 10:09:41.385455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I vote for option 2, just because I think this practice of openly fixing security issues as something else less serious is poor practice.  I'll defer to ttx for the final decision, though.", 
+            "date_created": "2012-03-26 13:54:34.260250+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "I'm OK with option 2, if the stakeholders announcement is sent today for a CRD at the end of the week (Thursday or Friday). Would like to have Vish's blessing of the patch and the strategy first.", 
+            "date_created": "2012-03-26 14:58:05.539436+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "2 is ok.  I still don't mind putting in the size middleware as an option so that deployers can turn it on if needed.  But I'm fine doing it with a backport to stable/essex later.", 
+            "date_created": "2012-03-26 17:26:56.808024+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I'm about to send out the advance notification ...\n\nI noticed one typo in the patch.  The log message says the name must be less than 255 characters, but the code enforces less than 256.  I'm just changing the message to say 256 instead of 255.", 
+            "date_created": "2012-03-26 19:30:33.637901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "CRD is Thursday, March 29th, 1500 UTC", 
+            "date_created": "2012-03-26 19:54:50.446270+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Added markmc and Daviey for stable/diablo", 
+            "date_created": "2012-03-29 14:19:39.647006+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "CRD reached and patch pushed to gerrit, opening the issue", 
+            "date_created": "2012-03-29 15:09:05.976067+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Added blamar for pre-review", 
+            "date_created": "2012-03-29 15:10:09.611595+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5955\nCommitted: http://github.com/openstack/nova/commit/c7f526fae6062e9ab51f65474af71d496aa66554\nSubmitter: Jenkins\nBranch:    master\n\ncommit c7f526fae6062e9ab51f65474af71d496aa66554\nAuthor: Dan Prince <email address hidden>\nDate:   Fri Mar 23 15:03:19 2012 -0400\n\n    Add validation for OSAPI server name length.\n    \n    Fixes LP Bug #962515.\n    \n    Change-Id: Iee895604f8e9101a341a5909fc5ba2dd8e708b4b\n", 
+            "date_created": "2012-03-29 15:32:43.912876+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5957\nCommitted: http://github.com/openstack/nova/commit/0fa7d12dbfb7ae016657dd91034b4c0781ea43de\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0fa7d12dbfb7ae016657dd91034b4c0781ea43de\nAuthor: Dan Prince <email address hidden>\nDate:   Fri Mar 23 15:40:57 2012 -0400\n\n    Adds middleware to limit request body sizes.\n    \n    Fixes LP Bug #962515.\n    \n    Change-Id: Ic1be1459515654d45febd89da58b19e0840aaf9d\n", 
+            "date_created": "2012-03-29 17:18:17.601917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Why is the limit 256 characters?", 
+            "date_created": "2012-03-29 19:04:49.091296+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jogo"
+        }, 
+        {
+            "content": "That is the limit of the field in the instances table:\n\n| server_name              | varchar(255) | YES  |     | NULL    |                |\n", 
+            "date_created": "2012-03-29 19:47:49.544222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "How many other places in nova/elsewhere have this issue :-(\nSeems like any buffer being read from input needs to be size limited and/or type checked before it hits the DB (which will also either chop off part of the string or fail at insertion time).", 
+            "date_created": "2012-03-29 20:48:51.822796+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/6018", 
+            "date_created": "2012-03-30 23:43:03.292125+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/6018\nCommitted: http://github.com/openstack/nova/commit/c869a41951b77c6930bf4fb4734f05cd3d6ac4b1\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit c869a41951b77c6930bf4fb4734f05cd3d6ac4b1\nAuthor: Dan Prince <email address hidden>\nDate:   Fri Mar 23 15:03:19 2012 -0400\n\n    Add validation for OSAPI server name length.\n    \n    Fixes LP Bug #962515.\n    \n    Change-Id: Iee895604f8e9101a341a5909fc5ba2dd8e708b4b\n", 
+            "date_created": "2012-03-31 23:42:00.937281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/5956\nCommitted: http://github.com/openstack/nova/commit/1ebec5726c7a9db0a6f29fad0ef747b0c087f702\nSubmitter: Jenkins\nBranch:    stable/diablo\n\ncommit 1ebec5726c7a9db0a6f29fad0ef747b0c087f702\nAuthor: Dan Prince <email address hidden>\nDate:   Thu Mar 29 10:46:59 2012 -0400\n\n    Add validation for OSAPI server name length.\n    \n    Diablo Fix for LP Bug #962515.\n    \n    Change-Id: Ifa1ca56a33ca517679fa80bfd10b962eeebe3a76\n", 
+            "date_created": "2012-04-11 17:06:19.158719+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-03-31 23:41:58.637886+00:00"
+}

@@ -1,0 +1,313 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-05-24 12:59:09.491576+00:00", 
+    "description": "We found this problem in our Diablo code base - I think by inspection its still valid in upstream as well but a bit harder to check as the code has changed (BootFromVolumeController no longer exists, and os-volume_boot now just inherits from the servers API).\n\nFillling anyway as its pretty serious, in the hope that someone can verify or dismiss it.\n\nBoot from volume allows a volume to be passed to the create method via the block_device_mapping parameter.   This parameter is not validated as having to be a volume belonging to the user creating the instance, so providing I know the valid ID of a volume belonging to another user I can create VM and gain access to that volume (c.f volume attachment which does make explicit checks for both the ownership and status of a volume)\n\nThe volume ownership and status should be explicitly checked in the compute.api layer", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 272, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1069904", 
+    "owner": "https://api.launchpad.net/1.0/~p-draigbrady", 
+    "id": 1069904, 
+    "index": 4422, 
+    "openned": "2012-10-22 16:41:55.662709+00:00", 
+    "created": "2012-10-22 16:41:55.662709+00:00", 
+    "title": "[OSSA 2013-001] No authentication on block device used for os-volume_boot", 
+    "comments": [
+        {
+            "content": "We found this problem in our Diablo code base - I think by inspection its still valid in upstream as well but a bit harder to check as the code has changed (BootFromVolumeController no longer exists, and os-volume_boot now just inherits from the servers API).\n\nFillling anyway as its pretty serious, in the hope that someone can verify or dismiss it.\n\nBoot from volume allows a volume to be passed to the create method via the block_device_mapping parameter.   This parameter is not validated as having to be a volume belonging to the user creating the instance, so providing I know the valid ID of a volume belonging to another user I can create VM and gain access to that volume (c.f volume attachment which does make explicit checks for both the ownership and status of a volume)\n\nThe volume ownership and status should be explicitly checked in the compute.api layer", 
+            "date_created": "2012-10-22 16:41:55.662709+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "The connection code attaches to the volume using api commands to cinder. Volumes belonging to other users will not be visible, so this shouldn't be possible in folsom.", 
+            "date_created": "2012-10-22 23:51:29.460631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "@Vish: would Essex be affected ?", 
+            "date_created": "2012-10-23 13:12:30.225080+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Also would Folsom with nova-volumes be affected ?", 
+            "date_created": "2012-10-24 13:33:08.420399+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "attach_volume is definitely not affected. It appears that attach_volume_boot has an elevated context so it may be possible to boot off of other peoples volumes. This appears to affect folsom/nova-volumes as well, although it should be verified. A simple fix would be to make sure we don't have an elevated context before doing the volume_api.get and volume_api.get_snapshot code in stable/essex here:\n\n 375                 # TODO(yamahata): default name and description\n 376                 snapshot = self.volume_api.get_snapshot(context,\n 377                                                         bdm['snapshot_id'])\n 378                 vol = self.volume_api.create(context, bdm['volume_size'],\n 379                                              '', '', snapshot)\n 380                 # TODO(yamahata): creating volume simultaneously\n 381                 #                 reduces creation time?\n 382                 self.volume_api.wait_creation(context, vol)\n 383                 self.db.block_device_mapping_update(\n 384                     context, bdm['id'], {'volume_id': vol['id']})\n 385                 bdm['volume_id'] = vol['id']\n 386 \n 387             if bdm['volume_id'] is not None:\n 388                 volume = self.volume_api.get(context, bdm['volume_id'])\n 389                 self.volume_api.check_attach(context, volume)\n 390                 cinfo = self._attach_volume_boot(context,\n 391                                                  instance,\n 392                                                  volume,\n 393                                                  bdm['device_name'])\n\n\n\n", 
+            "date_created": "2012-10-25 17:07:58.284833+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Looks like a deeper analysis is needed on this.. Vish, anyone you'd suggest would be a good fit to look into it ?", 
+            "date_created": "2012-10-26 14:46:16.882917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I know rmk has some essex installs with volumes. I will add him to the list to see if he can verify.", 
+            "date_created": "2012-10-27 18:38:51.821136+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Verified with a trunk devstack using nova-volumes. Here is a fix for trunk.", 
+            "date_created": "2012-10-27 20:42:33.152610+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Verified with a trunk devstack using nova-volumes. Here is a fix for trunk.", 
+            "date_created": "2012-10-27 20:42:57.455207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Now I'm confused. I understood that Grizzly was unaffected and now you say you have a trunk patch...\nWhich series are actually affected ?\n\nAdding nova-core for security patch review.", 
+            "date_created": "2012-10-31 15:03:02.132229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "ttx: only using nova-volumes is affected which means it doesn't affect grizzly. The fix involves checking at the api layer which is actually still valuable in trunk even though the security issue is not present. It should apply against folsom just fine. Rmk is working on a version for essex.", 
+            "date_created": "2012-10-31 18:05:22.014222+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "(the reason the patch is still valuable against trunk is it makes the failure happen at the api layer which causes the create to fail fast instead of putting the instance into error later in the process)", 
+            "date_created": "2012-10-31 18:07:21.444391+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Patch mostly looks good to me ... my only comment/question is whether we could catch something more specific than just \"Exception\".", 
+            "date_created": "2012-10-31 18:22:03.957787+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "@vish: thx for the explanation. As far as this security bug goes, I'll just consider it doesn't apply to Grizzly (even if pushing the fix there can't hurt).\n\nAdding Daviey so that he can look into stable/diablo being affected or not.", 
+            "date_created": "2012-11-01 16:51:45.495862+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+2 on the patch.  The Exception thing is just a potential cleanup, not a problem.", 
+            "date_created": "2012-11-05 14:39:02.700293+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "@nova-core: We need one more review here so we can proceed", 
+            "date_created": "2012-11-05 14:39:20.902182+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "@nova-core: one more review still needed", 
+            "date_created": "2012-11-16 13:05:06.272877+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+2 from me", 
+            "date_created": "2012-11-16 13:45:50.653402+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Refreshing patches: volume.patch does not apply cleanly to Grizzly\nrmk: are you working on an Essex patch ?", 
+            "date_created": "2012-11-16 16:10:57.947774+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-11-16 16:11:14.912644+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2012-11-16 16:11:33.150157+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@rmk: any progress on the Essex patch ?\n\nAdding the full Diablo maintenance team (rather than just Dave) to evaluate Diablo's vulnerability, although having the Essex patch will help in assessing that.\n\nMy proposed impact description:\n\nTitle: Boot from volume allows access to random volumes\nReporter: Phil Day (HP)\nProducts: Nova\nAffects: ??\n\nDescription:\nPhil Day from HP reported a vulnerability in volume attachment in nova-volume, affecting the boot-from-volume feature. By passing a specific volume ID, an authenticated user may be able to boot from a volume he doesn't own, potentially resulting in full access to that 3rd-party volume contents. Folsom setups making use of Cinder are not affected.\n", 
+            "date_created": "2012-11-21 15:44:11.461811+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Looks like rmk is not making progress on the essex patch. Anyone else in nova-core want to have a try ?", 
+            "date_created": "2012-11-30 10:26:34.339528+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Here's the first pass at an essex patch. I haven't been able to test it though, so please review with care.", 
+            "date_created": "2012-12-16 00:54:09.911655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "@nova-core: please have a look at proposed essex patch in comment 23", 
+            "date_created": "2012-12-18 15:37:07.586038+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "essex patch looks valid to me +1", 
+            "date_created": "2012-12-20 16:41:46.765534+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Still need one more +1 on the Essex patch\nEveryone alright with proposed impact description ?\n\nLast chance to propose a patch for Diablo, otherwise we'll release this without the diablo fix...", 
+            "date_created": "2013-01-16 11:32:48.152987+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+1 from me", 
+            "date_created": "2013-01-16 12:48:22.619559+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zulcss"
+        }, 
+        {
+            "content": "Please validate impact description:\n\n========\nTitle: Boot from volume allows access to random volumes\nReporter: Phil Day (HP)\nProducts: Nova\nAffects: Essex, Folsom\n\nDescription:\nPhil Day from HP reported a vulnerability in volume attachment in nova-volume, affecting the boot-from-volume feature. By passing a specific volume ID, an authenticated user may be able to boot from a volume he doesn't own, potentially resulting in full access to that 3rd-party volume contents. Folsom setups making use of Cinder are not affected.\n========", 
+            "date_created": "2013-01-18 14:40:32.115589+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "New refresh of the Grizzly patch", 
+            "date_created": "2013-01-18 14:43:12.730680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thierry - re the grizzly patch - it looks good although the same thing is done in compute manager's _setup_block_device_mapping. \n\nJust a heads up: I am trying to rework BDMs at the moment as part of https://blueprints.launchpad.net/nova/+spec/improve-block-device-handling - and I am hoping to propose more thorough validations as a part of those changes. so I am likely to remove/rework the bit of nova.api.  The patch should be ready during next week.", 
+            "date_created": "2013-01-18 16:24:44.859869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Remaining tasks before disclosure:\nAnyone: please review impact statement", 
+            "date_created": "2013-01-21 11:10:42.640955+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Notification sent out to stakeholders.  Proposed CRD is Thursday, January 24th at 1500 UTC.", 
+            "date_created": "2013-01-21 23:48:58.517494+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Bit confused as to why there's a grizzly patch if we're saying grizzly isn't affected?", 
+            "date_created": "2013-01-22 11:19:25.892903+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "@Mark: there is a bug in Grizzly, but without security consequences. See comment 10.", 
+            "date_created": "2013-01-22 13:01:40.154430+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I just started looking at this for Ubuntu. The essex patch fails in its testsuite with various errors like this:\n======================================================================\nERROR: test_run_with_snapshot (nova.tests.api.ec2.test_cloud.CloudTestCase)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/\u00abBUILDDIR\u00bb/nova-2012.1.3+stable-20120827-4d2a4afe/nova/tests/api/ec2/test_cloud.py\", line 2014, in test_run_with_snapshot\n    ec2_instance_id = self._run_instance(**kwargs)\n  File \"/\u00abBUILDDIR\u00bb/nova-2012.1.3+stable-20120827-4d2a4afe/nova/tests/api/ec2/test_cloud.py\", line 1441, in _run_instance\n    rv = self.cloud.run_instances(self.context, **kwargs)\n  File \"/\u00abBUILDDIR\u00bb/nova-2012.1.3+stable-20120827-4d2a4afe/nova/api/ec2/cloud.py\", line 1341, in run_instances\n    block_device_mapping=kwargs.get('block_device_mapping', {}))\n  File \"/\u00abBUILDDIR\u00bb/nova-2012.1.3+stable-20120827-4d2a4afe/nova/compute/api.py\", line 690, in create\n    scheduler_hints=scheduler_hints)\n  File \"/\u00abBUILDDIR\u00bb/nova-2012.1.3+stable-20120827-4d2a4afe/nova/compute/api.py\", line 395, in _create_instance\n    if bdm.get('snapshot_id') is not None and bdm['volume_id'] is None:\nKeyError: \"'volume_id'\\n-------------------- >> begin captured logging << --------------------\\nnova.service: AUDIT: Starting compute node (version 2012.1.3-LOCALBRANCH:LOCALREVISION)\\nnova.virt.fake: INFO: Compute_service record created for acde74615e9e4451837745036802057d \\nnova.service: AUDIT: Starting scheduler node (version 2012.1.3-LOCALBRANCH:LOCALREVISION)\\nnova.service: AUDIT: Starting network node (version 2012.1.3-LOCALBRANCH:LOCALREVISION)\\nnova.service: AUDIT: Starting volume node (version 2012.1.3-LOCALBRANCH:LOCALREVISION)\\nnova.api.ec2.cloud: AUDIT: Create snapshot of volume vol-00000001\\nnova.volume.manager: INFO: snapshot snapshot-00000001: creating\\nnova.api.ec2.cloud: AUDIT: Create snapshot of volume vol-00000001\\nnova.volume.manager: INFO: snapshot snapshot-00000002: creating\\n--------------------- >> end captured logging << ---------------------\"\n\nThis is because of the check for \"bdm['volume_id'] is None\". We need to verify that 'volume_id' is a key in bdm before accessing the value for the key. Attached is an updated patch for essex that passes its test suite on Ubuntu.", 
+            "date_created": "2013-01-23 20:35:58.679828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "FYI, the folsom patch suffers from the same problem. After adjusting it to use:\n+    def _validate_bdm(self, context, instance):\n+        for bdm in self.db.block_device_mapping_get_all_by_instance(\n+                context, instance['uuid']):\n+            # NOTE(vish): For now, just make sure the volumes are accessible.\n+            if bdm['snapshot_id'] is not None and \\\n+               'volume_id' in bdm and bdm['volume_id'] is None:\n+                try:\n+                    self.volume_api.get_snapshot(context, bdm['snapshot_id'])\n+                except Exception:\n+                    raise exception.InvalidBDMSnapshot(id=bdm['snapshot_id'])\n+            elif 'volume_id' in bdm and bdm['volume_id'] is not None:\n+                try:\n+                    self.volume_api.get(context, bdm['volume_id'])\n+                except Exception:\n+                    raise exception.InvalidBDMVolume(id=bdm['volume_id'])\n+\n\nit passes its testsuite as well (I would attach the patch, but I had to massage it a little for the version of Folsom in Ubuntu).", 
+            "date_created": "2013-01-23 20:39:53.037367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Visually inspecting Diablo, it seems affected too (the original report was against Diablo, so I am not sure why it is marked Incomplete...).\n\nAttached is a patch for Diablo backported from Essex with my changes above. It does pass the testsuite included in Diablo on Ubuntu, but beyond that I haven't tested it.", 
+            "date_created": "2013-01-23 20:42:27.442265+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Argh. We really need that private Gerrit and tests to validate patches better. Thanks for catching that. I suggest we push back publication to next Tuesday (this was a really short embargo period) and communicate the new set of patches to the stakeholders. Russell, thoughts?\n\nAbout Diablo, we were waiting for a confirmation since the Diablo code base mentioned in the report is based on an early and heavily patched milestone :) The diablo-maint team didn't really pick it up though, hence the \"Incomplete\" status.", 
+            "date_created": "2013-01-24 09:48:18.854165+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Red Hat are OK with this going out today at least. The ammendments simple.\nThough when verifiying them I noticed the logic could be simplified somewhat.\nAlso the existing patches didn't contain commit messages.\nAlso all didn't apply cleanly to the latest trees.\nAlso the essex and diablo ones duplicated the InvalidSnapshot exception class.\n\nSo I redid all the patches against the latest trees , and collated all the info\nfrom this bug report into the commit messages, and verified pertinent tests pass.\n\npatches following...", 
+            "date_created": "2013-01-24 11:10:34.407160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "redone diablo patch", 
+            "date_created": "2013-01-24 11:13:42.759236+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "redone essex patch", 
+            "date_created": "2013-01-24 11:14:24.673548+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "redone folsom patch", 
+            "date_created": "2013-01-24 11:14:57.014835+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "redone grizzly patch", 
+            "date_created": "2013-01-24 11:15:27.601095+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "DISCLOSURE DELAYED to Tuesday, January 29th at 1500 UTC. ", 
+            "date_created": "2013-01-24 13:18:36.662939+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Updated Essex patch to fix pep8 error", 
+            "date_created": "2013-01-24 13:20:03.528467+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Updated Folsom patch to fix a pep8 issue", 
+            "date_created": "2013-01-24 13:21:31.189646+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "And updated Grizzly patch to fix pep8\n\nIt would be good to get another ACK on this", 
+            "date_created": "2013-01-24 13:22:17.946424+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "+2 on russellb's patch, looks good to me", 
+            "date_created": "2013-01-24 18:48:41.782377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "+2", 
+            "date_created": "2013-01-24 18:55:58.503028+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Note I'll push these patches to E,F,G tomorrow at 1500 UTC,\nand approve them immediately as preapproved.\n\nI want to amend the Author to Vish (who I double checked with).", 
+            "date_created": "2013-01-28 22:28:13.820451+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/20698", 
+            "date_created": "2013-01-29 15:03:58.739571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/20699", 
+            "date_created": "2013-01-29 15:05:16.809919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/20700", 
+            "date_created": "2013-01-29 15:06:32.907527+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/diablo\nReview: https://review.openstack.org/20703", 
+            "date_created": "2013-01-29 15:46:05.225082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/20698\nCommitted: http://github.com/openstack/nova/commit/24fffd9d8b77e9b71e8013fc22c172f76bb4e84c\nSubmitter: Jenkins\nBranch:    master\n\ncommit 24fffd9d8b77e9b71e8013fc22c172f76bb4e84c\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Thu Jan 24 10:07:33 2013 +0000\n\n    validate specified volumes to boot from at the API layer\n    \n    This causes the create to fail fast instead of putting\n    the instance into error later in the process.\n    \n    Related to bug: 1069904\n    Change-Id: I5f7c8d20d3ebf33ce1ce64bf0a8418bd2b5a6411\n", 
+            "date_created": "2013-01-29 16:23:06.341360+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/20700\nCommitted: http://github.com/openstack/nova/commit/243d516cea9d3caa5a8267b12d2f577dcb24193b\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit 243d516cea9d3caa5a8267b12d2f577dcb24193b\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Thu Jan 24 10:45:19 2013 +0000\n\n    disallow boot from volume from specifying arbitrary volumes\n    \n    Fix a vulnerability in volume attachment in nova-volume, affecting the\n    boot-from-volume feature.  By passing a specific volume ID, an\n    authenticated user may be able to boot from a volume they don't own,\n    potentially resulting in full access to that 3rd-party volume.\n    \n    Fixes bug: 1069904, CVE-2013-0208\n    Change-Id: I5f7c8d20d3ebf33ce1ce64bf0a8418bd2b5a6411\n", 
+            "date_created": "2013-01-29 16:47:15.398235+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/20699\nCommitted: http://github.com/openstack/nova/commit/317cc0af385536dee43ef2addad50a91357fc1ad\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 317cc0af385536dee43ef2addad50a91357fc1ad\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Thu Jan 24 10:07:33 2013 +0000\n\n    disallow boot from volume from specifying arbitrary volumes\n    \n    Fix a vulnerability in volume attachment in nova-volume, affecting the\n    boot-from-volume feature.  By passing a specific volume ID, an\n    authenticated user may be able to boot from a volume they don't own,\n    potentially resulting in full access to that 3rd-party volume.\n    Folsom setups making use of Cinder are not affected.\n    \n    Fixes bug: 1069904, CVE-2013-0208\n    Change-Id: I5f7c8d20d3ebf33ce1ce64bf0a8418bd2b5a6411\n", 
+            "date_created": "2013-01-29 19:23:14.428152+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "OSSA 2013-001", 
+            "date_created": "2013-01-29 19:43:14.903703+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }
+    ], 
+    "closed": "2013-02-21 08:59:30.404874+00:00"
+}

@@ -1,0 +1,58 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2016-12-09 13:41:12.146955+00:00", 
+    "description": "Description\n===========\n\nWhen trying to launch an instance and nova determines that a compute node is out of disk space, other hypervisors are not considered for scheduling.\n\nSteps to reproduce\n==================\n\nOpenStack deployed using local storage on two nodes (using Kolla), 50 GB disk in my lab.\nLaunch instances until disk is near full, fex 2 Centos with flavor with 20 GB disk.\nLaunch another instance with flavor 20 GB disk.\n\nExpected Result\n===============\nNova schedules the \"other instance\" on the second compute host where there are sufficient resources.\n\nActual Result\n=============\nNova fails with \"Not Enough Hosts\"\n\n[req-a822f4c7-1788-4ff3-b03f-91db6d722937 ec4d0ac3f3684b1db4fa82449091339a df00326cc81048c28466529f82f4cf1a - - -] Filtering removed all hosts for the request with instance ID 'fb1ee3fe-3230-4d3a-a6d2-7b4a5bae1c09'. Filter results: ['RetryFilter: (start: 4, end: 4)', 'AvailabilityZoneFilter: (start: 4, end: 4)', 'RamFilter: (start: 4, end: 4)', 'DiskFilter: (start: 4, end: 2)', 'ComputeFilter: (start: 2, end: 0)']\\n\",\n\nEnvironment\n===========\n\nOpenStack Version: mitaka, installed from Kolla stable/mitaka\n\nHypervisor: KVM Linux 3.10.0-327.el7.x86_64 #1 SMP Thu Nov 19 22:10:57 UTC 2015 GNU/Linux\n\nStorage: Local\n\nNetworking: Neutron", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1630658", 
+    "owner": "None", 
+    "id": 1630658, 
+    "index": 7735, 
+    "openned": "2016-10-05 16:01:45.268736+00:00", 
+    "created": "2016-10-05 16:01:45.268736+00:00", 
+    "title": "nova-scheduler fails when running out of disk space", 
+    "comments": [
+        {
+            "content": "Description\n===========\n\nWhen trying to launch an instance and nova determines that a compute node is out of disk space, other hypervisors are not considered for scheduling.\n\nSteps to reproduce\n==================\n\nOpenStack deployed using local storage on two nodes (using Kolla), 50 GB disk in my lab.\nLaunch instances until disk is near full, fex 2 Centos with flavor with 20 GB disk.\nLaunch another instance with flavor 20 GB disk.\n\nExpected Result\n===============\nNova schedules the \"other instance\" on the second compute host where there are sufficient resources.\n\nActual Result\n=============\nNova fails with \"Not Enough Hosts\"\n\n[req-a822f4c7-1788-4ff3-b03f-91db6d722937 ec4d0ac3f3684b1db4fa82449091339a df00326cc81048c28466529f82f4cf1a - - -] Filtering removed all hosts for the request with instance ID 'fb1ee3fe-3230-4d3a-a6d2-7b4a5bae1c09'. Filter results: ['RetryFilter: (start: 4, end: 4)', 'AvailabilityZoneFilter: (start: 4, end: 4)', 'RamFilter: (start: 4, end: 4)', 'DiskFilter: (start: 4, end: 2)', 'ComputeFilter: (start: 2, end: 0)']\\n\",\n\nEnvironment\n===========\n\nOpenStack Version: mitaka, installed from Kolla stable/mitaka\n\nHypervisor: KVM Linux 3.10.0-327.el7.x86_64 #1 SMP Thu Nov 19 22:10:57 UTC 2015 GNU/Linux\n\nStorage: Local\n\nNetworking: Neutron", 
+            "date_created": "2016-10-05 16:01:45.268736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~magnus-loof"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-10-05 16:01:45.268736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~magnus-loof"
+        }, 
+        {
+            "content": "I have confirmed this to be the case, atleast with the default Kolla configs in the operator's environment (pristine upstream Newton).  If the nova scheduler fails to schedule to the first node, it gives up on other nodes.", 
+            "date_created": "2016-10-05 16:07:05.299622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdake"
+        }, 
+        {
+            "content": "The scheduler logs look like there are 4 hosts in your environment. 1/2 of them were thrown out because they had insufficent disk, however the remaining 2 were thrown out because they didn't have enough CPU capacity. Are you sure there was enough compute capacity on any nodes?", 
+            "date_created": "2016-10-06 14:26:28.177313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I'm also really curious by the fact that the number of nodes here that the scheduler is considering doesn't seem to match what you think you provided to kolla. Nova thinks there are 4, the bug says 2.", 
+            "date_created": "2016-10-06 14:28:39.670311+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Sorry guys. I edited the \"hypervisor\" list because I had two more Hyper-V hosts that were not part of the equeation, in an effort to simplify the problem description. Bad move.\n\nAnyway. I believe the logs show the following:\n\n1. There are - at least ;-) - two hypervisors with sufficient disk space:\n\n   openstack hypervisor show 3:\n   vcpus_used 0\n   free_disk_gb 49\n\n   openstack hypervisor show 5:\n   vcpus_used 0\n   free_disk_gb 49\n\n2. It is possible to schedule servers to both hypervisors:\n\n   7 x nova boot --image cirros --flavor m1.tiny\n\n   openstack hypervisor show 3:\n   vcpus_used 5\n   free_disk_gb 45\n\n   openstack hypervisor show 5:\n   vcpus_used 3\n   free_disk_gb 46\n\n3. There is diskspace remaining on control02 (id 5) after trying to schedule:\n  \n   nova boot --image CentOS-7-x86_64-GenericCloud-1608.qcow2 --flavor m1.small three\n\n   openstack hypervisor show 5:\n   vcpus_used 0\n   free_disk_gb 49\n  \n\n4. Nova fails to schedule, even though there is sufficient disk on control02 (id 5):\n\n  'DiskFilter: (start: 4, end: 2)'\n\n\n\n  The DiskFilter *should* have returned '3' (both Hyper-V hosts also had sufficient disk + control02)", 
+            "date_created": "2016-10-08 06:44:34.906618+00:00", 
+            "author": "https://api.launchpad.net/1.0/~magnus-loof"
+        }, 
+        {
+            "content": "This problem may not occur often in production, because there you would normally have shared storage of some kind. But for people doing PoCs or trying to learn, this could trip them up.", 
+            "date_created": "2016-10-08 06:47:53.415975+00:00", 
+            "author": "https://api.launchpad.net/1.0/~magnus-loof"
+        }, 
+        {
+            "content": "There was still no information provided about why the CPU Filter threw out the rest of the nodes. That is the important bit here that we need to move forward.\n\nAs such, closing as Invalid. If someone is able to put more detailed debug into the scheduler to figure out which hosts get dumped at the Disk and CPU filter parts for what reason, and provide that, please do and we can reopen.", 
+            "date_created": "2016-12-09 13:41:11.716953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ], 
+    "closed": "2016-12-09 13:39:29.569491+00:00"
+}

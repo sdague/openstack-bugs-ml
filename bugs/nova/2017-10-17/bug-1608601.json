@@ -1,0 +1,100 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-08-23 16:58:14.255340+00:00", 
+    "description": "There have been several changes in community in Newton on nova and neutron client interactions. The interactions are not consistently using admin context and credentials/token of nova user always instead sometimes using the logged in user credentials. Due to this the create_port is not getting allowed for non-admin users.\n\nhttps://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L117-L137\n\n# NOTE(dprince): In the case where no auth_token is present we allow use of # neutron admin tenant credentials if it is an admin context. This is to # support some services (metadata API) where an admin context is used # without an auth token", 
+    "tags": [
+        "neutron", 
+        "openstack-version.newton"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1608601", 
+    "owner": "https://api.launchpad.net/1.0/~johngarbutt", 
+    "id": 1608601, 
+    "index": 1959, 
+    "openned": "2016-08-01 16:24:31.274308+00:00", 
+    "created": "2016-08-01 16:24:31.274308+00:00", 
+    "title": "create_port is failing for non admin context as Nova neutronclient interactions are not using admin context consistently", 
+    "comments": [
+        {
+            "content": "There have been several changes in community in Newton on nova and neutron client interactions. The interactions are not consistently using admin context and credentials/token of nova user always instead sometimes using the logged in user credentials. Due to this the create_port is not getting allowed for non-admin users.\n\nhttps://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L117-L137\n\n# NOTE(dprince): In the case where no auth_token is present we allow use of # neutron admin tenant credentials if it is an admin context. This is to # support some services (metadata API) where an admin context is used # without an auth token", 
+            "date_created": "2016-08-01 16:24:31.274308+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eshaseth"
+        }, 
+        {
+            "content": "I think the description is slightly wrong.\n\nI took a look at neutron policy file and create_port can be created by any user by default.\nhttps://github.com/openstack/neutron/blob/master/etc/policy.json#L72 and that must be the reason the code was written with a neutronclient without admin context. If the default policy.json is used (which allows all users to create port), everything is good . However, if we customize the policy.json to something like below:\n\n\"create_port\": \"role:member or role:im-custom-role\"\n\nFor creating port in the deploy flow (which is the flow referred to here), the get_client() does not pass admin as true meaning it uses the token of the logged in user\nhttps://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L749\n\nIn the same flow the client context is updated to admin to enable a neutron flow that needs admin (here admin is set to true because the default policy.json doesn't allow all roles to update ports and thus without admin context the below call fails)\nhttps://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L789\n\n        # We always need admin_client to build nw_info,\n        # we sometimes need it when updating ports\n        admin_client = get_client(context, admin=True)\n\n        ordered_nets, ordered_ports, preexisting_port_ids, \\\n            created_port_ids = self._update_ports_for_instance(\n                context, instance,\n                neutron, admin_client, requests_and_created_ports, nets,\n                bind_host_id, dhcp_opts, available_macs)\n\nIt doesn't make sense for nova to use neutronclient with admin in some cases and without admin in others. It might work with the default neutron policy.json but not with a custom one. The code is not written consistently.\n\nThe nova-neutronclient code must either use admin context consistently , in which case it will always use the neutron service user credentials from the nova.conf file from the [neutron] section to make calls to neutron. Or, it must always use the token of the logged-in user. The problem with using the credentials of the logged-in user is that there would be cases where the logged in user's token gets expired mid-way and the nova-neutronclient logic would a fresh authentication with keystone and the credentials used at that time would be service user credentials (as the logged in user's credentials are not available to generate a fresh token) and that would again lead to inconsistencies. \n\nThis defect must be used to decide the course of action either way and not leave things inconsistently.", 
+            "date_created": "2016-08-02 05:23:06.308874+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dikonoor"
+        }, 
+        {
+            "content": "I'm not sure how to proceed here and asked on the ML for advice: http://lists.openstack.org/pipermail/openstack-dev/2016-August/100610.html", 
+            "date_created": "2016-08-02 08:04:30.690130+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "The issue could be solved by having either get_client(context, admin=True) at all places or get_client(context) while getting neutron_client for nova. The call should be consistent and not having admin=True for some cases and not for others.", 
+            "date_created": "2016-08-02 09:25:17.828882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eshaseth"
+        }, 
+        {
+            "content": "The issue can be summed up like this... when nova has asked neutron to create a port in previous releases, it has always used a token with the admin role. Something has gone into newton that has changed this behavior, which has the potential to break users who have customized neutron's policy.json file. Unless there's a very good reason for this change and it is appropriately documented in the release notes so that folks will know to look for and handle this on upgrades, that behavioral change needs to be reverted.", 
+            "date_created": "2016-08-18 20:36:57.771805+00:00", 
+            "author": "https://api.launchpad.net/1.0/~edmondsw"
+        }, 
+        {
+            "content": "OK so here is the problem, in master (newton) it's using the non-admin port client:\n\nhttps://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L702\n\nThat's coming from here:\n\nhttps://github.com/openstack/nova/blob/master/nova/network/neutronv2/api.py#L749\n\nBefore newton, that would be the port_client here with admin=True if using the port binding extension:\n\nhttps://github.com/openstack/nova/blob/stable/mitaka/nova/network/neutronv2/api.py#L564\n\nSo before newton we used an admin port client, but with the refactor changes in newton it's using the non-admin client hence the regression.", 
+            "date_created": "2016-08-18 21:34:34.669337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Per conversation in IRC I volunteered to work on this bug.", 
+            "date_created": "2016-08-18 21:52:05.398750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/357540", 
+            "date_created": "2016-08-18 23:28:36.899437+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "So this change was intentional, we need to get off the admin token.\n\nMy preferred way to fix this is to stop deciding if we should use the admin token or not based on if the port_binding extension is enabled.\n\nThere is no (sensible) Neutron deployment that would ever have port binding disabled right now, so we probably want to fix that anyway (I will work on a patch for that).", 
+            "date_created": "2016-08-19 08:14:43.959619+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/357726", 
+            "date_created": "2016-08-19 09:51:49.437388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@John we noticed this in a deployment that has port_binding extension enabled, so I'm not sure how that would be related.", 
+            "date_created": "2016-08-19 15:22:11.649465+00:00", 
+            "author": "https://api.launchpad.net/1.0/~edmondsw"
+        }, 
+        {
+            "content": "Thanks John for the clarification and the update! I will work on getting the tests passing with this new change.", 
+            "date_created": "2016-08-19 15:49:38.110817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "@auggy Is your change addressing:\n\nSo before newton we used an admin port client, but with the refactor changes in newton it's using the non-admin client hence the regression. \nSo we will change it all to make it consistent.", 
+            "date_created": "2016-09-13 11:28:02.673135+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eshaseth"
+        }, 
+        {
+            "content": "Patch in merge conflict, moving this out of In Progress", 
+            "date_created": "2016-12-09 16:38:45.265655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Automatically discovered version newton in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:55:21.484968+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/357726\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=7f38e25e7df7be805459998c591e7bf8d900f766\nSubmitter: Jenkins\nBranch:    master\n\ncommit 7f38e25e7df7be805459998c591e7bf8d900f766\nAuthor: John Garbutt <email address hidden>\nDate:   Fri Aug 19 10:17:58 2016 +0100\n\n    Assume neutron port_binding extensions enabled\n    \n    No recent neutron deployment should ever have the port_binding extension\n    missing in its list.\n    \n    It appears like this has been the case since this commit in Liberty:\n    61121c5f2af27e31092db7ac6947f796198410a8\n    \n    It causing lots of confusion around when an admin_client should be used,\n    among other things, so lets remove this needless complexity.\n    \n    Co-Authored-By: Augustina Ragwitz <email address hidden>\n    Change-Id: I5fa73fa0610b23ef231952b2035a284819186a7c\n    Related-Bug: 1608601\n", 
+            "date_created": "2017-08-23 16:58:13.579622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

@@ -1,0 +1,61 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-06-02 19:31:47.654303+00:00", 
+    "description": "Enable PCI passthrough on a compute host (whitelist devices explained in more detail in the docs), and create a network, subnet and a port that represents a SR-IOV physical function passthrough:\n\n$ neutron net-create --provider:physical_network=phynet --provider:network_type=flat sriov-net\n$ neutron subnet-create sriov-net 192.168.2.0/24 --name sriov-subne\n$ neutron port-create sriov-net --binding:vnic_type=direct-physical --name pf\n\nAfter that try to boot an instance using the created port (provided the pci_passthrough_whitelist was setup correctly) this should work:\n\n$ boot --image xxx --flavor 1 --nic port-id=$PORT_ABOVE testvm\n\nMy test env has 2 PFs with 7 VFs each, after spawning an instance, the PF gets marked as allocated, but non of the VFs do, even though they are removed from the host (note that device_pools are correctly updated.\n\nSo after the instance was successfully booted we get\n\nMariaDB [nova]> select count(*) from pci_devices where status=\"available\" and deleted=0;\n+----------+\n| count(*) |\n+----------+\n|       15 |\n+----------+\n\n# This should be 8 - we are leaking 7 VFs belonging to the attached PF that never get updated.\n\nMariaDB [nova]> select pci_stats from compute_nodes;\n| pci_stats                                                                                                                                                                                                          \n                                                                                                                                                                                                                     \n| {\"nova_object.version\": \"1.1\", \"nova_object.changes\": [\"objects\"], \"nova_object.name\": \"PciDevicePoolList\", \"nova_object.data\": {\"objects\": [{\"nova_object.version\": \"1.1\", \"nova_object.changes\": [\"count\", \"numa_\nnode\", \"vendor_id\", \"product_id\", \"tags\"], \"nova_object.name\": \"PciDevicePool\", \"nova_object.data\": {\"count\": 1, \"numa_node\": 0, \"vendor_id\": \"8086\", \"product_id\": \"1521\", \"tags\": {\"dev_type\": \"type-PF\", \"physical\n_network\": \"phynet\"}}, \"nova_object.namespace\": \"nova\"}, {\"nova_object.version\": \"1.1\", \"nova_object.changes\": [\"count\", \"numa_node\", \"vendor_id\", \"product_id\", \"tags\"], \"nova_object.name\": \"PciDevicePool\", \"nova_\nobject.data\": {\"count\": 7, \"numa_node\": 0, \"vendor_id\": \"8086\", \"product_id\": \"1520\", \"tags\": {\"dev_type\": \"type-VF\", \"physical_network\": \"phynet\"}}, \"nova_object.namespace\": \"nova\"}]}, \"nova_object.namespace\": \"n\nova\"} |\n\nThis is correct - shows 8 available devices\n\nOnce a new resource_tracker run happens we hit https://bugs.launchpad.net/nova/+bug/1565721 so we stop updating based on what is found on the host.\n\nThe root cause of this is (I believe) that we update PCI objects in the local scope, but never call save() on those particular instances. So we grap and update the status here:\n\nhttps://github.com/openstack/nova/blob/d57a4e8be9147bd79be12d3f5adccc9289a375b6/nova/objects/pci_device.py#L339-L349\n\nbut never call save inside that method.\n\nThe save is eventually called here referencing completely different instances that never see the update:\n\nhttps://github.com/openstack/nova/blob/d57a4e8be9147bd79be12d3f5adccc9289a375b6/nova/compute/resource_tracker.py#L646", 
+    "tags": [
+        "pci", 
+        "sriov"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1565785", 
+    "owner": "https://api.launchpad.net/1.0/~sahid-ferdjaoui", 
+    "id": 1565785, 
+    "index": 1908, 
+    "openned": "2016-04-04 13:01:26.794245+00:00", 
+    "created": "2016-04-04 13:01:26.794245+00:00", 
+    "title": "SR-IOV PF passthrough device claiming/allocation does not work for physical functions devices", 
+    "comments": [
+        {
+            "content": "Enable PCI passthrough on a compute host (whitelist devices explained in more detail in the docs), and create a network, subnet and a port that represents a SR-IOV physical function passthrough:\n\n$ neutron net-create --provider:physical_network=phynet --provider:network_type=flat sriov-net\n$ neutron subnet-create sriov-net 192.168.2.0/24 --name sriov-subne\n$ neutron port-create sriov-net --binding:vnic_type=direct-physical --name pf\n\nAfter that try to boot an instance using the created port (provided the pci_passthrough_whitelist was setup correctly) this should work:\n\n$ boot --image xxx --flavor 1 --nic port-id=$PORT_ABOVE testvm\n\nMy test env has 2 PFs with 7 VFs each, after spawning an instance, the PF gets marked as allocated, but non of the VFs do, even though they are removed from the host (note that device_pools are correctly updated.\n\nSo after the instance was successfully booted we get\n\nMariaDB [nova]> select count(*) from pci_devices where status=\"available\" and deleted=0;\n+----------+\n| count(*) |\n+----------+\n|       15 |\n+----------+\n\n# This should be 8 - we are leaking 7 VFs belonging to the attached PF that never get updated.\n\nMariaDB [nova]> select pci_stats from compute_nodes;\n| pci_stats                                                                                                                                                                                                          \n                                                                                                                                                                                                                     \n| {\"nova_object.version\": \"1.1\", \"nova_object.changes\": [\"objects\"], \"nova_object.name\": \"PciDevicePoolList\", \"nova_object.data\": {\"objects\": [{\"nova_object.version\": \"1.1\", \"nova_object.changes\": [\"count\", \"numa_\nnode\", \"vendor_id\", \"product_id\", \"tags\"], \"nova_object.name\": \"PciDevicePool\", \"nova_object.data\": {\"count\": 1, \"numa_node\": 0, \"vendor_id\": \"8086\", \"product_id\": \"1521\", \"tags\": {\"dev_type\": \"type-PF\", \"physical\n_network\": \"phynet\"}}, \"nova_object.namespace\": \"nova\"}, {\"nova_object.version\": \"1.1\", \"nova_object.changes\": [\"count\", \"numa_node\", \"vendor_id\", \"product_id\", \"tags\"], \"nova_object.name\": \"PciDevicePool\", \"nova_\nobject.data\": {\"count\": 7, \"numa_node\": 0, \"vendor_id\": \"8086\", \"product_id\": \"1520\", \"tags\": {\"dev_type\": \"type-VF\", \"physical_network\": \"phynet\"}}, \"nova_object.namespace\": \"nova\"}]}, \"nova_object.namespace\": \"n\nova\"} |\n\nThis is correct - shows 8 available devices\n\nOnce a new resource_tracker run happens we hit https://bugs.launchpad.net/nova/+bug/1565721 so we stop updating based on what is found on the host.\n\nThe root cause of this is (I believe) that we update PCI objects in the local scope, but never call save() on those particular instances. So we grap and update the status here:\n\nhttps://github.com/openstack/nova/blob/d57a4e8be9147bd79be12d3f5adccc9289a375b6/nova/objects/pci_device.py#L339-L349\n\nbut never call save inside that method.\n\nThe save is eventually called here referencing completely different instances that never see the update:\n\nhttps://github.com/openstack/nova/blob/d57a4e8be9147bd79be12d3f5adccc9289a375b6/nova/compute/resource_tracker.py#L646", 
+            "date_created": "2016-04-04 13:01:26.794245+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/301858", 
+            "date_created": "2016-04-05 18:16:12.543064+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/301859", 
+            "date_created": "2016-04-05 18:16:22.614901+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/301860", 
+            "date_created": "2016-04-05 18:16:31.211164+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Nikola Dipanov (<email address hidden>) on branch: master\nReview: https://review.openstack.org/301858\nReason: Not needed anymore", 
+            "date_created": "2016-04-06 15:13:51.213872+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/301859\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c469b8466fc5ff5514957a0fbd17d141761774c8\nSubmitter: Jenkins\nBranch:    master\n\ncommit c469b8466fc5ff5514957a0fbd17d141761774c8\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Apr 5 18:09:53 2016 +0100\n\n    pci: make sure device relationships are kept in memory\n    \n    `pci_devs` attribute of PciDevTracker class is the in-memory\n    \"master copy\" of all\n    devices on each compute host, and all data changes that happen when\n    claiming/allocating/freeing\n    devices HAVE TO be made against instances contained in `pci_devs`\n    list, because they are periodically flushed to the DB when the save()\n    method is called.\n    \n    Due to this we need to make sure all the relationships are available to\n    the code using them (claiming/allocation/freeing methods).\n    \n    We do this by simply keeping a tree structure by referencing\n    parent/children from objects themselves. This is done on every update of\n    the state of PCI devices (on compute service start up, and on every\n    resource tracker pass), so that this information is always as up to date\n    as the in memory view of devices.\n    \n    This change adds the code to build up the tree, and subsequent changes\n    will make sure the newly added relationships are used when needed. We\n    also add 2 non-versioned fields added to PciDevice object to hold the\n    references.\n    \n    Co-Authored-By: Sahid Ferdjaoui <email address hidden>\n    \n    Change-Id: Id6868b7839efb2cd53f5f7aaac2c55d169356ce4\n    Partial-bug: #1565785\n", 
+            "date_created": "2016-06-01 15:48:57.731143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/301860\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=0b85bb4b42ab8d47809ecb9244df88770de5d89b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 0b85bb4b42ab8d47809ecb9244df88770de5d89b\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Tue Apr 5 19:04:07 2016 +0100\n\n    pci: related updates are done without DB lookups\n    \n    Now that we have all relationships recorded on objects kept in the\n    master-list in memory, we can use those links to do updates (that\n    eventually get saved on pci_tracker.save()) without wrongfully updating\n    objects within the local scope and losing changes immediately.\n    \n    As a convenience, we add two properties to the PciDevice object that\n    take care of fetching related objects without worrying about missing or\n    unset values.\n    \n    We also clarify a bit more how to use PciDevTracker.pci_devs attribute\n    and why we can't just randomly fish PciDevices out of the DB for the\n    purposes of updating them.\n    \n    Change-Id: I118ba35f464afc970fef54759d5560ba20ff9c52\n    Closes-bug: #1565785\n", 
+            "date_created": "2016-06-01 15:49:53.348723+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0b1 development milestone.", 
+            "date_created": "2016-06-02 19:31:46.966685+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }
+    ], 
+    "closed": "2016-06-01 15:49:51.618388+00:00"
+}

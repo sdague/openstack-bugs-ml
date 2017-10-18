@@ -1,0 +1,61 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2016-11-14 22:52:37.313912+00:00", 
+    "description": "I booted up an instance as follows in my stable/mitaka devstack environment:\n\n$ echo \"this is a test\" > /tmp/my_user_data.txt\n$ echo \"blah1\" > /tmp/file1\n$ echo \"blah2\" > /tmp/file2\n$ nova boot --flavor m1.tiny --image cirros-0.3.4-x86_64-uec  --config-drive true --user-data /tmp/my_user_data.txt --file /root/file1=/tmp/file1 --file /tmp/file2=/tmp/file2 testing\n\n\nThis booted up an instance, and within the guest I ran the following:\n\n$ mkdir mnt\n$ mount /dev/sr0 mnt\n$ cat mnt/openstack/latest/user_data\nthis is a test\n$ umount mnt\n$ cat /root/file1\nblah1\n$ cat /tmp/file2\nblah2\n\nThen I killed the compute node and ran \"nova evacuate testing\".\n\nThe evacuated instance had a config drive at /dev/sr0, but it did not have the /root/file1 or /tmp/file2 files.  This is arguably incorrect.", 
+    "tags": [
+        "compute", 
+        "evacuate"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1638961", 
+    "owner": "None", 
+    "id": 1638961, 
+    "index": 3104, 
+    "openned": "2016-11-03 15:33:29.695530+00:00", 
+    "created": "2016-11-03 15:33:29.695530+00:00", 
+    "title": "evacuating an instance loses files specified via '--file' on the cli", 
+    "comments": [
+        {
+            "content": "I booted up an instance as follows in my stable/mitaka devstack environment:\n\n$ echo \"this is a test\" > /tmp/my_user_data.txt\n$ echo \"blah1\" > /tmp/file1\n$ echo \"blah2\" > /tmp/file2\n$ nova boot --flavor m1.tiny --image cirros-0.3.4-x86_64-uec  --config-drive true --user-data /tmp/my_user_data.txt --file /root/file1=/tmp/file1 --file /tmp/file2=/tmp/file2 testing\n\n\nThis booted up an instance, and within the guest I ran the following:\n\n$ mkdir mnt\n$ mount /dev/sr0 mnt\n$ cat mnt/openstack/latest/user_data\nthis is a test\n$ umount mnt\n$ cat /root/file1\nblah1\n$ cat /tmp/file2\nblah2\n\nThen I killed the compute node and ran \"nova evacuate testing\".\n\nThe evacuated instance had a config drive at /dev/sr0, but it did not have the /root/file1 or /tmp/file2 files.  This is arguably incorrect.", 
+            "date_created": "2016-11-03 15:33:29.695530+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "It seems like a related issue is that if you boot with \"--file\" and then do a \"nova rebuild\" without the \"--file\" option then you lose the injected file.  This makes sense since an evacuate is basically a rebuild to the same image.\n\nAs mentioned on IRC by mdbooth, it seems like the logical fix would be to store the injected file(s) in the DB.  Which is not really ideal.", 
+            "date_created": "2016-11-03 18:12:29.162794+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "Have you tried recreating this on master (ocata) or at least newton?", 
+            "date_created": "2016-11-12 00:37:42.649597+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "OK so this is a wishlist bug. Rebuild takes a list of files to inject:\n\nhttps://github.com/openstack/nova/blob/14.0.2/nova/compute/api.py#L2731\n\nEvacuate doesn't:\n\nhttps://github.com/openstack/nova/blob/14.0.2/nova/compute/api.py#L3729\n\nSince we don't store the injected files and evacuate is an admin operation, we can't get those back into the guest when it's rebuilt on another compute node. Rebuild is a user operation so they can rebuild with the same files to inject.\n\nWe've been talking about getting rid of file injection for a long time so I'm not sure we're going to consider fixing this, but I'll bring it up in the dev ML since we always talk about dropping file injection but never seen to get serious about it.", 
+            "date_created": "2016-11-12 00:52:34.496953+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Are the injected files not in the config drive? I though config drive or the metadata service were the alternative options to file injection?", 
+            "date_created": "2016-11-12 00:58:22.652750+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "The injected files are in the config drive, though a bit obscurely.  With the config drive mounted at \"mnt\", I get this:\n\n\n$ more mnt/openstack/latest/user_data \nthis is a test\n\n$ more mnt/openstack/latest/meta_data.json \n{\"files\": [{\"path\": \"/root/file1\", \"content_path\": \"/content/0000\"}, {\"path\": \"/tmp/file2\", \"content_path\": \"/content/0001\"}], \"admin_pass\": \"wSdQBR78EL3g\", \"random_seed\": \"Gqh8yTYfuWBEG6tarS7XCmChhA67RgVB84Z8MAOzCZIoq9QzKBDhcDAi+JRSAkFpSfrzWRsmckR58IlfRVK0mAZgXSqiF9ycbjCws5TW8AfsgPw6UTK9kXwWWcKSSnMogkdZATAa2fOZ5JM+CSMWNED02l5zlLypkba++AR8EMb0cTymfsyXT13uILc4K8ejWiCx4fT75ymHGhDcPBnwo3407K+SE7Dn6YreeayigHkHyK3YVyhuAt5hTkrrRFQtklqF5OQr+fJfIYv1bkSR7549o1jSFhkWgz/ldtVu4w4GIIInh0c59zB9LGUJQ9Ets8vRO5jH2ra+GaS53XFTJSJKKwjdbBfNc07ViGVB5tZ+TRAHHwCOZ7eWVzqB9BKH2QAVCkTDiQp0cTnTRjp9PvmcQkzysqIqFxArHOBz32Ma3IM18X5+ndao1l0jK4PAStiDXeRXYfnmSzrNsDyUw9Pxd9L3JTTcAUMflHr4RRpPb9H94CDq8W1Ff8bqyPgx0x2TqXBc7m2g12uVg2G5B+vyxu/ToeTbUCMqZ8L9keBV45MG16fhmY8di6CKrvwEmF+qa6Oub6K3i0Yt5UaClJguYG0102+wgu2rUgR+1QHVmDxOhloDZS8ko3eauzQAqFAGeO89Qroisy18QvQ2YPHZe86DDR3tONxtJq8Q3ek=\", \"uuid\": \"f0553d43-595a-4fdb-9768-34b2aaa97837\", \"availability_zone\": \"nova\", \"hostname\": \"testing.novalocal\", \"launch_index\": 0, \"project_id\": \"fd6d0497cc79434eb7eeb3c537b9d166\", \"name\": \"testing\"}\n\n$ more mnt/openstack/content/0000 \nblah1\n$ more mnt/openstack/content/0001 \nblah2\n\n", 
+            "date_created": "2016-11-14 22:43:10.508339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "I should point out that the above is on initial boot.  Need to check on evac.", 
+            "date_created": "2016-11-14 22:46:11.811791+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }, 
+        {
+            "content": "On running \"nova rebuild f0553d43-595a-4fdb-9768-34b2aaa97837 cirros-0.3.4-x86_64-uec\" the resulting instance has a config drive, but the config drive is missing the two injected files:\n\n$ more mnt/openstack/latest/meta_data.json\n{\"admin_pass\": \"Y38CjEszMXfG\", \"random_seed\": \"V7b2sElSVRcZlNXhlWLVWJ/T+ce4qO6s2C/vYsRisd7D8xSQuGGXJM3fjvAoZfBsFvC+Ob+tiRNvTl5vxsl8ENK7g3VuBmPKlJFOfUD0Jy4gPDBvyPH8O744wOB4fbQX8BBWBvnDTOVuYx9v6/W+R5R/McKkDw9d1L3mp5SZjjF6N5P8uyXPnKJN4PNhGKwFwRSIzUXMWF+yKDVWmzFr0BEci01nGMF9UiApGKkLEa1xZwF/zhmq06mflD07qDdNzNhj6RS8l6dpqX0/On7ld1e7EaFq3XtoEKbD3dkMgX6325RezhZaN7wjLIB/04GuLl74DDr/bEz9ShKrMKcRwCA1gN3KyAry2o2Xj7reqWbkiLdtv1wsqqqYYQJcy9RyRcBretz910NmLqEf2Fk2Iksegc1GKWE9XRR6d6QBdqP5PNtnNvacm00Iq+6/rbyZccLpAG1qsMHt6WeQvetzqIWlpP8AHiqZYwAc4TFpA7lPIg26JetB7Gm/WhGFFc7Jpi7rKgexQDoZ8I0azXYl3M2tP8OB0iDZJ4tSgM5hK4P6VMDezN7uP+dbu/owY3yRCEhKYToatgdW/mwt7MSy93ycdn6BsTCurJyvmqYYLusgaTFjGy27o/55FXlmnaDmd+Y5H8FPAbjxYpPgSEDDUzTVZSYfbk/aobq0lbjxVF8=\", \"uuid\": \"f0553d43-595a-4fdb-9768-34b2aaa97837\", \"availability_zone\": \"nova\", \"hostname\": \"testing.novalocal\", \"launch_index\": 0, \"project_id\": \"fd6d0497cc79434eb7eeb3c537b9d166\", \"name\": \"testing\"}\n\nThe config drive does still have the file specified by \"--user-data\" in the boot line:\n\n$ more mnt/openstack/latest/user_data\nthis is a test\n", 
+            "date_created": "2016-11-14 22:52:36.008448+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbf123"
+        }
+    ], 
+    "closed": "2016-11-12 00:52:49.323729+00:00"
+}

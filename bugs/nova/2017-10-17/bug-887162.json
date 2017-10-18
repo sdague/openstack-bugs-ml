@@ -1,0 +1,83 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-07-24 20:04:37.817521+00:00", 
+    "description": "Hi,\n\nWe have an issue with our cloud VM, where eth0 goes down a short time, because they didn't get DHCP reply quickly enough.\n\nThe cause seems to be dnsmasq not responding to unicast dhcprequest and only getting reply with broadcast dhcprequest, which may be sent too late in time.\n\n\n\nHere is the detailed problem and our installation: \n\n* All server are ubuntu lucid.\n* nova version are version 2011.3 from ppa (2011.3-0ubuntu2~ppa1~lucid1)\n* lease time is 120 second (default - hard coded in nova/network/linux_net.py, in dnsmasq startup line)\n* from the 120 second of lease timelife, dnsmasq generate the renew to a value near 60s (120/2) and rebind time to a value near 105s (7/8 * 120)\n* we are using vlan and then we have several dnsmasq running, one for each vlan, serving only the given vlan\n* guest is a simple ubuntu lucid with default dhcp3-client\n\nFirst issue: dnsmasq don't reply to UNICAST dhcprequest: because when an unicast request come to nova-network node, since we have several dnsmasq running on some port (0.0.0.0:67), the last started will get the message. This is probably more a dnsmasq bug.\n\nBut because of this, dhcp client won't get any answer before trying to rebind. In this case, rebind send BROADCAST dhcprequest, and in this case all dnsmasq will get the message. Since dnsmasq only reply when it know the host, when all dnsmasq get the broadcast request, only the good one send the reply.\n\nIn most case everything is fine, dhcp client send the broadcast few seconds before lease expire time. But something (I'm pretty sure because of backoff time - interval between two dhcprequest) it don't send the broadcast request before lease expire time.\n\nThis never last too long, because if dhcp client would backoff after the lease expire time, it alter the backoff interval to match the expire time... + 1 second. So interface goes down and a second later dhcp request is send.\n\n\nA solution could be to increase the lease time to more than 120s, but this seems to be hard-coded (I don't known if their is some reason). Also, it's seem to be an flag for dhcp_lease_time, but it's not used for dnsmasq command line parameter.\n\n\nWe are testing a workaround, which is to limit the backoff interval of dhclient to 10 second instead of default 2 minutes.\n\n\nIf something is not clear, don't hesitate to ask for more information.\n\nI also add detail on software version and extract of dhcp client log\n\nPS: we have trouble with interface going down, because we add a secondary IP (a VIP) with pacemaker. When interface goes goes, even the shortest time, secondary IP get lost.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 34, 
+    "link": "https://bugs.launchpad.net/nova/+bug/887162", 
+    "owner": "None", 
+    "id": 887162, 
+    "index": 2633, 
+    "openned": "2011-11-07 15:38:28.476055+00:00", 
+    "created": "2011-11-07 15:38:28.476055+00:00", 
+    "title": "VM interface goes down because of short dhcp lease", 
+    "comments": [
+        {
+            "content": "Hi,\n\nWe have an issue with our cloud VM, where eth0 goes down a short time, because they didn't get DHCP reply quickly enough.\n\nThe cause seems to be dnsmasq not responding to unicast dhcprequest and only getting reply with broadcast dhcprequest, which may be sent too late in time.\n\n\n\nHere is the detailed problem and our installation: \n\n* All server are ubuntu lucid.\n* nova version are version 2011.3 from ppa (2011.3-0ubuntu2~ppa1~lucid1)\n* lease time is 120 second (default - hard coded in nova/network/linux_net.py, in dnsmasq startup line)\n* from the 120 second of lease timelife, dnsmasq generate the renew to a value near 60s (120/2) and rebind time to a value near 105s (7/8 * 120)\n* we are using vlan and then we have several dnsmasq running, one for each vlan, serving only the given vlan\n* guest is a simple ubuntu lucid with default dhcp3-client\n\nFirst issue: dnsmasq don't reply to UNICAST dhcprequest: because when an unicast request come to nova-network node, since we have several dnsmasq running on some port (0.0.0.0:67), the last started will get the message. This is probably more a dnsmasq bug.\n\nBut because of this, dhcp client won't get any answer before trying to rebind. In this case, rebind send BROADCAST dhcprequest, and in this case all dnsmasq will get the message. Since dnsmasq only reply when it know the host, when all dnsmasq get the broadcast request, only the good one send the reply.\n\nIn most case everything is fine, dhcp client send the broadcast few seconds before lease expire time. But something (I'm pretty sure because of backoff time - interval between two dhcprequest) it don't send the broadcast request before lease expire time.\n\nThis never last too long, because if dhcp client would backoff after the lease expire time, it alter the backoff interval to match the expire time... + 1 second. So interface goes down and a second later dhcp request is send.\n\n\nA solution could be to increase the lease time to more than 120s, but this seems to be hard-coded (I don't known if their is some reason). Also, it's seem to be an flag for dhcp_lease_time, but it's not used for dnsmasq command line parameter.\n\n\nWe are testing a workaround, which is to limit the backoff interval of dhclient to 10 second instead of default 2 minutes.\n\n\nIf something is not clear, don't hesitate to ask for more information.\n\nI also add detail on software version and extract of dhcp client log\n\nPS: we have trouble with interface going down, because we add a secondary IP (a VIP) with pacemaker. When interface goes goes, even the shortest time, secondary IP get lost.", 
+            "date_created": "2011-11-07 15:38:28.476055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pierre-fersing"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2011-11-07 15:38:28.476055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pierre-fersing"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2011-11-07 15:38:56.599517+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pierre-fersing"
+        }, 
+        {
+            "content": "\nI have the same issue, especially on windows guests, sometimes the DHCPREQUEST is sent too late and the DHCP server answers with a NAK because the lease is not found (lease is expired).\n\nWe are testing with a longer lease time (yes you have to overwrite the hard-coded value of 120 in linux_net.py).\n\nHopefully a longer lease time will fix this issue and the dhcp_release switch will be used to free up private IPs of terminated instances before the lease expired so we don't waste fixed ips.\n\nI don't think we should work on a client-based solution as they are many OS involved, but a switch to overwrite the lease time would be effective and simple to implement.\n", 
+            "date_created": "2012-02-16 19:21:34.632065+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boris-michel-deschenes"
+        }, 
+        {
+            "content": "FYI, dhcp_lease_type is configurable in essex, so you don't have to overwrite the hard coded value.", 
+            "date_created": "2012-02-16 20:03:16.986428+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "I guess you mean --dhcp_lease_time and not --dhcp_lease_type\n\nI see the switch is actually referenced in diablo but simply not used for the dnsmasq command.  If it's fixed in essex then all is well.\n\n", 
+            "date_created": "2012-02-16 20:57:36.070468+00:00", 
+            "author": "https://api.launchpad.net/1.0/~boris-michel-deschenes"
+        }, 
+        {
+            "content": "sorry, yes --dhcp_lease_time and it is actually used in essex. :)", 
+            "date_created": "2012-02-16 23:16:47.429678+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Maybe this isn't a duplicate. The bug originally reported by PierreF is exactly what we experience. We raised the lease time slightly (so the --dhcp_lease_time does its job ) and still have issues with network interfaces going down on VMs under high load.\nSo the --dhcp_lease_time parameter does its job but doesn't solve the issue of why the VM don't receive a DHCPOFFER and then looses its interface. So ok we can raise the lease but the actual issue is probably a dnsmasq related bug.\n\nOur syslog:\nJun 27 08:32:26 node1 dhclient: DHCPREQUEST of 192.168.1.13 on eth0 to 192.168.1.7 port 67\nJun 27 08:32:26 node1 dhclient: DHCPACK of 192.168.1.13 from 192.168.1.7\nJun 27 08:32:26 node1 dhclient: bound to 192.168.1.13 -- renewal in 407 seconds.\nJun 27 08:38:24 ---> from this time point we get a lot error lines of deamons that start complaining that network interface is down\n-->only after only 3 min the VM requests a new IP but doesn't get offer back, We check the node running DNSmasq and it never seems to receive these last requests \nJun 27 08:41:15 pbsnode1 dhclient: DHCPREQUEST of 192.168.1.13 on eth0 to 192.168.1.7 port 67\nJun 27 08:41:27 pbsnode1 dhclient: DHCPREQUEST of 192.168.1.13 on eth0 to 192.168.1.7 port 67\nJun 27 08:44:53 pbsnode1 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67\nJun 27 08:44:53-->at  this time the node with dns masq server receives the DHCPDISCOVER and send out a DHCPACK of 192.168.1.13 back, but this doesn't sam to reach the VM and it keeps sending out  DHCPDISCOVER requests\nJun 27 08:53:38 pbsnode1 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67 interval 8\nJun 27 08:53:46 pbsnode1 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67 interval 19\nJun 27 08:54:05 pbsnode1 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67 interval 4\nJun 27 08:54:09 pbsnode1 dhclient: No DHCPOFFERS received.\n\n--> at this point we just give up and reboot the VM to get our network back", 
+            "date_created": "2012-06-27 10:42:56.491037+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tomiles-deactivatedaccount"
+        }, 
+        {
+            "content": "Tomiles, I think you are affected by the dnsmasq bug discussed in this email:\nhttp://openstack.markmail.org/search/?q=Dhcp+lease+errors+in+vlan+mode#query:Dhcp%20lease%20errors%20in%20vlan%20mode+page:1+mid:7kjf4hljszpydsrx+state:results\n\n", 
+            "date_created": "2012-06-27 15:18:45.055412+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmi"
+        }, 
+        {
+            "content": "The problems detailed in my comment above occurred despite the fact that we had already upgraded to 2.61.\nWe even start loosing our network interface under high load now despite having raised our lease time to 600000s.", 
+            "date_created": "2012-06-27 15:39:02.994127+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tomiles-deactivatedaccount"
+        }, 
+        {
+            "content": "can you check syslog for errors on the compute host? You might want to make sure you aren't losing packets due to conntrack tables being full etc. If you are seeing issues like that, it could be a bug in libvirt / qemu / virtio that needs to be reported upstream.", 
+            "date_created": "2012-06-27 15:44:29.508220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "the compute hosts syslog doesn't contain any errors around the time-point of the crash.\nWe are beginning to think DHCP is not the source issue but just a consequence of the network interface going down.\nBut we are in the dark about any indication on what could possible trigger a VMs network interface to do down?\nUsual suspect are glusterfs mounts in the VM but don't know if that can cause a network down.", 
+            "date_created": "2012-06-28 08:56:14.685946+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tomiles-deactivatedaccount"
+        }, 
+        {
+            "content": "I'm seeing something quite similar on my deployment (essex/precise). I have either network or VM stability problems (haven't nailed down which yet) when the network interface gets busy on the VM. The instance can be rebooted successfully and begins to work properly, modulo network load. The odd thing is that we only see this issue on machines with large amounts of memory. We don't see the same issue on hosts/instances with smaller memory footprints. It is unclear to me if this is an artifact of resource footprint or a difference between node hardware types. ", 
+            "date_created": "2012-07-24 20:04:36.521224+00:00", 
+            "author": "https://api.launchpad.net/1.0/~narayan-desai"
+        }
+    ], 
+    "closed": "2012-02-16 20:03:28.435066+00:00"
+}

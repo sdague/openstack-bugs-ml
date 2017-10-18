@@ -1,0 +1,46 @@
+{
+    "status": "Expired", 
+    "last_updated": "2016-12-13 04:17:35.682179+00:00", 
+    "description": "Description:\n\nIn Liberty and Mitaka, Nova assumes that it has exclusive access to the huge pages on the compute node. It maintains track of the total pages per NUMA node on the compute node, and then number of used (by Nova VMs) pages on each NUMA node. This is done for the three huge page sizes supported.\n\nHowever, if other third party processes consume huge pages, there will be a discrepancy between the actual pages available and what Nova thinks is available. As a result, it is possible (based on the number of pages and the VM size) for Nova to think it has enough pages, when there are not enough pages. The create will fail with QEMU reporting insufficient memory available, for example.\n\n\nSteps to reproduce:\n\n1. Compute with 32768 2MB pages available, giving 16384 per NUMA node with two nodes.\n2. Third party process that consumes 256 pages per NUMA node.\n3. Create 15 small flavor (2GB = 1024 pages) VMs.\n4. Create another small flavor VM.\n\nExpected Result:\n\nThat the 16th VM would be created, without an error, and using huge pages on the second NUMA node (and allow more VMs as well).\n\nActual Result:\n\nAfter step 3, Nova thinks there are 1024 pages available, but the compute host shows only 768 pages available. The scheduler thinks there is space for one more VM, it will pass the filter. The creation will commence, as Nova thinks there is enough space on NUMA node 0. QEMU will fail, indicating that there is not enough memory.\n\nIn addition, there are 16128 pages available on NUMA node 1, but Nova will not attempt using them, as it thinks there is still memory available on NUMA node 0.\n\nIn my case, I had multiple compute hosts and ended up with a \"No hosts available\" error, as it fails on each host when trying NUMA node 0. If, at step 4, one creates a medium flavor VM, it will succeed, as Nova will not see enough pages on NUMA node 0, and will try NUMA node 1, which has ample space.\n\nCommentary: Nova checks total huge pages, but not available huge pages.\n\nNote: A feature was added to master (for Newton) that has a config based mechanism to reserve huge pages for third party applications under bug 1543149. However, the Nova team indicated that this change cannot be back ported to Liberty.\n\nEnvironment:\n\nLiberty release (12.0.3), with LB, neutron networking, libvirt 1.2.17, API QEMU 1.2.17, QEMU 2.3.0.\n\nConfig:\n\nnova flavor-key m1.small set hw:numa_nodes=1\nnova flavor-key m1.small set hw:mem_page_size=2048\n\nnetwork, subnet, and standard VM create commands.", 
+    "tags": [
+        "hugepages", 
+        "numa"
+    ], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1594529", 
+    "owner": "None", 
+    "id": 1594529, 
+    "index": 7558, 
+    "openned": "2016-06-20 18:48:28.506473+00:00", 
+    "created": "2016-06-20 18:48:28.506473+00:00", 
+    "title": "VM creation failure due to Nova hugepage assumptions", 
+    "comments": [
+        {
+            "content": "Description:\n\nIn Liberty and Mitaka, Nova assumes that it has exclusive access to the huge pages on the compute node. It maintains track of the total pages per NUMA node on the compute node, and then number of used (by Nova VMs) pages on each NUMA node. This is done for the three huge page sizes supported.\n\nHowever, if other third party processes consume huge pages, there will be a discrepancy between the actual pages available and what Nova thinks is available. As a result, it is possible (based on the number of pages and the VM size) for Nova to think it has enough pages, when there are not enough pages. The create will fail with QEMU reporting insufficient memory available, for example.\n\n\nSteps to reproduce:\n\n1. Compute with 32768 2MB pages available, giving 16384 per NUMA node with two nodes.\n2. Third party process that consumes 256 pages per NUMA node.\n3. Create 15 small flavor (2GB = 1024 pages) VMs.\n4. Create another small flavor VM.\n\nExpected Result:\n\nThat the 16th VM would be created, without an error, and using huge pages on the second NUMA node (and allow more VMs as well).\n\nActual Result:\n\nAfter step 3, Nova thinks there are 1024 pages available, but the compute host shows only 768 pages available. The scheduler thinks there is space for one more VM, it will pass the filter. The creation will commence, as Nova thinks there is enough space on NUMA node 0. QEMU will fail, indicating that there is not enough memory.\n\nIn addition, there are 16128 pages available on NUMA node 1, but Nova will not attempt using them, as it thinks there is still memory available on NUMA node 0.\n\nIn my case, I had multiple compute hosts and ended up with a \"No hosts available\" error, as it fails on each host when trying NUMA node 0. If, at step 4, one creates a medium flavor VM, it will succeed, as Nova will not see enough pages on NUMA node 0, and will try NUMA node 1, which has ample space.\n\nCommentary: Nova checks total huge pages, but not available huge pages.\n\nNote: A feature was added to master (for Newton) that has a config based mechanism to reserve huge pages for third party applications under bug 1543149. However, the Nova team indicated that this change cannot be back ported to Liberty.\n\nEnvironment:\n\nLiberty release (12.0.3), with LB, neutron networking, libvirt 1.2.17, API QEMU 1.2.17, QEMU 2.3.0.\n\nConfig:\n\nnova flavor-key m1.small set hw:numa_nodes=1\nnova flavor-key m1.small set hw:mem_page_size=2048\n\nnetwork, subnet, and standard VM create commands.", 
+            "date_created": "2016-06-20 18:48:28.506473+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pcm"
+        }, 
+        {
+            "content": "Was also wondering if the solution being targeted to Newton, should reduce the total of pages passed in, when creating a NUMAPagesTopology object in the libvirt driver, rather than alter the object's signature by adding a reserved parameter. With the former, the versioned object would not need an API change and may be a more backward compatible solution.\n\n", 
+            "date_created": "2016-07-11 17:55:40.104744+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pcm"
+        }, 
+        {
+            "content": "I think it has been finished in mitaka version. It uses reserved_huge_pages for system process. Please see function numa_get_reserved_huge_pages and the related code in master.", 
+            "date_created": "2016-07-16 06:47:26.076337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~liu-lixiu"
+        }, 
+        {
+            "content": "I'm not sure what the expected resolution is here. We've added support for reserving some amount of hugepages but, as you say, this is classified as feature rather than a bugfix. I don't really think there is anything that can be done in older versions of nova to handle this outside of an out-of-tree patch...", 
+            "date_created": "2016-10-13 14:18:29.309739+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stephenfinucane"
+        }, 
+        {
+            "content": "[Expired for OpenStack Compute (nova) because there has been no activity for 60 days.]", 
+            "date_created": "2016-12-13 04:17:32.498525+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }
+    ], 
+    "closed": "2016-12-13 04:17:33.317049+00:00"
+}

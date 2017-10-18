@@ -1,0 +1,58 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-10-13 02:25:16.324243+00:00", 
+    "description": "When executing the following command on a KVM box with the latest version of Nova:\n        nova host-update XXX --maintenance enable\nit returns the following error:\n        ERROR (HTTPNotImplemented): Virt driver does not implement host maintenance mode.\n\nThe libvirt driver has not implemented host maintenance mode.\n\nIn a workload cloud, nova compute nodes need to be maintained (such as system or hardware upgrade) from time to time. But the service or VMs running on the nodes cannot be paused to minimize the effect to users. So we need a functionality to put a compute node to maintenance mode so that no VM will be scheduled to run on this node and no new instance will be create on this node.\n\nThis topic has been discussed since 2013 here (https://blueprints.launchpad.net/nova/+spec/host-maintenance). In the previous discussion, Oshrit Feder explained why the current implementation is not enough, and how to improve it. And after some discussions, the basic idea came to (IIUC):\n\n1.\tCLI (nova host-update \u2013maintenance enable/disable) or API (set_host_maintenance) should not target the request directly to the compute node to be put in maintenance itself. Instead, nova conductor is responsible for the orchestration.\n2.\tWhen the operation starts, nova disables the target host (disable nova-compute) so that no new instance will be created on this host.\n3.\tLive migrate all instances on this host. The nova conductor delivers the request to nova scheduler, and the scheduler picks suitable destination hosts for the migration.\n4.\tRebuild all not-running instances on destination hosts if necessary.\n5.\tSet the host mode to maintenance.\n\nAnd according to the source code, I think step1 has been implemented by merging live-migrate and migrate operations, and move the orchestration to nova conductor, providing all basic functionalities for the other steps. So to enable KVM host maintenance mode, we need to finish step 2,3,4,5 in libvirt driver.\n\nThe basic implementation will be like this: \n1.\tWhen user calls \u201cnova host-update XXX maintenance --enable\u201d, disable nova-compute service on host XXX.\n2.\tThe command request should be handled in nova/virt/libvirt/host.py. So implement host_maintenance_mode() in host.py, and call it through libvirt driver.\n3.\tDeliver the request to nova conductor, and the conductor is able to list up all the instances on the host.\n4.\tList up all running instances, find the Instance objects of them, and live migrate them. \n5.\tRebuild all not-running instances on destination hosts.\n6.\tWhen all the above have been done successfully, set the host mode to maintenance mode.\n7.\tReenable nova-compute service on error.\n\nThe first version of patch will come soon.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 16, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1465176", 
+    "owner": "https://api.launchpad.net/1.0/~tangchen", 
+    "id": 1465176, 
+    "index": 6873, 
+    "openned": "2015-06-15 08:07:28.742962+00:00", 
+    "created": "2015-06-15 08:07:28.742962+00:00", 
+    "title": "Host maintenance mode unavailable in Libvirt.", 
+    "comments": [
+        {
+            "content": "When executing the following command on a KVM box with the latest version of Nova:\n        nova host-update XXX --maintenance enable\nit returns the following error:\n        ERROR (HTTPNotImplemented): Virt driver does not implement host maintenance mode.\n\nThe libvirt driver has not implemented host maintenance mode.\n\nIn a workload cloud, nova compute nodes need to be maintained (such as system or hardware upgrade) from time to time. But the service or VMs running on the nodes cannot be paused to minimize the effect to users. So we need a functionality to put a compute node to maintenance mode so that no VM will be scheduled to run on this node and no new instance will be create on this node.\n\nThis topic has been discussed since 2013 here (https://blueprints.launchpad.net/nova/+spec/host-maintenance). In the previous discussion, Oshrit Feder explained why the current implementation is not enough, and how to improve it. And after some discussions, the basic idea came to (IIUC):\n\n1.\tCLI (nova host-update \u2013maintenance enable/disable) or API (set_host_maintenance) should not target the request directly to the compute node to be put in maintenance itself. Instead, nova conductor is responsible for the orchestration.\n2.\tWhen the operation starts, nova disables the target host (disable nova-compute) so that no new instance will be created on this host.\n3.\tLive migrate all instances on this host. The nova conductor delivers the request to nova scheduler, and the scheduler picks suitable destination hosts for the migration.\n4.\tRebuild all not-running instances on destination hosts if necessary.\n5.\tSet the host mode to maintenance.\n\nAnd according to the source code, I think step1 has been implemented by merging live-migrate and migrate operations, and move the orchestration to nova conductor, providing all basic functionalities for the other steps. So to enable KVM host maintenance mode, we need to finish step 2,3,4,5 in libvirt driver.\n\nThe basic implementation will be like this: \n1.\tWhen user calls \u201cnova host-update XXX maintenance --enable\u201d, disable nova-compute service on host XXX.\n2.\tThe command request should be handled in nova/virt/libvirt/host.py. So implement host_maintenance_mode() in host.py, and call it through libvirt driver.\n3.\tDeliver the request to nova conductor, and the conductor is able to list up all the instances on the host.\n4.\tList up all running instances, find the Instance objects of them, and live migrate them. \n5.\tRebuild all not-running instances on destination hosts.\n6.\tWhen all the above have been done successfully, set the host mode to maintenance mode.\n7.\tReenable nova-compute service on error.\n\nThe first version of patch will come soon.", 
+            "date_created": "2015-06-15 08:07:28.742962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tangchen"
+        }, 
+        {
+            "content": "The first version patch will come in this week.", 
+            "date_created": "2015-06-15 08:08:40.371282+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tangchen"
+        }, 
+        {
+            "content": "@tangchen (tangchen):\n\nSince you are set as assignee, I switch the status to \"In Progress\".", 
+            "date_created": "2015-06-15 09:16:48.187411+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Actually this doesn't look like a bug, it looks like a new feature.", 
+            "date_created": "2015-08-11 09:05:44.371159+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "Hi Pawel,\n\nOn 08/11/2015 05:05 PM, Pawel Koniszewski wrote:\n> Actually this doesn't look like a bug, it looks like a new feature.\n>\n\nYes, it is a new feature. But Since I just started to work on openstack,\nI didn't find a proper way to add patch for new feature, except a bug \nreport.\n\nThanks.\n\n\n", 
+            "date_created": "2015-08-15 06:40:12+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tangchen"
+        }, 
+        {
+            "content": "Tang, you can register blueprint here: https://blueprints.launchpad.net/nova/+addspec\n\nYour feature request might require specification, you can find more details here: https://github.com/openstack/nova-specs/blob/master/README.rst", 
+            "date_created": "2015-08-17 05:47:16.059904+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "\nHi Pawel,\n\nThank you very much for telling me this.\nI will give a BP in the next version.\n\nThanks.\n\nOn 08/17/2015 01:47 PM, Pawel Koniszewski wrote:\n> Tang, you can register blueprint here:\n> https://blueprints.launchpad.net/nova/+addspec\n>\n> Your feature request might require specification, you can find more\n> details here: https://github.com/openstack/nova-\n> specs/blob/master/README.rst\n>\n\n", 
+            "date_created": "2015-08-18 08:43:26+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tangchen"
+        }, 
+        {
+            "content": "Has posted a BP for this functionality.\r\n\r\nPlease refer to: https://blueprints.launchpad.net/nova/+spec/host-maintenance-mode", 
+            "date_created": "2015-10-13 02:25:13.343146+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tangchen"
+        }
+    ], 
+    "closed": "2015-10-13 02:25:14.554930+00:00"
+}

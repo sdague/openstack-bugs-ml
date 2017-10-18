@@ -1,0 +1,93 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-11-17 13:12:37.625247+00:00", 
+    "description": "[Impact]\nAlthough aarch64 supports spawning a vm with hugepages, in nova code, the libvirt driver considers only x86_64 and I686. Both for NUMA and Hugepage support, AARCH64 needs to be added. Due to this bug, vm can not be launched with hugepage using OpenStack on aarch64 servers.\n\nNote: this depends on the fix for LP: #1627926.\n\n[Test Case]\nSteps to reproduce:\nOn an openstack environment running on aarch64:\n1. Configure compute to use hugepages.\n2. Set mem_page_size=\"2048\" for a flavor\n3. Launch a VM using the above flavor.\n\nExpected result:\nVM should be launched with hugepages and the libvirt xml should have\n\n\u00a0\u00a0<memoryBacking>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<hugepages>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0<page size='2048' unit='KiB' nodeset='0'/>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0</hugepages>\n\u00a0\u00a0</memoryBacking>\n\nActual result:\nVM is launched without hugepages.\n\nThere are no error logs in nova-scheduler.\n\n[Regression Risk]\nRisk is minimized by the fact that this change is just enabling the same code for arm64 that is already enabled for Ubuntu/x86.", 
+    "tags": [
+        "libvirt", 
+        "numa", 
+        "patch", 
+        "verification-done"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1623871", 
+    "owner": "https://api.launchpad.net/1.0/~mveenasl", 
+    "id": 1623871, 
+    "index": 3093, 
+    "openned": "2016-09-15 09:59:06.999677+00:00", 
+    "created": "2016-09-15 09:59:06.999677+00:00", 
+    "title": "Nova hugepage support does not include aarch64", 
+    "comments": [
+        {
+            "content": "Although aarch64 supports spawning a vm with hugepages, in nova code, the libvirt driver considers only x86_64 and I686. Both for NUMA and Hugepage support, AARCH64 needs to be added. Due to this bug, vm can not be launched with hugepage using OpenStack on aarch64 servers.\n\nSteps to reproduce:\nOn an openstack environment running on aarch64:\n1. Configure compute to use hugepages.\n2. Set mem_page_size=\"2048\" for a flavor\n3. Launch a VM using the above flavor. \n\nExpected result:\nVM should be launched with hugepages and the libvirt xml should have \n\n  <memoryBacking>\n      <hugepages>\n        <page size='2048' unit='KiB' nodeset='0'/>\n      </hugepages>\n  </memoryBacking>\n\nActual result:\nVM is launched without hugepages.\n\nThere are no error logs in nova-scheduler.", 
+            "date_created": "2016-09-15 09:59:06.999677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mveenasl"
+        }, 
+        {
+            "content": "Thanks for proposing to add aarch64 support to hugepages and NUMA instances.\n\nConsidering the operator impact and the fact that we would need to verify the libvirt and qemu minimum versions that we ship for making sure they support the above, I think it is really important to have that specific feature request to be handled accordingly with people able to review your proposal.\n\nIn Nova, we follow a specific process for writing new specifications and proposals that you can find more information on http://docs.openstack.org/developer/nova/process.html#how-do-i-get-my-code-merged\n\nBasically, it requires you to write a blueprint and discuss on IRC to see whether your blueprint needs a formal specification writing called a \"spec\" file.\n", 
+            "date_created": "2016-09-15 15:50:41.544584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sylvain-bauza"
+        }, 
+        {
+            "content": "I think this is a bug in Nova as the arch specific versions are hard coded and aarch64 is ignored in that. We just need to add the check for aarch64 also. So instead of a BP, it'll be good to fix it as a bug. The minimum version of libvert(1.2.7) and QEMU(2.1.0) which are verified for x86 also hold good for aarch64. Please let me know if I can proceed with fixing it as a bug. ", 
+            "date_created": "2016-09-17 14:55:53.589573+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mveenasl"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/372304", 
+            "date_created": "2016-09-19 08:29:26.971056+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2016-09-27 21:55:17.354442+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dannf"
+        }, 
+        {
+            "content": "@mveenasl asked that I describe my testing process - here it is:\n\nI pushed this change to a PPA:\n  https://launchpad.net/~ce-hyperscale/+archive/ubuntu/cloud-mitaka\n\nI then deployed OpenStack across a cluster of Cavium ThunderX CRB1s systems\nusing the current Mitaka Juju charms. I configured the nova-compute charm to pull\npackages from this overlay PPA:\n\n  openstack-origin: ppa:ce-hyperscale/cloud-mitaka\n\nI logged into each of the 3 nova-compute nodes and created hugepages:\n\n  $ echo 4096 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages\n\nAnd restarted libvirt/nova-compute just to be sure they were detected:\n\n  $ sudo service libvirt-bin restart; sudo service nova-compute restart\n\nI configured the m1.small flavor type to use hugepages:\n  $ nova flavor-key m1.small set hw:mem_page_size=2048\n\nI then launched a guest:\n  $ nova boot --image xenial-uefi  --flavor m1.small --nic net-id=0fed1d06-2c7c-48ab-b81b-112af6d362d7 uefi\n\nThen found the corresponding hypervisor node and logged in.\n\nI verified that QEMU was started w/ the appropriate memory-backend settings:\n\n$ ps -ef  | grep qemu\nlibvirt+  850307       1 42 16:17 ?        00:00:12 /usr/bin/qemu-system-aarch64 -name instance-00000001 -S -machine virt,accel=kvm,usb=off,gic-version=3 -cpu host -drive file=/usr/share/AAVMF/AAVMF_CODE.fd,if=pflash,format=raw,unit=0,readonly=on -drive file=/var/lib/libvirt/qemu/nvram/instance-00000001_VARS.fd,if=pflash,format=raw,unit=1 -m 2048 -realtime mlock=off -smp 1,sockets=1,cores=1,threads=1 -object memory-backend-file,id=ram-node0,prealloc=yes,mem-path=/dev/hugepages/libvirt/qemu,share=yes,size=2147483648,host-nodes=0,policy=bind -numa node,nodeid=0,cpus=0,memdev=ram-node0 [...]\n\n\nAnd that the hugepage pool was actually depleted:\n $ cat /sys/devices/system/node/node0/hugepages/hugepages-2048kB/free_hugepages\n 3072\n\nAnd finally, checked the console log to make sure the guest OS actually booted:\n\nubuntu@ubuntu:~$ nova console-log uefi | tail -2\n[  196.813164] cloud-init[1242]: Cloud-init v. 0.7.7 finished at Fri, 30 Sep 2016 16:21:21 +0000. Datasource DataSourceEc2.  Up 196.73 seconds\n", 
+            "date_created": "2016-09-30 16:26:46.463791+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dannf"
+        }, 
+        {
+            "content": "Patch rebased on 2:14.0.0~rc2-0ubuntu2, MP here:\n  https://code.launchpad.net/~dannf/ubuntu/+source/nova/+git/nova/+merge/307230", 
+            "date_created": "2016-10-05 21:27:45.920667+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dannf"
+        }, 
+        {
+            "content": "MP for a xenial SRU:\n  https://code.launchpad.net/~dannf/ubuntu/+source/nova/+git/nova/+merge/307882", 
+            "date_created": "2016-10-06 20:05:54.914258+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dannf"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2:14.0.0-0ubuntu1\n\n---------------\nnova (2:14.0.0-0ubuntu1) yakkety; urgency=medium\n\n  * New upstream release for OpenStack Newton.\n  * d/t/nova-compute-daemons: Skip test execution if running within a\n    container, ensuring that autopkgtests don't fail on armhf and s390x.\n  * d/t/control,nova-compute-daemons: Don't install nova-compute as part\n    of the autopkgtest control setup, direct install hypervisor specific\n    nova-compute packages ensuring packages are configured in the correct\n    order and that nova-compute can access the libvirt socket.\n\n -- James Page <email address hidden>  Fri, 07 Oct 2016 08:48:28 +0100", 
+            "date_created": "2016-10-07 21:14:11.312891+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/372304\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=50e0106d35ec1a3204c18f3912b0dc6cf6632305\nSubmitter: Jenkins\nBranch:    master\n\ncommit 50e0106d35ec1a3204c18f3912b0dc6cf6632305\nAuthor: VeenaSL <email address hidden>\nDate:   Mon Sep 19 13:36:53 2016 +0530\n\n    Adding hugepage and NUMA support check for aarch64\n    \n    Nova ignores aarch64 while verifying for hugepage and NUMA support.\n    AARCH64 also supports hugepage and NUMA on the same libvirt versions as of x86.\n    Hence adding this chek for aarch64 also.\n    \n    Change-Id: I7b5ae1dbdca4fdd0aee2eefd4099c4c4953b609a\n    Closes-bug: #1623871\n", 
+            "date_created": "2016-10-20 21:20:58.526086+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hello Veena, or anyone else affected,\n\nAccepted nova into xenial-proposed. The package will build now and be available at https://launchpad.net/ubuntu/+source/nova/2:13.1.2-0ubuntu2 in a few hours, and then in the -proposed repository.\n\nPlease help us by testing this new package.  See https://wiki.ubuntu.com/Testing/EnableProposed for documentation how to enable and use -proposed.  Your feedback will aid us getting this update out to other Ubuntu users.\n\nIf this package fixes the bug for you, please add a comment to this bug, mentioning the version of the package you tested, and change the tag from verification-needed to verification-done. If it does not fix the bug for you, please add a comment stating that, and change the tag to verification-failed.  In either case, details of your testing will help us make a better decision.\n\nFurther information regarding the verification process can be found at https://wiki.ubuntu.com/QATeam/PerformingSRUVerification .  Thank you in advance!", 
+            "date_created": "2016-10-31 20:16:54.053431+00:00", 
+            "author": "https://api.launchpad.net/1.0/~brian-murray"
+        }, 
+        {
+            "content": "This bug was fixed in the package nova - 2:13.1.2-0ubuntu2\n\n---------------\nnova (2:13.1.2-0ubuntu2) xenial; urgency=medium\n\n  [ dann frazier ]\n  * d/p/libvirt-add-hugepages-support-for-Power.patch (LP: #1568086).\n  * d/p/libvirt-add-hugepages-support-for-arm64.patch (LP: #1623871).\n\n -- Corey Bryant <email address hidden>  Tue, 18 Oct 2016 13:56:15 -0400", 
+            "date_created": "2016-11-09 22:11:29.315908+00:00", 
+            "author": "https://api.launchpad.net/1.0/~janitor"
+        }, 
+        {
+            "content": "The verification of the Stable Release Update for nova has completed successfully and the package has now been released to -updates.  Subsequently, the Ubuntu Stable Release Updates Team is being unsubscribed and will not receive messages about this bug report.  In the event that you encounter a regression using the package from -updates please report a new bug using ubuntu-bug and tag the bug report regression-update so we can easily find any regressions.", 
+            "date_created": "2016-11-09 22:11:48.792223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pitti"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 15.0.0.0b1 development milestone.", 
+            "date_created": "2016-11-17 13:12:36.927895+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-10-20 21:20:54.189817+00:00"
+}

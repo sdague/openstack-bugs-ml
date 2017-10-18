@@ -1,0 +1,263 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-05-24 12:51:25.634865+00:00", 
+    "description": "When using FlatDHCP networking it is possible for a user to use up all of the fixed ips by repeatedly calling addFixedIp to an instance.\n\nRepro case allocating 100 fixed ips:\n\nnova boot --flavor=1 --image=<image> foo\nfor i in {1..100}; do\n  nova add-fixed-ip foo\ndone\n\nWhen all ips are exhausted it is impossible for anyone to boot a vm\n\nNote this is possible in vlan mode, but it would only DOS a single tenant in this case.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 268, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1125468", 
+    "owner": "https://api.launchpad.net/1.0/~mikal", 
+    "id": 1125468, 
+    "index": 968, 
+    "openned": "2013-02-14 19:04:43.528647+00:00", 
+    "created": "2013-02-14 19:04:43.528647+00:00", 
+    "title": "[OSSA 2013-008] DOS by allocating all fixed ips", 
+    "comments": [
+        {
+            "content": "When using FlatDHCP networking it is possible for a user to use up all of the fixed ips by repeatedly calling addFixedIp to an instance.\n\nRepro case allocating 100 fixed ips:\n\nnova boot --flavor=1 --image=<image> foo\nfor i in {1..100}; do\n  nova add-fixed-ip foo\ndone\n\nWhen all ips are exhausted it is impossible for anyone to boot a vm\n\nNote this is possible in vlan mode, but it would only DOS a single tenant in this case.", 
+            "date_created": "2013-02-14 19:04:43.528647+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "IMO the easy fix for folsom/essex is probably just to disable/remove the add-fixed-ip code. For grizzly we should be enforcing this with a quota.", 
+            "date_created": "2013-02-14 19:06:28.520149+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "The offending command is in the multinic extension.", 
+            "date_created": "2013-02-14 19:08:01.442354+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "another potential easy fix for essex/folsom would be to disable multinic via policy.", 
+            "date_created": "2013-02-14 19:08:59.492652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Vish:\n\nFor Folsom/Essex: Are we sure people aren't using that code? I like the idea of updating the default policy to disallow it slightly better (although this could be a breaking change too).\n\nFor Grizzly using a quota sounds reasonable. Something like 'quota_fixed_ips'?", 
+            "date_created": "2013-02-14 22:15:55.352345+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Dan: I'm not sure that no-one is using it. RAX uses it but enforces quotas in melange. Turning it off by default in policy is fine with me.\n\nDidn't you do quotas for something else recently? I haven't taken a look at the quota code recently, so if you want to take a swing at it that would be awesome.", 
+            "date_created": "2013-02-18 05:10:19.394869+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Hmm, that one is a bit tricky. Disabling the whole feature in a stable update sounds like a bad idea, this can hardly be considered a fix for the vulnerability, at best a workaround.\n\nOne alternative would be to issue a \"security note\" instead, advising people to disable it...\nAdding markmc for the stable team for their opinion.", 
+            "date_created": "2013-02-18 13:52:08.360040+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The rationale for disabling the feature is that only RAX is using it and they enforce quotas separately?\n\nI don't like assuming RAX is the only one using it. We have enough users now that it's impossible to predict what people may be doing. If we publish this issue, recommend disabling the extension and there are people who are using it ... then we've nicely screwed them.\n\nHow about we cook up the quotas patch and see how invasive it is? It might be backportable with manageable regression risk", 
+            "date_created": "2013-02-22 13:19:15.097269+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "I took a quick look at folsom, and one small wart I've found is that I'd like to make the quota per project and the fixips model object doesn't store project id. Do people think this quota should be per project or per instance? If its per instance isn't it still pretty easy to DoS people? You just have to start a bunch of instances as well.", 
+            "date_created": "2013-02-22 20:06:07.486792+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Ahhh, I can do a joined load. Here's a patch for folsom. Its untested (not even unit tests) because I have to leave for the airport in a minute. I'll try to take another look at this on the flight.\n\nThe folsom changes don't see too invasive to me, noting that I've never done a quota change before and might have that bit horribly wrong.", 
+            "date_created": "2013-02-22 21:46:02.126367+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "And now that I have stopped travelling, here's a version which passes unit tests. Do people think this is too invasive for folsom?", 
+            "date_created": "2013-02-25 17:00:43.371310+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "some errors in the above patch:\n\nin db/api.py the method is called floating_ip_count_by_project, when it should be fixed_ip...\n\nthe exception should be a new exception FixedIp... not FloatingIp.\n\nI don't think the patch is too invasive. We don't need a db migration right?", 
+            "date_created": "2013-02-25 18:52:28.219767+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Agreed that this does not look too invasive for folsom.", 
+            "date_created": "2013-02-25 18:53:28.278571+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "I can't see why we'd need a migration. Sorry for the typos. I blame jet lag.", 
+            "date_created": "2013-02-25 18:59:19.650938+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "This version fixes Vishy's comments.", 
+            "date_created": "2013-02-25 19:40:26.350752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Agree it's not too invasive for Folsom\n\nLooks good except you need a QUOTAS.rollback() if there's an exception between the reserve() and commit()", 
+            "date_created": "2013-02-26 07:43:06.133707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Sorry I didn't get a chance to progress this today... I will work on this more tomorrow.", 
+            "date_created": "2013-02-27 01:32:04.988963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "So, this took a long time to test and get right, but this new version of the folsom patch has been tested with devstack and appears to work. It includes Mark's request for a rollback of quota allocations on exceptions, and required re-writing the database code to count fixed_ips. I believe this patch is good to go for Folsom, but would appreciate comments from nova-cores.", 
+            "date_created": "2013-03-01 21:03:25.083629+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Looks pretty good to me. I guess we're not so worried about rollback if a failure happens in deallocate_fixed_ip().", 
+            "date_created": "2013-03-01 21:41:01.418255+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Yeah, I did think about that, but we don't care about rollback for floating ips, so I figure we similarly don't care for fixed ips. I've just found a PEP8 failure in this code, so I'll send yet another patch which fixes that in a minute.", 
+            "date_created": "2013-03-01 21:56:37.410727+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Ok, here are patches for essex and folsom, both of which have been tested with devstack and pass PEP8. The Folsom one also passes unit tests, but I can't get the essex unit tests to run for me, so that one hasn't been done.\n\n@ttx -- are you sure we don't need a patch for grizzly? That's how I am reading your \"no longer affects nova/grizzly\" above. Am I confused?", 
+            "date_created": "2013-03-03 21:46:54.115062+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2013-03-03 21:47:10.707807+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "We need a patch for Grizzly, it's just that grizzly does not need a specific series task. it's tracked in the main bugtask. We only use series tasks when we need a stable/* backport. The main bugtask tracks \"master\" (master happening to be grizzly right now). So it's not \"no longer affects Grizzly\", it's \"removing extraneous bugtask\".", 
+            "date_created": "2013-03-04 12:49:05.133628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Ok, here's a patch for grizzly. Again, passes unit tests and devstack twiddling.", 
+            "date_created": "2013-03-05 02:36:51.298736+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "It would be cool if other nova-core's could check each of these three patches and see what they think.", 
+            "date_created": "2013-03-05 02:37:22.045592+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Adding nova-core for review on this bug.", 
+            "date_created": "2013-03-05 16:31:30.111589+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "(reviewing the grizzly patch): All the quota tests seem to set fixed_ips quota just to the default of 10, which isn't a very good update test. That should be updated. Other than that this approach seems sane.", 
+            "date_created": "2013-03-05 16:49:03.764859+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Sean -- I'm happy to tweak the unit tests. Are there any other\ncomments from others?\n\nMichael\n", 
+            "date_created": "2013-03-05 18:17:23+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "@Mikal: wanna have a try at the impact description ? See https://wiki.openstack.org/wiki/VulnerabilityManagement for templates.", 
+            "date_created": "2013-03-07 16:11:59.749657+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "@ttx -- I pinged you with a draft of one the other day, but perhaps you didn't see it. How about something like this?\n\n-----\n\nSUBJECT: Vulnerability in OpenStack Nova\n\nThis is an advance warning of a vulnerability discovered in OpenStack,\nto give you, as downstream stakeholders, a chance to coordinate the\nrelease of fixes and reduce the vulnerability window. Please treat the\nfollowing information as confidential until the proposed public\ndisclosure date.\n\nTitle: DoS by allocating all Fixed IPs\nImpact: Medium\nReporter: Vish Ishaya (Nebula)\nProducts: Nova\nAffects: All versions\n\nDescription:\nVish Ishaya reported a vulnerability in Nova where there is no quota\nfor Fixed IPs. Previously the instance quota acted as a proxy for\na Fixed IP quota, but if your configuration allows an instance to\nconsume more than one Fixed IP via an extension such as multinic\nthen this is no longer true. Running out of Fixed IPs would result in\nnot being able to spawn new instances.\n\nProposed patches:\nSee attached patches. Unless a flaw is discovered in them, these\npatches will be merged to Nova master (Grizzly), stable/folsom,\nand stable/essex branches on the public disclosure date.\n\nCVE:\nNo CVE has been assigned to this issue yet.\n\nProposed public disclosure date/time:\nTuesday, March 12, 1500UTC\nPlease do not make the issue public (or release public patches) before\nthis coordinated embargo date.\n\nRegards,\n\n-----\n\nIf we're running with that disclosure date we should probably send this out ASAP. Perhaps you could do it overnight?", 
+            "date_created": "2013-03-07 22:14:49.036865+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "+1 on the description. Looks like we're missing some approvals on that patch, though. If we gather them today then we can send this baby out with a disclosure date of Thursday, March 14.", 
+            "date_created": "2013-03-08 13:39:03.088385+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thanks ttx. At this point I think we should handle Sean's request for more unit tests for trunk in a separate patch. I'm happy to do that work, I just don't want to block this fix. Given I am trapped in a training course yet again today, can you please run with getting this disclosure email sent when we're ready?", 
+            "date_created": "2013-03-08 13:48:57.022214+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Grizzly patch looks good to me.", 
+            "date_created": "2013-03-08 15:01:21.964176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Notification sent to downstream stakeholders.", 
+            "date_created": "2013-03-08 23:40:09.864057+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Proposed public disclosure date/time:\nThursday, March 14, 1500UTC", 
+            "date_created": "2013-03-11 09:30:39.602007+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Adding Stable and Essex maintainers", 
+            "date_created": "2013-03-14 10:31:23.984871+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "FYI, applying the essex patch to 2012.1.3+stable-20120827 results in several unit test errors (see attached).", 
+            "date_created": "2013-03-14 13:54:37.004917+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Attempting to fetch that attachment gets me a \"processing error\" message from LP.", 
+            "date_created": "2013-03-14 14:02:22.521775+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "I was able to fetch it by clicking on it, then using 'Save page as' in my browser. If using wget or similar, that won't work because the bug is private.", 
+            "date_created": "2013-03-14 14:37:56.532643+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Jamie -- I got it working by waiting a bit and trying again.", 
+            "date_created": "2013-03-14 14:46:49.310336+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Jamie, sorry about that. Does this new patch work for you?", 
+            "date_created": "2013-03-14 15:29:00.453146+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "The updated patch works with the version of essex in Ubuntu 12.04 LTS, yes. Thanks!", 
+            "date_created": "2013-03-14 16:15:43.716110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jdstrand"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/24451", 
+            "date_created": "2013-03-14 16:43:11.544752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/folsom\nReview: https://review.openstack.org/24452", 
+            "date_created": "2013-03-14 16:43:49.762503+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/essex\nReview: https://review.openstack.org/24453", 
+            "date_created": "2013-03-14 16:46:28.746773+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/24452\nCommitted: http://github.com/openstack/nova/commit/9561484166f245d0e4602a36351d6cac72dd9426\nSubmitter: Jenkins\nBranch:    stable/folsom\n\ncommit 9561484166f245d0e4602a36351d6cac72dd9426\nAuthor: Michael Still <email address hidden>\nDate:   Wed Mar 13 04:44:14 2013 +1100\n\n    Add quotas for fixed ips.\n    \n    DocImpact: there is now a default quota of 10 fixed ips per tenant.\n    This will need to be adjusted by deployers if that number does not\n    meet their needs.\n    \n    Resolves bug 1125468 for folsom.\n    \n    Change-Id: I970d540cfa6a61b7e903703f845a6453ff55f225\n", 
+            "date_created": "2013-03-14 18:53:08.536171+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "OSSA-2013-008", 
+            "date_created": "2013-03-14 19:37:51.519514+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/24453\nCommitted: http://github.com/openstack/nova/commit/efaacdaee116388234558e2682b647d41fe5b149\nSubmitter: Jenkins\nBranch:    stable/essex\n\ncommit efaacdaee116388234558e2682b647d41fe5b149\nAuthor: Michael Still <email address hidden>\nDate:   Fri Mar 15 03:45:41 2013 +1100\n\n    Add quotas for fixed ips.\n    \n    DocImpact: there is now a default quota of 10 fixed ips per tenant.\n    This will need to be adjusted by deployers if that number does not\n    meet their needs.\n    \n    Resolves bug 1125468 for essex.\n    \n    Change-Id: I2a5afaa47afb182f4917cd43e1ebd0d6cd1330e3\n", 
+            "date_created": "2013-03-14 19:45:35.397129+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/24451\nCommitted: http://github.com/openstack/nova/commit/99429214d4ddb5bdc7de185693b8a53ad50df3c6\nSubmitter: Jenkins\nBranch:    master\n\ncommit 99429214d4ddb5bdc7de185693b8a53ad50df3c6\nAuthor: Michael Still <email address hidden>\nDate:   Tue Mar 5 05:53:43 2013 +1100\n\n    Add quotas for fixed ips.\n    \n    DocImpact: there is now a default quota of 10 fixed ips per tenant.\n    This will need to be adjusted by deployers if that number does not\n    meet their needs.\n    \n    Resolves bug 1125468.\n    \n    Change-Id: Iffa19583340f80cb2a13ba5fce31f7ff724a52d6\n", 
+            "date_created": "2013-03-15 02:10:36.274680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-03-20 16:05:43.230795+00:00"
+}

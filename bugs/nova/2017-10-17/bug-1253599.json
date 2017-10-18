@@ -1,0 +1,33 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 09:06:57.021408+00:00", 
+    "description": "There are two metrics in the system which describe how much disc space is\navailable on a compute host (both stored in compute_nodes):\n\nfree_gb is calculated from the maximum available space in the filesystem\nminus the amount of disc space defined by the instance type of each instance\non the host.\n\ndisk_available_least is calculated from the actual free space in the filesystem minus the disk space that is commited but not yet used by all instances that the hypervisor knows about (so if an instance has a 10GB disc, and is currently using 2GB an additional 8GB will be taken away from the actual free space.  \n\nUnder normal conditions disk_available_least should therefore always be less than free_gb (since it takes into account space in the filesystem that is consumed by things other than disks).\n\nHowever where an instance exists in the DB but not on the host, which can happen for some Error conditions, then free_gb may be less that disk_available_least (since the instance which is only in the DB is not factored into disk_available_least)\n\nCurrently the scheduler (host manager) builds its view of the amount of free disk space from disk_least_available (if defined) using free_disk_gb only as a fallback if disk_least_available is None.\n\nhttps://github.com/openstack/nova/blob/master/nova/scheduler/host_manager.py#L158\n\nThe compute manager resource tracker on the other hand always uses free_diks_gb when deciding if an instance fits or not.\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L387\n\nIn the case where disk_least_available > free_disk_gb this leads to the scheduler sending requests to hosts which will then be rejected.\n\nClearly using two different metrics in this way is not healthy.\n\nAt a minimum the scheduler should use the minimum of the two values (since the \"missing\" VM may come back its not safe to just ignore it).\n\nWould probably be better if the compute manager also did the same thing.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1253599", 
+    "owner": "https://api.launchpad.net/1.0/~moorryan", 
+    "id": 1253599, 
+    "index": 3714, 
+    "openned": "2013-11-21 11:12:28.707908+00:00", 
+    "created": "2013-11-21 11:12:28.707908+00:00", 
+    "title": "Host manager uses a different value for free disk than compute manager", 
+    "comments": [
+        {
+            "content": "Currently the scheduler (host manager) builds its view of the amount of free disk space from disk_least_available (if defined) using free_disk_gb only as a fallback if disk_least_available is None.\n\nhttps://github.com/openstack/nova/blob/master/nova/scheduler/host_manager.py#L158\n\nThe compute manager resource tracker on the other hand always uses free_diks_gb when deciding if an instance fits or not.\n\nhttps://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L387\n\nIn the case where disk_least_available > free_disk_gb this leads to the scheduler sending requests to hosts which will then be rejected.\n\nLooking through the code it appears that disk_least_available is intended to take into account space consumed by files that are not part of instances on a host, and so should always be < free_disk_gb, but we\u2019ve seen cases where this is not true (could be due to a bug / race condition).   However it would be more robust if the code in host_manager was changed to always take the lower of the two values (so that it is aligned with the check that the compute manager is going to make).", 
+            "date_created": "2013-11-21 11:12:28.707908+00:00", 
+            "author": "https://api.launchpad.net/1.0/~philip-day"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/57708", 
+            "date_created": "2013-11-21 16:03:20.767292+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/57708\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=56688707138d2343a65e25f8c27586ffd44875cf\nSubmitter: Jenkins\nBranch:    master\n\ncommit 56688707138d2343a65e25f8c27586ffd44875cf\nAuthor: Ryan Moore <email address hidden>\nDate:   Thu Nov 21 15:38:56 2013 +0000\n\n    Correct host managers free disk calculation\n    \n    Take lower of disk_least_available/free_disk_gb if they exist.\n    \n    When an instance exists in the database but not on the hypervisor\n    (which can happen in some error cases), the 'missing' instance\n    is included in the calculation of 'free_gb' but not included in\n    'disk_available_least'.\n    Need to take the value that represents the minimum amount of free\n    disk space available.\n    \n    Testing:\n    COMPUTE_NODES in fakes.py includes the 4 possible test cases:\n        disk_least_available or free_disk_gb = free_disk_mb\n            None             or     512      =    524288\n            1024             or    None      =   1048576\n            3333             or    3072      =   3145728\n            8192             or    8888      =   8388608\n       test: test_host_manager.py\n               test_get_all_host_states:\n                 Already has existing tests looking for these\n                 cases - I've modifed the test data (in fakes.py)\n                 rather than creating new test data.\n                 Added check for Warning message for node 3 where\n                 physical disk (3333) is greater than database (3072)\n             No impact on other tests.\n    \n    Change-Id: I4a18bf023a64d0cb198f77aab9daecb0786e93ff\n    Closes-Bug: 1253599\n", 
+            "date_created": "2014-02-13 12:10:32.797638+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2014-03-05 13:11:05.132480+00:00"
+}

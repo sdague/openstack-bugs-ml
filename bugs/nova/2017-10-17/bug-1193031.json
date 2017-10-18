@@ -1,0 +1,73 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:47:13.232456+00:00", 
+    "description": "When amqp_rpc_single_reply_queue=True is set, using qpid on Fedora 17 novn service will fail to work reliably.\n\nReproduce by starting more then one instance, and then get theit vnc consoles with:\n\n$ nova get-vnc-consol $INSTANCE_UUID_1 novnc\n$ nova get-vnc-consol $INSTANCE_UUID_2 novnc\n\nAnd try to connect to those consoles in your browser, to use them, and refresh the page. The page will eventually get stuck on 'Waiting for VNC handshake' and generaly not work properly.\n\nI dug a bit deeper into this and it seems to be realted to a select call in wbesockify.py which does not work properly with eventlet monkey_patched sockets.\n\nThe solution is to either not monkey_patch for /cmd/nova-novncproxy and do the rpc call that validates the token with the consolauth service in a separate process that is monkey_patched (the rpc won't work without it), or to make openstack/common/rpc/amqp/multicall not use green-threads for this particular call (ie. block the caller).\n\nConfirmed with trunk on 75ead3a2a37efbc6a4fdea7e492ca41cdd559a8c (20-6-2013)", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1193031", 
+    "owner": "None", 
+    "id": 1193031, 
+    "index": 1131, 
+    "openned": "2013-06-20 16:06:03.384306+00:00", 
+    "created": "2013-06-20 16:06:03.384306+00:00", 
+    "title": "novnc fails when amqp_rpc_single_reply_queue=True", 
+    "comments": [
+        {
+            "content": "When amqp_rpc_single_reply_queue=True is set, using qpid on Fedora 17 novn service will fail to work reliably.\n\nReproduce by starting more then one instance, and then get theit vnc consoles with:\n\n$ nova get-vnc-consol $INSTANCE_UUID_1 novnc\n$ nova get-vnc-consol $INSTANCE_UUID_2 novnc\n\nAnd try to connect to those consoles in your browser, to use them, and refresh the page. The page will eventually get stuck on 'Waiting for VNC handshake' and generaly not work properly.\n\nI dug a bit deeper into this and it seems to be realted to a select call in wbesockify.py which does not work properly with eventlet monkey_patched sockets.\n\nThe solution is to either not monkey_patch for /cmd/nova-novncproxy and do the rpc call that validates the token with the consolauth service in a separate process that is monkey_patched (the rpc won't work without it), or to make openstack/common/rpc/amqp/multicall not use green-threads for this particular call (ie. block the caller).\n\nConfirmed with trunk on 75ead3a2a37efbc6a4fdea7e492ca41cdd559a8c (20-6-2013)", 
+            "date_created": "2013-06-20 16:06:03.384306+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Also this fails even worse with Grizzly as there is no monkey patching on nova-novncproxy. see https://review.openstack.org/#/c/33319/", 
+            "date_created": "2013-06-20 16:06:55.508495+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "I can confirm that this issue also appears in ubuntu using havana.\n\nI've done some digging on this and got to the conclusion that eventlet's epoll hub implementation doesn't play well with multiprocessing module. The issue doesn't happen if we force to use \"poll\" hub in the websocketproxy module or just monkey_patch inside the new_client method (as this is run in a separate process) :\n\nwebsockify uses 'select' directly to decide when to write/read to a socket and multiprocessing to spawn the processes that will take care of the client. This makes me think that eventlet's epoll implementation is broken if used together with multiprocessing.\n\nI'll update if I find something else while following the trail into eventlet's internals.", 
+            "date_created": "2013-07-15 09:20:09.034630+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "Oh, to force eventlet's hub implementation to be poll just add the following in the top of the module:\n\nfrom eventlet import hubs\nhubs.use_hub(\"poll\")", 
+            "date_created": "2013-07-15 09:21:09.302702+00:00", 
+            "author": "https://api.launchpad.net/1.0/~xqueralt-deactivatedaccount"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/37419", 
+            "date_created": "2013-07-17 08:09:45.966648+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/37419\nCommitted: http://github.com/openstack/nova/commit/cb25bc4530323aaa33d5c42eb01f998d463f2106\nSubmitter: Jenkins\nBranch:    master\n\ncommit cb25bc4530323aaa33d5c42eb01f998d463f2106\nAuthor: Xavier Queralt <email address hidden>\nDate:   Wed Jul 17 01:31:36 2013 +0200\n\n    Force reopening eventlet's hub after fork\n    \n    With this we reopen eventlet's hub after a fork (triggered from\n    websockify when a new client connects) to prevent sharing epoll's fd\n    with the parent, which may cause erratic behaviour.\n    \n    This caused novncproxy to stop working when it had more than two clients\n    connected.\n    \n    Fixes bug #1193031\n    \n    Change-Id: I3ff9001543b84b1037597da243422490bb611657\n", 
+            "date_created": "2013-07-17 14:50:02.258753+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: milestone-proposed\nReview: https://review.openstack.org/37507", 
+            "date_created": "2013-07-17 15:39:39.710973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/37512", 
+            "date_created": "2013-07-17 15:53:41.046323+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/grizzly\nReview: https://review.openstack.org/37526", 
+            "date_created": "2013-07-17 16:48:31.109167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/37507\nCommitted: http://github.com/openstack/nova/commit/9315de02d67aaacc7e8da0de67ca477c2c0bc127\nSubmitter: Jenkins\nBranch:    milestone-proposed\n\ncommit 9315de02d67aaacc7e8da0de67ca477c2c0bc127\nAuthor: Xavier Queralt <email address hidden>\nDate:   Wed Jul 17 01:31:36 2013 +0200\n\n    Force reopening eventlet's hub after fork\n    \n    With this we reopen eventlet's hub after a fork (triggered from\n    websockify when a new client connects) to prevent sharing epoll's fd\n    with the parent, which may cause erratic behaviour.\n    \n    This caused novncproxy to stop working when it had more than two clients\n    connected.\n    \n    Fixes bug #1193031\n    \n    Change-Id: I3ff9001543b84b1037597da243422490bb611657\n    (cherry picked from commit cb25bc4530323aaa33d5c42eb01f998d463f2106)\n", 
+            "date_created": "2013-07-18 08:04:30.841365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/37526\nCommitted: http://github.com/openstack/nova/commit/11046d94456c63fda51f626e1b816fd57612a4ec\nSubmitter: Jenkins\nBranch:    stable/grizzly\n\ncommit 11046d94456c63fda51f626e1b816fd57612a4ec\nAuthor: Nikola Dipanov <email address hidden>\nDate:   Wed Jul 17 18:34:36 2013 +0200\n\n    Force reopening eventlet's hub after fork\n    \n    With this we reopen eventlet's hub after a fork (triggered from\n    websockify when a new client connects) to prevent sharing epoll's fd\n    with the parent, which may cause erratic behaviour.\n    \n    This caused novncproxy/spicehtml5proxy to stop working when it had more\n    than two clients connected.\n    \n    Fixes bug #1193031\n    \n    Change-Id: I3ff9001543b84b1037597da243422490bb611657\n", 
+            "date_created": "2013-07-29 18:35:21.332852+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-07-18 08:04:27.852839+00:00"
+}

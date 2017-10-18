@@ -1,0 +1,35 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 12:00:40.098711+00:00", 
+    "description": "Table 'instance_groups' has two columns to unambiguously identify the specific row:\n1) id (Integer, primary_key=True, autoincrement=True)\n2) uuid  (String)\n\nThe former is used internally to bind related entities by FKs (InstanceGroupMember, InstanceGroupPolicy and InstanceGroupMetadata), and the latter is accepted by public DB API methods (this must be a miss in the DB schema design, because uuid  could be easily used for both use cases).\n\nHaving two 'id' columns is both misleading and error-prone. E. g. instance_group_delete() deletes the instance group (and all related entities) given its UUID value:\n\ndef instance_group_delete(context, group_uuid):\n    \"\"\"Delete an group.\"\"\"\n    session = get_session()\n    with session.begin():\n        count = _instance_group_get_query(context,\n                                          models.InstanceGroup,\n                                          models.InstanceGroup.uuid,\n                                          group_uuid,\n                                          session=session).soft_delete()\n        if count == 0:\n            raise exception.InstanceGroupNotFound(group_uuid=group_uuid)\n\n        # Delete policies, metadata and members\n        instance_models = [models.InstanceGroupPolicy,\n                           models.InstanceGroupMetadata,\n                           models.InstanceGroupMember]\n        for model in instance_models:\n            model_query(context, model, session=session).\\\n                    filter_by(group_id=group_uuid).\\\n                    soft_delete()\n\nRelated entities are filtered by 'group_id' column, but 'group_uuid' value is passed. Despite that these two columns are of different types, this statement is executed successfully on MySQL and SQLite (though WHERE clause never evaluates to True, so related entities aren't actually deleted), but fails on PostgreSQL, which is more strict when checking data types of values.", 
+    "tags": [
+        "db"
+    ], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1211307", 
+    "owner": "https://api.launchpad.net/1.0/~rpodolyaka", 
+    "id": 1211307, 
+    "index": 5217, 
+    "openned": "2013-08-12 12:28:23.000410+00:00", 
+    "created": "2013-08-12 12:28:23.000410+00:00", 
+    "title": "instance_group_delete() filters related entities by group UUID rather than by ID", 
+    "comments": [
+        {
+            "content": "Table 'instance_groups' has two columns to unambiguously identify the specific row:\n1) id (Integer, primary_key=True, autoincrement=True)\n2) uuid  (String)\n\nThe former is used internally to bind related entities by FKs (InstanceGroupMember, InstanceGroupPolicy and InstanceGroupMetadata), and the latter is accepted by public DB API methods (this must be a miss in the DB schema design, because uuid  could be easily used for both use cases).\n\nHaving two 'id' columns is both misleading and error-prone. E. g. instance_group_delete() deletes the instance group (and all related entities) given its UUID value:\n\ndef instance_group_delete(context, group_uuid):\n    \"\"\"Delete an group.\"\"\"\n    session = get_session()\n    with session.begin():\n        count = _instance_group_get_query(context,\n                                          models.InstanceGroup,\n                                          models.InstanceGroup.uuid,\n                                          group_uuid,\n                                          session=session).soft_delete()\n        if count == 0:\n            raise exception.InstanceGroupNotFound(group_uuid=group_uuid)\n\n        # Delete policies, metadata and members\n        instance_models = [models.InstanceGroupPolicy,\n                           models.InstanceGroupMetadata,\n                           models.InstanceGroupMember]\n        for model in instance_models:\n            model_query(context, model, session=session).\\\n                    filter_by(group_id=group_uuid).\\\n                    soft_delete()\n\nRelated entities are filtered by 'group_id' column, but 'group_uuid' value is passed. Despite that these two columns are of different types, this statement is executed successfully on MySQL and SQLite (though WHERE clause never evaluates to True, so related entities aren't actually deleted), but fails on PostgreSQL, which is more strict when checking data types of values.", 
+            "date_created": "2013-08-12 12:28:23.000410+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/41408", 
+            "date_created": "2013-08-12 13:27:13.151283+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/41408\nCommitted: http://github.com/openstack/nova/commit/767fb98b885327d1ad1cd380682ae4745aa78387\nSubmitter: Jenkins\nBranch:    master\n\ncommit 767fb98b885327d1ad1cd380682ae4745aa78387\nAuthor: Roman Podolyaka <email address hidden>\nDate:   Mon Aug 12 14:46:53 2013 +0300\n\n    Fix instance_group_delete() DB API method\n    \n    Table 'instance_groups' has two columns that can be used to\n    unambigously identify the specific row:\n      - 'id' (Integer, primary_key=True, autoincrement=True)\n      - 'uuid' (String)\n    \n    The former is used internally to bind related instances by FKs\n    (InstanceGroupMember, InstanceGroupPolicy and InstanceGroupMetadata),\n    and the latter is accepted by public methods of DB API. This must\n    be a miss in DB schema design, because 'uuid' could be used for both\n    use cases.\n    \n    instance_group_delete() deletes the instance group (and all related\n    instances) given its UUID value. When related entities are deleted\n    they are filtered by the FK value - the 'group_id' column, however,\n    the 'group_uuid' value is passed.\n    \n    Such DELETE statement is executed successfully (though WHERE clause never\n    evaluates to True, so the query is logically incorrect) on MySQL and SQLite,\n    which are often too 'soft' when checking data types of passed values.\n    \n    This patch fixes the instance_group_delete() method and renames the 'group_uuid'\n    argument of _instance_group_model_get_query() to 'group_id', because this one\n    is actually always called with id value rather than with uuid.\n    \n    Closes-Bug: #1211307\n    \n    Change-Id: Ic8bcb4b218f570f26420904aeb74eb14567235fb\n", 
+            "date_created": "2013-08-23 20:14:03.192961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-09-05 15:45:09.886402+00:00"
+}

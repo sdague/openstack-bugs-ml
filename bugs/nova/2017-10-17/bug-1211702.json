@@ -1,0 +1,53 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2013-08-15 17:03:56.389061+00:00", 
+    "description": "When an admin user try to get the list of servers filtered by tenant_id the filter is overwritten by the admin tenant_id so  the actual filter specified is not used but the list is just reporting the  the admin user's servers.\n\nThe problem is in that in the servers API the \"project_id' is defined to be equal to the context.project_id:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if 'all_tenants' not in search_opts:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0if context.project_id:\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0search_opts['project_id'] = context.project_id\n\nThen in the nova/compute/api.py we have a filter_mapping to associate the tenant_id filter as project_id filter:\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0# search_option to filter_name mapping.\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0filter_mapping = {\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0'image': 'image_ref',\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0'name': 'display_name',\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0'tenant_id': 'project_id',\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0'flavor': _remap_flavor_filter,\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0'fixed_ip': _remap_fixed_ip_filter}\n\nbecause of the mapping the filter tenant_id is mapped as project_id then the value project_id in the dictionary is overwritten by the project_id filter defined at the API layer.\n\nMy solution is basically avoid to add a filter if the same filter has been required in the original request.\nTo do that the idea is, before adding a value in the serach_opts, we need to check if the key we are going to add  is present as value in the filter_mapping dict,  if so we can force the filter only if the user is not requiring the same value in the original call.\n\nIn my opinion we should also to move all the logic about the creation and management of the search_opts dictionary in the API code in order to have a single point where the dictionary is created and the let the compute api code just to give results back based on the filters passed.\n\nSteps to reproduce:\n- create an instance (inst1) for the tenant_id X\n- with an admin user call the servers/detail?tenant_id=X\n- verify that the instance inst1 is not returned. (Note that if the admin user has some instances the call will get them back)", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1211702", 
+    "owner": "https://api.launchpad.net/1.0/~andrea-rosa-m", 
+    "id": 1211702, 
+    "index": 5221, 
+    "openned": "2013-08-13 09:47:41.624523+00:00", 
+    "created": "2013-08-13 09:47:41.624523+00:00", 
+    "title": "Server list filtered by tenant_id doesn't work", 
+    "comments": [
+        {
+            "content": "When an admin user try to get the list of servers filtered by tenant_id the filter is overwritten by the admin tenant_id so  the actual filter specified is not used but the list is just reporting the  the admin user's servers.\n\nThe problem is in that in the servers API the \"project_id' is defined to be equal to the context.project_id:\n        if 'all_tenants' not in search_opts:\n            if context.project_id:\n                search_opts['project_id'] = context.project_id\n\nThen in the nova/compute/api.py we have a filter_mapping to associate the tenant_id filter as project_id filter:\n\n        # search_option to filter_name mapping.\n        filter_mapping = {\n                'image': 'image_ref',\n                'name': 'display_name',\n                'tenant_id': 'project_id',\n                'flavor': _remap_flavor_filter,\n                'fixed_ip': _remap_fixed_ip_filter}\n\nbecause of the mapping the filter tenant_id is mapped as project_id then the value project_id in the dictionary is overwritten by the project_id filter defined at the API layer.\n\nMy solution is basically avoid to add a filter if the same filter has been required in the original request.\nTo do that the idea is, before adding a value in the serach_opts, we need to check if the key we are going to add  is present as value in the filter_mapping dict,  if so we can force the filter only if the user is not requiring the same value in the original call.\n\nIn my opinion we should also to move all the logic about the creation and management of the search_opts dictionary in the API code in order to have a single point where the dictionary is created and the let the compute api code just to give results back based on the filters passed.\n\nSteps to reproduce:\n- create an instance (inst1) for the tenant_id X\n- with an admin user call the servers/detail?tenant_id=X\n- verify that the instance inst1 is not returned. (Note that if the admin user has some instances the call will get them back)\n\nIf the bag will be confirmed I am happy to work on the resolution, so please assign it to me", 
+            "date_created": "2013-08-13 09:47:41.624523+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "To prove that this is a bug you can change the unit test and verify that it fails:\n--- a/nova/tests/api/openstack/compute/test_servers.py\n+++ b/nova/tests/api/openstack/compute/test_servers.py\n@@ -740,14 +740,14 @@ class ServersControllerTest(ControllerTest):\n                          sort_dir='desc', limit=None, marker=None,\n                          columns_to_join=None):\n             self.assertNotEqual(filters, None)\n-            self.assertEqual(filters['project_id'], 'fake')\n+            self.assertEqual(filters['project_id'], 'newfake')\n             self.assertFalse(filters.get('tenant_id'))\n             return [fakes.stub_instance(100)]\n \n         self.stubs.Set(db, 'instance_get_all_by_filters',\n                        fake_get_all)\n \n-        req = fakes.HTTPRequest.blank('/fake/servers?tenant_id=fake',\n+        req = fakes.HTTPRequest.blank('/fake/servers?tenant_id=newfake',\n", 
+            "date_created": "2013-08-13 13:14:49.053241+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "I am going to submit a patch for the bug without the proposed refactor mentioned in the description.\n", 
+            "date_created": "2013-08-15 14:46:54.835059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~andrea-rosa-m"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/42145", 
+            "date_created": "2013-08-15 14:48:02.187271+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This is not a bug. There was a recent mailing list post about this, even. If you pass in all_tenants=1 in the API request, you achieve the behavior you desire, which is to include all tenants when applying filters.", 
+            "date_created": "2013-08-15 16:57:24.215203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "If you're an admin, you must be explicit in saying \"I want to reach outside of my project id\" by using all_tenants=1.", 
+            "date_created": "2013-08-15 16:58:04.688727+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "http://lists.openstack.org/pipermail/openstack-dev/2013-June/010461.html", 
+            "date_created": "2013-08-15 17:03:54.661943+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }
+    ], 
+    "closed": "2013-08-15 16:58:31.555589+00:00"
+}

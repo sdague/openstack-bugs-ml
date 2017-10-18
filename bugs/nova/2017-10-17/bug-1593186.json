@@ -1,0 +1,77 @@
+{
+    "status": "Incomplete", 
+    "last_updated": "2017-08-22 09:14:57.051330+00:00", 
+    "description": "After rebooting all nodes in the cluster, all the instances that were running on the cluster are stuck in Status ACTIVE, Task state: powering-off, Power state: Crashed.\nFrom the log it looks that during in nova-compute service start, messages sent form init_host method vanished, because the start of RPC server is invoked only afterwards.\n\nThe menager.init_host methods, see an instance with vm_state == vm_states.ACTIVE and vm_power_state in (power_state.SHUTDOWN, power_state.CRASHED). I get the log message \"Instance shutdown by itself. Calling the stop API. Current vm_state: active, current task_state: None, original DB power_state: 1, current VM power_state: 6\".\nThen it calls the api.stop method, which invokes the api.force_stop method, and I see the following log message \"Going to try to stop instance force_stop\". This method invokes through RPC a stop_instance method. But the RPC message never reach the RPC server, which is started only after the init_host is called in service.start method.\nSince I am using rabbitmq, the message queues after rebooting the cluster of nodes are not initiated, and the call never gets to the destination.\n\nAfter wards, the _sync_instance_power_state see the powering-off task state, and never cleans the instance state. I get the log messages: \"During sync_power_state the instance has a pending task (powering-off). Skip.\"\n\nNova version is 12.0.0.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1593186", 
+    "owner": "None", 
+    "id": 1593186, 
+    "index": 7549, 
+    "openned": "2016-06-16 10:59:11.203726+00:00", 
+    "created": "2016-06-16 10:59:11.203726+00:00", 
+    "title": "Nova instance stuck in powering-off when rebooting all nodes in cluster", 
+    "comments": [
+        {
+            "content": "After rebooting all nodes in the cluster, all the instances that were running on the cluster are stuck in Status ACTIVE, Task state: powering-off, Power state: Crashed.\nFrom the log it looks that during in nova-compute service start, messages sent form init_host method vanished, because the start of RPC server is invoked only afterwards.\n\nThe menager.init_host methods, see an instance with vm_state == vm_states.ACTIVE and vm_power_state in (power_state.SHUTDOWN, power_state.CRASHED). I get the log message \"Instance shutdown by itself. Calling the stop API. Current vm_state: active, current task_state: None, original DB power_state: 1, current VM power_state: 6\".\nThen it calls the api.stop method, which invokes the api.force_stop method, and I see the following log message \"Going to try to stop instance force_stop\". This method invokes through RPC a stop_instance method. But the RPC message never reach the RPC server, which is started only after the init_host is called in service.start method.\nSince I am using rabbitmq, the message queues after rebooting the cluster of nodes are not initiated, and the call never gets to the destination.\n\nAfter wards, the _sync_instance_power_state see the powering-off task state, and never cleans the instance state. I get the log messages: \"During sync_power_state the instance has a pending task (powering-off). Skip.\"\n\nNova version is 12.0.0.", 
+            "date_created": "2016-06-16 10:59:11.203726+00:00", 
+            "author": "https://api.launchpad.net/1.0/~eyal-6"
+        }, 
+        {
+            "content": "So it seems the fix is to switch the order of these:\nhttps://github.com/openstack/nova/blob/master/nova/service.py#L117\nhttps://github.com/openstack/nova/blob/master/nova/service.py#L153\n\nTo init the rpc server before init_host, that sends messages to itself with rpc.", 
+            "date_created": "2016-06-16 11:13:22.137602+00:00", 
+            "author": "https://api.launchpad.net/1.0/~shoham-peller"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/330556", 
+            "date_created": "2016-06-16 13:34:39.736198+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Eyal Posener (<email address hidden>) on branch: master\nReview: https://review.openstack.org/330556\nReason: Found a bug in the patch.\nWorking on a new patch.", 
+            "date_created": "2016-06-27 13:51:17.472455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/334566", 
+            "date_created": "2016-06-27 16:58:04.294512+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/334566\nReason: This review is > 6 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2016-12-09 21:06:11.489358+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "\nThere are no currently open reviews on this bug, changing\nthe status back to the previous state and unassigning. If\nthere are active reviews related to this bug, please include\nlinks in comments.\n", 
+            "date_created": "2017-06-23 12:46:03.982961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "is this still an issue in master?", 
+            "date_created": "2017-06-28 15:16:18.979965+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I have the same issue with the latest Ocata (freshly updated).", 
+            "date_created": "2017-07-24 21:36:55.977980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vpushkar"
+        }, 
+        {
+            "content": "Just had this happen to a client who's building kindly switched off the power for several hours with no warning. All instances in Active / powering-off state. nova reset-state --active takes care of it, but it's super frustrating to have to do that in bulk.", 
+            "date_created": "2017-08-06 05:16:56.637211+00:00", 
+            "author": "https://api.launchpad.net/1.0/~emccormickva"
+        }, 
+        {
+            "content": "jep, I've the same issue in newton.\nI've restarted the nova-compute server and one vm stack in poweroff state. ", 
+            "date_created": "2017-08-17 07:21:37.240860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~wlkalexander"
+        }, 
+        {
+            "content": "me too, same issue in newton.\n\none vm has task_state in powering-off.", 
+            "date_created": "2017-08-22 09:14:56.534247+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cshen"
+        }
+    ]
+}

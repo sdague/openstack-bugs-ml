@@ -1,0 +1,169 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-08-18 12:24:34.402070+00:00", 
+    "description": "The core issue are console.log files with ownership root:root and permissions 600 during migration where a target hosts nova process is unable to access these console.log files.\n\nThe setup is kilo version OpenStack with Quobyte backend running with nas_secure_file_permissions and nas_secure_file_operations set to true and libvirts qemu.conf set to dynamic_ownership=0 and qemu running as nova:cinder user:group.\n\nAfter testing the different types migration (cold migration and live migration) i see two scenarios so far that produce a console.log file with the afore mentioned access issue:\n1) cold migration on a stopped instance who's image resides in a (Quobyte) Cinder volume\n2) live migrations of instances who's images reside either in ephemeral storage or in a (Quobyte) Cinder volume\n\nOn all occasions all files related to the instance are found to have ownership nova:nova with permissions 644 with the sole exception of the console.log file, e.g.:\n\n[root@server06 log]# ls -lah /prod/openstack-nova/instances/0dfdfd1e-7f5e-47ea-a63c-06c4f84ae2d8*\ntotal 22M\ndrwxr-xr-x. 1 nova nova   0 Feb 25 14:05 .\ndrwxrwxrwx. 1 root root   0 Feb 25 14:05 ..\n-rw-------. 1 root root   0 Feb 25 14:05 console.log\n-rw-r--r--. 1 nova nova 22M Feb 25 14:03 disk\n\nLibvirt does not have a detection for Quobyte as a shared filesystem at this point and thus believes the files to reside on a local filesystem.\n\nNow i'm trying to find out\n1) Who creates console.log at which point (so i can check where the ownership & permissions for that are taken from)\n2) Who manipulates console.log during migration (so i can check for the same as above)\n\nGeneral observation: libvirts qemu settings for dynamic ownership and user:group do work as the other files are managed according to these settings but console.log seems to be an exception (maybe not touched by libvirt at all? Is Nova setting this?)\n\nAny help appreciated.", 
+    "tags": [
+        "cinder", 
+        "kilo-backport-potential", 
+        "liberty-backport-potential", 
+        "libvirt", 
+        "live-migration", 
+        "openstack-version.kilo", 
+        "openstack-version.liberty", 
+        "openstack-version.mitaka", 
+        "openstack-version.newton", 
+        "quobyte", 
+        "volume"
+    ], 
+    "importance": "Low", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1549828", 
+    "owner": "None", 
+    "id": 1549828, 
+    "index": 1957, 
+    "openned": "2016-02-25 14:28:39.946641+00:00", 
+    "created": "2016-02-25 14:28:39.946641+00:00", 
+    "title": "permission denied on console.log during some migrations when using Quobyte for cinder volumes", 
+    "comments": [
+        {
+            "content": "The core issue are console.log files with ownership root:root and permissions 600 during migration where a target hosts nova process is unable to access these console.log files.\n\nThe setup is kilo version OpenStack with Quobyte backend running with nas_secure_permissions and nas_secure_ownership set to true and libvirts qemu.conf set to dynamic_ownership=0 and qemu running as nova:cinder user:group.\n\nAfter testing the different types migration (cold migration and live migration) i see two scenarios so far that produce a console.log file with the afore mentioned access issue:\n1) cold migration on a stopped instance who's image resides in a (Quobyte) Cinder volume\n2) live migrations of instances who's images reside either in ephemeral storage or in a (Quobyte) Cinder volume\n\nOn all occasions all files related to the instance are found to have ownership nova:nova with permissions 644 with the sole exception of the console.log file, e.g.:\n\n[root@server06 log]# ls -lah /prod/openstack-nova/instances/0dfdfd1e-7f5e-47ea-a63c-06c4f84ae2d8*\ntotal 22M\ndrwxr-xr-x. 1 nova nova   0 Feb 25 14:05 .\ndrwxrwxrwx. 1 root root   0 Feb 25 14:05 ..\n-rw-------. 1 root root   0 Feb 25 14:05 console.log\n-rw-r--r--. 1 nova nova 22M Feb 25 14:03 disk\n\nLibvirt does not have a detection for Quobyte as a shared filesystem at this point and thus believes the files to reside on a local filesystem.\n\nNow i'm trying to find out \n1) Who creates console.log at which point (so i can check where the ownership & permissions for that are taken from)\n2) Who manipulates console.log during migration (so i can check for the same as above)\n\nGeneral observation: libvirts qemu settings for dynamic ownership and user:group do work as the other files are managed according to these settings but console.log seems to be an exception (maybe not touched by libvirt at all? Is Nova setting this?)\n\nAny help appreciated.", 
+            "date_created": "2016-02-25 14:28:39.946641+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "Can you actually build a reproduce for this? Because get_console_output does a chown, so I'm not sure what the concern here is. https://github.com/openstack/nova/blob/058e21ec984fb602e8ed293e2aea32267ca1143e/nova/virt/libvirt/driver.py#L2855", 
+            "date_created": "2016-02-26 13:11:44.607820+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "All activities for copying console.log file are made by libvirt. So console log, after copying has \nqemu-libvirt owner. \nSo , as Sean mentioned above you can do nova console-log <instance-name> and nova wil chown this file.\n\nFYI https://bugs.launchpad.net/nova/+bug/1203193 console.log related bug in block live migration.\nand review https://review.openstack.org/284674/", 
+            "date_created": "2016-02-26 17:12:45.766973+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gstepanov"
+        }, 
+        {
+            "content": "Thanks for the feedback!\n\nconsole-log is a good hint on how to mitigate this issue, prevents the user from having to manually find the file and correct this. Nice.\n\nNevertheless live-migrations or starting an instance after a stopped instance migration can fail because of this.\n\nI can reproduce this with a CentOS 7, RDO / Kilo release OpenStack installation running with Quobyte storage. Cinder is running with nas_secure_file_permissions and nas_secure_file_operations, libvirt is running qemu with dynamic_ownership = 0 (off) and nova:cinder ownership. If you want me to try any reconfigurations, etc. please feel free to contact me (kaisers@irc) or comment in here.\n\nI can mitigate this by running e.g.: 'nova console-log <instanceid> && nova live-migration <instanceid> <targethost>' which works more often than not. But this is not reliable. I'd prefer to have the (live-)migration commands to work reliably on itself.\n\nI'd think this issue should come up with GlusterFS  setups running nas_secure_file_* = true, too. Has anybody experiences with that kind of setup?", 
+            "date_created": "2016-03-01 10:39:21.569228+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "BTW, thanks for the console.log related change links!", 
+            "date_created": "2016-03-01 10:39:59.896861+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "I did some more detailed testing by migrating a VM up and down and all around my setup and monitoring it's files, some insights:\n\n1) console.log belonging to root:root with 600 is created when the live-migration command is issued. This command silently fails, meaning Nova reports no error and the VM does not migrate. Only digging on the source hosts logs reveals:\n\n2016-03-02 11:48:14.250 5338 ERROR nova.virt.libvirt.driver [req-b84dd9be-6f61-4c9c-80d7-edead59fdd37 d544aad717f14bd1a20ccdc9d78281e1 5a74d35b546e46039ff2daf48565f186 - - -] [instance: 6c49d8ea-9a62-4db7-a46e-c\n462c1c4a08a] Live Migration failure: internal error: process exited while connecting to monitor: 2016-03-02T10:48:14.073332Z qemu-kvm: -chardev file,id=charserial0,path=/prod/openstack-nova/instances/6c49d8ea-9a\n62-4db7-a46e-c462c1c4a08a/console.log: Could not open '/prod/openstack-nova/instances/6c49d8ea-9a62-4db7-a46e-c462c1c4a08a/console.log': Permission denied\n\n2) Once the console-log command is run the ownership for console.log changes to nova:root 600, as pointed out previously. This is sufficient to complete a second live-migration attempt that works without issues now.\n\nSo this issue should be solvable by doing a chown during the live-migration action, preferably during/after creation of console.log .", 
+            "date_created": "2016-03-02 10:56:43.413143+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "Might this be the point where console.log is created with root:root 600 ?\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L6676\n\nThen a solution would be to add a chown right afterwards or change the call to use the correct ownership.\n\nI'm not sure why there's two or three chown calls for the console.log file, througout the driver.py file. Shouldn't this be set right at the creation of this file?\n\nI'll probably add a change for further discussion on this.", 
+            "date_created": "2016-03-02 11:14:55.778059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "After some unsuccessful fix testing.\n\nHow does the Nova process create a console.log file with root:root ownership in the first place???\nIf this file is created by the aforementioned 'touch' command it should have the owner of the Nova process, shouldn't it? This should be the user nova. So how is the file created with root:root?", 
+            "date_created": "2016-03-03 07:56:13.051475+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "More testing done.\n\n- Adding a chown prior to migrating helps but only in case console.log is already present\n- console.log is created with root:root if it does not exist during the migration process, which fails because of this\n- The weird fact is that despite qemu-kvm running as nova:cinder ownership the file console.log is still created with root:root ???\n\nSeems to me this is related to an earlier issue i ran into: #1473116", 
+            "date_created": "2016-03-03 12:45:17.357339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "Seems to be related to this issue (although in our case libvirts qemu is configured as specified in the described workaround in this ticket):\nhttps://bugzilla.redhat.com/show_bug.cgi?id=1004673", 
+            "date_created": "2016-03-03 14:28:01.580509+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "https://review.openstack.org/#/c/284674/ this patch may solve this. It actually happens during block\nlive migration, right after that console.log owned by qemu-libvirt or root and should be owned by nova.", 
+            "date_created": "2016-03-07 16:16:02.094526+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gstepanov"
+        }, 
+        {
+            "content": "Thanks for the hint! However I've not been using block live migration, only live migration on a shared file system. Therefore i fear this will not solve this.", 
+            "date_created": "2016-03-08 07:17:19.153707+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "Hello, i've read your bug report more carefully. If you are interested who \noperates with console.log - it is libvirt. libvirt-qemu or root are owners of this file and they move it during migration.\nbut you can simply call \nnova console-log <instance>\n\nand observe that in instance directory console log is owned by stack or nova or\nsomething else user that runs nova.\nSo there is no problem that console.log is denied, use root permissions or open it using\nnova console log.", 
+            "date_created": "2016-03-11 16:29:36.505384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gstepanov"
+        }, 
+        {
+            "content": "Hi Gleb, thanks for looking into this!\n\nThe remaining Problem in this issue is that the live migration fails (without throwing an error, it just does not migrate). Please see comment #5.\nFurthermore VMs affected by this cannot be started by Nova, e.g. if beeing restarted.\n\nBeeing familiar with this ticket means one can easily mitigate by running console-log on the instance but if a user does not know that he is unable to run these migrations.", 
+            "date_created": "2016-03-14 08:17:33.021907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "Btw, if more questions arise, please feel free to contact me in IRC (kaisers), i'd be happy to help.", 
+            "date_created": "2016-03-14 09:49:47.484907+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "I think, cloud operator should use nova tools to observe logs, instead of manually open these files.\n\nI'll try to reproduce it in Kilo. But in my current installation made from devstack/master this bug is not reproducable.", 
+            "date_created": "2016-03-14 10:15:41.011003+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gstepanov"
+        }, 
+        {
+            "content": "For reproduction you need a filesystem based volume driver. Iirc GlusterFS won't work, sadly, as libvirt has builtin GlusterFS support which detects the shared filesystem and thus causes libvirt to refrain from touching the files. So it probably never changes ownership for console.log with GlusterFS. I'm not sure wich filesystems are available to you.\nRegarding options you need to set the following:\n- nas_secure_file_owernship/-permissions = True should be used with Cinder (otherwise all files will run with root:root / 666 in insecure mode)\n- libvirt has to run with the following options set in /etc/libvirt/qemu.conf:\n    - dynamic_ownership = 0\n    - user = \"nova\"\n    - group = \"cinder\"\n\nIf this is not reproducable for you perhaps i can try to write a fix myself but i need some nova insight & help. So far i've not been able to find the right point where to fix this.\n\nBtw this has nothing to do with manually opening those files. When running the live migration the console.log is changed to root:root which a) causes the live-migration to 'not happen' (fail but no error thrown) and b) causes subsequent vm starts to fail (this time including a thrown error).  The fact that the nova console-log command includes a chown on the console.log file which repairs the ownership is a nice mitigation to these issues but no final solution imho.", 
+            "date_created": "2016-03-14 11:11:12.004339+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "I've set this back to \"New\" because it looks like it hasn't been reproduced. If there is a patch for this bug, please make sure it has the \"closes-bug\" tag in the commit message.", 
+            "date_created": "2016-06-16 16:26:48.441478+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "I can reproduce this continuously in the setup described in the earlier comments.", 
+            "date_created": "2016-06-17 07:16:58.881498+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "We need someone other than the person reporting the bug to be able to reproduce it. If we can't follow the steps to reproduce then we can't debug it.", 
+            "date_created": "2016-06-17 16:20:17.202606+00:00", 
+            "author": "https://api.launchpad.net/1.0/~auggy"
+        }, 
+        {
+            "content": "For anyone trying to reproduce, please see comment #16 where i outlined the env.", 
+            "date_created": "2016-06-20 06:16:18.768154+00:00", 
+            "author": "https://api.launchpad.net/1.0/~2-silvan"
+        }, 
+        {
+            "content": "I think we can mark this as confirmed, but as has been said, this only happens when specific filesystem based volume drivers are used as backends. Being specific about that means this is definitely a low priority bug as it impacts a small slice of our users, and is not as dire as failing all the time.", 
+            "date_created": "2016-07-01 11:43:54.163415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I too faced this ERROR when executed: nova evacuate:\nSome Environment Info:- Two compute nodes\nOpenstack Newton\nDistro: Centos7\nopenstack-nova-api-14.0.2-1.el7.noarch\npython2-novaclient-6.0.0-1.el7.noarch\nopenstack-nova-compute-14.0.3-1.el7.noarch\nlibvirt-daemon-2.0.0-10.el7_3.4.x86_64\n\nWorkaround used:-\nchown -R nova:nova /var/lib/nova/instances on target host and\nthen  \"nova evacuate\" didn't face the error.\n", 
+            "date_created": "2017-03-04 09:32:49.504141+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yatinkarel"
+        }, 
+        {
+            "content": "I also see this ERROR when doing an evacuate:\nTwo compute nodes\nOpenstack Ocata\nDistro: Ubuntu 16.04\nStandard tutorial manual build plus shared /var/lib/nov/instances\n\nWorkaround used:-\nchmod 666 /var/lib/nova/instances/console.log on target host and\nthen \"nova evacuate\" didn't face the error.", 
+            "date_created": "2017-04-26 12:31:21.820797+00:00", 
+            "author": "https://api.launchpad.net/1.0/~luowei"
+        }, 
+        {
+            "content": "We are also facing this error here on Ubuntu/Xenial and for our customers it is a bugger when 20% of the vms are not migrating, when they rather should. It simply means this will break our autoscaling and autoscheduling and update-process on the plattform, because we can't drain hosts of all the VMs.\n\nWe're using Quobyte-Latest(currently 1.3.17) here as shared storage.\n\nnova-api: 13.1.3-0ubuntu1\nnova-compute: 13.1.3-0ubuntu1\npython-novaclient: 3.3.1-2ubuntu1\nlibvirt0: 1.3.1-1ubuntu10.8\n\nAs Silvan pointed out the extra step of getting the console and then doing a live-migration is nothing more than a desperate kludge and far from feasable for us as operators as well as for our customers.\nWe could as well place an inotify in place that monitors any file and changes permissions when needed.\nThats the same level of uggly mess and this should be fixed at the root instead: Whoever creates the file with the wrong permissions shouldn't do that in the first place.\n", 
+            "date_created": "2017-05-08 10:50:04.965425+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jwalzer"
+        }, 
+        {
+            "content": "Automatically discovered version kilo in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:58:27.067900+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "This seems to be alive and kicking on Ocata\n\n[...]\n2017-07-18 11:28:48.949 12914 ERROR oslo_messaging.rpc.server   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/driver.py\", line 2964, in _ensure_console_log_for_instance\n2017-07-18 11:28:48.949 12914 ERROR oslo_messaging.rpc.server     libvirt_utils.file_open(console_file, 'a').close()\n2017-07-18 11:28:48.949 12914 ERROR oslo_messaging.rpc.server   File \"/usr/lib/python2.7/site-packages/nova/virt/libvirt/utils.py\", line 350, in file_open\n2017-07-18 11:28:48.949 12914 ERROR oslo_messaging.rpc.server     return open(*args, **kwargs)\n2017-07-18 11:28:48.949 12914 ERROR oslo_messaging.rpc.server IOError: [Errno 13] Permission denied: '/var/lib/nova/instances/e23edae7-f259-4fbf-b6ff-0d016044acbd/console.log'\n2017-07-18 11:28:48.949 12914 ERROR oslo_messaging.rpc.server\n\n", 
+            "date_created": "2017-08-14 08:56:28.767059+00:00", 
+            "author": "https://api.launchpad.net/1.0/~maciejkucia"
+        }, 
+        {
+            "content": "The problem was resolved for me in Ocata when following fix was introduced:\n Correct _ensure_console_log_for_instance implementation\n https://review.openstack.org/#/c/469012/\n", 
+            "date_created": "2017-08-18 12:24:33.934687+00:00", 
+            "author": "https://api.launchpad.net/1.0/~maciejkucia"
+        }
+    ]
+}

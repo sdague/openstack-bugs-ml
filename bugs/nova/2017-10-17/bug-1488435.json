@@ -1,0 +1,65 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-12-03 21:33:18.491245+00:00", 
+    "description": "I've deployed multinode devstack environment and tried to live-migrate volume-backed instance,\nlive-migration fails during copying of glance image to destination. When it happens nova leaves destination host in inconsistent state, and attempt to run live-migration again fails.\nHere is small investigation of a problem:\nnova creates instance directory on target compute node:\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L6152\nin second run it fail here, because dest node wasn't properly cleanedup:\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L6148\n\nAlso it's really strange, that when pre_live_migration on dest node fails, flow returns to source which decide is that really required to clean_up destination or not. It will be more clearer to wrap pre_live_migration with try/catch and rollback it before response to source node:\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L4962-L4984\n\nDevstack nova version:\nstack@node1:/opt/stack/nova$ git log -1\ncommit a71912ef463761187ef785118fbb0e51a5e91ba3\nMerge: ea4e95e 6b2d616\nAuthor: Jenkins <email address hidden>\nDate:   Mon Aug 24 16:07:32 2015 +0000\n\n\u00a0\u00a0\u00a0\u00a0Merge \"Fixed indentation\"\n\nController with compute node nova.conf:\nhttp://paste.openstack.org/show/426934/\n\nCompute only nova.conf:\nhttp://paste.openstack.org/show/426936/\n\n\n*UPDATE* \nroot cause of the problem:\nrollback_live_migration_at_destination \ndo several things: \none of them is deallocation nova-network resources over call of setup_networks_on_host with teardown=True. If this call fails no \nclean-up on driver side happens.", 
+    "tags": [
+        "live-migration"
+    ], 
+    "importance": "High", 
+    "heat": 10, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1488435", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1488435, 
+    "index": 1801, 
+    "openned": "2015-08-25 09:33:09.230203+00:00", 
+    "created": "2015-08-25 09:33:09.230203+00:00", 
+    "title": "Resources on destination node doesn't cleanup if live-migration fails", 
+    "comments": [
+        {
+            "content": "I've deployed multinode devstack environment and tried to live-migrate volume-backed instance,\nlive-migration fails during copying of glance image to destination. When it happens nova leaves destination host in inconsistent state, and attempt to run live-migration again fails.\nHere is small investigation of a problem:\nnova creates instance directory on target compute node:\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L6152\nin second run it fail here, because dest node wasn't properly cleanedup:\nhttps://github.com/openstack/nova/blob/master/nova/virt/libvirt/driver.py#L6148\n\nAlso it's really strange, that when pre_live_migration on dest node fails, flow returns to source which decide is that really required to clean_up destination or not. It will be more clearer to wrap pre_live_migration with try/catch and rollback it before response to source node:\nhttps://github.com/openstack/nova/blob/master/nova/compute/manager.py#L4962-L4984", 
+            "date_created": "2015-08-25 09:33:09.230203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tdurakov"
+        }, 
+        {
+            "content": "A few more details would be good:\n* details about the setup\n   * `git log -1` for devstack and nova\n   * the \"local.conf\" files (you can use http://paste.openstack.org/ for that)\n* steps to reproduce (or record a session with http://showterm.io/ )\n* anything catched in the logs?\n\nAnd right now it reads like this describes 3 issues:\n1) \"live-migration fails during copying of glance image to destination\"\n2) \"nova leaves destination host in inconsistent state\"\n3) \"attempt to run live-migration again fails\"\n\nThe upcoming patch sets for these issues could be easier reviewed if they can be easier distinguished. So it could make sense to split this bug report up to three more dedicated bug reports?", 
+            "date_created": "2015-08-25 09:51:44.770752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "@markus_z thank you for comment, I've updated bug description with details you've asked. About issues you decompose:\nit looks like we could  merge 2 and 3 as they are tightly coupled. I  would like to focus on then in this bug. The problem with glance image requires another bug. I'll file it and add as comment to current bug.", 
+            "date_created": "2015-08-25 10:59:03.557491+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tdurakov"
+        }, 
+        {
+            "content": "@markus_z found reason of glance error, there was incorrect [glance]api_servers provided on destination node. so only second and third are issues are valid.\n", 
+            "date_created": "2015-08-25 13:35:41.919243+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tdurakov"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/227897", 
+            "date_created": "2015-09-25 15:09:36.633210+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Isn't this duplicate of https://bugs.launchpad.net/nova/+bug/1284719 ?", 
+            "date_created": "2015-09-30 10:38:54.947027+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "@Pawel, no, root cause of the problem is different ", 
+            "date_created": "2015-09-30 12:32:21.053769+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tdurakov"
+        }, 
+        {
+            "content": "Raising importance to high because it leaves instance files on destination host so every other LM of the same VM to particular compute node will fail. Also this will be a blocker for https://review.openstack.org/#/c/228828/ (query and cancel LM) implementation if we agree on this spec which is very important from operators perspective.", 
+            "date_created": "2015-10-14 13:59:01.313238+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pawel-koniszewski"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/227897\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=450f9a063973cca65af76ef2deb4d833ce68572b\nSubmitter: Jenkins\nBranch:    master\n\ncommit 450f9a063973cca65af76ef2deb4d833ce68572b\nAuthor: Timofey Durakov <email address hidden>\nDate:   Fri Sep 25 18:06:50 2015 +0300\n\n    Attempt rollback live migrate at dest even if network dealloc fails\n    \n    When setup_networks_on_host fails during\n    rollback_live_migration_at_destination some resources are\n    left because driver.rollback_live_migration_at_destination\n    is not called.\n    \n    To give driver a chance to cleanup resources,the network\n    method is wrapped with a try/except block so we can\n    attempt the rollback via the virt driver.\n    \n    Closes-bug: #1488435\n    \n    Change-Id: I463fa28fe05cf44dc335fe02f6c54d9b0a20d1e4\n", 
+            "date_created": "2015-10-19 23:04:10.284676+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-12-03 21:33:15.619136+00:00"
+}

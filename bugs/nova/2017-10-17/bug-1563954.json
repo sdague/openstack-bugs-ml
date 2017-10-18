@@ -1,0 +1,234 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-23 16:29:38.021641+00:00", 
+    "description": "The nova metadata service uses the remote address to determine which metadata to retrieve. In order to work behind a proxy there is an option use_forwarded_for which will use the X-Forwarded-For header to determine the remote IP.\n\nIf this option is set then anyone who can access the metadata port can request metadata for any instance if they know the IP.\n\nThe user data is also exposed.\n\n$ echo 123456 > /tmp/data\n$ openstack server create --image CentOS7 --flavor fedora --user-data /tmp/data test\n<wait>\n$ curl -H 'X-Forwarded-For: 10.0.0.7' http://localhost:8775/latest/user-data/\n123456\n\nAt a minimum this side-effect isn't documented anywhere I could find.", 
+    "tags": [
+        "security"
+    ], 
+    "importance": "High", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1563954", 
+    "owner": "None", 
+    "id": 1563954, 
+    "index": 1905, 
+    "openned": "2016-03-30 16:03:17.377136+00:00", 
+    "created": "2016-03-30 16:03:17.377136+00:00", 
+    "title": "use_forwarded_for exposes metadata", 
+    "comments": [
+        {
+            "content": "The nova metadata service uses the remote address to determine which metadata to retrieve. In order to work behind a proxy there is an option use_forwarded_for which will use the X-Forwarded-For header to determine the remote IP.\n\nIf this option is set then anyone who can access the metadata port can request metadata for any instance if they know the IP.\n\nThe user data is also exposed.\n\n$ echo 123456 > /tmp/data\n$ openstack server create --image CentOS7 --flavor fedora --user-data /tmp/data test\n<wait>\n$ curl -H 'X-Forwarded-For: 10.0.0.7' http://localhost:8775/latest/user-data/\n123456\n\nAt a minimum this side-effect isn't documented anywhere I could find.", 
+            "date_created": "2016-03-30 16:03:17.377136+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rcritten"
+        }, 
+        {
+            "content": "Since this report concerns a possible security risk, an incomplete security advisory task has been added while the core security reviewers for the affected project or projects confirm the bug and discuss the scope of any vulnerability along with potential solutions.", 
+            "date_created": "2016-03-30 17:06:17.404754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "This seems like a real information leak.\n\n@nova-coresec please confirm/triage this bug report.", 
+            "date_created": "2016-04-04 15:08:02.334165+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "@nova-coresec, any progess ?", 
+            "date_created": "2016-06-27 16:18:46.012749+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "I haven't tested this, but this definitely sounds like a real problem to me. For example, the root password for the instance would be exposed if this works.\n\nThat said, I also can't think of an immediate fix which wouldn't require fairly significant architecture work. I need to think on that more.", 
+            "date_created": "2016-06-28 00:41:52.095419+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "Two immediate work arounds, neither of them great:\n\n * tell people to use config drive\n * stop honouring X-Forwarded-For (i.e. no proxies)\n\nI don't love either, but that's what I can think of.", 
+            "date_created": "2016-06-28 00:53:32.833599+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "There is a 3rd option which IMO is slightly less terrible but probably still an ops wart.\n\n* Add a config option that is the list of trusted IPs (ie proxy servers) and only use the X-Forwarded-For header if the actual peer address is in that list.  There is no sane default that will work for ops so if we go this way we'll need to call it out in the release notes / OSSA\n\nYes this moves the trust issue to the proxy server/load balancer squid[1] and f5 have trivial ways to do that.\n\n\n[1] http://www.squid-cache.org/Doc/config/forwarded_for/\n[2] https://devcentral.f5.com/questions/prevent-x-forwarded-for-spoofing", 
+            "date_created": "2016-06-28 02:03:52.031332+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "So in keystone, glance and some others I have been transitioning services over to using the http_proxy_to_wsgi middleware [1] which handles this in the paste pipeline. \n\nIf you deprecate the CONF.use_forwarded_for option in nova (as other services have) then you can insert by default the http_proxy_to_wsgi middleware in front of nova-api but not the metadata service which would mean X-Forwarded-For was ignored in metadata services.\n\nThis would obviously cause problems for anyone who is deploying the metadata service behind a load balancer (which i'm told is a real usecase) but that can be solved by adding the middleware to the metadata pipeline manually.\n\nThis doesn't help with the current problem but would give you a sensible default and a way forward.\n\n\n[1] http://git.openstack.org/cgit/openstack/oslo.middleware/tree/oslo_middleware/http_proxy_to_wsgi.py", 
+            "date_created": "2016-06-29 02:20:22.123105+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jamielennox"
+        }, 
+        {
+            "content": "It needs work, I'm running tox/tempest over it now but this is what I was thinking.\n\nI wonder if it's worth making trusted_forwarders understand network notation, I don't if the list will get long without it.\n\nIt wont cherry=pick cleanly to stable/* as the config options stuff has moved a lot of that code around but I think functionally the code will move pretty easily.\n\nJamie validated that the API auth stuff isn't affected.\n\nWe have some longer term work to do here but lets address the immediate problem.", 
+            "date_created": "2016-06-29 06:43:14.176746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Passes tox and tempest.  I'll drum up some reviews ....", 
+            "date_created": "2016-06-29 07:02:43.686510+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "So I thought X-Forwarded-For was a known weakness, all be it a badly documented one.\n\nThe configuration option used to say: \"Only enable this if you have a sanitizing proxy.\"\nhttps://github.com/openstack/nova/commit/ca1017988f98a246aa82c16f471791c7ea3eceec\n\nNow somehow that has morphed to \"a HTML santizing proxy\" which is totally miss-leading:\nhttps://github.com/openstack/nova/blob/master/nova/conf/api.py#L48\n\nWe do now have this shared secret checking feature, that the neutron proxy uses:\nhttps://github.com/openstack/nova/blob/2a0fce7a44d4050e112a6b987f24236627632d2c/nova/api/metadata/handler.py#L259\nI believe the proxy uses OVS (et al) protections to ensure only the correct VMs can talk to their proxy, then shared secret sent to the load balanced nova metadata api server, or something like that.\n\n@tonyb, I think the issue with your extra option is that with spoofing the source IP, or similar, it doesn't really give us any more security, unless I am missing something? In reality folks really should consider carefully about securing this channel, via some other means they can trust within the context of their network.\n\nWhat about beefing up the documentation, issuing a security advisory? I think we could also deprecate the proxy feature, telling users to configure a proxy to use the above shared secret system? Does that sound practical?\n\nFWIW, I know many users worry about instance traffic being routed into the control plane, so tend to only deploy with Configuration Drive.\n\nPS\nHaving access does also allow you to write passwords into the database, blocking the user generating a password, if you time it correctly, if my memory servers me correctly.", 
+            "date_created": "2016-06-29 08:08:11.091079+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "John is right, the new config option is just a feature-poor version of iptables.\n\nI think the right option here is up the documentation and work with the VMT on the OSSA to point people at best practice implementations of a correct proxy setup.\n\nA challenge is I can really only help squid/f5 config in front of the meta data server.", 
+            "date_created": "2016-06-29 08:39:30.215011+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "So for most folks, they will be using the shared secret from a neutron proxy, which I believe is much safer, as neutron secures the connections to the neutron proxy (I guess we should double check that).\n\nI wouldn't worry about limiting it to squid/f5 config. I thought with nova-network multi node it was more \"normal\" to run a metadata api node on very compute node, to avoid the need for a proxy. We can largely ignore the nova-network needs LB case, given the nova-network deprecation. Documenting a few examples of the kinds of thing you need to do seems like a good starting point. It gives folks a place to add to, if they want to share how they do it.", 
+            "date_created": "2016-06-29 09:27:09.424828+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "If the plan is to fix/improve documentation and config comments to mark this as clearly unsafe without additional mitigation, then the announcement process would be to have the OSSN editors draft and publish an OpenStack Security Note detailing the risks. I've subscribed the OSSP's core security reviewers to chime in on any concerns with that option.", 
+            "date_created": "2016-06-29 14:04:02.889475+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "I'm trying to understand the impact - what is the sensitivity of the data that goes into Nova metadata?\n\nThis is definitely an information leak, I'm just trying to understand how bad.  For example, can we advise not to put anything sensitive in Nova metadata or is that one of the core purposes?", 
+            "date_created": "2016-06-29 16:17:41.229181+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "The primary purpose of metadata is to configure an instance on first boot. It therefore includes networking setup information, root password (if any), ssh public keys, and so forth. It is also commonly extended to include cryptographic material required to register the instance with things like Active Directory.", 
+            "date_created": "2016-06-29 21:01:33.673635+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "OK so it sounds like this is a pretty serious issue.  Thoughts on OSSA vs OSSN?  At minimum we should do an embargoed OSSN so that stakeholders have a chance to implement our recommendations before public notification IMO.", 
+            "date_created": "2016-06-29 21:30:35.868735+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "OSSA would only be if there's an actual patch we're backporting to \"fix\" this in existing supported releases. OSSN is more for \"don't do this, or if you're going to then make sure you do it this way\" sorts of issues.\n\nIt sounds like the thinking here is that this is and always was a feature whose use is discouraged unless you're actually coupling it with some other (external to Nova) filtering solution, but the documentation warning about it has gotten too weak in recent releases. If so, that's more OSSN territory (an article warning that if you're going to turn on proxy support for your metadata server then make sure you have some means of controlling its availability) in addition to shoring up the existing warnings in Nova itself.", 
+            "date_created": "2016-06-29 21:49:04.258166+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Ahh ok, good point.  My only concern is if people ARE using it this way already they might be in for an unpleasant surprise.", 
+            "date_created": "2016-06-29 21:58:14.559690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~travis-mcpeak"
+        }, 
+        {
+            "content": "OSSN is new to me but I think that's the right solution here for everything that's released (including I suppose Newton)  I think it'll be Ocata before we \"fix\" this.", 
+            "date_created": "2016-06-30 01:42:52.065012+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "I'm switching the OSSA task status to opinion until a Security Note (OSSN) is defined.", 
+            "date_created": "2016-07-11 16:12:56.673029+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Agree this should be an OSSN.\n\nIt's been repeated plenty of times in the community that the metadata\nservice shouldn't be used for sensitive data but I've also seen multiple\nexamples of production services doing this.\n\nI share Travis' concern that this could be a major issue for some users. It\nwould be useful to know if there's a way an operator can assess if\nsensitive data is stored in the metadata service (I've seen SSH keys, LDAP\ncredentials etc before)\n\nThis seems like a good candidate for an embargoed release\n\n-Rob\n\n\nOn Wed, Aug 17, 2016 at 3:31 PM, Travis McPeak <email address hidden> wrote:\n\n> ** Changed in: ossn\n>      Assignee: (unassigned) => Travis McPeak (travis-mcpeak)\n>\n> --\n> You received this bug notification because you are a member of OSSG\n> CoreSec, which is subscribed to the bug report.\n> https://bugs.launchpad.net/bugs/1563954\n>\n> Title:\n>   use_forwarded_for exposes metadata\n>\n> Status in OpenStack Compute (nova):\n>   Confirmed\n> Status in OpenStack Security Advisory:\n>   Opinion\n> Status in OpenStack Security Notes:\n>   New\n>\n> Bug description:\n>   This issue is being treated as a potential security risk under\n>   embargo. Please do not make any public mention of embargoed (private)\n>   security vulnerabilities before their coordinated publication by the\n>   OpenStack Vulnerability Management Team in the form of an official\n>   OpenStack Security Advisory. This includes discussion of the bug or\n>   associated fixes in public forums such as mailing lists, code review\n>   systems and bug trackers. Please also avoid private disclosure to\n>   other individuals not already approved for access to this information,\n>   and provide this same reminder to those who are made aware of the\n>   issue prior to publication. All discussion should remain confined to\n>   this private bug report, and any proposed fixes should be added to the\n>   bug as attachments.\n>\n>   --\n>\n>   The nova metadata service uses the remote address to determine which\n>   metadata to retrieve. In order to work behind a proxy there is an\n>   option use_forwarded_for which will use the X-Forwarded-For header to\n>   determine the remote IP.\n>\n>   If this option is set then anyone who can access the metadata port can\n>   request metadata for any instance if they know the IP.\n>\n>   The user data is also exposed.\n>\n>   $ echo 123456 > /tmp/data\n>   $ openstack server create --image CentOS7 --flavor fedora --user-data\n> /tmp/data test\n>   <wait>\n>   $ curl -H 'X-Forwarded-For: 10.0.0.7' http://localhost:8775/latest/\n> user-data/\n>   123456\n>\n>   At a minimum this side-effect isn't documented anywhere I could find.\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1563954/+subscriptions\n>\n", 
+            "date_created": "2016-08-17 20:50:10+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Any progress on this security note ?", 
+            "date_created": "2016-09-22 04:05:25.668384+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tristan-cacqueray"
+        }, 
+        {
+            "content": "Hi Tristan,\n\nThe note is written and in internal review.\n\nRecently we've started using restricted google docs to review the content for embargoed OSSNs. The Gerrit process we normally use is great but I'm understanding a little bit more of the VMT's pain when it comes to doing things out-of-process. \n\nFor expediency here's the current draft, I'm happy to take comments here:\n\n\n\n\n\nNova metadata service should not be used for sensitive information\n---\n\n### Summary ###\nA recent security report has highlighted how users may be using the\nmetadata service to store inappropriate information.\n\nThe Nova metadata service should not be considered a secure repository\nof confidential information required by compute instances.\n\n### Affected Services / Software ###\nNova, <I'm guessing all releases with metadata service?>\n\n### Discussion ###\nA recent vulnerability report for Nova stated that the metadata service\nwill obey the `X-Forwarded-For` HTTP header. This header is often\nsupplied by proxies so that the end service can identify which IP the\nrequest originated from.\n\nThe Nova metadata service typically uses the source IP address of the\nincoming request to respond with the appropriate data for the compute\ninstance making the request. This is a sort of weak authentication,\ndesigned to ensure that metadata for one tenant isn't accidentally\nprovided to another.\n\nIf the request contains a `X-Forwarded-For` HTTP header then the\nmetadata service will use that for the source authentication rather than\nthe actual TCP/IP source.\n\nAn attacker with access to a compute instance in the cloud could send a\nrequest to the metadata service and include the `X-Forwarded-For` header\nin order to effectively spoof their source and cause the metadata\nservice to provide information that should not have been provided to\nthat instance.\n\nConsider the following:\nAlice creates a compute instance. She places the root password for that\ninstance in the metadata service. The instance is assigned a 10.1.2.2\nIP address. Alice believes that the root password for her instance is\nsafe within the metadata service.\n\nAlice retrieves metadata by running a command similar to:\n`curl http://169.254.169.254/latest/meta-data`\nthis will retrieve any metadata stored for Alice's compute instance,\nwhich has an IP address of 10.1.2.2\n\nBob has a compute instance with IP address 10.1.9.9 however Bob wants\naccess to the metadata for Alice's compute instance. If Bob runs a\nsimilar command to Alice, but includes a customer header as below, he\nwill get access to all of Alice's metadata, including the root password\nshe chose to store there:\n`curl -H \"X-Forwarded-For: 10.1.2.2\" http://169.254.169.254/latest/meta-data`\n\nThe Nova metadata service is a useful utility within OpenStack but\nclearly not intended as a strongly authenticated system for storing\nsensitive data such as private keys or passwords.\n\n### Recommended Actions ###\nThe metadata service should not be used to store sensitive information.\n\nThe IP forwarding issue is not a defect of itself, it exists to allow\nthe metadata service to provide IP addresses for instances that are\nbehind a proxy as may be the case in more complex deployments.\n\nCloud users who have a requirement to store sensitive information that\ncompute instances require for operation should instead look to the\nConfig drive to provide this service. It's operation is much more\ntightly bound to individual compute instances.\n\n### Contacts / References ###\nAuthor: Robert Clark, IBM\nThis OSSN : <link to OSSN on wiki>\nOriginal LaunchPad Bug : https://bugs.launchpad.net/nova/+bug/1563954\nMailing List : [Security] tag on <email address hidden>\nOpenStack Security Group : https://launchpad.net/~openstack-ossg\nConfig Drive : http://docs.openstack.org/user-guide/cli-config-drive.html\n", 
+            "date_created": "2016-09-22 07:03:27.220871+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "@tristan-cacqueray I've made a couple of small tweaks and the OSSP cores have reviewed. We need the VMT to review and a core from Nova before we publish.", 
+            "date_created": "2016-09-28 12:24:36.918019+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Hi VMT / Nova Cores,\n\nCan you please provide review on Roberts note, or give it your blessing to get published?\n\nLuke", 
+            "date_created": "2016-10-11 13:04:43.086041+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "The draft content looks reasonable. Could we see the final draft? ", 
+            "date_created": "2016-10-11 15:51:49.346397+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "Hi Grant, I believe its #23 ", 
+            "date_created": "2016-10-11 16:17:12.787506+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "I mean with the blanks filled in e.g. \n\n### Affected Services / Software ###\nNova, <I'm guessing all releases with metadata service?>", 
+            "date_created": "2016-10-11 16:55:32.834113+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gmurphy"
+        }, 
+        {
+            "content": "For the record I went back through the eol tags to diablo and they're all vulnerable.\n\nSo I think we can say Nova <All versions>\n\nThe OSSN look good to me but it's be nice to see some of the mitigations mentioned\n1. squid/f5 config\n2. running a metadata server on each compute", 
+            "date_created": "2016-10-12 04:54:33.686333+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "If you have a google-linked email address (i.e you can view google docs with it) reply here and I'll add you to the working draft.", 
+            "date_created": "2016-10-13 17:37:20.038731+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Thanks Robert.   tony.breeds@{gmail,bakeyournoodle}.com should do that thing", 
+            "date_created": "2016-10-13 23:09:18.999082+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "Nova metadata service should not be used for sensitive information\n---\n\n\n### Summary ###\nA recent security report has highlighted how users may be using the\nmetadata service to store security sensitive information.\n\n\nThe Nova metadata service should not be considered a secure repository\nof confidential information required by compute instances.\n\n\n### Affected Services / Software ###\nNova, All Versions\n\n\n### Discussion ###\nA recent vulnerability report for Nova stated that the metadata service\nwill obey the `X-Forwarded-For` HTTP header. This header is often\nsupplied by proxies so that the end service can identify which IP the\nrequest originated from.\n\n\nThe Nova metadata service typically uses the source IP address of the\nincoming request to respond with the appropriate data for the compute\ninstance making the request. This is a sort of weak authentication,\ndesigned to ensure that metadata for one tenant isn't accidentally\nprovided to another.\n\n\nIf the request contains a `X-Forwarded-For` HTTP header then the\nmetadata service will use that for the source authentication rather than\nthe actual TCP/IP source.\n\n\nAn attacker with access to a compute instance in the cloud could send a\nrequest to the metadata service and include the `X-Forwarded-For` header\nin order to effectively spoof their source and cause the metadata\nservice to provide information that should not have been provided to\nthat instance.\n\n\nConsider the following:\nAlice creates a compute instance. She places the root password for that\ninstance in the metadata service. The instance is assigned a 10.1.2.2\nIP address. Alice believes that the root password for her instance is\nsafe within the metadata service.\n\n\nAlice retrieves metadata by running a command similar to:\n`curl http://169.254.169.254/latest/meta-data`\nthis will retrieve any metadata stored for Alice's compute instance,\nwhich has an IP address of 10.1.2.2\n\n\nBob has a compute instance with IP address 10.1.9.9 however Bob wants\naccess to the metadata for Alice's compute instance. If Bob runs a\nsimilar command to Alice, but includes a customer header as below, he\nwill get access to all of Alice's metadata, including the root password\nshe chose to store there:\n`curl -H \"X-Forwarded-For: 10.1.2.2\" http://169.254.169.254/latest/meta-data`\n\n\nThe Nova metadata service is a useful utility within OpenStack but\nclearly not intended as a strongly authenticated system for storing\nsensitive data such as private keys or passwords.\n\n\n### Recommended Actions ###\nThe metadata service should not be used to store sensitive information.\n\n\nThe IP forwarding issue is not a defect of itself, it exists to allow\nthe metadata service to provide IP addresses for instances that are\nbehind a proxy as may be the case in more complex deployments.\n\n\nCloud users who have a requirement to store sensitive information that\ncompute instances require for operation should instead look to the\nConfig drive to provide this service. It's operation is much more\ntightly bound to individual compute instances.\n\n\nWhere use of config drive is not an option, operators should consider\nother mitigations such as placing a proxy in front of the metadata service\nwhich can filter out these sorts of malicious activities.\n\n\n### Contacts / References ###\nAuthor: Robert Clark, IBM\nThis OSSN : <link to OSSN on wiki>\nOriginal LaunchPad Bug : https://bugs.launchpad.net/nova/+bug/1563954\nMailing List : [Security] tag on <email address hidden>\nOpenStack Security Group : https://launchpad.net/~openstack-ossg\nConfig Drive : http://docs.openstack.org/user-guide/cli-config-drive.html\n", 
+            "date_created": "2016-11-10 12:10:58.669121+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "@tony if you want to provide alternative language for the last paragraph (mitigations) then I'd be happy to swap it out. ", 
+            "date_created": "2016-11-10 12:11:29.856855+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Robert: Did you mean to say \"custom header\" instead of \"customer header\"? Also, in the second-to-last paragraph you used \"It's\" (a conjunction) where you wanted \"Its\" (possessive, so no apostrophe).\n\nThose minor editorial nits aside, it reads well. Thanks for writing this up!", 
+            "date_created": "2016-11-10 14:29:49.006261+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Thanks Jeremy, I'll update the draft on gdocs, I'll wait to hear back from Tony for a +1 on the content.\n", 
+            "date_created": "2016-11-10 14:47:54.176194+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "We need a +1 from a Nova core.\n", 
+            "date_created": "2016-12-01 17:08:56.664154+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Very sorry.  The text in Comment 32 LGTM.  For the record I'm nova-coresec but not nova-core", 
+            "date_created": "2016-12-01 22:31:41.837947+00:00", 
+            "author": "https://api.launchpad.net/1.0/~o-tony"
+        }, 
+        {
+            "content": "I will put this note out to downstream steakholders this evening, unless any objections?", 
+            "date_created": "2016-12-08 07:57:10.865422+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "No objection from me, but please get up with me or someone else from the VMT first for an updated list (we've had at least one recent addition).", 
+            "date_created": "2016-12-08 14:51:59.172249+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "Note sent to downstream stakeholders. Will release to public 7 days from now (19/12).", 
+            "date_created": "2016-12-12 09:34:34.032904+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "OSSN sent to public lists", 
+            "date_created": "2016-12-19 09:29:23.883677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lhinds"
+        }, 
+        {
+            "content": "[that was me correcting the bug type/tags a moment ago, I just forgot I was still logged into a test account instead of this one]", 
+            "date_created": "2016-12-19 15:10:04.814891+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }
+    ]
+}

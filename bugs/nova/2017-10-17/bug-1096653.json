@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-04-04 11:02:24.647755+00:00", 
+    "description": "Caught in an unrelated change set in the unit tests - http://logs.openstack.org/18147/4/check/gate-nova-python26/12438/testr_results.html\n\nIt looks like there is another lazy loaded dependent object which is now failing due to the no-db-compute changes.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1096653", 
+    "owner": "https://api.launchpad.net/1.0/~cbehrens", 
+    "id": 1096653, 
+    "index": 919, 
+    "openned": "2013-01-06 18:27:35.614337+00:00", 
+    "created": "2013-01-06 18:27:35.614337+00:00", 
+    "title": "detached instance error on some unit tests", 
+    "comments": [
+        {
+            "content": "Caught in an unrelated change set in the unit tests - http://logs.openstack.org/18147/4/check/gate-nova-python26/12438/testr_results.html\n\nIt looks like there is another lazy loaded dependent object which is now failing due to the no-db-compute changes.", 
+            "date_created": "2013-01-06 18:27:35.614337+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Notes so far:\n\nActually, it's failing on the \"deleted\" column, which is neither lazy-loaded nor specific to Instance.\n\nAlso, I can reproduce it (seemingly) all the time on my fast machine, and (seemingly) never on a slow one, and in both cases, for full runs and single tests.\n\nIt's failing to convert the instance on the outbound side of the RPC call from nova-api, which means that the code making the call is passing some half-baked instance or something, and isn't related to no-db-compute changes, but rather no-db-messaging ones which have been in the tree for quite a while.\n\nI tend to think this is either some race that just got uncovered, or the result of something else changing...", 
+            "date_created": "2013-01-06 23:23:01.197760+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Correction, it's the deleted property of the Instance.metadata (InstanceMetadata) object, which _is_ lazy-loaded from Instance. It looks to me like the problem arises in the instance that is returned from self.update() during rebuild, which is db.instance_update_and_get_original().", 
+            "date_created": "2013-01-06 23:52:37.891903+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "The following tweak fixes it for me, and I think it's related to the same issue as noted by comstud above, where sqlalchemy fails to refresh the instance['metadata'] after the update. However, I don't understand why the same session.refresh() doesn't work for me, so that will have to wait for tomorrow and someone who understands it more than me.\n\ndiff --git a/nova/db/sqlalchemy/api.py b/nova/db/sqlalchemy/api.py\nindex dce92ba..a0a73e8 100644\n--- a/nova/db/sqlalchemy/api.py\n+++ b/nova/db/sqlalchemy/api.py\n@@ -1897,6 +1897,13 @@ def _instance_update(context, instance_uuid, values, copy\n             # instance_type.\n             session.refresh(instance_ref['instance_type'])\n \n+        if metadata is not None:\n+            # Why can't I do this:\n+            #   session.refresh(instance_ref['metadata'])\n+            # ?\n+            instance_ref['metadata'] = _instance_metadata_get_query(\n+                context, instance_ref['uuid'], session=session).all()\n+\n     return (old_instance_ref, instance_ref)\n", 
+            "date_created": "2013-01-07 00:38:22.316793+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Good question on why refresh doesn't work.  sqlalchemy may think everything is up to date, perhaps.\n\nI don't really understand why InstanceMetadata is trying to be lazy-loaded... unless sqlalchemy thinks its out of date for some reason.   But if the above patch fixes it, I'm guessing the below patch will as well.  I like this below patch better as it doesn't add any queries.  Give this a try?\n\ndiff --git a/nova/db/sqlalchemy/api.py b/nova/db/sqlalchemy/api.py\nindex dce92ba..de5003d 100644\n--- a/nova/db/sqlalchemy/api.py\n+++ b/nova/db/sqlalchemy/api.py\n@@ -1877,13 +1877,13 @@ def _instance_update(context, instance_uuid, values, cop\n \n         metadata = values.get('metadata')\n         if metadata is not None:\n-            instance_metadata_update(context, instance_ref['uuid'],\n-                                     values.pop('metadata'), True,\n-                                     session=session)\n+            md_models = instance_metadata_update(context,\n+                    instance_ref['uuid'], values.pop('metadata'), True,\n+                    session=session)\n \n         system_metadata = values.get('system_metadata')\n         if system_metadata is not None:\n-            instance_system_metadata_update(\n+            sys_md_models = instance_system_metadata_update(\n                  context, instance_ref['uuid'], values.pop('system_metadata'),\n                  delete=True, session=session)\n \n@@ -1896,6 +1896,10 @@ def _instance_update(context, instance_uuid, values, copy\n             # but the rest of the model has the data from the old\n             # instance_type.\n             session.refresh(instance_ref['instance_type'])\n+        if metadata is not None:\n+            instance_ref['metadata'] = md_models\n+        if system_metadata is not None:\n+            instance_ref['system_metadata'] = sys_md_models\n \n     return (old_instance_ref, instance_ref)\n", 
+            "date_created": "2013-01-07 18:39:02.010668+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cbehrens"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/19135", 
+            "date_created": "2013-01-07 19:32:43.482669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/19135\nCommitted: http://github.com/openstack/nova/commit/321a8396ca6e0a6896658e9ceb724f1ba796ee40\nSubmitter: Jenkins\nBranch:    master\n\ncommit 321a8396ca6e0a6896658e9ceb724f1ba796ee40\nAuthor: Dan Smith <email address hidden>\nDate:   Mon Jan 7 14:17:07 2013 -0500\n\n    Refresh instance metadata in-place\n    \n    For some reason that isn't entirely clear to me, the attempt to update\n    instance metadata in _instance_update() results in a stale sqlalchemy\n    object state. This is a similar issue to the one fixed in commit:\n    \n      9fdf7552779d518af9cda4e366bf81fddb0cb6f2\n    \n    For some reason, session.refresh() doesn't work for instance['metadata']\n    in the same way, which also raises suspicion that perhaps it's not the\n    right fix for system_metadata either.\n    \n    This patch adds an _instance_update_metadata_in_place() method that\n    updates the actual instance['metadata'] list _and_ the database,\n    mirroring the high-level behavior of instance_metadata_update(), but\n    without requiring us to refresh or re-fetch the metadata or the\n    whole instance (as a workaround).\n    \n    Fixes bug 1096653\n    \n    Change-Id: Ic5a205631b1b7dce3744960ed4201dcc7b4b2ae6\n", 
+            "date_created": "2013-01-08 21:02:21.712191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/19263\nCommitted: http://github.com/openstack/nova/commit/35328ddd8fd1aadf0800ae282a7654c106bc52f3\nSubmitter: Jenkins\nBranch:    master\n\ncommit 35328ddd8fd1aadf0800ae282a7654c106bc52f3\nAuthor: Giampaolo Lauria <email address hidden>\nDate:   Tue Jan 8 17:43:51 2013 -0500\n\n    Added sample tests to FlavorSwap API.\n    \n    Partially implements blueprint nova-api-samples\n    Fixes bug 1096653\n    \n    Change-Id: I9a6ca8a023bf0f3404b3a9af635dd29a7a584aa3\n", 
+            "date_created": "2013-01-12 09:54:35.268495+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-01-09 10:20:48.365572+00:00"
+}

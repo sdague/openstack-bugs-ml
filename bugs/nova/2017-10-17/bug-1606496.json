@@ -1,0 +1,93 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2016-11-10 02:06:04.357723+00:00", 
+    "description": "Description\n===========\n\nIn a heterogeneous cloud with both libvirt and ironic compute nodes instance affinity filters like DifferentHostFilter or SameHostFilter do not filter hosts out when scheduling a subsequent instance.\n\nSteps to reproduce\n==================\n\nMake sure you have at least two libvirt compute nodes and one ironic node.\n\nMake sure DifferentHostFilter and SameHostFilter are configured as nova-scheduler filters in nova.conf, filters scheduler is used.\n\n1. Boot a libvirt instance A.\n2. Check the host name of the compute node instance A is running on (nova show from an admin user).\n3. Boot a libvirt instance B passing a different_host=$A.uuid hint for nova-scheduler.\n4. Check the host name of the compute node instance B is running on (nova show from an admin user).\n\nExpected result\n===============\n\nInstances A and B are running on two different compute nodes.\n\nActual result\n=============\n\nInstances A and B are running on the same compute node.\n\nnova-scheduler logs shows that DifferentHost filter was run, but did not filter out one of the hosts:  Filter DifferentHostFilter returned 2 host(s) get_filtered_objects\n\nEnvironment\n===========\n\nOpenStack Mitaka\n\n2 libvirt compute nodes\n1 ironic compute node\nFiltersScheduler is used\nDifferentHostFilter and SameHostFilter filters are enabled in nova.conf\n\nRoot cause analysis\n===================\n\nDebugging shown that IronicHostManager is configured to be used by nova-scheduler instead of the default host manager, when Ironic compute are deployed in the same cloud together with libvirt compute nodes.\n\nIronicHostManager overrides the _get_instance_info() method and unconditionally returns an empty instance dict, even if this method is called for non-ironic computes of the same cloud. DifferentHostFilter and similar filters later use this info to find an intersection of a set of instances running on a libvirt compute node (currently, always {}) and a set of instances uuids passed as a hint for nova-scheduler, thus compute nodes are never filtered out and the hint is effectively ignored.", 
+    "tags": [
+        "in-stable-mitaka", 
+        "ironic", 
+        "scheduler", 
+        "tempest"
+    ], 
+    "importance": "Medium", 
+    "heat": 20, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1606496", 
+    "owner": "https://api.launchpad.net/1.0/~rpodolyaka", 
+    "id": 1606496, 
+    "index": 4589, 
+    "openned": "2016-07-26 09:33:46.679066+00:00", 
+    "created": "2016-07-26 09:33:46.679066+00:00", 
+    "title": "Instance affinity filters do not work in a heterogeneous cloud with Ironic computes ", 
+    "comments": [
+        {
+            "content": "Description\n===========\n\nIn a heterogeneous cloud with both libvirt and ironic compute nodes instance affinity filters like DifferentHostFilter or SameHostFilter do not filter hosts out when scheduling a subsequent instance.\n\n\nSteps to reproduce\n==================\n\nMake sure you have at least two libvirt compute nodes and one ironic node.\n\nMake sure DifferentHostFilter and SameHostFilter are configured as nova-scheduler filters in nova.conf, filters scheduler is used.\n\n1. Boot a libvirt instance A.\n2. Check the host name of the compute node instance A is running on (nova show from an admin user).\n3. Boot a libvirt instance B passing a different_host=$A.uuid hint for nova-scheduler.\n4. Check the host name of the compute node instance B is running on (nova show from an admin user).\n\n\nExpected result\n===============\n\nInstances A and B are running on two different compute nodes. \n\n\nActual result\n=============\n\nInstances A and B are running on the same compute node.\n\nnova-scheduler logs shows that DifferentHost filter was run, but did not filter out one of the hosts:  Filter DifferentHostFilter returned 2 host(s) get_filtered_objects \n\n\nEnvironment\n===========\n\nOpenStack Mitaka\n\n2 libvirt compute nodes\n1 ironic compute node\nFiltersScheduler is used\nDifferentHostFilter and SameHostFilter filters are enabled in nova.conf\n\n\nRoot cause analysis\n===================\n\nDebugging shown that IronicHostManager is configured to be used by nova-scheduler instead of the default host manager, when Ironic compute are deployed in the same cloud together with libvirt compute nodes.\n\nIronicHostManager overrides the _get_instance_info() method and unconditionally returns an empty instance dict, even if this method is called for non-ironic computes of the same cloud. DifferentHostFilter and similar filters later use this info to find ab intersection of a set of instances running on a libvirt compute node (currently, always {}) and a set of instances uuids passed as a hint for nova-scheduler, thus compute nodes are never filtered out and the hint is effectively ignored.", 
+            "date_created": "2016-07-26 09:33:46.679066+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Partial fix on review: https://review.openstack.org/#/c/346966", 
+            "date_created": "2016-07-27 14:24:00.946073+00:00", 
+            "author": "https://api.launchpad.net/1.0/~rpodolyaka"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/347948", 
+            "date_created": "2016-07-27 16:53:45.081713+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I've described the same bug in MOS project because we need to make a backport:\nhttps://bugs.launchpad.net/mos/+bug/1618406", 
+            "date_created": "2016-08-30 10:37:33.900392+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tnurlygayanov"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/346966\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=af218caba4f532c7d182071ab4304d49d02de08f\nSubmitter: Jenkins\nBranch:    master\n\ncommit af218caba4f532c7d182071ab4304d49d02de08f\nAuthor: Roman Podoliaka <email address hidden>\nDate:   Mon Jul 25 20:35:29 2016 +0300\n\n    ironic_host_manager: fix population of instances info on schedule\n    \n    IronicHostManager currently overrides the _get_instance_info() method\n    of the base class and unconditionally returns an empty dict of\n    instances for a given compute node.\n    \n    The problem with that is that in a heterogeneous cloud with both\n    libvirt and ironic compute nodes this will always return {} for the\n    former too, which is incorrect and will effectively break instance\n    affinity filters like DifferentHostFilter or SameHostFilter, that\n    check set intersections of instances running on a particular host and\n    the ones passed as a hint for nova-scheduler in a boot request.\n    \n    IronicHostManager should use the method implementation of the base\n    class for non-ironic compute nodes.\n    \n    This is a partial fix which only modifies _get_instance_info() called\n    down the select_destinations() stack. A following change will modify\n    _init_instance_info() that pre-populates node instances info on start\n    of a nova-scheduler process.\n    \n    Partial-Bug: #1606496\n    \n    Change-Id: Ib1ddb44d71f7b085512c1f3fc0544f7b00c754fe\n", 
+            "date_created": "2016-09-08 11:06:02.964345+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/347948\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=cc64a45d98d7576a78a853cc3da8109c31f4b75d\nSubmitter: Jenkins\nBranch:    master\n\ncommit cc64a45d98d7576a78a853cc3da8109c31f4b75d\nAuthor: Roman Podoliaka <email address hidden>\nDate:   Wed Jul 27 19:46:16 2016 +0300\n\n    ironic_host_manager: fix population of instances info on start\n    \n    IronicHostManager currently overrides the _init_instance_info()\n    method of the base class and unconditionally skips population of\n    instances information for all compute nodes, even if they are not\n    Ironic ones.\n    \n    If there are compute nodes with the hypervisor_type different from\n    Ironic in the same cloud. the instances info will be missing in\n    nova-scheduler (if IronicHostManager is configured as a host manager\n    impl in nova.conf), which will effectively break instance affinity\n    filters like DifferentHostFilter or SameHostFilter, that check set\n    intersections of instances running on a particular host and the ones\n    passed as a hint for nova-scheduler in a boot request.\n    \n    IronicHostManager should use the method implementation of the base\n    class for non-ironic compute nodes.\n    \n    Ib1ddb44d71f7b085512c1f3fc0544f7b00c754fe fixed the problem with\n    scheduling, this change is needed to make sure we also populate the\n    instances info on start of nova-scheduler.\n    \n    Closes-Bug: #1606496\n    \n    Co-Authored-By: Timofei Durakov <email address hidden>\n    \n    Change-Id: I9d8d2dc99773df4097c178d924d182a0d1971bcc\n", 
+            "date_created": "2016-09-08 12:09:52.800365+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/367402", 
+            "date_created": "2016-09-08 14:04:52.853896+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: stable/mitaka\nReview: https://review.openstack.org/367403", 
+            "date_created": "2016-09-08 14:05:03.248273+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/367402\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=6f1151378b24f134bd7bf41fcfa0e4c65aca86e7\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 6f1151378b24f134bd7bf41fcfa0e4c65aca86e7\nAuthor: Roman Podoliaka <email address hidden>\nDate:   Mon Jul 25 20:35:29 2016 +0300\n\n    ironic_host_manager: fix population of instances info on schedule\n    \n    IronicHostManager currently overrides the _get_instance_info() method\n    of the base class and unconditionally returns an empty dict of\n    instances for a given compute node.\n    \n    The problem with that is that in a heterogeneous cloud with both\n    libvirt and ironic compute nodes this will always return {} for the\n    former too, which is incorrect and will effectively break instance\n    affinity filters like DifferentHostFilter or SameHostFilter, that\n    check set intersections of instances running on a particular host and\n    the ones passed as a hint for nova-scheduler in a boot request.\n    \n    IronicHostManager should use the method implementation of the base\n    class for non-ironic compute nodes.\n    \n    This is a partial fix which only modifies _get_instance_info() called\n    down the select_destinations() stack. A following change will modify\n    _init_instance_info() that pre-populates node instances info on start\n    of a nova-scheduler process.\n    \n    Partial-Bug: #1606496\n    \n    (cherry-picked from af218caba4f532c7d182071ab4304d49d02de08f)\n    Change-Id: Ib1ddb44d71f7b085512c1f3fc0544f7b00c754fe\n", 
+            "date_created": "2016-09-19 07:06:02.799857+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/367403\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=13513e6232366a82a8a81c01f9ec8210f6da3a30\nSubmitter: Jenkins\nBranch:    stable/mitaka\n\ncommit 13513e6232366a82a8a81c01f9ec8210f6da3a30\nAuthor: Roman Podoliaka <email address hidden>\nDate:   Wed Jul 27 19:46:16 2016 +0300\n\n    ironic_host_manager: fix population of instances info on start\n    \n    IronicHostManager currently overrides the _init_instance_info()\n    method of the base class and unconditionally skips population of\n    instances information for all compute nodes, even if they are not\n    Ironic ones.\n    \n    If there are compute nodes with the hypervisor_type different from\n    Ironic in the same cloud. the instances info will be missing in\n    nova-scheduler (if IronicHostManager is configured as a host manager\n    impl in nova.conf), which will effectively break instance affinity\n    filters like DifferentHostFilter or SameHostFilter, that check set\n    intersections of instances running on a particular host and the ones\n    passed as a hint for nova-scheduler in a boot request.\n    \n    IronicHostManager should use the method implementation of the base\n    class for non-ironic compute nodes.\n    \n    Ib1ddb44d71f7b085512c1f3fc0544f7b00c754fe fixed the problem with\n    scheduling, this change is needed to make sure we also populate the\n    instances info on start of nova-scheduler.\n    \n    Closes-Bug: #1606496\n    \n    Co-Authored-By: Timofei Durakov <email address hidden>\n    \n    (cherry-picked from cc64a45d98d7576a78a853cc3da8109c31f4b75d)\n    Change-Id: I9d8d2dc99773df4097c178d924d182a0d1971bcc\n", 
+            "date_created": "2016-09-19 07:18:27.385391+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0rc1 release candidate.", 
+            "date_created": "2016-09-26 20:14:56.442962+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-10-10 13:19:44.797961+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 14.0.0.0rc1 release candidate.", 
+            "date_created": "2016-10-18 17:02:33.354652+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.1.2 release.", 
+            "date_created": "2016-11-10 02:06:03.576381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-09-08 12:09:50.270988+00:00"
+}

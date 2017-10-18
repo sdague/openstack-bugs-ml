@@ -1,0 +1,65 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2015-05-22 17:01:31.119952+00:00", 
+    "description": "I am running a scale environment where I needed to exceed the port quota count to unlimited.\n\nThe neutron.conf documentation for the quota_port parameter states the following:\n\n# Number of ports allowed per tenant. A negative value means unlimited.\n\nLooking at this, I had set the value to -2 as:\n\nquota_port = -2\n\nAfter this, the nova boot started failing with Error code 500.\n\nThe error stack is the following:\n\n TRACE nova.api.openstack   File \"/usr/lib/python2.7/site-packages/nova/api/openstack/compute/servers.py\", line 1016, in create\n TRACE nova.api.openstack     server = self._view_builder.create(req, instances[0])\n TRACE nova.api.openstack IndexError: list index out of range\n TRACE nova.api.openstack\n\nThe error is seen because in the /nova/network/neutronv2/api.py - validate_networks() method, the quota check is very strict in terms for the unlimited check:\n\n            if quotas.get('port', -1) == -1:\n                # Unlimited Port Quota\n                return num_instances\n            else:\n                free_ports = quotas.get('port') - len(ports)\n                ports_needed = ports_needed_per_instance * num_instances\n                if free_ports >= ports_needed:\n                    return num_instances\n                else:\n                    return free_ports // ports_needed_per_instance\n\nThe above code would return free_ports - and that value is negative.\n\nFiling this bug to change the above check to something like:\n\n            if quotas.get('port', -1) <= -1:\n                # Unlimited Port Quota\n                return num_instances\n\nThis will allow nova to react correctly with the documentation in neutron as well.", 
+    "tags": [
+        "network"
+    ], 
+    "importance": "Low", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1438738", 
+    "owner": "https://api.launchpad.net/1.0/~sbiswas7", 
+    "id": 1438738, 
+    "index": 1662, 
+    "openned": "2015-03-31 14:50:28.333110+00:00", 
+    "created": "2015-03-31 14:50:28.333110+00:00", 
+    "title": "Nova boot fails with Error Code 500,  if quota_port is < -1 in neutron.conf", 
+    "comments": [
+        {
+            "content": "I am running a scale environment where I needed to exceed the port quota count to unlimited.\n\nThe neutron.conf documentation for the quota_port parameter states the following:\n\n# Number of ports allowed per tenant. A negative value means unlimited.\n\nLooking at this, I had set the value to -2 as:\n\nquota_port = -2\n\nAfter this, the nova boot started failing with Error code 500.\n\nThe error stack is the following:\n\n TRACE nova.api.openstack   File \"/usr/lib/python2.7/site-packages/nova/api/openstack/compute/servers.py\", line 1016, in create\n TRACE nova.api.openstack     server = self._view_builder.create(req, instances[0])\n TRACE nova.api.openstack IndexError: list index out of range\n TRACE nova.api.openstack\n\nThe error is seen because in the /nova/network/neutronv2/api.py - validate_networks() method, the quota check is very strict in terms for the unlimited check:\n\n            if quotas.get('port', -1) == -1:\n                # Unlimited Port Quota\n                return num_instances\n            else:\n                free_ports = quotas.get('port') - len(ports)\n                ports_needed = ports_needed_per_instance * num_instances\n                if free_ports >= ports_needed:\n                    return num_instances\n                else:\n                    return free_ports // ports_needed_per_instance\n\nThe above code would return free_ports - and that value is negative.\n\nFiling this bug to change the above check to something like:\n\n            if quotas.get('port', -1) <= -1:\n                # Unlimited Port Quota\n                return num_instances\n\nThis will allow nova to react correctly with the documentation in neutron as well.", 
+            "date_created": "2015-03-31 14:50:28.333110+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sbiswas7"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/169605", 
+            "date_created": "2015-04-01 03:52:30.468659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I do not believe this is an issue that should be fixed in Nova. -1 has a well understood 'unlimitted' value in openstack, and neutron definitely shouldn't ever return a -2 over the network. Any data scrubbing here should be on the neutron side.", 
+            "date_created": "2015-04-01 17:07:52.085752+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "I spoke with Sean and Dan about this bug in openstack-nova, and agreed to fix it before realizing the original submitter assigned the bug to himself for neutron as well.\nI am not going to push the patch to gerrit because this would be unfair to the current assignee.\n\nThe patch is attached here, so that the assignee can compare it with his own, or perhaps just push it to gerrit if he feels it's a decent one.\n", 
+            "date_created": "2015-04-01 22:58:58.152947+00:00", 
+            "author": "https://api.launchpad.net/1.0/~salvatore-orlando"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/170061", 
+            "date_created": "2015-04-02 09:47:53.584223+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I thought I'd fix this in neutron today and assigned this to my name before going off to bed. I didn't quite realize that you were also looking into it. The patch above looks pretty good. I just added a couple of more lines of checks with respect to network/subnet negative quotas. I pushed the patch in and marked Salvatore Orlando as the co-author. Please let me know if it's not the right way - I'd be absolutely OK with abandoning my review :)", 
+            "date_created": "2015-04-02 09:57:53.706814+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sbiswas7"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/170061\nCommitted: https://git.openstack.org/cgit/openstack/neutron/commit/?id=2041ead12d1bf4c2b03fd980fd2a6ce5f653dcfb\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2041ead12d1bf4c2b03fd980fd2a6ce5f653dcfb\nAuthor: Sudipta Biswas <email address hidden>\nDate:   Thu Apr 2 15:06:35 2015 +0530\n\n    Treat all negative quota values as -1\n    \n    Currently if the quota_port, quota_network, quota_subnet values\n    in the neutron.conf are set to a negative value not equal to -1,\n    neutron reports the values as is to consumers like Nova.\n    Nova treats -1 as the infinite quota indicator and doesn't expect\n    neutron to return any other non-negative value.\n    \n    The fix allows the flexibility of having any negative number for the\n    quota parameters in the neutron.conf file and allows the nova boot\n    to succeed subsequently. The fix would report any negative value\n    as -1 for port, subnet and network.\n    \n    Change-Id: Ib9a7136b0bfd01bdf04a5d0937854590029b1010\n    Closes-Bug: 1438738\n    Co-Authored-By: Salvatore Orlando <email address hidden>\n", 
+            "date_created": "2015-04-02 14:53:36.089455+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Joe Gordon (<email address hidden>) on branch: master\nReview: https://review.openstack.org/169605\nReason: This review is > 4 weeks without comment and currently blocked by a core reviewer with a -2. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and contacting the reviewer with the -2 on this review to ensure you address their concerns.", 
+            "date_created": "2015-05-13 17:07:51.875566+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: neutron-pecan\nReview: https://review.openstack.org/185072", 
+            "date_created": "2015-05-22 17:01:29.547485+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2015-04-01 17:06:51.346131+00:00"
+}

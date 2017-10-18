@@ -1,0 +1,91 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2016-09-22 05:50:09.513525+00:00", 
+    "description": "I'm using a nova built from stable/kilo and trying to implement instance IO resource quotas for disk as per https://wiki.openstack.org/wiki/InstanceResourceQuota#IO.\n\nWhile this works when building an instance from ephemeral storage, it does not when booting from a bootable cinder volume. I realize I can implement this using cinder quota but I want to apply the same settings in nova regardless of the underlying disk.\n\nSteps to produce:\n\nnova flavor-create iolimited 1 8192 64 4\nnova flavor-key 1 set quota:disk_read_iops_sec=10000\nBoot an instance using the above flavor\nGuest XML is missing <iotune> entries\n\nExpected result:\n<snip>\n      <target dev='vda' bus='virtio'/>\n      <iotune>\n        <read_iops_sec>10000</read_iops_sec>\n      </iotune>\n</snip>\n\nThis relates somewhat to https://bugs.launchpad.net/nova/+bug/1405367 but that case is purely hit when booting from RBD-backed ephemeral storage. \n\nEssentially, for non-ephemeral disks, a call is made to _get_volume_config() which creates a generic LibvirtConfigGuestDisk object but no further processing is done to add extra-specs (if any).\n\nI've essentially copied the disk_qos() method from the associated code review (https://review.openstack.org/#/c/143939/) to implement my own patch (attached).", 
+    "tags": [
+        "libvirt", 
+        "quotas"
+    ], 
+    "importance": "Wishlist", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1445637", 
+    "owner": "None", 
+    "id": 1445637, 
+    "index": 2953, 
+    "openned": "2015-04-17 19:29:28.289628+00:00", 
+    "created": "2015-04-17 19:29:28.289628+00:00", 
+    "title": "Instance resource quota not observed for non-ephemeral storage", 
+    "comments": [
+        {
+            "content": "I'm using a nova built from stable/kilo and trying to implement instance IO resource quotas for disk as per https://wiki.openstack.org/wiki/InstanceResourceQuota#IO.\n\nWhile this works when building an instance from ephemeral storage, it does not when booting from a bootable cinder volume. I realize I can implement this using cinder quota but I want to apply the same settings in nova regardless of the underlying disk.\n\nSteps to produce:\n\nnova flavor-create iolimited 1 8192 64 4\nnova flavor-key 1 set quota:disk_read_iops_sec=10000\nBoot an instance using the above flavor\nGuest XML is missing <iotune> entries\n\nExpected result:\n<snip>\n      <target dev='vda' bus='virtio'/>\n      <iotune>\n        <read_iops_sec>10000</read_iops_sec>\n      </iotune>\n</snip>\n\nThis relates somewhat to https://bugs.launchpad.net/nova/+bug/1405367 but that case is purely hit when booting from RBD-backed ephemeral storage. \n\nEssentially, for non-ephemeral disks, a call is made to _get_volume_config() which creates a generic LibvirtConfigGuestDisk object but no further processing is done to add extra-specs (if any).\n\nI've essentially copied the disk_qos() method from the associated code review (https://review.openstack.org/#/c/143939/) to implement my own patch (attached).", 
+            "date_created": "2015-04-17 19:29:28.289628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tony-walker-h"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-04-17 19:29:28.289628+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tony-walker-h"
+        }, 
+        {
+            "content": "", 
+            "date_created": "2015-04-17 19:31:07.975154+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tony-walker-h"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/201019", 
+            "date_created": "2015-07-13 07:11:17.120592+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by lyanchih (<email address hidden>) on branch: master\nReview: https://review.openstack.org/201019", 
+            "date_created": "2015-07-13 14:32:26.094776+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Cinder client had offer qos command. Those instance quota settings of non-emphemeral disk should be set via cinder cli instead of inherit from instance's flavor.", 
+            "date_created": "2015-07-13 14:41:24.328556+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyanchih"
+        }, 
+        {
+            "content": "I'm aware of the ability to do this via cinder quota but why force this as the only option? By applying this via host aggregates I can generically control users rather than having to individually manage their instances on a per-volume basis. Given this is done for ephemeral volumes can you explain why a solution in nova will be abandoned?", 
+            "date_created": "2015-07-13 14:45:44.851281+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tony-walker-h"
+        }, 
+        {
+            "content": "I'm sorry for I was too hurry to change into invalid. \nOriginally I was thought those non-ephemeral disk was managed by cinder, those settings should dependent on it.\nAnd even you assign higher value, the rate was still limit by cinder. Then you can't observed the real rate.\nBut I also thought flavor was hardware template, its settings should also apply.\nMaybe we could select the minimum quota value between cinder or flavor settings.", 
+            "date_created": "2015-07-13 15:17:26.831860+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lyanchih"
+        }, 
+        {
+            "content": "No problem - just wanted to understand. Thanks for reconsidering. It would certainly be helpful to accept limits from Nova only (in the case that cinder quotas aren't being set).", 
+            "date_created": "2015-07-13 16:22:09.105303+00:00", 
+            "author": "https://api.launchpad.net/1.0/~tony-walker-h"
+        }, 
+        {
+            "content": "@lyanchich, are you still working on this ? Also, changing status to \"new\" as the existing patch has -2 by core reviewer.", 
+            "date_created": "2016-05-06 19:49:45.743351+00:00", 
+            "author": "https://api.launchpad.net/1.0/~pushkar-umaranikar"
+        }, 
+        {
+            "content": "In review [1] it was figured out that this is a feature request (=>\"wishlist\"). The effort is driven by the bp [2] (=> \"Opinion\"). No need for this bug report anymore.\n\nReferences:\n[1] https://review.openstack.org/#/c/201019/\n[2] https://blueprints.launchpad.net/nova/+spec/non-ephemeral-storage-quota-assign", 
+            "date_created": "2016-05-24 09:42:12.460096+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mzoeller"
+        }, 
+        {
+            "content": "Change abandoned by Michael Still (<email address hidden>) on branch: master\nReview: https://review.openstack.org/201019\nReason: This code hasn't been updated in a long time, and is in merge conflict. I am going to abandon this review, but feel free to restore it if you're still working on this.", 
+            "date_created": "2016-07-26 20:16:38.000963+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I don't think this is orchestration/proxy work that we want Nova to do when creating a volume during the boot from volume scenario. There is agreement, however, to allow passing a volume type when booting an instance for the BFV scenario and the volume type can have the QoS specs in it, see:\n\nhttp://lists.openstack.org/pipermail/openstack-dev/2016-August/102401.html\n\n-- mriedem 20160920", 
+            "date_created": "2016-09-20 13:58:03.138654+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Removing myself as assignee as this is something we won't incorporate in nova.", 
+            "date_created": "2016-09-22 05:50:08.679790+00:00", 
+            "author": "https://api.launchpad.net/1.0/~parora"
+        }
+    ], 
+    "closed": "2016-05-24 09:42:19.180227+00:00"
+}

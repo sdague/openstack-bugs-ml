@@ -1,0 +1,73 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2015-10-18 03:59:52.062557+00:00", 
+    "description": "While trying to attach more than one volume to an instance two volumes hung in an \"attaching\" state.   A volume-detach on that volume returns a 404  and a volume-delete returns a 500.    \n\nIt seems that a volume-force-detach is needed to clean up volumes in a hung state.", 
+    "tags": [], 
+    "importance": "Medium", 
+    "heat": 40, 
+    "link": "https://bugs.launchpad.net/nova/+bug/944383", 
+    "owner": "None", 
+    "id": 944383, 
+    "index": 2785, 
+    "openned": "2012-03-01 21:49:14.725715+00:00", 
+    "created": "2012-03-01 21:49:14.725715+00:00", 
+    "title": "There is no way to recover/cleanup  a volume in an 'attaching' state", 
+    "comments": [
+        {
+            "content": "While trying to attach more than one volume to an instance two volumes hung in an \"attaching\" state.   A volume-detach on that volume returns a 404  and a volume-delete returns a 500.    \n\nIt seems that a volume-force-detach is needed to clean up volumes in a hung state.", 
+            "date_created": "2012-03-01 21:49:14.725715+00:00", 
+            "author": "https://api.launchpad.net/1.0/~letterj"
+        }, 
+        {
+            "content": "Dealing with a force detach:\nThe database has the status set to \"attaching\" and a storage repository may exist on the host.\n\nA suggested process for cleaning up a volume stuck in an \"attaching\" state:\n\nCheck if a \"storage repository\" exist on the host\nif it does\n    remove it\n\nupdate the volumes state in the db to \"available\"\n ", 
+            "date_created": "2012-03-13 23:00:31.528790+00:00", 
+            "author": "https://api.launchpad.net/1.0/~letterj"
+        }, 
+        {
+            "content": "Might be linked to / duplicate of bug 953594", 
+            "date_created": "2012-03-14 16:48:42.990170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "The changes made in bug 953594 will clean up the database entry but if (in Xen) the storage repository has been created on the host nothing is done to clean that up.  ", 
+            "date_created": "2012-03-15 03:16:26.893191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~letterj"
+        }, 
+        {
+            "content": "Are there any other ways to repro this? I tried attaching multiple volumes simultaneously, and it worked.", 
+            "date_created": "2012-03-29 16:07:03.610648+00:00", 
+            "author": "https://api.launchpad.net/1.0/~renukaapte"
+        }, 
+        {
+            "content": "We are using Xen and my script tried to create/attach 10 volumes\nwithout any pause and 8 of them hung in an \"attaching\" state.   I\ncreated a new instance on a different host and tried the same\nexperiment again this time with a 20 second sleep between each\ncreate/attach volume call.    I was able to get 4 attached with 6\nhanging in the \"attaching\" state.\n\n\nOn Thu, Mar 29, 2012 at 11:07 AM, Renuka Apte <email address hidden> wrote:\n> Are there any other ways to repro this? I tried attaching multiple\n> volumes simultaneously, and it worked.\n>\n> --\n> You received this bug notification because you are subscribed to the bug\n> report.\n> https://bugs.launchpad.net/bugs/944383\n>\n> Title:\n> \u00a0There is no way to recover/cleanup \u00a0a volume in an \"attaching\" state\n>\n> Status in OpenStack Compute (Nova):\n> \u00a0Confirmed\n>\n> Bug description:\n> \u00a0While trying to attach more than one volume to an instance two volumes\n> \u00a0hung in an \"attaching\" state. \u00a0 A volume-detach on that volume returns\n> \u00a0a 404 \u00a0and a volume-delete returns a 500.\n>\n> \u00a0It seems that a volume-force-detach is needed to clean up volumes in a\n> \u00a0hung state.\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/944383/+subscriptions\n", 
+            "date_created": "2012-03-30 17:27:33+00:00", 
+            "author": "https://api.launchpad.net/1.0/~letterj"
+        }, 
+        {
+            "content": "I think I have a simple and reliable way to reproduce.  Try attaching a volume to an instance that does not have a route to the nova-volume service.\n\nI stumbled into this through a misconfiguration.  The fixed_ip range in my case is a private non-routable network.  I tried attaching a volume without configuring the nova-volume server to have a NIC on that private network and have this result.\n\nThanks! ", 
+            "date_created": "2012-06-21 20:09:40.056581+00:00", 
+            "author": "https://api.launchpad.net/1.0/~marrusl"
+        }, 
+        {
+            "content": "If I understand the above correctly there are actually 2 issues described here:\n\n1) That once the volume is stuck in \"attaching\" there is no good way to clean it up in Cinder.\n2) It is easy to get Nova to leave volumes in such inconsistent states and there is\n\nPert 1) is has believe addressed at least to some extent by https://review.openstack.org/#/c/12004/, so I am tempted to mark this as fix committed, but it is an admin only fix so I will wait for cinder folks to confirm that they are happy that it indeed does address this bug.\n\nThe nova part of the bug needs more looking into. Currently (icehouse-3) nova would call cinder's \"reserve_volume\" (which will move the volume to the \"attaching\" state as described in the bug) in the API, and should be cleaning the state up on failure on the compute side of the \"attach_volume\" rpc call, from looking at the code. \n\nSo the likely culprit at this moment may be some issues with messages getting through. I will try to reproduce what is described above with the current trunk (it's been a year and a half since this has been reported), and circle back here once I have more info.", 
+            "date_created": "2014-03-17 11:15:52.457415+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Ok so I've looked at this and seems to work as expected now:\n\n$ for i in {1..5}; do cinder create --display-name volume_$i 1; done\n$ cinder list\n+--------------------------------------+-----------+----------+------+-------------+----------+-------------+\n|                  ID                  |   Status  |   Name   | Size | Volume Type | Bootable | Attached to |\n+--------------------------------------+-----------+----------+------+-------------+----------+-------------+\n| 0afc6137-bb95-433b-bf47-31edb4f22109 | available | volume_5 |  1   |     None    |  false   |             |\n| 4368ddd6-6d1c-436f-abf2-328de4af4c14 | available | volume_2 |  1   |     None    |  false   |             |\n| 5899a09f-a052-4328-80a1-dccefde7ffbb | available | volume_4 |  1   |     None    |  false   |             |\n| 65bb1a41-39c9-47bf-b48e-3f873ece7cc8 | available | volume_3 |  1   |     None    |  false   |             |\n| a163bc28-7980-4c50-8ae3-cde63037096f | available | volume_1 |  1   |     None    |  false   |             |\n+--------------------------------------+-----------+----------+------+-------------+----------+-------------+\n$ cinder list | grep \"^| \\w\" | awk '{ print $2 }' | xargs -P5 -I {} nova volume-attach d6544df8-7e3a-4f45-ad60-deff250e07c3 {}\n</ volume attach output snipped>\n$ cinder list \n+--------------------------------------+--------+----------+------+-------------+----------+--------------------------------------+\n|                  ID                  | Status |   Name   | Size | Volume Type | Bootable |             Attached to              |\n+--------------------------------------+--------+----------+------+-------------+----------+--------------------------------------+\n| 0afc6137-bb95-433b-bf47-31edb4f22109 | in-use | volume_5 |  1   |     None    |  false   | d6544df8-7e3a-4f45-ad60-deff250e07c3 |\n| 4368ddd6-6d1c-436f-abf2-328de4af4c14 | in-use | volume_2 |  1   |     None    |  false   | d6544df8-7e3a-4f45-ad60-deff250e07c3 |\n| 5899a09f-a052-4328-80a1-dccefde7ffbb | in-use | volume_4 |  1   |     None    |  false   | d6544df8-7e3a-4f45-ad60-deff250e07c3 |\n| 65bb1a41-39c9-47bf-b48e-3f873ece7cc8 | in-use | volume_3 |  1   |     None    |  false   | d6544df8-7e3a-4f45-ad60-deff250e07c3 |\n| a163bc28-7980-4c50-8ae3-cde63037096f | in-use | volume_1 |  1   |     None    |  false   | d6544df8-7e3a-4f45-ad60-deff250e07c3 |\n+--------------------------------------+--------+----------+------+-------------+----------+--------------------------------------+\n\nSo based on the above I will mark as invalid for Nova", 
+            "date_created": "2014-03-17 14:57:46.840165+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }, 
+        {
+            "content": "Any update on this?", 
+            "date_created": "2014-07-15 07:09:37.167689+00:00", 
+            "author": "https://api.launchpad.net/1.0/~h-tanizawa"
+        }, 
+        {
+            "content": "I believe this has since been addressed. If not, please feel free to reopen.", 
+            "date_created": "2015-10-18 03:59:51.433084+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sean-mcginnis"
+        }
+    ], 
+    "closed": "2014-03-17 14:57:42.747023+00:00"
+}

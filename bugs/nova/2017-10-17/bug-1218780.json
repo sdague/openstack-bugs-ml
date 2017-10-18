@@ -1,0 +1,65 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-10-22 19:05:50.427823+00:00", 
+    "description": "I am using Grizzly 2013.1.2, I have an image with a property: hw_vif_model=e1000.\n\nWhen first nova boot a VM from this image, e1000 get configured as nic type properly,  but once I do a soft/hard reboot,  the nic type is changed backed to default virtio. \n\nI guess this is a bug of Nova ?", 
+    "tags": [
+        "libvirt"
+    ], 
+    "importance": "Undecided", 
+    "heat": 30, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1218780", 
+    "owner": "None", 
+    "id": 1218780, 
+    "index": 5299, 
+    "openned": "2013-08-30 08:54:10.999256+00:00", 
+    "created": "2013-08-30 08:54:10.999256+00:00", 
+    "title": "Image property 'hw_vif_model' is not honored again if we do a  VM soft/hard reboot via Nova", 
+    "comments": [
+        {
+            "content": "I am using Grizzly 2013.1.2, I have an image with a property: hw_vif_model=e1000.\n\nWhen first nova boot a VM from this image, e1000 get configured as nic type properly,  but once I do a soft/hard reboot,  the nic type is changed backed to default virtio. \n\nI guess this is a bug of Nova ?", 
+            "date_created": "2013-08-30 08:54:10.999256+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kimi-zhangkai"
+        }, 
+        {
+            "content": "Weird -- if it's a bug, then that would be a regression.\n\n I was previously able to test this successfully during Folsom release. \n\nI just re-tested on my Havana setup (running on Fedora-20):\n\n    $ $ wget http://download.fedoraproject.org/pub/fedora/linux/releases/19/Images/x86_64/Fedora-x86_64-19-20130627-sda.qcow2\n\n    $ glance image-update \\\n                    --property hw_disk_bus=ide \\\n                    --property hw_cdrom_bus=ide \\\n                    --property hw_vif_model=e1000 \\\n                    fedora19\n\n    $ glance image-show fedora19 \n+-------------------------+--------------------------------------+\n| Property                | Value                                |\n+-------------------------+--------------------------------------+\n| Property 'hw_cdrom_bus' | ide                                  |\n| Property 'hw_disk_bus'  | ide                                  |\n| Property 'hw_vif_model' | e1000                                |\n.\n.\n.\n\n\nBoot a nova guest\n\n    $ nova boot --flavor 2 --key_name oskey2 \\\n       --image 1dcc7990-0a6f-4018-9e60-2ca3d3850207 \\\n        f19-guest2 --security_groups default\n\n    $ nova list | grep f19-guest2\n    | 6a600a49-1271-4100-b7cb-8fef7865bce8 | f19-guest2  | ACTIVE | None       | Running     | int=30.0.0.8                 |\n\n\nGrep for the device type:\n\n    # On Compute node\n    $ sudo virsh dumpxml instance-0000000c | egrep -i e1000 -A1 -B1\n          <target dev='tap8c641de7-df'/>\n          <model type='e1000'/>\n          <alias name='net0'/>\n\nReboot the guest:\n\n    $ nova reboot f19-guest2\n    $ nova list| grep f19-guest2\n| 6a600a49-1271-4100-b7cb-8fef7865bce8 | f19-guest2  | REBOOT | rebooting  | Running     | int=30.0.0.8, 192.168.122.16 |\n\n\nAnd, grep for the device name, again:\n\n    $ sudo virsh dumpxml instance-0000000c | egrep -i e1000 -A1 -B1\n          <target dev='tap8c641de7-df'/>\n          <model type='e1000'/>\n          <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>\n\n\nIs this what you tried?\n\n\nHere's a relevant bug\n\n  https://bugs.launchpad.net/nova/+bug/1132739  --  namespace prefix to glance hardware properties used by libvirt\n", 
+            "date_created": "2013-11-13 23:19:49.351655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~kashyapc"
+        }, 
+        {
+            "content": "Same problem for me. Even worse: when I update libvirt.xml file and restart the VM the modifications are lost:\n\n$ sudo vi /var/lib/nova/instances/5bb23f33-9ba6-4d1c-b7cf-f89533cd8212/libvirt.xml\n$ grep rtl8139 /var/lib/nova/instances/5bb23f33-9ba6-4d1c-b7cf-f89533cd8212/libvirt.xml\n      <model type=\"rtl8139\"/>\n$ nova reboot 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212\n$ grep rtl8139 /var/lib/nova/instances/5bb23f33-9ba6-4d1c-b7cf-f89533cd8212/libvirt.xml\n(back to virtio)\n\nTHe file is actually generated each time I start the instance.\n\nIn case it helps:\n\nmysql> use nova\nmysql> select * from nova.instance_system_metadata where instance_uuid=\"5bb23f33-9ba6-4d1c-b7cf-f89533cd8212\";\n+---------------------+------------+------------+-----+--------------------------------------+----------------------------+--------------------------------------+---------+\n| created_at          | updated_at | deleted_at | id  | instance_uuid                        | key                        | value                                | deleted |\n+---------------------+------------+------------+-----+--------------------------------------+----------------------------+--------------------------------------+---------+\n| 2013-11-19 15:24:28 | NULL       | NULL       | 387 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_memory_mb    | 32768                                |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 388 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_swap         | 0                                    |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 389 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_vcpu_weight  | NULL                                 |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 390 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_root_gb      | 160                                  |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 391 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_id           | 6                                    |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 392 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_name         | m1.xxlarge                           |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 393 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_ephemeral_gb | 0                                    |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 394 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_rxtx_factor  | 1                                    |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 395 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | image_hw_vif_model         | rtl8139                              |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 396 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_flavorid     | 6                                    |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 397 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | instance_type_vcpus        | 8                                    |       0 |\n| 2013-11-19 15:24:28 | NULL       | NULL       | 398 | 5bb23f33-9ba6-4d1c-b7cf-f89533cd8212 | image_base_image_ref       | b0912003-e0d5-40dc-8a10-9e89b65cdfa6 |       0 |\n+---------------------+------------+------------+-----+--------------------------------------+----------------------------+--------------------------------------+---------+\n12 rows in set (0.00 sec)\n", 
+            "date_created": "2013-11-20 11:31:43.035681+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hunal"
+        }, 
+        {
+            "content": "I confirm it does not happen anymore in Havana, which I just upgraded from Grizzly.", 
+            "date_created": "2013-11-20 13:29:06.413976+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hunal"
+        }, 
+        {
+            "content": "I've updated from Grizzly to Havana and the problem seems to persist:\n\n nova show 3c6eab53-2825-48b7-a8a2-3b53112f33d6 | grep image\n| image                                | RedHat5-x86-64 (5db7017f-d8eb-42b8-9ebc-429d83bc03b3)    |\n\n nova image-show 5db7017f-d8eb-42b8-9ebc-429d83bc03b3 | grep hw_disk_bus\n| metadata hw_disk_bus  | ide                                  |\n\n\ncat 3c6eab53-2825-48b7-a8a2-3b53112f33d6/libvirt.xml\n<domain type=\"kvm\">\n  <uuid>3c6eab53-2825-48b7-a8a2-3b53112f33d6</uuid>\n  <name>instance-0000001f</name>\n  <memory>1048576</memory>\n  <vcpu>1</vcpu>\n  <sysinfo type=\"smbios\">\n    <system>\n      <entry name=\"manufacturer\">OpenStack Foundation</entry>\n      <entry name=\"product\">OpenStack Nova</entry>\n      <entry name=\"version\">2013.2</entry>\n      <entry name=\"uuid\">3c6eab53-2825-48b7-a8a2-3b53112f33d6</entry>\n    </system>\n  </sysinfo>\n  <os>\n    <type>hvm</type>\n    <boot dev=\"hd\"/>\n    <smbios mode=\"sysinfo\"/>\n  </os>\n  <features>\n    <acpi/>\n    <apic/>\n  </features>\n  <clock offset=\"utc\">\n    <timer name=\"pit\" tickpolicy=\"delay\"/>\n    <timer name=\"rtc\" tickpolicy=\"catchup\"/>\n  </clock>\n  <cpu mode=\"host-model\" match=\"exact\"/>\n  <devices>\n    <disk type=\"file\" device=\"disk\">\n      <driver name=\"qemu\" type=\"qcow2\" cache=\"none\"/>\n      <source file=\"/var/lib/nova/instances/3c6eab53-2825-48b7-a8a2-3b53112f33d6/disk\"/>\n      <target bus=\"virtio\" dev=\"vda\"/>\n    </disk>\n(...)\n\nany ideas?\n\n\n", 
+            "date_created": "2014-01-02 18:48:45.467401+00:00", 
+            "author": "https://api.launchpad.net/1.0/~bsendas"
+        }, 
+        {
+            "content": "Same here.\nAny idea what is the problem?\n\nThanks!", 
+            "date_created": "2014-01-06 15:25:38.509677+00:00", 
+            "author": "https://api.launchpad.net/1.0/~joaosoares"
+        }, 
+        {
+            "content": "Same here\n/etc/libvirt/qemu # nova --version\n2.16.0\n\n", 
+            "date_created": "2014-08-06 21:18:35.139715+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lacroix1547"
+        }, 
+        {
+            "content": "I cant reproduce that issue anymore with Havana 2013.2.3-1.el6 and Icehouse 2014.1.2-1.el6.\n\n\n\n", 
+            "date_created": "2014-10-09 17:00:26.100537+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lacroix1547"
+        }, 
+        {
+            "content": "It has been fixed a while ago: https://review.openstack.org/#/c/58701/", 
+            "date_created": "2014-10-22 19:04:59.232751+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vladik-romanovsky"
+        }
+    ], 
+    "closed": "2014-10-22 19:05:46.681792+00:00"
+}

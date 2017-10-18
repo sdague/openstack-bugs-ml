@@ -1,0 +1,66 @@
+{
+    "status": "Confirmed", 
+    "last_updated": "2017-06-27 19:30:50.659608+00:00", 
+    "description": "Resource tracker in nova-compute checks the resource usage every minute.\nIf the latest resource usage is different from the previous of that,\nnova-compute request nova-scheduler to update compute_nodes table in DB.\nhttps://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L712-L728\n_update() calls _resource_change(). And in _resource_change(), resource usages are compared by obj_equal_prims().\n\nIn obj_equal_prims(), the resource usage lists are created.\nhttps://github.com/openstack/nova/blob/master/nova/objects/base.py#L328-L360\nAnd I found that the lists contained \"updated_at\" in their keys.\n\n prim_1 ={'nova_object.version': u'1.16',\n'nova_object.name': 'ComputeNode', \n'nova_object.data': {'pci_device_pools': {'nova_object.version': '1.1',\n'nova_object.name': 'PciDevicePoolList', \n'nova_object.data': {'objects': []}, 'nova_object.namespace': 'nova'}, \n'updated_at': '2017-01-20T01:07:43Z',\u3000\u2605here\n(omission)\n\nprim_2 ={'nova_object.version': '1.16', \n'nova_object.name': 'ComputeNode', \n'nova_object.data': {'pci_device_pools': {'nova_object.version': '1.1',\n'nova_object.name': 'PciDevicePoolList', \n'nova_object.data': {'objects': []}, 'nova_object.namespace': 'nova'}, \n'updated_at': '2017-01-20T01:06:42Z',\u3000\u2605here\n(omission)\n\nThese difference in \"updated_at\" values makes unequal resource usage in recent 2 times checks,\nand causes update of compute_nodes table every minute.\nI noticed this problem in Mitaka. According to the code, I think this happens in master.", 
+    "tags": [
+        "openstack-version.mitaka", 
+        "resource-tracker", 
+        "scheduler"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1658629", 
+    "owner": "None", 
+    "id": 1658629, 
+    "index": 4741, 
+    "openned": "2017-01-23 09:46:03.696058+00:00", 
+    "created": "2017-01-23 09:46:03.696058+00:00", 
+    "title": "Resource tracker causes update of compute_nodes table every minute", 
+    "comments": [
+        {
+            "content": "Resource tracker in nova-compute checks the resource usage every minute.\nIf the latest resource usage is different from the previous of that,\nnova-compute request nova-scheduler to update compute_nodes table in DB.\nhttps://github.com/openstack/nova/blob/master/nova/compute/resource_tracker.py#L712-L728\n_update() calls _resource_change(). And in _resource_change(), resource usages are compared by obj_equal_prims().\n\nIn obj_equal_prims(), the resource usage lists are created.\nhttps://github.com/openstack/nova/blob/master/nova/objects/base.py#L328-L360\nAnd I found that the lists contained \"updated_at\" in their keys.\n\n prim_1 ={'nova_object.version': u'1.16',\n'nova_object.name': 'ComputeNode', \n'nova_object.data': {'pci_device_pools': {'nova_object.version': '1.1',\n'nova_object.name': 'PciDevicePoolList', \n'nova_object.data': {'objects': []}, 'nova_object.namespace': 'nova'}, \n'updated_at': '2017-01-20T01:07:43Z',\u3000\u2605here\n(omission)\n\nprim_2 ={'nova_object.version': '1.16', \n'nova_object.name': 'ComputeNode', \n'nova_object.data': {'pci_device_pools': {'nova_object.version': '1.1',\n'nova_object.name': 'PciDevicePoolList', \n'nova_object.data': {'objects': []}, 'nova_object.namespace': 'nova'}, \n'updated_at': '2017-01-20T01:06:42Z',\u3000\u2605here\n(omission)\n\nThese difference in \"updated_at\" values makes unequal resource usage in recent 2 times checks,\nand causes update of compute_nodes table every minute.\nI noticed this problem in Mitaka. According to the code, I think this happens in master.", 
+            "date_created": "2017-01-23 09:46:03.696058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~atsumi-yoshihiko"
+        }, 
+        {
+            "content": "I can confirm that this does indeed appear to be the case in master (as of 20170123): The compute_node in a single node devstack is updated every 61 seconds.", 
+            "date_created": "2017-01-23 18:02:02.494669+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "I can also confirm that changing the prims check like to:\n\n  if not obj_base.obj_equal_prims(compute_node, old_compute, ['updated_at']):\n\nwill cause the conditional to fail as desired. However, this does not change that the compute node table still gets written every sixty seconds. Something else is still doing that, so fixing this could fix one extraneous update but leave at least one more to fix.", 
+            "date_created": "2017-01-23 18:41:18.984547+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/424305", 
+            "date_created": "2017-01-23 19:36:02.808206+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/424305\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=b2a4fcf84633413c322afb4f2c8066358b943d6b\nSubmitter: Jenkins\nBranch:    master\n\ncommit b2a4fcf84633413c322afb4f2c8066358b943d6b\nAuthor: Chris Dent <email address hidden>\nDate:   Mon Jan 23 19:34:44 2017 +0000\n\n    Avoid redundant call to update_resource_stats from RT\n    \n    When the resource_tracker calls _update, when the new compute node\n    and the old compute node only differ by updated_at,\n    update_resource_stats was still being called. Manual testing shows\n    that updated_at is generally different because there's something\n    else that is also leading to a compute_node.save() approximately\n    every sixty seconds. So while this fix removes one redundant\n    save, it doesn't get all of them, thus the \"partial\" below.\n    \n    A unit test is added to exercise different updated_at values.\n    \n    Change-Id: If688ae4d92ecdea83479f37de8856b668b8bc7a6\n    Partial-Bug: #1658629\n", 
+            "date_created": "2017-01-29 16:58:10.968270+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "The merged code indicates that it was a partial fix - any update on what is left?", 
+            "date_created": "2017-03-08 17:31:17.246977+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mszankin"
+        }, 
+        {
+            "content": "There's some discussion of the other issues in this email thread: http://lists.openstack.org/pipermail/openstack-dev/2017-January/110953.html\n\nIt might make sense, however, to call this bug closed as fixing the rest of things is a bigger change and not really a bug fix. The code is behaving as intended right now (since the merge of the fix above), it's just that intent is not quite right", 
+            "date_created": "2017-03-08 18:43:11.857449+00:00", 
+            "author": "https://api.launchpad.net/1.0/~cdent"
+        }, 
+        {
+            "content": "Automatically discovered version mitaka in description. If this is incorrect, please update the description to include 'nova version: ...'", 
+            "date_created": "2017-06-27 15:56:24.537776+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "There are no currently open reviews on this bug, changing the status back to the previous state and unassigning. If there are active reviews related to this bug, please include links in comments. ", 
+            "date_created": "2017-06-27 19:30:46.626757+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }
+    ]
+}

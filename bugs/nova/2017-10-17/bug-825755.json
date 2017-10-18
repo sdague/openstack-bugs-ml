@@ -1,0 +1,50 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2013-02-27 05:20:20.779913+00:00", 
+    "description": "Deleting a project (with running instances associating with floating ips) through \"nova-manage project delete\" didn't clean up iptables in both network controllers and compute nodes. \n\nShould the same floating ups are reused, they create duplicate iptable rules in network controller, which consequently causes network traffic issue.", 
+    "tags": [
+        "low-hanging-fruit"
+    ], 
+    "importance": "Medium", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/825755", 
+    "owner": "https://api.launchpad.net/1.0/~shuquan", 
+    "id": 825755, 
+    "index": 2506, 
+    "openned": "2011-08-13 10:47:43.414866+00:00", 
+    "created": "2011-08-13 10:47:43.414866+00:00", 
+    "title": "project delete broke network controller and iptables", 
+    "comments": [
+        {
+            "content": "Deleting a project (with running instances associating with floating ips) through \"nova-manage project delete\" didn't clean up iptables in both network controllers and compute nodes. \n\nShould the same floating ups are reused, they create duplicate iptable rules in network controller, which consequently causes network traffic issue.", 
+            "date_created": "2011-08-13 10:47:43.414866+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunshen"
+        }, 
+        {
+            "content": "Which version of Nova did you reproduce this on ?", 
+            "date_created": "2011-08-19 09:40:53.397812+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I had this issue with D2\n\n\nDatabase tables that will be affected by delete operation\n=============================================\n\nI) Tables that have explicit project_id field:\n\n1. certificates\n2. floating_ips\n3. networks\n4. projects\n5. quotas\n6. security_groups\n7. snapshots\n8. user_project_association\n9. user_project_role_association\n10. volumes\n\nII) Tables that have explicit user_id field:\n\n1. auth_tokens\n2. certificates\n3. key_pairs\n4. security_groups\n5. snapshots\n6. user_project_association\n7. user_project_role_association\n8. user_role_association\n9. users\n10. volumes\n\nIII) Tables that have both user_id and project_id fields:\n\n1. certificates\n2. security_groups\n3. snapshots\n4. user_project_association\n5. user_project_role_association\n\n\nObservation:\n==========\n\ndb/sqlalchemy/api.py:\n-----\n\ndef project_delete(context, id):\n    session = get_session()\n    with session.begin():\n        session.query(models.UserProjectAssociation).\\\n                filter_by(project_id=id).\\\n                delete()\n        session.query(models.UserProjectRoleAssociation).\\\n                filter_by(project_id=id).\\\n                delete()\n        project_ref = project_get(context, id, session=session)\n        session.delete(project_ref)\n\n\nnova-manage.py: \n\n@args('--project', dest=\"project_id\", metavar='<Project name>',\n            help='Project name')\ndef scrub(self, project_id):\n        \"\"\"Deletes data associated with project\"\"\"\n        admin_context = context.get_admin_context()\n        networks = db.project_get_networks(admin_context, project_id)\n        for network in networks:\n            db.network_disassociate(admin_context, network['id'])\n        groups = db.security_group_get_by_project(admin_context, project_id)\n        for group in groups:\n            db.security_group_destroy(admin_context, group['id'])\n\n\nCurrent \"project delete\" command removes 4 and 5 mentioned III. Another observation is \"project scrub\" removes 3 and 6 in I. However, all these operations are done at the DB level.\n\n\nAnalysis:\n=======\n\nLet us take a closer look at the code of scrub() in nova-manage.py. what it does is to disassociate network from project operating on networks table. \n\nLet us consider the following scenario:\n\n- Suppose we have two network controllers in the environment, let us say *nc1* and *nc2*. \n- Default network manager is VlanManager. \n- A project has network with vlan id as 200. \n\n\nThe current strategy of nova is to allow any network controller to pick fixed ip requests. This enables both nc1 and nc2 to create network bridge with the same name as br200@eth0 and starts corresponding dnsmasq process.\n\n\nAfter a while, let us delete the project.\n\nWhen another project is created, it gets the same vlan200. Each network controller, at this stage, will compete with each to get the first IP address for dnsmasq.   \n", 
+            "date_created": "2011-08-19 12:39:27.647388+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yunshen"
+        }, 
+        {
+            "content": "Great analysis, thanks ! Setting to 'Triaged' which means it has all it needs to get picked up by a bugfixer :)", 
+            "date_created": "2011-08-24 10:25:46.772300+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Two potential fixes:\n\n1) Make network_disassociate leave the network host alone, so it will get the same network host next time:\n2008 @require_admin_context\n2009 def network_disassociate(context, network_id):\n2010     network_update(context, network_id, {'project_id': None,\n2011                                          'host': None})\n\nremove the 'host\" part and make sure it doesn't break any tests\n\n2) Make nova_network stop dnsmasq when it the last ip from the network is released (and potentially delete the bridge?)\n\n669 def update_dhcp(context, dev, network_ref):\n 670     conffile = _dhcp_file(dev, 'conf')\n 671     write_to_file(conffile, get_dhcp_hosts(context, network_ref))\n 672     restart_dhcp(context, dev, network_ref)\n\nmaybe do:\nhost_data = get_dhcp_hosts(context, network_ref)\nif host_data:\n    write_to_file(conffile, host_data)\n    restart_dhcp(context, dev, network_ref)\nelse:\n    kill_dhcp(dev)\n\nTesting will probably be ncessary for both", 
+            "date_created": "2012-02-03 08:02:08.366001+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "There is a flag to enable teardown in multi_host mode:\n\nteardown_unused_network_gateway=True\n\nSince multi_host is the most common version and no one seems to be picking this up, I'm going to assume that is good enough and mark this won't fix.", 
+            "date_created": "2013-02-27 05:19:44.694536+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }
+    ], 
+    "closed": "2013-02-27 05:20:19.513338+00:00"
+}

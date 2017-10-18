@@ -1,0 +1,58 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2013-10-17 11:54:31.345648+00:00", 
+    "description": "In test_servers_negative::test_create_with_nonexistent_security_group a exceptions.BadRequest 400 is expected. But with Quantum, a 404 Not found is thrown instead. Thus the test fails.\n\nSee https://github.com/openstack/nova/blob/master/nova/network/security_group/quantum_driver.py#L97", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 12, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1183347", 
+    "owner": "https://api.launchpad.net/1.0/~melwitt", 
+    "id": 1183347, 
+    "index": 4944, 
+    "openned": "2013-05-23 18:52:36.766003+00:00", 
+    "created": "2013-05-23 13:11:06.671502+00:00", 
+    "title": "create_with_nonexistent_security_group fails : Quantum returns a 404 where Nova-network returns a 400", 
+    "comments": [
+        {
+            "content": "In test_servers_negative::test_create_with_nonexistent_security_group a exceptions.BadRequest 400 is expected. But with Quantum, a 404 Not found is thrown instead. Thus the test fails.\n\nSee https://github.com/openstack/nova/blob/master/nova/network/security_group/quantum_driver.py#L97", 
+            "date_created": "2013-05-23 13:11:06.671502+00:00", 
+            "author": "https://api.launchpad.net/1.0/~jordan-pittier"
+        }, 
+        {
+            "content": "Quantum driver is raising exc.HTTPNotFound exception from nova/api/openstack/compute/contrib/security_groups.py NativeSecurityGroupExceptions, which gives the 404.\n\nIn nova/api/openstack/compute/servers.py, exception.SecurityGroupNotFound (that's raised at the nova db layer) is caught and then exc.HTTPBadRequest raised, so nova-network gives the 400 result.\n\nThere's a kwarg, map_exception, for the SecurityGroupAPI::get function in nova/compute/api.py that defaults to False. Because it's False, it re-raises the exception.SecurityGroupNotFound instead of mapping it to exc.HTTPNotFound.\n\nThere are different ways to handle this:\n\n1. Raise exc.HTTPNotFound in nova/api/openstack/compute/servers.py when exception.SecurityGroupNotFound is caught\n\n2. Call SecurityGroupAPI::get with map_exception=True\n\n3. Have quantum driver raise exception.SecurityGroupNotFound instead of exc.HTTPNotFound if quantum api responds with 404.\n", 
+            "date_created": "2013-05-23 22:58:09.799900+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "I think option 3 is more in line with what we do on other drivers.", 
+            "date_created": "2013-05-28 22:13:24.771926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Thanks, appreciate the guidance.\n\nI went to do option 3 but the security group api (both nova and quantum) has semantics to map not found to not found. If you were to make a rest call to SecurityGroupAPI::get, the response should be a 404.\n\nThis situation is different since we're trying to create a server and fetching the security group fails because it wasn't found and we want to respond with bad request. It's not the same as the straightforward \"not found\" of a standalone security group api call as the create server request was invalid overall.\n\nThe SecurityGroupAPI::get function is throwing, not add_to_instance. Get is called as part of _check_requested_secgroups in the compute api as part of the validation that happens for a create server request.\n\nI'm thinking of raising exception.SecurityGroupNotFound in _check_requested_secgroups instead of in quantum driver in order to leave the SecurityGroupAPI semantics intact. I think we only want to have a bad request response if the security group isn't found during a server create.", 
+            "date_created": "2013-05-29 00:16:20.695759+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/30815", 
+            "date_created": "2013-05-29 01:39:09.160882+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/30271\nCommitted: http://github.com/openstack/tempest/commit/2c2978703319631f1c0144db05f55dbad3a55c50\nSubmitter: Jenkins\nBranch:    master\n\ncommit 2c2978703319631f1c0144db05f55dbad3a55c50\nAuthor: JordanP <email address hidden>\nDate:   Thu May 23 15:34:16 2013 +0200\n\n    Update a test to work with Quantum SecGroup\n    \n    Nova-Network and Quantum return different error code to an\n    non existent security group\n    \n    Fix Bug #1183347\n    \n    Change-Id: Iae2d86938b5c3df0af99e760ac7933bcdd8f9007\n", 
+            "date_created": "2013-06-04 07:50:05.286220+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "I'm gathering opinions from nova reviewers on whether to refactor the security group api not to raise http-level exceptions as part of fixing this correctly on the nova side.", 
+            "date_created": "2013-06-04 17:57:20.987274+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/30815\nCommitted: http://github.com/openstack/nova/commit/3401cca5bbc89f713d5c853f62a713d6219dac28\nSubmitter: Jenkins\nBranch:    master\n\ncommit 3401cca5bbc89f713d5c853f62a713d6219dac28\nAuthor: Melanie Witt <email address hidden>\nDate:   Wed May 29 01:01:07 2013 +0000\n\n    refactor security group api not to raise http exceptions\n    \n    The SecurityGroupAPI had been raising http exceptions,\n    resulting in a difference in behavior depending on the\n    driver being used: nova or quantum. The nova driver\n    re-raises nova exceptions by default, while the quantum\n    driver was raising the built-in http exceptions. Since\n    servers.py handles nova exceptions, in some cases the\n    quantum driver's http exceptions weren't being handled\n    and resulted in a different http return code to the\n    user.\n    \n    Both SecurityGroupAPI classes inherit from\n    NativeSecurityGroupExceptions and call its static\n    methods to raise exceptions.\n    \n    This change refactors SecurityGroupAPI to raise nova\n    exceptions by modifying NativeSecurityGroupExceptions.\n    The nova exceptions are then translated to http\n    exceptions in the security group wsgi extension.\n    \n    Fixes bug 1183347\n    \n    Change-Id: I7177183154b4c41037623f443cf9958ac457a020\n", 
+            "date_created": "2013-06-24 16:35:12.777817+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-07-17 12:32:52.302874+00:00"
+}

@@ -1,0 +1,60 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2015-04-30 20:34:14.958498+00:00", 
+    "description": "Short version:\nRebuilding instance after resize, vm become ERROR cause of VirtualInterfaceCreateException.\n\nLong version:\n\nReproduce:\nmaster(0bbf6301b1886f501713df8c13a5f8b92c9b0c2c)\n\n1. create instanse\n2. do resize(succcess and active in destination host/status is VERIFY_RESIZE)\n3. do resize-revert(success and active in source host/status is ACTIVE/port is DOWN)\n4. do rebuild\n\nAfter timeout(value of vif_plugging_timeout), vm became ERROR cause of VirtualInterfaceCreateException.\n\nIf you set vif_plugging_is_fatal to True, vm is removed.\nOtherwise, if you set vif_plugging_is_fatal to False, vm become ACTIVE.\n\nCause:\nWhen I do resize-revert, instance come back to source host, but host information is set to destination node.\n(host information is 'host' of ml2_port_bindings table of neutron DB)\nThis lead to mismatch of actual neutron port and DB information of port.\nSo this port become to DOWN.\nDo rebuild in this situation, port don't become to ACTIVE, so results in timuout.\n\nSolution:\nnova/compute/manager.py\ndef finish_revert_resize(self, context, instance, reservations, migration):\n        instance.system_metadata = sys_meta\n        instance.memory_mb = instance_type['memory_mb']\n        instance.vcpus = instance_type['vcpus']\n        instance.root_gb = instance_type['root_gb']\n        instance.ephemeral_gb = instance_type['ephemeral_gb']\n        instance.instance_type_id = instance_type['id']\n        instance.host = migration['source_compute']\n        instance.node = migration['source_node']\n        instance.save()\n\n        +migration.dest_compute = migration['source_compute']\n        +migration.save()\n\n        self.network_api.setup_networks_on_host(context, instance,\n                                        migration['source_compute'])\n\n        block_device_info = self._get_instance_block_device_info(\n                context, instance, refresh_conn_info=True)", 
+    "tags": [
+        "juno-backport-potential"
+    ], 
+    "importance": "Low", 
+    "heat": 28, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1380934", 
+    "owner": "https://api.launchpad.net/1.0/~yasuaki-nagata", 
+    "id": 1380934, 
+    "index": 1424, 
+    "openned": "2014-10-14 08:05:32.591137+00:00", 
+    "created": "2014-10-14 08:05:32.591137+00:00", 
+    "title": "failure rebuilding instance after resize-revert", 
+    "comments": [
+        {
+            "content": "Short version:\nDo rebuild instance after resize, vm become ERROR cause of VirtualInterfaceCreateException.\n\n\nLong version:\n\nReproduce:\nmaster(0bbf6301b1886f501713df8c13a5f8b92c9b0c2c)\n\n1. create instanse\n2. do resize(succcess and active in destination host/status is VERIFY_RESIZE)\n3. do resize-revert(success and active in source host/status is ACTIVE/port is DOWN)\n4. do rebuild\n\nAfter timeout(value of vif_plugging_timeout), vm became ERROR cause of VirtualInterfaceCreateException.\n\nIf you set vif_plugging_is_fatal to True, vm is removed.\nOtherwise, if you set vif_plugging_is_fatal to False, vm become ACTIVE.\n\nCause:\nWhen I do resize-revert, instance come back to source host, but host information is set to destination node.\n(host information is 'host' of ml2_port_bindings table of neutron DB)\nThis lead to mismatch of actual neutron port and DB information of port.\nSo this port become to DOWN.\nDo rebuild in this situation, port don't become to ACTIVE, so results in timuout.\n\n\nSolution:\nnova/compute/manager.py\n\n     def finish_revert_resize(self, context, instance, reservations, migration):\n             instance.system_metadata = sys_meta\n             instance.memory_mb = instance_type['memory_mb']\n             instance.vcpus = instance_type['vcpus']\n             instance.root_gb = instance_type['root_gb']\n             instance.ephemeral_gb = instance_type['ephemeral_gb']\n             instance.instance_type_id = instance_type['id']\n             instance.host = migration['source_compute']\n             instance.node = migration['source_node']\n             instance.save()\n\n+             migration.dest_compute = migration['source_compute']\n+             migration.save()\n+\n             self.network_api.setup_networks_on_host(context, instance,\n                                             migration['source_compute'])\n\n             block_device_info = self._get_instance_block_device_info(\n                     context, instance, refresh_conn_info=True)", 
+            "date_created": "2014-10-14 08:05:32.591137+00:00", 
+            "author": "https://api.launchpad.net/1.0/~h-tanizawa"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/130237", 
+            "date_created": "2014-10-22 14:50:52.466362+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi, Freddie Zhang\n\nI have modified code for Bug#1380934.\nSo if you have any problem, it is OK to assign to me.", 
+            "date_created": "2014-11-18 10:12:58.054863+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yasuaki-nagata"
+        }, 
+        {
+            "content": "Sorry! I forgot it.\nI have removed assignment to myself.\n\n2014-11-18 18:12 GMT+08:00 Yasuaki Nagata <email address hidden>\n:\n\n> Hi, Freddie Zhang\n>\n> I have modified code for Bug#1380934.\n> So if you have any problem, it is OK to assign to me.\n>\n> --\n> You received this bug notification because you are a bug assignee.\n> https://bugs.launchpad.net/bugs/1380934\n>\n> Title:\n>   failure rebuilding instance after resize-revert\n>\n> Status in OpenStack Compute (Nova):\n>   In Progress\n>\n> Bug description:\n>   Short version:\n>   Rebuilding instance after resize, vm become ERROR cause of\n> VirtualInterfaceCreateException.\n>\n>   Long version:\n>\n>   Reproduce:\n>   master(0bbf6301b1886f501713df8c13a5f8b92c9b0c2c)\n>\n>   1. create instanse\n>   2. do resize(succcess and active in destination host/status is\n> VERIFY_RESIZE)\n>   3. do resize-revert(success and active in source host/status is\n> ACTIVE/port is DOWN)\n>   4. do rebuild\n>\n>   After timeout(value of vif_plugging_timeout), vm became ERROR cause of\n>   VirtualInterfaceCreateException.\n>\n>   If you set vif_plugging_is_fatal to True, vm is removed.\n>   Otherwise, if you set vif_plugging_is_fatal to False, vm become ACTIVE.\n>\n>   Cause:\n>   When I do resize-revert, instance come back to source host, but host\n> information is set to destination node.\n>   (host information is 'host' of ml2_port_bindings table of neutron DB)\n>   This lead to mismatch of actual neutron port and DB information of port.\n>   So this port become to DOWN.\n>   Do rebuild in this situation, port don't become to ACTIVE, so results in\n> timuout.\n>\n>   Solution:\n>   nova/compute/manager.py\n>   def finish_revert_resize(self, context, instance, reservations,\n> migration):\n>           instance.system_metadata = sys_meta\n>           instance.memory_mb = instance_type['memory_mb']\n>           instance.vcpus = instance_type['vcpus']\n>           instance.root_gb = instance_type['root_gb']\n>           instance.ephemeral_gb = instance_type['ephemeral_gb']\n>           instance.instance_type_id = instance_type['id']\n>           instance.host = migration['source_compute']\n>           instance.node = migration['source_node']\n>           instance.save()\n>\n>           +migration.dest_compute = migration['source_compute']\n>           +migration.save()\n>\n>           self.network_api.setup_networks_on_host(context, instance,\n>                                           migration['source_compute'])\n>\n>           block_device_info = self._get_instance_block_device_info(\n>                   context, instance, refresh_conn_info=True)\n>\n> To manage notifications about this bug go to:\n> https://bugs.launchpad.net/nova/+bug/1380934/+subscriptions\n>\n", 
+            "date_created": "2014-11-18 14:41:24+00:00", 
+            "author": "https://api.launchpad.net/1.0/~myzswen"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/135819", 
+            "date_created": "2014-11-20 02:16:55.552021+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/130237\nReason: This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results.", 
+            "date_created": "2014-12-08 16:44:24.933377+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/135819\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=31a95b5fcbad12897725a778c67fbd2e146d8b67\nSubmitter: Jenkins\nBranch:    master\n\ncommit 31a95b5fcbad12897725a778c67fbd2e146d8b67\nAuthor: Yasuaki Nagata <email address hidden>\nDate:   Wed Nov 19 14:25:47 2014 +0900\n\n    Fix failure rebuilding instance after resize_revert\n    \n    When doing resize-revert, instance come back to source host,\n    but host information is set to destination node.\n    This lead to mismatch of actual neutron port and DB information\n    of port. Then this port become to DOWN.\n    \n    This patch fixes the problem by reverting source host information\n    when doing resize-revert.\n    \n    Change-Id: I82a4a8c45fcbcfb30b6d67e3ea645a358d2c0286\n    Closes-bug: #1380934\n", 
+            "date_created": "2015-01-15 03:17:14.618089+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Bug 1450624 may be related.", 
+            "date_created": "2015-04-30 20:34:14.024262+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }
+    ], 
+    "closed": "2015-02-05 20:21:33.454537+00:00"
+}

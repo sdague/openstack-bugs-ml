@@ -1,0 +1,60 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2014-04-17 08:47:22.548011+00:00", 
+    "description": "While creating Baremetal Node by `nova baremetal-node-create' with --pm_password '' [1] and starting a deployment, IPMI power manager hangs with showing prompt \"Password:\" in nova-compute process. IPMI power manager creates an empty file and specifies it as the password file in the ipmitool command line, but ipmitool ignores that file [2].\n\nThis is an uncommon case that an administrator set password empty, but this is not a low importance bug due to it stops the thread.\n\nI think we can avoid this bug by writing '\\0' into the password file [3], since ipmitool checks return value of fgets() is not NULL which means the file is not start with EOF and no error had occurred.\n\n[1] e.g.:\n\u00a0\u00a0\u00a0\u00a0$ nova baremetal-node-create --pm_address 192.0.2.200 --pm_user admin --pm_password '' service-host 1 1000 10000 00:11:22:33:44:55\n\n[2] In ipmitool manpage:\n\u00a0\u00a0\u00a0\u00a0-f <password_file>\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0Specifies a file containing the remote server password. If this option is absent, or if password_file is empty, the password will default to NULL.\n\n[3] I checked that ipmitool works with a file containing '\\0';\n\u00a0\u00a0\u00a0\u00a0# touch a\n\u00a0\u00a0\u00a0\u00a0# ipmitool -I lanplus -H 192.0.2.94 -f a -U administrator power status\n\u00a0\u00a0\u00a0\u00a0Unable to read password from file a\n\u00a0\u00a0\u00a0\u00a0Unable to read password from file a\n\u00a0\u00a0\u00a0\u00a0Password:                       <-- Enter\n\u00a0\u00a0\u00a0\u00a0Chassis Power is off\n\u00a0\u00a0\u00a0\u00a0# echo -ne '\\0' > b\n\u00a0\u00a0\u00a0\u00a0# ipmitool -I lanplus -H 192.0.2.94 -f b -U administrator power status\n\u00a0\u00a0\u00a0\u00a0Chassis Power is off", 
+    "tags": [
+        "baremetal"
+    ], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1237802", 
+    "owner": "https://api.launchpad.net/1.0/~r-mibu", 
+    "id": 1237802, 
+    "index": 1270, 
+    "openned": "2013-10-10 07:08:12.293615+00:00", 
+    "created": "2013-10-10 07:08:12.293615+00:00", 
+    "title": "IPMI power manager hangs when the password is empty.", 
+    "comments": [
+        {
+            "content": "While creating Baremetal Node by `nova baremetal-node-create' with --pm_password '' [1] and starting a deployment, IPMI power manager hangs up with showing prompt \"Password:\" in nova-compute process. IPMI power manager creates an empty file and specifies it as the password file in the ipmitool command line, but ipmitool ignores that file [2].\n\nThis is an uncommon case that an administrator set password empty, but this is not a low importance bug due to it stops the thread.\n\nI think we can avoid this bug by writing '\\0' into the password file [3], since ipmitool checks return value of fgets() is not NULL which means the file is not start with EOF and no error had occurred.\n\n\n[1] e.g.:\n    $ nova baremetal-node-create --pm_address 192.0.2.200 --pm_user admin --pm_password '' service-host 1 1000 10000 00:11:22:33:44:55\n\n[2] In ipmitool manpage:\n    -f <password_file>\n        Specifies a file containing the remote server password. If this option is absent, or if password_file is empty, the password will default to NULL.\n\n[3] I checked that ipmitool works with a file containing '\\0';\n    # touch a\n    # ipmitool -I lanplus -H 192.0.2.94 -f a -U administrator power status\n    Unable to read password from file a\n    Unable to read password from file a\n    Password:                       <-- Enter\n    Chassis Power is off\n    # echo -e '\\0' > b\n    # ipmitool -I lanplus -H 192.0.2.94 -f b -U administrator power status\n    Chassis Power is off", 
+            "date_created": "2013-10-10 07:08:12.293615+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-mibu"
+        }, 
+        {
+            "content": "That approach, while terrible, seems plausible ;). Want to send in a patch?", 
+            "date_created": "2013-10-16 14:37:56.610058+00:00", 
+            "author": "https://api.launchpad.net/1.0/~lifeless"
+        }, 
+        {
+            "content": "lifeless: There is already a patch for this:\n\nhttps://review.openstack.org/#/c/51121/\n\nNot sure why it didn't get linked. In the last few weeks there have been quite a few unlinked patches...", 
+            "date_created": "2013-10-16 18:58:09.650116+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dan-prince"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/53832", 
+            "date_created": "2013-10-25 12:17:04.542898+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This problem does not occur in Ironic. The ipmitool module ignores empty string as \"ipmi_password\" and raises exception.InvalidParameterValue before executing ipmitool.\n\nEmpty password and empty username are options of IPMI, so it's nice to support them in ironic and tripleO.", 
+            "date_created": "2013-10-30 12:15:42.812229+00:00", 
+            "author": "https://api.launchpad.net/1.0/~r-mibu"
+        }, 
+        {
+            "content": "I'm marking this as Invalid for Ironic because it is presently not possible for the ipmitool driver to accept an empty string for either username or password -- as Ryota pointed out, such values will cause the driver to raise an InvalidParameterValue exception.\n\nI will open a separate bug to indicate the desired functionality -- that is, to accept empty username or password.", 
+            "date_created": "2013-10-30 14:15:54.198755+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "https://bugs.launchpad.net/ironic/+bug/1246342", 
+            "date_created": "2013-10-30 14:20:40.897381+00:00", 
+            "author": "https://api.launchpad.net/1.0/~devananda"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/51121\nCommitted: http://github.com/openstack/nova/commit/e936cac67612015e1123b4539a60ec1aa1b1ff82\nSubmitter: Jenkins\nBranch:    master\n\ncommit e936cac67612015e1123b4539a60ec1aa1b1ff82\nAuthor: Ryota MIBU <email address hidden>\nDate:   Fri Oct 11 13:54:37 2013 +0900\n\n    Fix power manager hangs while executing ipmitool\n    \n    In nova/virt/baremetal, IPMI power manager uses ipmitool with '-F' option to\n    specify a file containing the remote server password.  When the passowrd was\n    empty, ipmitool ignores that file and asks user to set password in stdin.\n    This makes the thread stop.\n    \n    This patch changes power manager to write '\\0' to the password file in the\n    case of empty password, to force the password on impitool.\n    \n    Closes-bug: #1237802\n    \n    Change-Id: I44f56129a8ce2af4dda8dea35eb9c60d9518d54b\n", 
+            "date_created": "2013-11-26 08:01:04.006694+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2013-12-04 10:02:50.222729+00:00"
+}

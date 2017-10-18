@@ -1,0 +1,52 @@
+{
+    "status": "In Progress", 
+    "last_updated": "2017-04-29 15:09:36.952082+00:00", 
+    "description": "Unable to migrate a VM that was originally deployed as a part of multi-vm deploy request. (eg set number of instances to greater than 1 in the UI/REST)\n\nSteps to reproduce:\n- Set up the controller and register compute nodes\n- Now, try a multi-deploy of VMs\n- Once the deploy is successful, try to migrate(untargeted migration) one of the VM deployed as part of group(group here means,  attempting to deploy several VMs with a single request and NOT a server group.)\n- The operation will fail with NoValidHost error at the scheduler\n\nThe issue here is that the request spec the scheduler is getting during migration has num_instances greater than 1(or however many were initially deployed). This is expected on the initial deploy but is not expected on the later migration.\n\nThe problem seems to be related to nova.compute.api._provision_instances().\nIn mitaka it was:\n                req_spec = objects.RequestSpec.from_components(context,\n                        instance_uuid, boot_meta, instance_type,\n                        base_options['numa_topology'],\n                        base_options['pci_requests'], filter_properties,\n                        instance_group, base_options['availability_zone'])\n                req_spec.create()\nIn ocata it is:\n                req_spec = objects.RequestSpec.from_components(context,\n                        instance_uuid, boot_meta, instance_type,\n                        base_options['numa_topology'],\n                        base_options['pci_requests'], filter_properties,\n                        instance_group, base_options['availability_zone'],\n                        security_groups=security_groups)\n                # NOTE(danms): We need to record num_instances on the request\n                # spec as this is how the conductor knows how many were in this batch.\n                req_spec.num_instances = num_instances\n                req_spec.create()\n\nIn mitaka, on deploy...the RequestSpec was saved to the db and then the num_instances was set to the current object on the fly based on len(num_instances). So on deploy, the scheduler gets an object with num_instances equal to the number deployed, but what got saved in the db was the default value 1. On later migrations, when the new RequestSpec object is created from the db information the object has the default 1 value.\n   Now in ocata, the local object's num_instances is updated and then the db object is created/saved. This means the db's copy also has the larger value. When a migration is attempted on one of the VM, the new RequestSpec object created for the migration also shows this larger value causing the migration to fail at scheduler.", 
+    "tags": [], 
+    "importance": "Undecided", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1680773", 
+    "owner": "https://api.launchpad.net/1.0/~arun-mani", 
+    "id": 1680773, 
+    "index": 8046, 
+    "openned": "2017-04-07 09:41:38.277383+00:00", 
+    "created": "2017-04-07 09:41:38.277383+00:00", 
+    "title": "Migration of a one VM deployed as part of group fails with NoValidHost", 
+    "comments": [
+        {
+            "content": "Migrating one VM that got deployed as part of multi-deploy fails with NoValidHost error from scheduler. I'll update this with more info soon enough", 
+            "date_created": "2017-04-07 09:41:38.277383+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arun-mani"
+        }, 
+        {
+            "content": "What group policy did you use when creating the group? affinity? anti-affinity? other?", 
+            "date_created": "2017-04-10 13:23:55.999800+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "(9:02:12 AM) gibi: mriedem: migrating affinty group is not possible today. you will get no valid host. you can evacuate an affinity group with --force flag", 
+            "date_created": "2017-04-10 14:03:46.376575+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Assuming the server group was created with an 'affinity' policy, this is working as designed, or rather, it's a limitation that Nova does not currently support migrating affined instances in a group on the same host, since that would violate the affinity policy.\n\nAt this point the best we can do is document the limitation in the API reference.\n\nIf your server group is anti-affinity or some other setup, please describe in more detail.", 
+            "date_created": "2017-04-10 14:16:11.078897+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Per comment 3, this is what I would update in the API reference:\n\nhttps://developer.openstack.org/api-ref/compute/?expanded=create-server-group-detail#create-server-group\n\nSo I'd update the description here:\n\nhttps://github.com/openstack/nova/blob/3092d2adcb6bab0bf39b01ea0561ec7e6a3990fd/api-ref/source/parameters.yaml#L3826", 
+            "date_created": "2017-04-10 14:34:29.558655+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "@mriedem, I've updated the description with more details on the problem. Hope it helps in understanding the problem better. In any case, this isn't related to server group. ", 
+            "date_created": "2017-04-19 16:55:51.350456+00:00", 
+            "author": "https://api.launchpad.net/1.0/~arun-mani"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/461213", 
+            "date_created": "2017-04-29 15:09:36.359533+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ]
+}

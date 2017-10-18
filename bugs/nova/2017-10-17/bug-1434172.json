@@ -1,0 +1,160 @@
+{
+    "status": "Won't Fix", 
+    "last_updated": "2016-06-10 15:55:14.199377+00:00", 
+    "description": "security group create returns an error without --description supplied.  This appears to be the server rejecting the request so we should set a default value rather than sending None.\n\n\u00a0\u00a0$ openstack security group create qaz\n\u00a0\u00a0ERROR: openstack Security group description is not a string or unicode (HTTP 400) (Request-ID: req-dee03de3-893a-4d58-bc3d-de87d09c3fb8)\n\nSent body:\n\n\u00a0\u00a0{\"security_group\": {\"name\": \"qaz2\", \"description\": null}}", 
+    "tags": [
+        "api"
+    ], 
+    "importance": "Low", 
+    "heat": 14, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1434172", 
+    "owner": "https://api.launchpad.net/1.0/~sdague", 
+    "id": 1434172, 
+    "index": 1622, 
+    "openned": "2015-03-24 02:30:46.766874+00:00", 
+    "created": "2015-03-19 16:37:15.821608+00:00", 
+    "title": "security group create errors without description", 
+    "comments": [
+        {
+            "content": "security group create returns an error without --description supplied.  This appears to be the server rejecting the request so we should set a default value of \"\" rather than sending None.\n\n\n  $ openstack security group create qaz\n  ERROR: openstack Security group description is not a string or unicode (HTTP 400) (Request-ID: req-dee03de3-893a-4d58-bc3d-de87d09c3fb8)\n\nSent body:\n\n  {\"security_group\": {\"name\": \"qaz2\", \"description\": null}}", 
+            "date_created": "2015-03-19 16:37:15.821608+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dtroyer"
+        }, 
+        {
+            "content": "The description also can not be empty (\"\") so the default could be the security group name repeated?", 
+            "date_created": "2015-03-19 16:45:21.834313+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dtroyer"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/165956", 
+            "date_created": "2015-03-19 18:30:18.665357+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "@Dean, whats the API say? I would think null is a valid description value", 
+            "date_created": "2015-03-24 02:18:28.830221+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "AFAICT - the API says a request with no description in the body should be allowed:\nhttp://developer.openstack.org/api-ref-compute-v2-ext.html\n\nIn the controller, the description value is not checked but goes to validate_property...\nhttps://github.com/openstack/nova/blob/3e5062a8ddf94351389f7e201959591b26f338a4/nova/api/openstack/compute/contrib/security_groups.py#L190-L207\n\nAt validate_property though, it errors out when any value is not a string\nhttps://github.com/openstack/nova/blob/d33184b6f890256b332e75bd46a58823cac663ff/nova/compute/api.py#L3855-L3880\n\nTo me, this seems like an issue with nova's implementation not matching it's API. In this case the API seems correct as description should always be optional. \n\nWe can and should proceed with the OSC fix as a band-aid solution, but should mark a TODO to change it when the nova side is resolved.", 
+            "date_created": "2015-03-24 02:30:12.341470+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "Potentially, we could change novaclient to check if description is not null, and not include the key in the body. Not sure if this will result in a different error.", 
+            "date_created": "2015-03-24 02:32:05.533690+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "description is optional, optional does not mean it can be null, it means it shouldn't be in the payload at all.", 
+            "date_created": "2015-03-24 18:39:58.869827+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "@sdague, novaclient seems to always pass in a description -> https://github.com/openstack/python-novaclient/blob/0a60aae852d2688861d0b4ba097a1a00529f0611/novaclient/v2/security_groups.py#L48 ", 
+            "date_created": "2015-03-24 18:53:59.077957+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "@sdague, I made a change to novaclient to ensure the body does not include the description value.\n\nYou can see in the log below that the body is just: {\"security_group\": {\"name\": \"tempo\"}}\n\nBut, the result remains the same (400 with description is not a string or unicode):\n2015-03-25 00:22:48.445 DEBUG nova.api.openstack.wsgi [req-0c501906-c662-4afd-a3fc-3b6e5e22caf9 admin admin] Action: 'create', calling method: <bound method SecurityGroupController.create of <nova.api.openstack.compute.contrib.security_groups.SecurityGroupController object at 0x7f0768586cd0>>, body: {\"security_group\": {\"name\": \"tempo\"}} from (pid=14913) _process_stack /opt/stack/nova/nova/api/openstack/wsgi.py:780\n2015-03-25 00:22:48.447 INFO nova.api.openstack.wsgi [req-0c501906-c662-4afd-a3fc-3b6e5e22caf9 admin admin] HTTP exception thrown: Security group description is not a string or unicode\n2015-03-25 00:22:48.447 DEBUG nova.api.openstack.wsgi [req-0c501906-c662-4afd-a3fc-3b6e5e22caf9 admin admin] Returning 400 to user: Security group description is not a string or unicode from (pid=14913) __call__ /opt/stack/nova/nova/api/openstack/wsgi.py:1166\n2015-03-25 00:22:48.450 INFO nova.osapi_compute.wsgi.server [req-0c501906-c662-4afd-a3fc-3b6e5e22caf9 admin admin] 10.0.2.15 \"POST /v2/36c7f6452c394b44ad4ae1f2bfe07800/os-security-groups HTTP/1.1\" status: 400 len: 317 time: 0.1127591\n\nThis is the  change that I made to novaclient\n\nsteve:python-novaclient$ git diff\ndiff --git a/novaclient/v2/security_groups.py b/novaclient/v2/security_groups.py\nindex 40d1e7f..0cd4960 100644\n--- a/novaclient/v2/security_groups.py\n+++ b/novaclient/v2/security_groups.py\n@@ -45,7 +45,9 @@ class SecurityGroupManager(base.ManagerWithFind):\n         :param description: description of the security group\n         :rtype: the security group object\n         \"\"\"\n-        body = {\"security_group\": {\"name\": name, 'description': description}}\n+        body = {\"security_group\": {\"name\": name}}\n+        if description:\n+            body['security_group']['description'] = description\n         return self._create('/os-security-groups', body, 'security_group')\n\nDouble checked that it still works for the case with a description, and it does.\n\n2015-03-25 00:25:28.870 DEBUG nova.api.openstack.wsgi [req-e2be9899-c50a-40fc-9eaa-258db57b5cf3 admin admin] Action: 'create', calling method: <bound method SecurityGroupController.create of <nova.api.openstack.compute.contrib.security_groups.SecurityGroupController object at 0x7f0768586cd0>>, body: {\"security_group\": {\"name\": \"tempo\", \"description\": \"tempo_desc\"}} from (pid=14913) _process_stack /opt/stack/nova/nova/api/openstack/wsgi.py:780\n2015-03-25 00:25:28.871 DEBUG oslo_db.api [req-e2be9899-c50a-40fc-9eaa-258db57b5cf3 admin admin] Loading backend 'sqlalchemy' from 'nova.db.sqlalchemy.api' from (pid=14913) _load_backend /usr/local/lib/python2.7/dist-packages/oslo_db/api.py:214\n2015-03-25 00:25:28.872 WARNING oslo_config.cfg [req-e2be9899-c50a-40fc-9eaa-258db57b5cf3 admin admin] Option \"sql_connection\" from group \"DEFAULT\" is deprecated. Use option \"connection\" from group \"database\".\n2015-03-25 00:25:28.892 DEBUG oslo_db.sqlalchemy.session [req-e2be9899-c50a-40fc-9eaa-258db57b5cf3 admin admin] MySQL server mode set to STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,TRADITIONAL,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION from (pid=14913) _check_effective_sql_mode /usr/local/lib/python2.7/dist-packages/oslo_db/sqlalchemy/session.py:513\n2015-03-25 00:25:29.089 DEBUG nova.quota [req-e2be9899-c50a-40fc-9eaa-258db57b5cf3 admin admin] Created reservations ['abcd8046-85b8-4a9f-a7ac-258e0050d10c'] from (pid=14913) reserve /opt/stack/nova/nova/quota.py:1319\n2015-03-25 00:25:29.090 INFO nova.compute.api [req-e2be9899-c50a-40fc-9eaa-258db57b5cf3 admin admin] Create Security Group tempo\n\nTo me it still looks like this call will always fail:\n\n  self.security_group_api.validate_property(group_description, 'description', None)\n\nSince it always attempts to strip the value and match it with something", 
+            "date_created": "2015-03-25 04:30:13.393601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "Switched it back to new, let me know if you disagree.", 
+            "date_created": "2015-03-25 04:31:02.060692+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/167487", 
+            "date_created": "2015-03-25 04:34:07.806287+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Steve, Dean,\n\nIs there anything to do in Nova itself?\n\nthanks,\ndims", 
+            "date_created": "2015-03-25 12:25:41.745551+00:00", 
+            "author": "https://api.launchpad.net/1.0/~dims-v"
+        }, 
+        {
+            "content": "@Dims, yes there is.\n\nThis request to create a new security group fails: body = {\"security_group\": {\"name\": name}}.\n\nThis is actually shown in one of nova's tests: https://github.com/openstack/nova/blob/master/nova/tests/unit/api/openstack/compute/contrib/test_security_groups.py#L171-L179\n\n    def test_create_security_group_with_no_description(self):\n        sg = security_group_template()\n        del sg['description']\n\n        req = fakes.HTTPRequest.blank('/v2/fake/os-security-groups')\n        self.assertRaises(webob.exc.HTTPBadRequest, self.controller.create,\n                          req, {'security_group': sg})\n\nSo not including an optional attribute results in a bad request?", 
+            "date_created": "2015-03-25 16:09:04.316980+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "I realize this is a low priority bug, and it's RC time. But I honestly can't show how this is any less valid.", 
+            "date_created": "2015-03-25 16:10:13.813601+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "According to the documentation for the security groups api, the description parameter is supposed to be optional:\n\nhttp://developer.openstack.org/api-ref-compute-v2-ext.html#ext-os-security-groups", 
+            "date_created": "2015-03-25 17:35:50.034763+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Right, optional means you are allowed to not provide the parameter. Not that you can provide it as null. There is a python-novaclient bug here.", 
+            "date_created": "2015-03-30 12:00:43.086420+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Hi Sean, in comment #8 Steve said he still got a 400 from nova after omitting the description parameter from the request body.", 
+            "date_created": "2015-03-30 17:46:02.125875+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Change abandoned by Steve Martinelli (<email address hidden>) on branch: master\nReview: https://review.openstack.org/167487\nReason: meh", 
+            "date_created": "2015-04-15 05:33:42.174926+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "There is also a bug in nova. Both the documentation and the data model show \"description\" as an optional field, but the implementation erroneously requires it as it calls a validate_property function on \"description\" whether it was provided or not:\r\n\r\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/api/openstack/compute/contrib/security_groups.py#n201\r\nhttp://git.openstack.org/cgit/openstack/nova/tree/nova/compute/api.py#n3838", 
+            "date_created": "2015-04-22 21:43:40.358824+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/165956\nCommitted: https://git.openstack.org/cgit/openstack/python-openstackclient/commit/?id=11c39530f5f97a14d534c8d5b7160a1e74f6cdf8\nSubmitter: Jenkins\nBranch:    master\n\ncommit 11c39530f5f97a14d534c8d5b7160a1e74f6cdf8\nAuthor: Dean Troyer <email address hidden>\nDate:   Thu Mar 19 11:46:05 2015 -0500\n\n    Fix security group create description bug\n    \n    --description is optional in our CLI but the server requires it to be\n    non-empty.  Set a default value of the given name.\n    \n    Closes-Bug: #1434172\n    Change-Id: I81507a77ad8d815000ff411784ae71e229c77f78\n", 
+            "date_created": "2015-04-23 20:05:49.086022+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "We can work around the nova bug in novaclient by passing a default value.", 
+            "date_created": "2015-04-23 21:13:57.948408+00:00", 
+            "author": "https://api.launchpad.net/1.0/~melwitt"
+        }, 
+        {
+            "content": "@melwitt we worked around this in OSC by sending a description that was the same as the name (if no name was passed in).", 
+            "date_created": "2015-04-23 21:26:40.856364+00:00", 
+            "author": "https://api.launchpad.net/1.0/~stevemar"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/183909", 
+            "date_created": "2015-05-17 12:29:10.384216+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Adrien Verg\u00e9 (<email address hidden>) on branch: master\nReview: https://review.openstack.org/183909", 
+            "date_created": "2015-08-18 16:10:03.627541+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/262655", 
+            "date_created": "2015-12-31 04:35:25.331503+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "We've updated the Nova docs that this is no longer optional.", 
+            "date_created": "2016-02-12 20:35:06.630124+00:00", 
+            "author": "https://api.launchpad.net/1.0/~sdague"
+        }, 
+        {
+            "content": "Change abandoned by Sean Dague (<email address hidden>) on branch: master\nReview: https://review.openstack.org/279552", 
+            "date_created": "2016-02-12 20:36:49.148400+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Kevin L. Mitchell (<email address hidden>) on branch: master\nReview: https://review.openstack.org/262655\nReason: Not updated since December.", 
+            "date_created": "2016-06-10 15:55:13.435883+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2016-02-12 20:34:29.665976+00:00"
+}

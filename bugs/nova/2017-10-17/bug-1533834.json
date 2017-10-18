@@ -1,0 +1,82 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2017-04-12 03:51:56.628604+00:00", 
+    "description": "The method here:\n\nhttps://github.com/openstack/nova/blob/9f2e0ea1ce2792505cdae6e8f3cce9e32845ea64/nova/objects/block_device.py#L200\n\nAllows getting a BDM with or without an instance_uuid.\n\nThere is no unique constraint on the block_device_mappings table, so we could potentially have a race here where some code calls this without an instance uuid (which there are several in the compute API and manager) and we could have multiple BDMs mapped to the same volume_id in the database. We get one back and the .first() call in the DB API hides that we're corrupt:\n\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L4035\n\nSo what we need to do is be explicit about calling this kind of method. This is also related to the multiattach series here:\n\nhttps://review.openstack.org/#/q/topic:bp/volume-multi-attach\n\nBecause after that series we'll be able to associate the same volume_id to multiple instances (by design).\n\nSo we need to:\n\n1. deprecate the existing bdm.get_by_volume_id method\n\n2. add a new method which takes volume_id and instance_uuid (not optional) and returns a single BDM for those.\n\n3. add a new method which takes only volume_id (no instance uuid) and if we get multiple BDMs back from the database, it raises an error because we should only get one, else the DB is corrupt.\n\n4. change all of code that's calling (1) to all the new methods in (2) or (3).\n\nThis should help us move forward on the multiattach blueprint in the Newton release.", 
+    "tags": [
+        "db", 
+        "unified-objects", 
+        "volumes"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1533834", 
+    "owner": "https://api.launchpad.net/1.0/~mriedem", 
+    "id": 1533834, 
+    "index": 4425, 
+    "openned": "2016-01-13 20:52:15.416680+00:00", 
+    "created": "2016-01-13 20:52:15.416680+00:00", 
+    "title": "nova.objects.BlockDeviceMapping.get_by_volume_id can be racy and should be deprecated", 
+    "comments": [
+        {
+            "content": "The method here:\n\nhttps://github.com/openstack/nova/blob/9f2e0ea1ce2792505cdae6e8f3cce9e32845ea64/nova/objects/block_device.py#L200\n\nAllows getting a BDM with or without an instance_uuid.\n\nThere is no unique constraint on the block_device_mappings table, so we could potentially have a race here where some code calls this without an instance uuid (which there are several in the compute API and manager) and we could have multiple BDMs mapped to the same volume_id in the database. We get one back and the .first() call in the DB API hides that we're corrupt:\n\nhttps://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L4035\n\nSo what we need to do is be explicit about calling this kind of method. This is also related to the multiattach series here:\n\nhttps://review.openstack.org/#/q/topic:bp/volume-multi-attach\n\nBecause after that series we'll be able to associate the same volume_id to multiple instances (by design).\n\nSo we need to:\n\n1. deprecate the existing bdm.get_by_volume_id method\n\n2. add a new method which takes volume_id and instance_uuid (not optional) and returns a single BDM for those.\n\n3. add a new method which takes only volume_id (no instance uuid) and if we get multiple BDMs back from the database, it raises an error because we should only get one, else the DB is corrupt.\n\n4. change all of code that's calling (1) to all the new methods in (2) or (3).\n\nThis should help us move forward on the multiattach blueprint in the Newton release.", 
+            "date_created": "2016-01-13 20:52:15.416680+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/267169\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=c1a61fcc37a06f7d25b86c5ace47e9d68008ddff\nSubmitter: Jenkins\nBranch:    master\n\ncommit c1a61fcc37a06f7d25b86c5ace47e9d68008ddff\nAuthor: Dan Smith <email address hidden>\nDate:   Wed Jan 13 13:12:20 2016 -0800\n\n    Fix undetected races when getting BDMs by volume id\n    \n    This deprecates the BDM.get_by_volume_id() method and introduces two new ones.\n    The existing method will fail to detect that multiple instances can have BDMs\n    pointing at the same volume. This could happen via race, and will be normal\n    behavior when we get volume multi-attach support.\n    \n    Instead of this method which takes instance as an optional parameter, a new\n    method is introduced which requires the property when searching for a single\n    BDM for a volume. Another method is added that allows us to fetch BDMs for\n    volumes where there should be only one instance attached. This method checks\n    that the single-owner consistency is correct, or fails otherwise.\n    \n    Closes-Bug: #1533834\n    Co-Authored-By: Ildiko Vancsa <email address hidden>\n    Co-Authored-By: Krisztian Gacsal <email address hidden>\n    Change-Id: I06cdeef38aeb3f3e65dfc0ced8a75960b5d57f49\n", 
+            "date_created": "2016-01-16 03:48:13.198976+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "This issue was fixed in the openstack/nova 13.0.0.0b2 development milestone.", 
+            "date_created": "2016-01-21 13:42:43.778160+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/429413", 
+            "date_created": "2017-02-05 21:03:16.325167+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/429413\nCommitted: https://git.openstack.org/cgit/openstack/nova/commit/?id=d83ff6bc93909d3fa3468640f1da028f2ba01b06\nSubmitter: Jenkins\nBranch:    master\n\ncommit d83ff6bc93909d3fa3468640f1da028f2ba01b06\nAuthor: Matt Riedemann <email address hidden>\nDate:   Sun Feb 5 16:01:16 2017 -0500\n\n    Handle VolumeBDMIsMultiAttach in os-assisted-volume-snapshots\n    \n    Change c1a61fcc37a06f7d25b86c5ace47e9d68008ddff made\n    BlockDeviceMapping.get_by_volume raise VolumeBDMIsMultiAttach\n    but we weren't handling it in the create method of the\n    os-assisted-volume-snapshots API. This adds the handling of\n    the exception so it will result in a 400 instead of a 500\n    error if we hit it.\n    \n    Change-Id: Ie544d10ada5ee1812ec5f201b02f7ba0af449bd7\n    Related-Bug: #1533834\n", 
+            "date_created": "2017-03-01 14:46:15.812314+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Hi Matt, \n\nWe also encountered this situation that there are multiple BDMs mapped to the same volume_id in the database (do not know the specific steps now), pls see the row 1 and row 2 in the link [1], is it possible to use the last BDM (db_bdm = db_bdms[-1]) instead of the first BDM (db_bdm = db_bdms[0]) to try the best to bypass the dirty data ?\n\n if len(db_bdms) > 1:\n            LOG.warning(_LW('Legacy get_by_volume_id() call found multiple '\n                            'BDMs for volume %(volume)s'),\n                        {'volume': volume_id})\n db_bdm = db_bdms[-1]\n\n[1] http://paste.ubuntu.com/24286817/", 
+            "date_created": "2017-03-31 08:59:46.650191+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhhuabj"
+        }, 
+        {
+            "content": "Hi Zhang,\n\nIt would be helpful if you could provide recreate steps for that. Is this happening during a swap volume operation that fails maybe? Also, on which version of Nova are you hitting this?", 
+            "date_created": "2017-03-31 15:47:26.292632+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "Hi Matt, \n\nIf database happened to die when running 'self.compute_rpcapi.attach_volume' [1], connection_info of this BDM will be NULL due to [2], and at this time it will fail to destory this BDM as well [3], then we will encountered this situation that there are multiple BDMs mapped to the same volume_id in the database mentioned above.\n\nI did an experiment to reproduce this problem sucessfully, the steps can refer the link [4].\n\nThe version of Nova we are hitting is Kilo, but I believe master branch will have the same problem since this part of the code structure between master and Kilo are the same [1][5]. \n\nJust I found the comment [6] also mentioned this problem and explain how multiple BDMs mapped to the same volume_id were created, the patch [7] proposed a idea to cleanup dirty BDM record, but my experiment also confirms we can use last BDM (db_bdm = db_bdms[-1]) instead of the first BDM (db_bdm = db_bdms[0]) to try the best to bypass the dirty record to make nova more robust, so I will also submit a patch for review, thanks.\n\n[1] https://github.com/openstack/nova/blob/kilo-eol/nova/compute/api.py#L3091\n[2] https://github.com/openstack/nova/blob/kilo-eol/nova/virt/block_device.py#L270\n[3] https://github.com/openstack/nova/blob/kilo-eol/nova/compute/api.py#L3095\n[4] http://paste.ubuntu.com/24317950/\n[5] https://github.com/openstack/nova/blob/master/nova/compute/api.py#L3715\n[6] https://bugs.launchpad.net/nova/+bug/1427060/comments/4\n[7] https://review.openstack.org/#/c/290793", 
+            "date_created": "2017-04-05 04:15:51.493474+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhhuabj"
+        }, 
+        {
+            "content": "Related fix proposed to branch: master\nReview: https://review.openstack.org/453451", 
+            "date_created": "2017-04-05 04:17:10.670767+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Change abandoned by Zhang Hua (<email address hidden>) on branch: master\nReview: https://review.openstack.org/453451\nReason: sorry, this patch can't stop creating new dirty BDM record when happen to fail to run 'volume_bdm.destroy()' - https://github.com/openstack/nova/blob/master/nova/compute/api.py#L3715, so abandon it", 
+            "date_created": "2017-04-05 05:24:02.101271+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Please report a new bug if there is a separate issue.\n\nAlso, https://review.openstack.org/#/c/290793/ might be related.\n\nIf you lose the database during any operation, things are going to be bad, so in general I'm not sure how realistic guarding for that case is. Losing an MQ connection or RPC timing out is probably more realistic.", 
+            "date_created": "2017-04-05 13:05:32.514478+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mriedem"
+        }, 
+        {
+            "content": "@Matt, thank you, I wrote my thoughts in the bug https://bugs.launchpad.net/nova/+bug/1681998, welcome to comment.", 
+            "date_created": "2017-04-12 03:51:56.169498+00:00", 
+            "author": "https://api.launchpad.net/1.0/~zhhuabj"
+        }
+    ], 
+    "closed": "2016-01-16 03:48:10.956268+00:00"
+}

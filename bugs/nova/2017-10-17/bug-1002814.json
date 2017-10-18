@@ -1,0 +1,38 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-09-27 15:30:36.574428+00:00", 
+    "description": "Lets say instance reboot is in progress. At one point, libvirt driver is asked to reboot the actual VM. Now in this case if the VM itself has disappeared, the instance will be stuck in rebooting forever\n\n(This was accidentally discovered when libvirtd was killed using \"sudo kill -9\" when reboot was in progress. \"virsh list\" would also not list any instances)\n\n\nRefer to following code snippet  from nova/virt/libvirt/connection.py :\n\n        def _wait_for_reboot():\n            \"\"\"Called at an interval until the VM is running again.\"\"\"\n            try:\n                state = self.get_info(instance)['state']\n            except exception.NotFound:\n                LOG.error(_(\"During reboot, instance disappeared.\"),\n                          instance=instance)\n                raise utils.LoopingCallDone\n\n            if state == power_state.RUNNING:\n                LOG.info(_(\"Instance rebooted successfully.\"),\n                         instance=instance)\n                raise utils.LoopingCallDone\n\n\nHere exception.NotFound block should NOT raise \"utils.LoopingCallDone\" (which indicates that operation successfully completed - and infinite loop in utils.LoopingCall is broken) Due to this, nova-compute never knows that VM has vanished\n\nInstead it should just \"raise\" or \"raise exception.NotFound\".  This will (hopefully) cascade the exception and nova-compute will catch and mark the instance as error.\n\nInstances stuck in \"rebooting\" can't be deleted.  Since VM has already disappeared, marking it as Error (Thus allowing delete) seems like correct solution.\n\n\nThere may be similar problems in _wait_for_boot(), _wait_for_running() etc.", 
+    "tags": [], 
+    "importance": "High", 
+    "heat": 6, 
+    "link": "https://bugs.launchpad.net/nova/+bug/1002814", 
+    "owner": "https://api.launchpad.net/1.0/~vishvananda", 
+    "id": 1002814, 
+    "index": 688, 
+    "openned": "2012-05-22 11:40:57.377203+00:00", 
+    "created": "2012-05-22 11:40:57.377203+00:00", 
+    "title": "Instance stuck in reboot on libvirt failure", 
+    "comments": [
+        {
+            "content": "Lets say instance reboot is in progress. At one point, libvirt driver is asked to reboot the actual VM. Now in this case if the VM itself has disappeared, the instance will be stuck in rebooting forever\n\n(This was accidentally discovered when libvirtd was killed using \"sudo kill -9\" when reboot was in progress. \"virsh list\" would also not list any instances)\n\n\nRefer to following code snippet  from nova/virt/libvirt/connection.py :\n\n        def _wait_for_reboot():\n            \"\"\"Called at an interval until the VM is running again.\"\"\"\n            try:\n                state = self.get_info(instance)['state']\n            except exception.NotFound:\n                LOG.error(_(\"During reboot, instance disappeared.\"),\n                          instance=instance)\n                raise utils.LoopingCallDone\n\n            if state == power_state.RUNNING:\n                LOG.info(_(\"Instance rebooted successfully.\"),\n                         instance=instance)\n                raise utils.LoopingCallDone\n\n\nHere exception.NotFound block should NOT raise \"utils.LoopingCallDone\" (which indicates that operation successfully completed - and infinite loop in utils.LoopingCall is broken) Due to this, nova-compute never knows that VM has vanished\n\nInstead it should just \"raise\" or \"raise exception.NotFound\".  This will (hopefully) cascade the exception and nova-compute will catch and mark the instance as error.\n\nInstances stuck in \"rebooting\" can't be deleted.  Since VM has already disappeared, marking it as Error (Thus allowing delete) seems like correct solution.\n\n\nThere may be similar problems in _wait_for_boot(), _wait_for_running() etc.", 
+            "date_created": "2012-05-22 11:40:57.377203+00:00", 
+            "author": "https://api.launchpad.net/1.0/~mandarvaze"
+        }, 
+        {
+            "content": "I'm not sure that changing the exception that is raised is really the fix, but I think there is probably some state cleanup that needs to be done after the loopingcall if it fails.\r\n\r\nTargeting for folsom-rc1 since this is a state corruption bug that has the potential to block normal users, requiring them to manually poke their database.", 
+            "date_created": "2012-09-07 14:15:31.503353+00:00", 
+            "author": "https://api.launchpad.net/1.0/~danms"
+        }, 
+        {
+            "content": "Review is https://review.openstack.org/12819", 
+            "date_created": "2012-09-11 21:44:32.429531+00:00", 
+            "author": "https://api.launchpad.net/1.0/~markmc"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/12819\nCommitted: http://github.com/openstack/nova/commit/e6e5123cceb874a7ca6dcb16bc401f530439d07a\nSubmitter: Jenkins\nBranch:    master\n\ncommit e6e5123cceb874a7ca6dcb16bc401f530439d07a\nAuthor: Vishvananda Ishaya <email address hidden>\nDate:   Tue Sep 11 12:09:38 2012 -0700\n\n    Allows waiting timers in libvirt to raise NotFound\n    \n    There are cases where an operation will fail when communicating with\n    libvirt. We were eating the exception even though the operation\n    failed, which has the potential to put the instance into an\n    unrecoverable state.\n    \n    This patch allows NotFound exceptions to propogate up so that they\n    are caught by the state handling code and the task state can be\n    set to error.\n    \n    Fixes bug 1002814\n    \n    Change-Id: Iddc319b24aee0b7132155f50b9d3b0eee9bb3fa8\n", 
+            "date_created": "2012-09-18 01:27:19.773959+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-09-19 06:33:06.238162+00:00"
+}

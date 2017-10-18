@@ -1,0 +1,83 @@
+{
+    "status": "Fix Released", 
+    "last_updated": "2012-04-05 10:18:25.677192+00:00", 
+    "description": "For some reason if the following is not overriden by a setting nova will attempt to connect to google's DNS servers.\n\nOdd code @ \n\n    cfg.StrOpt('my_ip',\n               default=_get_my_ip(),\n               help='host ip address'),\n\nOf file nova/flags.py\n\nWhere that function _get_my_ip() which may be called even if the option exists as a setting (its a default??).\n\nThe function does the following:\n\ndef _get_my_ip():\n    \"\"\"Returns the actual ip of the local machine.\"\"\"\n    try:\n        csock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n        csock.connect(('8.8.8.8', 80))\n        (addr, port) = csock.getsockname()\n        csock.close()\n        return addr\n    except socket.error as ex:\n        return \"127.0.0.1\"\n\nThis seems to attempt to open a socket to google's DNS servers @ http://code.google.com/speed/public-dns/docs/using.html\n\n The Google Public DNS IP addresses (IPv4) are as follows: \n 8.8.8.8 \n 8.8.4.4\n\nIs this the correct and desired effect? I would hope not, since I doubt companies want to expose that they are using openstack to google....", 
+    "tags": [], 
+    "importance": "Low", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/930513", 
+    "owner": "https://api.launchpad.net/1.0/~russellb", 
+    "id": 930513, 
+    "index": 441, 
+    "openned": "2012-02-11 02:30:45.200746+00:00", 
+    "created": "2012-02-11 02:30:45.200746+00:00", 
+    "title": "Flags default uses google's DNS", 
+    "comments": [
+        {
+            "content": "For some reason if the following is not overriden by a setting nova will attempt to connect to google's DNS servers.\n\nOdd code @ \n\n    cfg.StrOpt('my_ip',\n               default=_get_my_ip(),\n               help='host ip address'),\n\nOf file nova/flags.py\n\nWhere that function _get_my_ip() which may be called even if the option exists as a setting (its a default??).\n\nThe function does the following:\n\ndef _get_my_ip():\n    \"\"\"Returns the actual ip of the local machine.\"\"\"\n    try:\n        csock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n        csock.connect(('8.8.8.8', 80))\n        (addr, port) = csock.getsockname()\n        csock.close()\n        return addr\n    except socket.error as ex:\n        return \"127.0.0.1\"\n\nThis seems to attempt to open a socket to google's DNS servers @ http://code.google.com/speed/public-dns/docs/using.html\n\n The Google Public DNS IP addresses (IPv4) are as follows: \n 8.8.8.8 \n 8.8.4.4\n\nIs this the correct and desired effect? I would hope not, since I doubt companies want to expose that they are using openstack to google....", 
+            "date_created": "2012-02-11 02:30:45.200746+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "So the functionality doesn't quite match the function name.\n\nIt's clearly reaching out to the internet to see if it's possible with the current configuration, if it is possible it then returns the address information of the socket. If it can't then it returns the loopback.\n\nSo I see two things wrong here:\n* A call out to a third part that you might not want to have any communication with\n* This code doesn't work anyway. Google's DNS servers don't appear have port 80 open\n\nI don't see any reason to keep this quiet:\n* No vulnerability in OpenStack\n* Scope for a _tiny_ information leak if the code actually worked\n\n\n\n\n\n", 
+            "date_created": "2012-02-11 09:59:45.465582+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "@joshua - Thanks for submitting the report.\n@vish - I've assigned this to you as your down as lead for the Nova Security Hardening team.\n\nMight be worth a little discussion.", 
+            "date_created": "2012-02-11 10:05:32.235176+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "Dropped the privacy flag.", 
+            "date_created": "2012-02-11 10:06:17.587433+00:00", 
+            "author": "https://api.launchpad.net/1.0/~robert-clark"
+        }, 
+        {
+            "content": "So just a simple test shows that something does happen with this code even if google isn't opening port 80.\n\nJust try this in some version of python.\n\n>>> import socket\n>>> csock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n>>> csock.connect(('8.8.8.8', 80))\n>>> (addr, port) = csock.getsockname()\n>>> csock.close()\n>>> addr\n'192.168.0.198'\n>>> port\n53610\n\n", 
+            "date_created": "2012-02-11 18:07:28.742132+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "So a little investigation with wireshark, that connection is being done with UDP (the SOCK_DGRAM part) so if it was switched to TCP (socket.SOCK_STREAM) then you would see the failure u would expect there (it would also hang for a while as the socket can't be opened) as google doesn't have port 80 open (which is something that shouldn't be relied upon, who knows one day they might have a little web page there or something). Relying on this is sort of questionable, since the socket is definitely opened, no data is sent (which might be ok) but this whole part of code just has a really weird questionable security \"smell to it\". \n\nHere is the TCP version which will hang.\n\n>>> import socket\n>>> csock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n>>> csock.connect(('8.8.8.8', 80))\n\n(wait and wait and wait for the timeout...)", 
+            "date_created": "2012-02-11 18:34:46.760724+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Just some useful fyi, if this was using TCP then hopefully this would receive a higher priority (even if googles isn't responding on port 80). \n\nA nice diagram of the TCP connect cycle is @ http://www.sdsusa.com/connections/\n\nSo thanks to this being UDP it might be a little more \"safe\". But its still odd that googles DNS servers are being used anywhere in openstack code. :-(", 
+            "date_created": "2012-02-11 20:23:07.741454+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "The code is a little bit misleading, but I have seen this pattern used elsewhere.  No traffic is actually sent here at all since it's a UDP socket.  The connect() call is necessary so that the IP stack will choose a source IP address.  Then, getsockname() will work.  This code is basically \"If I were to send traffic to something out on the Internet, what source IP address would I be using\".  I don't really know a better way to accomplish it.  \n\nI don't consider this is a bug.  Thanks for bringing up the possible concern, though.", 
+            "date_created": "2012-02-12 02:02:51.466271+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Misleading code isn't a bug??? A little bit sad about that. Especially since code that lists google's IP address is just waiting to be re-stated (or re-opened) as a bug. Possible more code comments, or using http://pypi.python.org/pypi/netifaces?? Thanks for at least looking at it, hopefully it can be cleaned up by essex. ", 
+            "date_created": "2012-02-12 03:29:32.579231+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "It doesn't look like netifaces would work to get the same information.  It can provide a list of addresses, but can't tell you which one would be used as the source if you were to send traffic somehwere.\n\nI can add a comment to the code to make it more clear what it does.", 
+            "date_created": "2012-02-12 18:15:30.373588+00:00", 
+            "author": "https://api.launchpad.net/1.0/~russellb"
+        }, 
+        {
+            "content": "Fix proposed to branch: master\nReview: https://review.openstack.org/4060", 
+            "date_created": "2012-02-12 18:20:34.078659+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }, 
+        {
+            "content": "Do u know how the operating system is determining which one can be used as the source? Since I could see the operating system having the same problem. If netifaces returns \"many\" that could be used as the source (which seems possibly if u have multiple NICs) it seems like the operating system would have the same problem. ", 
+            "date_created": "2012-02-13 18:29:12.005093+00:00", 
+            "author": "https://api.launchpad.net/1.0/~harlowja"
+        }, 
+        {
+            "content": "Reviewed:  https://review.openstack.org/4060\nCommitted: http://github.com/openstack/nova/commit/e023c28a81a2b43786d60dacf9d324537ee2dfd0\nSubmitter: Jenkins\nBranch:    master\n\ncommit e023c28a81a2b43786d60dacf9d324537ee2dfd0\nAuthor: Russell Bryant <email address hidden>\nDate:   Sun Feb 12 13:18:49 2012 -0500\n\n    Add some more comments to _get_my_ip().\n    \n    bug 930513.\n    \n    This patch adds some additional comments to _get_my_ip() to try to make\n    the code a bit more clear and to clarify that no traffic is actually\n    sent out by this code.\n    \n    Change-Id: I6f8d4a0a51596e5c531da53f3c79c5bffca59b39\n", 
+            "date_created": "2012-02-17 19:45:15.868421+00:00", 
+            "author": "https://api.launchpad.net/1.0/~hudson-openstack"
+        }
+    ], 
+    "closed": "2012-02-29 10:32:52.380308+00:00"
+}

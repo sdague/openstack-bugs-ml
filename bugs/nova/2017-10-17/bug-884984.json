@@ -1,0 +1,61 @@
+{
+    "status": "Invalid", 
+    "last_updated": "2014-03-17 14:58:51.658917+00:00", 
+    "description": "More details on:\nhttps://answers.launchpad.net/nova/+question/176938\n\nSummary:\n-------------\nSay I had 2 disks, disk1 and disk2 (represented by 2 volumes). disk1 has the root-file-system and disk2 has some data. I boot an instances using the boot-from-volumes extension, and specify the 2 disks such as disk1 should be attached to /dev/vda and disk2 to /dev/vdb. When the instance is launched it fails to boot, because it tries to find the root-filesystem on disk2 instead.\n\nThe underlying problem is with virsh/libvirt. Boot fails because in the libvirt.xml file created by Openstack, disk2 (/dev/vdb) is listed before disk1 (/dev/vda). So, what happens is that the hypervisor attaches disk2 first (since its listed first in the XML). Therefore when these disks are attached on the guest, disk2 appears as /dev/vda and disk1 as /dev/vdb. Later the kernel tries to find the root filesystem on '/dev/vda' (because that's what is selected as the root) and it fails for obvious reason. I think it's a virsh bug. It should be smart about it and attach the devices in the right order.", 
+    "tags": [
+        "canonistack", 
+        "volume"
+    ], 
+    "importance": "Medium", 
+    "heat": 8, 
+    "link": "https://bugs.launchpad.net/nova/+bug/884984", 
+    "owner": "None", 
+    "id": 884984, 
+    "index": 2621, 
+    "openned": "2011-11-01 22:48:31.253756+00:00", 
+    "created": "2011-11-01 22:48:31.253756+00:00", 
+    "title": "Cannot boot from volume with 2 devices", 
+    "comments": [
+        {
+            "content": "More details on:\nhttps://answers.launchpad.net/nova/+question/176938\n\nSummary:\n-------------\nSay I had 2 disks, disk1 and disk2 (represented by 2 volumes). disk1 has the root-file-system and disk2 has some data. I boot an instances using the boot-from-volumes extension, and specify the 2 disks such as disk1 should be attached to /dev/vda and disk2 to /dev/vdb. When the instance is launched it fails to boot, because it tries to find the root-filesystem on disk2 instead.\n\nThe underlying problem is with virsh/libvirt. Boot fails because in the libvirt.xml file created by Openstack, disk2 (/dev/vdb) is listed before disk1 (/dev/vda). So, what happens is that the hypervisor attaches disk2 first (since its listed first in the XML). Therefore when these disks are attached on the guest, disk2 appears as /dev/vda and disk1 as /dev/vdb. Later the kernel tries to find the root filesystem on '/dev/vda' (because that's what is selected as the root) and it fails for obvious reason. I think it's a virsh bug. It should be smart about it and attach the devices in the right order.", 
+            "date_created": "2011-11-01 22:48:31.253756+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gagupta"
+        }, 
+        {
+            "content": "Vish suggested:\n\"Sounds like we can work around this pretty easily by sorting the disks before we pass them into the xml template.\"\n", 
+            "date_created": "2011-11-01 22:49:26.704914+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gagupta"
+        }, 
+        {
+            "content": "The order in XML isn't a part of libvirt API. It's just how the current libvirt is implemented and qemu-kvm works.\r\nSo sorting is not long term solution. Only acceptable as short term work around.\r\nFor example, if you specify /dev/vda and /dev/vdc (skipping /dev/vdb), sorting doesn't work.\r\n\r\nHow guest OS associates device names with devices is highly OS/distribution dependent,\r\nthus libvirt can't know all the cases.\r\n\r\nSo long term solution is\r\n- use disk label where possible (This is already suggested by Scott)\r\n- pass the information of the relation to the guest OS from nova-compute(or libvirt) somehow\r\n\r\nIf guest BIOS(seabios) is involuved for OS booting, the information also needs to be passed to BIOS.", 
+            "date_created": "2011-11-04 08:56:56.837320+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "Is there any more thought about this bug. Can we prioritise this in Essex.", 
+            "date_created": "2011-12-15 23:48:24.727544+00:00", 
+            "author": "https://api.launchpad.net/1.0/~gagupta"
+        }, 
+        {
+            "content": "Adding openstack-volumes team to cc:", 
+            "date_created": "2011-12-16 14:02:47.196524+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ttx"
+        }, 
+        {
+            "content": "I still think sorting is a good short term solution to get booting to work again.  Beyond that we need better support for naming virtio disks.  We may have to do some guest agent / udev magic to get the names right because it doesn't appear that udev has any way to tell which device name it should pick for attached volumes.", 
+            "date_created": "2012-02-06 17:30:26.541252+00:00", 
+            "author": "https://api.launchpad.net/1.0/~vishvananda"
+        }, 
+        {
+            "content": "Hmm I didn't say precisely my opinion.\r\nI'm not objecting against sorting as short term work around. Rather I think it should be committed at first because it would take long time to attack long term solution. It needs to fix not only nova but also other component like kvm, libvirt.\r\nThe reason why xen case(AWS) works is such information is passed to drivers in kernel  via xenstore. On the other hand KVM lacks such framework yet. \r\n\r\nWhen short term work around is committed,  \r\nplease put on the comment on the code that it's work around,\r\nand please don't mark this bug fixed, keep this bug open until the long term solution is committed.", 
+            "date_created": "2012-02-08 02:07:48.287450+00:00", 
+            "author": "https://api.launchpad.net/1.0/~yamahata"
+        }, 
+        {
+            "content": "I believe that with the new block device syntax introduced in https://blueprints.launchpad.net/nova/+spec/improve-block-device-handling now allows you to sidestep these issues as it allows for explicitly specifying the root device when booting. So for example booting with two volumes one of which is the root device can now be done like so:\n\n$ nova boot --boot_volume $BOOT_VOL_ID --block_device id=$OTHER_VOL_ID,source=volume,dest=volume --flavor=$FLAVOR_ID testvm\n\nI am marking this bug as invalid, but the reporter or anyone else should feel free to provide more information and re-open should they feel the above does not address the problem fully.", 
+            "date_created": "2014-03-17 09:24:49.815207+00:00", 
+            "author": "https://api.launchpad.net/1.0/~ndipanov"
+        }
+    ], 
+    "closed": "2014-03-17 14:58:48.717403+00:00"
+}
